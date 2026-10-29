@@ -1,0 +1,20 @@
+{
+  "name": "Naive Client",
+  "identifier": "dev.egoist.naiveclient",
+  "slug": "naive-client",
+  "version": "0.0.1",
+  "out": "build",
+  "updates": {
+    "publicKey": "HjzqTnLkhxuS5VitxBQaFWN4jhdTCp2O/C/EnHp4z2I=",
+    "github": "jonkimi/mygo-naive-client"
+  },
+  "macos": {
+    "icon": "resources/icon.icns",
+    "minimumSystemVersion": "13.0"
+  },
+  "linux": {
+    "comment": "Cross-platform NaiveProxy client manager",
+    "categories": ["Network"],
+    "webview": false
+  }
+}
