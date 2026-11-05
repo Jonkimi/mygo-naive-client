@@ -47,8 +47,9 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	cat := a.catalog()
 
 	if collapsed {
-		ui.Column(c).AlignItems(ui.Center).Gap(6).Padding(28, 0, 6, 0).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 6, 0).Children(func() {
 			logoBtn := ui.ButtonBase(c.Key("sidebar-brand-collapsed")).
+				Label(cat.SidebarExpand()).
 				Size(36, 36).Radius(8).Background(p.accentBg).
 				AlignItems(ui.Center).Justify(ui.Center).
 				Tooltip(cat.SidebarExpand() + " (⌘B)").
@@ -56,21 +57,6 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
 				})
 			if logoBtn.Clicked() {
-				a.toggleSidebar()
-			}
-
-			toggleBtn := ui.ButtonBase(c.Key("btn-sidebar-toggle-collapsed")).
-				Label(cat.SidebarExpand()).
-				Size(28, 24).Radius(6).Background(ui.Transparent).
-				AlignItems(ui.Center).Justify(ui.Center).
-				Tooltip(cat.SidebarExpand() + " (⌘B)").
-				Children(func() {
-					ui.Icon(c, iconSidebarExpand).Size(14, 14).TextColor(p.textMuted)
-				})
-			if toggleBtn.Hovered() {
-				toggleBtn.Background(p.elevated)
-			}
-			if toggleBtn.Clicked() {
 				a.toggleSidebar()
 			}
 		})
