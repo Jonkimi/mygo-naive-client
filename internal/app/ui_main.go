@@ -46,9 +46,9 @@ func (a *app) view(c *ui.Context) {
 				a.renderPlaceholderPage(c, p, a.catalog().NavTailnet, "Tailnet 组网将在阶段五就绪")
 			}
 		})
-
-		a.renderLogDrawer(c, p)
 	})
+
+	a.renderLogDrawer(c, p)
 
 	a.renderEditorDialog(c, p)
 	a.renderImportDialog(c, p)
@@ -216,6 +216,7 @@ func (a *app) coreStatusSubtitle() string {
 }
 
 func (a *app) renderToolbar(c *ui.Context, p palette) {
+	cat := a.catalog()
 	runningCount := 0
 	for _, svc := range a.state.Services {
 		st := a.mgr.StatusOf(svc.ID).State
@@ -230,24 +231,24 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-					ui.Text(c, fmt.Sprintf("本地服务 (%d)", len(a.state.Services))).
+					ui.Text(c, cat.LocalServicesLabel(len(a.state.Services))).
 						FontSize(14).FontWeight(600).TextColor(p.text)
 					if runningCount > 0 {
-						statusBadge(c, fmt.Sprintf("%d 个运行中", runningCount), p.green, p.greenBg)
+						statusBadge(c, cat.RunningCountBadge(runningCount), p.green, p.greenBg)
 					} else {
-						tagPill(c, "全部已停止", p.textMuted, p.elevated)
+						tagPill(c, cat.AllStoppedBadge, p.textMuted, p.elevated)
 					}
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					if len(a.state.Services) > 0 {
-						if actionChip(c.Key("btn-start-all"), p, iconPlay, "全部启动", runningCount == len(a.state.Services)).Clicked() {
+						if actionChip(c.Key("btn-start-all"), p, iconPlay, cat.ActionStartAll, runningCount == len(a.state.Services)).Clicked() {
 							a.startAllServices()
 						}
-						if actionChip(c.Key("btn-stop-all"), p, iconStop, "全部停止", runningCount == 0).Clicked() {
+						if actionChip(c.Key("btn-stop-all"), p, iconStop, cat.ActionStopAll, runningCount == 0).Clicked() {
 							a.stopAllServices()
 						}
-						batchLabel := "一键测速"
+						batchLabel := cat.ActionBatchTest
 						if a.batchTesting && a.batchStage != "" {
 							batchLabel = a.batchStage
 						}
@@ -256,17 +257,17 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 							a.triggerBatchTest()
 						}
 					}
-					if actionChip(c.Key("btn-open-settings"), p, iconSettings, "设置", false).Clicked() {
+					if actionChip(c.Key("btn-open-settings"), p, iconSettings, cat.ActionSettings, false).Clicked() {
 						a.openSettingsDialog()
 					}
 				})
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, "新建服务", p.accent, false).Clicked() {
+				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewService, p.accent, false).Clicked() {
 					a.openCreateServiceDialog()
 				}
-				if actionChip(c.Key("btn-import-service"), p, iconPaste, "剪贴板导入", false).Clicked() {
+				if actionChip(c.Key("btn-import-service"), p, iconPaste, cat.ImportClipboard, false).Clicked() {
 					a.openImportDialog()
 				}
 			})
@@ -292,6 +293,7 @@ func (a *app) renderServiceList(c *ui.Context, p palette) {
 }
 
 func (a *app) renderEmptyState(c *ui.Context, p palette) {
+	cat := a.catalog()
 	ui.Column(c).
 		AlignItems(ui.Center).Justify(ui.Center).
 		PaddingX(32).PaddingY(48).Gap(12).
@@ -302,14 +304,13 @@ func (a *app) renderEmptyState(c *ui.Context, p palette) {
 				Children(func() {
 					ui.Icon(c, iconShield).Size(24, 24)
 				})
-			ui.Text(c, "尚未配置本地 NaiveProxy 服务").FontSize(15).FontWeight(600).TextColor(p.text)
-			ui.Text(c, "支持同时配置并独立运行多个本地 SOCKS5 / HTTP 代理端口，一键导出 V2rayN 格式 (socks://address:port#alias)").
-				FontSize(12).TextColor(p.textMuted)
+			ui.Text(c, cat.NoNodes).FontSize(15).FontWeight(600).TextColor(p.text)
+			ui.Text(c, cat.NoNodesDesc).FontSize(12).TextColor(p.textMuted)
 			ui.Row(c).AlignItems(ui.Center).Gap(10).Padding(8, 0, 0, 0).Children(func() {
-				if primaryPillButton(c.Key("empty-new-btn"), p, iconPlus, "新建第一个服务", p.accent, false).Clicked() {
+				if primaryPillButton(c.Key("empty-new-btn"), p, iconPlus, cat.AddNode, p.accent, false).Clicked() {
 					a.openCreateServiceDialog()
 				}
-				if actionChip(c.Key("empty-import-btn"), p, iconPaste, "从剪贴板导入", false).Clicked() {
+				if actionChip(c.Key("empty-import-btn"), p, iconPaste, cat.ImportFromClipboard, false).Clicked() {
 					a.openImportDialog()
 				}
 			})
@@ -317,6 +318,7 @@ func (a *app) renderEmptyState(c *ui.Context, p palette) {
 }
 
 func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
+	cat := a.catalog()
 	rt := a.mgr.StatusOf(svc.ID)
 	logsOpen := a.expandedLogs[svc.ID]
 
@@ -332,9 +334,9 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
 
 					if svc.EffectiveKind() == config.KindExternalProxy {
-						tagPill(c, "EXTERNAL", p.accentText, p.accentBg)
+						tagPill(c, cat.TagExternalProxy, p.accentText, p.accentBg)
 					} else {
-						tagPill(c, "NAIVE", p.textMuted, p.elevated)
+						tagPill(c, cat.TagManagedNaive, p.textMuted, p.elevated)
 					}
 					for _, tag := range svc.Tags {
 						if tag != "" {
@@ -343,7 +345,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					}
 
 					if svc.AutoStart {
-						tagPill(c, "自启动", p.accentText, p.accentBg)
+						tagPill(c, cat.TagAutoStart, p.accentText, p.accentBg)
 					}
 					if svc.InsecureConcurrency > 1 {
 						tagPill(c, fmt.Sprintf("%dx 并发", svc.InsecureConcurrency), p.textMuted, p.elevated)
@@ -358,20 +360,20 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						tagPill(c, fmt.Sprintf("已重试 %d 次", rt.Restarts), p.amber, p.amberBg)
 					}
 					if rt.Probing {
-						tagPill(c, "延迟测速中...", p.amber, p.amberBg)
+						tagPill(c, cat.LatencyTesting, p.amber, p.amberBg)
 					} else if rt.ProbeError != "" {
-						tagPill(c, "延迟测速失败", p.red, p.redBg)
+						tagPill(c, cat.LatencyFailed, p.red, p.redBg)
 					} else if rt.Latency > 0 {
 						tagPill(c, fmt.Sprintf("%d ms", max(1, rt.Latency.Milliseconds())), p.green, p.greenBg)
 					}
 					if rt.SpeedTesting {
 						if rt.DownloadSpeed > 0 {
-							tagPill(c, "下载测速中 "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
+							tagPill(c, cat.DownloadTesting+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
 						} else {
-							tagPill(c, "下载测速中...", p.amber, p.amberBg)
+							tagPill(c, cat.DownloadTesting, p.amber, p.amberBg)
 						}
 					} else if rt.SpeedError != "" {
-						tagPill(c, "下载测速失败", p.red, p.redBg)
+						tagPill(c, cat.DownloadFailed, p.red, p.redBg)
 					} else if rt.DownloadSpeed > 0 {
 						tagPill(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.green, p.greenBg)
 					}
@@ -379,11 +381,11 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 				// Primary Start/Stop toggle button
 				isRunning := rt.State == runner.StateRunning || rt.State == runner.StateStarting
-				toggleLabel := "启动"
+				toggleLabel := cat.ActionStart
 				toggleIcon := iconPlay
 				toggleColor := p.accent
 				if isRunning {
-					toggleLabel = "停止"
+					toggleLabel = cat.ActionStop
 					toggleIcon = iconStop
 					toggleColor = p.red
 				}
@@ -400,21 +402,27 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						listens = svc.PrimaryListen()
 					}
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Text(c, "本地监听:").FontSize(12).TextColor(p.textMuted)
+						ui.Text(c, cat.LabelLocalListen).FontSize(12).TextColor(p.textMuted)
 						ui.Text(c, listens).FontSize(12).FontWeight(600).TextColor(p.text)
 					})
 
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Text(c, "远端节点:").FontSize(12).TextColor(p.textMuted)
-						ui.Text(c, svc.RedactedProxy()).FontSize(12).FontWeight(500).TextColor(p.text)
-					})
+					remoteProxy := svc.RedactedProxy()
+					if svc.EffectiveKind() == config.KindExternalProxy && svc.ExternalURI != "" {
+						remoteProxy = svc.ExternalURI
+					}
+					if remoteProxy != "" {
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+							ui.Text(c, cat.LabelRemoteNode).FontSize(12).TextColor(p.textMuted)
+							ui.Text(c, remoteProxy).FontSize(12).FontWeight(500).TextColor(p.text)
+						})
+					}
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					if actionChip(c.Key("edit-btn"), p, iconEdit, "编辑", false).Clicked() {
+					if actionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit, false).Clicked() {
 						a.openEditServiceDialog(svc)
 					}
-					if actionChip(c.Key("delete-btn"), p, iconTrash, "删除", false).Clicked() {
+					if actionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete, false).Clicked() {
 						a.openDeleteServiceDialog(svc)
 					}
 				})
@@ -423,7 +431,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 			// Error Banner if process failed or crashed
 			if rt.LastError != "" {
 				ui.Row(c).AlignItems(ui.Center).PaddingX(10).PaddingY(7).Radius(7).Background(p.redBg).Children(func() {
-					ui.Text(c, "运行异常: "+rt.LastError).FontSize(12).FontWeight(500).TextColor(p.red)
+					ui.Text(c, "Error: "+rt.LastError).FontSize(12).FontWeight(500).TextColor(p.red)
 				})
 			}
 
@@ -431,23 +439,23 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 			canTest := rt.State == runner.StateRunning
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Padding(2, 0, 0, 0).Children(func() {
 				localLink := svc.V2rayNSocksURI()
-				if actionChip(c.Key("copy-local"), p, iconCopy, "复制本地链接", false).Tooltip(localLink).Clicked() {
+				if actionChip(c.Key("copy-local"), p, iconCopy, cat.ActionCopyV2rayN, false).Tooltip(localLink).Clicked() {
 					a.copyV2rayNLink(svc)
 				}
 				naiveTip := svc.NaiveShareURI()
 				if naiveTip == "" {
-					naiveTip = "未配置可导出的远端节点"
+					naiveTip = cat.NoRemoteConfigured
 				}
-				if actionChip(c.Key("copy-naive"), p, iconCopy, "复制 Naive 链接", false).Tooltip(naiveTip).Clicked() {
+				if actionChip(c.Key("copy-naive"), p, iconCopy, cat.ActionCopyNaive, false).Tooltip(naiveTip).Clicked() {
 					a.copyNaiveShareLink(svc)
 				}
-				if actionChip(c.Key("probe-btn"), p, iconBolt, "延迟测速", !canTest || rt.Probing).Clicked() {
+				if actionChip(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency, !canTest || rt.Probing).Clicked() {
 					a.triggerServiceProbe(svc)
 				}
-				if actionChip(c.Key("speed-btn"), p, iconDownload, "下载测速", !canTest || rt.SpeedTesting).Clicked() {
+				if actionChip(c.Key("speed-btn"), p, iconDownload, cat.ActionDownload, !canTest || rt.SpeedTesting).Clicked() {
 					a.triggerServiceDownloadTest(svc)
 				}
-				if actionChip(c.Key("drawer-logs"), p, iconList, "日志", false).Clicked() {
+				if actionChip(c.Key("drawer-logs"), p, iconList, cat.ActionLogs, false).Clicked() {
 					if a.activeLogDrawerID == svc.ID {
 						a.activeLogDrawerID = ""
 					} else {
@@ -464,15 +472,16 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 }
 
 func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State) {
+	cat := a.catalog()
 	switch st {
 	case runner.StateRunning:
-		statusBadge(c, "运行中", p.green, p.greenBg)
+		statusBadge(c, cat.StatusRunning, p.green, p.greenBg)
 	case runner.StateStarting:
-		statusBadge(c, "启动中", p.amber, p.amberBg)
+		statusBadge(c, cat.StatusStarting, p.amber, p.amberBg)
 	case runner.StateError:
-		statusBadge(c, "异常", p.red, p.redBg)
+		statusBadge(c, cat.StatusError, p.red, p.redBg)
 	default:
-		statusBadge(c, "已停止", p.textMuted, p.elevated)
+		statusBadge(c, cat.StatusStopped, p.textMuted, p.elevated)
 	}
 }
 

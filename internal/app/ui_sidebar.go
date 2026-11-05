@@ -10,13 +10,13 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 	cat := a.catalog()
 
 	ui.Column(c).
-		Width(160).
-		Padding(12).Gap(8).
+		Width(180).
+		Padding(10).Gap(8).
 		Background(p.sidebarBg).
 		BorderWidth(0, 1, 0, 0).BorderColor(p.borderSubtle).
 		Children(func() {
-			// Brand header
-			ui.Row(c).AlignItems(ui.Center).Gap(10).PaddingX(6).PaddingY(8).Children(func() {
+			// Brand header with window control clearance
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Padding(30, 6, 6, 6).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 					Size(30, 30).Radius(8).Background(p.accentBg).
 					Children(func() {
@@ -71,22 +71,43 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, label, shortcut
 }
 
 func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette) {
+	cat := a.catalog()
 	ui.Column(c).
-		Padding(10).Radius(8).Gap(6).
+		Padding(8).Radius(8).Gap(6).
 		Background(p.surface).
 		BorderWidth(1, 1, 1, 1).BorderColor(p.borderSubtle).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Text(c, "NaiveProxy").FontSize(11).FontWeight(600).TextColor(p.textDim)
-				if actionChip(c.Key("btn-check-update"), p, iconRefresh, "检查更新", a.checkingUpdate || a.updatingCore).Clicked() {
+
+				checkBtn := ui.ButtonBase(c.Key("btn-check-update")).
+					Height(22).PaddingX(6).Radius(4).
+					Background(p.elevated).Border(1, p.borderSubtle).
+					Disabled(a.checkingUpdate || a.updatingCore)
+				if !a.checkingUpdate && !a.updatingCore && checkBtn.Hovered() {
+					checkBtn.Background(p.cardHover)
+				}
+				checkBtn.Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(3).TextColor(p.textMuted).Children(func() {
+						if iconRefresh != nil {
+							ui.Icon(c, iconRefresh).Size(11, 11)
+						}
+						chkText := "检查"
+						if cat.Code == "en" {
+							chkText = "Check"
+						}
+						ui.Text(c, chkText).FontSize(10).FontWeight(500)
+					})
+				})
+				if checkBtn.Clicked() {
 					a.triggerCheckUpdate(true)
 				}
 			})
 
 			if a.localVersion == "" {
-				statusBadge(c, "未安装 naive 核心", p.amber, p.amberBg)
+				statusBadge(c, cat.CoreNotInstalled, p.amber, p.amberBg)
 			} else {
-				statusBadge(c, "本地核心 "+a.localVersion, p.green, p.greenBg)
+				statusBadge(c, cat.CoreLocal+a.localVersion, p.green, p.greenBg)
 			}
 
 			if a.hasUpdate && a.latestRelease != nil {
@@ -94,12 +115,9 @@ func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette) {
 			}
 
 			if a.localVersion == "" || a.hasUpdate || a.updatingCore {
-				updLabel := "下载并无感更新"
-				if a.localVersion == "" {
-					updLabel = "一键下载核心"
-				}
+				updLabel := cat.InstallCore
 				if a.updatingCore {
-					updLabel = "更新中..."
+					updLabel = cat.Updating
 				} else if a.latestRelease != nil && a.hasUpdate {
 					updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
 				}

@@ -34,17 +34,24 @@ type Catalog struct {
 	TailnetNotConnected  string
 	TailnetConnected     string
 
-	// Nodes Page
+	// Nodes Page Toolbar & Badges
 	NodesTitle           string
 	AutoSelectPool       string
 	SearchPlaceholder    string
 	NewNode              string
+	NewService           string
+	ImportClipboard      string
 	SpeedTestAll         string
 	NoNodes              string
 	NoNodesDesc          string
 	AddNode              string
 	ImportFromClipboard  string
 	DirectNoProxy        string
+	AllStoppedBadge      string
+	ActionStartAll       string
+	ActionStopAll        string
+	ActionBatchTest      string
+	ActionSettings       string
 
 	// Node Status & Badges
 	StatusStarting       string
@@ -54,11 +61,14 @@ type Catalog struct {
 	TagManagedNaive      string
 	TagExternalProxy     string
 	TagAutoStart         string
+	CoreLocal            string
+	CoreNotInstalled     string
 
-	// Node Actions
+	// Node Actions & Details
 	ActionStart          string
 	ActionStop           string
 	ActionLatency        string
+	ActionDownload       string
 	ActionLogs           string
 	ActionEdit           string
 	ActionMore           string
@@ -70,6 +80,13 @@ type Catalog struct {
 	DeleteConfirmMsg     string
 	Confirm              string
 	Cancel               string
+	LabelLocalListen     string
+	LabelRemoteNode      string
+	LatencyTesting       string
+	LatencyFailed        string
+	DownloadTesting      string
+	DownloadFailed       string
+	NoRemoteConfigured   string
 
 	// Log Drawer
 	LogDrawerTitle       string
@@ -128,6 +145,22 @@ func (c *Catalog) RunningCount(running, total int) string {
 		return fmt.Sprintf("本地服务 (%d/%d 运行中)", running, total)
 	}
 	return fmt.Sprintf("Services (%d/%d running)", running, total)
+}
+
+// RunningCountBadge formats the running badge in the toolbar.
+func (c *Catalog) RunningCountBadge(running int) string {
+	if c.Code == string(LangZhHans) {
+		return fmt.Sprintf("%d 个运行中", running)
+	}
+	return fmt.Sprintf("%d Running", running)
+}
+
+// LocalServicesLabel formats the local services counter title in the toolbar.
+func (c *Catalog) LocalServicesLabel(total int) string {
+	if c.Code == string(LangZhHans) {
+		return fmt.Sprintf("本地服务 (%d)", total)
+	}
+	return fmt.Sprintf("Services (%d)", total)
 }
 
 // For returns the Catalog corresponding to the specified language.
