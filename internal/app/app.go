@@ -60,8 +60,9 @@ type app struct {
 	updatePercent   float64
 	updateError     string
 
-	mainScroll   ui.ScrollState
-	expandedLogs map[string]bool
+	mainScroll         ui.ScrollState
+	settingsPageScroll ui.ScrollState
+	expandedLogs       map[string]bool
 
 	activeTab         TabID
 	activeLogDrawerID string

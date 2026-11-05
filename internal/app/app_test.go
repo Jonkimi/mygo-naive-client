@@ -468,6 +468,42 @@ func TestSettingsDialog_LayoutAndSave(t *testing.T) {
 	}
 }
 
+// Navigating to the settings workbench page via Cmd+5 allows hot-switching language and appearance.
+func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// Switch to Settings tab
+	tt.Key(ui.Cmd, ui.Key5)
+	tt.Frame()
+
+	if a.activeTab != TabSettings {
+		t.Fatalf("expected activeTab = TabSettings, got %v", a.activeTab)
+	}
+
+	// Switch to English on settings workbench page
+	if err := tt.Click("English"); err != nil {
+		t.Fatalf("click English: %v", err)
+	}
+	tt.Frame()
+
+	if a.state.Language != i18n.LangEn {
+		t.Fatalf("expected state.Language = LangEn, got %v", a.state.Language)
+	}
+
+	// Switch back to Nodes tab via Cmd+1
+	tt.Key(ui.Cmd, ui.Key1)
+	tt.Frame()
+
+	if a.activeTab != TabNodes {
+		t.Fatalf("expected activeTab = TabNodes, got %v", a.activeTab)
+	}
+
+	// In English, toolbar button must show English "New Service"
+	if _, ok := tt.Find("New Service"); !ok {
+		t.Fatalf("expected English 'New Service' on nodes toolbar after switching language")
+	}
+}
+
 func buildTestReleaseArchive(t *testing.T, assetName, entryName string, payload []byte) []byte {
 	t.Helper()
 	if strings.HasSuffix(assetName, ".zip") {

@@ -75,21 +75,22 @@ func (a *app) rebuildTrayMenu() {
 }
 
 func (a *app) buildTrayMenu() *mygo.Menu {
+	cat := a.catalog()
 	var items []*mygo.MenuItem
 
 	items = append(items, &mygo.MenuItem{
-		Label: "打开主面板",
+		Label: cat.TrayShow,
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.showMainWindow()
 		},
 	})
 
-	verLabel := "核心版本: 未安装"
+	verLabel := cat.CoreVersionLabel + ": " + cat.CoreNotInstalled
 	if a.localVersion != "" {
-		verLabel = "核心版本: " + a.localVersion
+		verLabel = cat.CoreVersionLabel + ": " + a.localVersion
 	}
 	if a.hasUpdate && a.latestRelease != nil {
-		verLabel += fmt.Sprintf(" (可更新至 %s)", a.latestRelease.TagName)
+		verLabel += fmt.Sprintf(" (-> %s)", a.latestRelease.TagName)
 	}
 	items = append(items, &mygo.MenuItem{
 		Label: verLabel,
@@ -106,7 +107,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 
 	if len(a.state.Services) == 0 {
 		items = append(items, &mygo.MenuItem{
-			Label:    "暂无已配置服务",
+			Label:    cat.NoNodes,
 			Disabled: true,
 		})
 	} else {
@@ -129,7 +130,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 		}
 		items = append(items, mygo.Separator())
 		items = append(items, &mygo.MenuItem{
-			Label: "全部启动",
+			Label: cat.ActionStartAll,
 			Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.dispatchUI(func() {
 					a.startAllServices()
@@ -137,7 +138,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 			},
 		})
 		items = append(items, &mygo.MenuItem{
-			Label: "全部停止",
+			Label: cat.ActionStopAll,
 			Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.dispatchUI(func() {
 					a.stopAllServices()
@@ -148,13 +149,13 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 
 	items = append(items, mygo.Separator())
 	items = append(items, &mygo.MenuItem{
-		Label: "检查客户端更新…",
+		Label: cat.CheckClientUpdates + "…",
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			checkForClientUpdates()
 		},
 	})
 	items = append(items, &mygo.MenuItem{
-		Label: "检查核心更新",
+		Label: cat.CheckUpdates,
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.dispatchUI(func() {
 				a.triggerCheckUpdate(true)
@@ -162,17 +163,17 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 		},
 	})
 	items = append(items, &mygo.MenuItem{
-		Label: "偏好设置...",
+		Label: cat.MenuPreferences,
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.showMainWindow()
 			a.dispatchUI(func() {
-				a.openSettingsDialog()
+				a.activeTab = TabSettings
 			})
 		},
 	})
 	items = append(items, mygo.Separator())
 	items = append(items, &mygo.MenuItem{
-		Label: "退出 NaiveClient",
+		Label: cat.TrayQuit,
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.quitting = true
 			if a.mgr != nil {

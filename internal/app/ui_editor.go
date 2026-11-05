@@ -213,16 +213,17 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
 			Children(func() {
 				// Header
+				cat := a.catalog()
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-					title := "编辑本地 Naive 服务"
+					title := cat.EditNodeTitle
 					if a.editor.isNew {
-						title = "新建本地 Naive 服务"
+						title = cat.NewNodeTitle
 					}
 					ui.Text(c, title).FontSize(16).FontWeight(700).TextColor(p.text)
 					segmentedControl(c.Key("editor-tabs"), p, &a.editor.tab, []string{
-						"基础配置",
-						"高级参数 (USAGE.txt)",
-						"配置预览",
+						cat.EditorTabBasic,
+						cat.EditorTabAdvanced,
+						cat.EditorTabPreview,
 					})
 				})
 
@@ -254,18 +255,18 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 					Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 							ui.Switch(c.Key("editor-autostart"), &a.editor.autoStart).
-								Label("随客户端启动时自动运行该服务")
-							ui.Text(c, "随客户端启动时自动运行该服务").FontSize(12).TextColor(p.text)
+								Label(cat.EditorAutoStartDesc)
+							ui.Text(c, cat.EditorAutoStartDesc).FontSize(12).TextColor(p.text)
 						})
 
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							if ui.Button(c.Key("editor-cancel"), "取消").Clicked() {
+							if ui.Button(c.Key("editor-cancel"), cat.Cancel).Clicked() {
 								a.editor.open = false
 								a.editor.errText = ""
 							}
-							saveLabel := "保存修改"
+							saveLabel := cat.EditorSaveEdit
 							if a.editor.isNew {
-								saveLabel = "创建服务"
+								saveLabel = cat.EditorSaveCreate
 							}
 							if ui.PrimaryButton(c.Key("editor-save"), saveLabel).Clicked() {
 								a.saveEditorService()
@@ -277,75 +278,75 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 }
 
 func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
+	cat := a.catalog()
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-			ui.Text(c, "节点类型").FontSize(12).TextColor(p.text)
+			ui.Text(c, cat.NodeKindLabel).FontSize(12).TextColor(p.text)
 			segmentedControl(c.Key("editor-kind-segmented"), p, &a.editor.kindIndex, []string{
-				"NaiveProxy (内置托管)",
-				"外部代理 (SOCKS5/HTTP)",
+				cat.NodeKindManaged,
+				cat.NodeKindExternal,
 			})
 		})
 
-		labeledInput(c, p, "inp-name", "服务名称 (Alias)", &a.editor.name, "例如: 香港 HK-01")
-		labeledInput(c, p, "inp-tags", "服务器标签 (Tags，逗号分隔)", &a.editor.tagsInput, "例如: hk, fast, ai")
+		labeledInput(c, p, "inp-name", cat.NodeNameLabel, &a.editor.name, "HK-01")
+		labeledInput(c, p, "inp-tags", cat.TagsLabel, &a.editor.tagsInput, cat.TagsHint)
 
 		if a.editor.kindIndex == 1 {
-			labeledInput(c, p, "inp-external-uri", "外部代理地址", &a.editor.externalURI, "socks5://1.2.3.4:1080 或 http://user:pass@host:8080")
+			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel, &a.editor.externalURI, cat.ExternalURIHint)
 			return
 		}
 
 		ui.Column(c).Gap(4).Children(func() {
-			labeledInput(c, p, "inp-listen", "本地监听地址 (listen)", &a.editor.listenInput, "socks://127.0.0.1:1080 或 http://127.0.0.1:8080 (多个用逗号分隔)")
-			ui.Text(c, "支持协议: socks://, http://, redir://。可同时监听多个本地地址，以逗号分隔。").
-				FontSize(11).TextColor(p.textMuted)
+			labeledInput(c, p, "inp-listen", cat.ListenPortLabel, &a.editor.listenInput, "socks://127.0.0.1:1080")
+			ui.Text(c, cat.EditorListenHint).FontSize(11).TextColor(p.textMuted)
 		})
 
 		ui.Column(c).Gap(4).Children(func() {
-			labeledInput(c, p, "inp-proxy", "远端代理地址 (proxy)", &a.editor.proxyInput, "https://user:pass@example.com:443 或 quic://user:pass@example.com")
-			ui.Text(c, "支持 https://、quic://，支持用逗号串联前置代理链 (如 socks://1.2.3.4:1080,https://example.com)").
-				FontSize(11).TextColor(p.textMuted)
+			labeledInput(c, p, "inp-proxy", cat.ProxyURILabel, &a.editor.proxyInput, cat.ProxyURIHint)
+			ui.Text(c, cat.EditorProxyHintFull).FontSize(11).TextColor(p.textMuted)
 		})
 
-		labeledInput(c, p, "inp-concurrency-basic", "并发连接数 (insecure-concurrency)", &a.editor.concurrencyStr, "默认 1 (建议 1~4)")
-		switchRow(c, p, "inp-nopq-basic", "禁用后量子密钥交换 (no-post-quantum)", &a.editor.noPostQuantum)
+		labeledInput(c, p, "inp-concurrency-basic", cat.EditorConcurrencyLabel, &a.editor.concurrencyStr, "1")
+		switchRow(c, p, "inp-nopq-basic", cat.EditorNoPQLabel, &a.editor.noPostQuantum)
 	})
 }
 
 func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
+	cat := a.catalog()
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-tunnel-timeout", "隧道超时秒数 (tunnel-timeout)", &a.editor.tunnelTimeout, "默认留空")
+				labeledInput(c, p, "inp-tunnel-timeout", cat.EditorTunnelTimeoutLabel, &a.editor.tunnelTimeout, "")
 			})
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-idle-timeout", "空闲超时秒数 (idle-timeout)", &a.editor.idleTimeout, "默认留空")
+				labeledInput(c, p, "inp-idle-timeout", cat.EditorIdleTimeoutLabel, &a.editor.idleTimeout, "")
 			})
 		})
 
-		labeledInput(c, p, "inp-extra-headers", "自定义请求头 (extra-headers)", &a.editor.extraHeaders, "Header1: Value1; Header2: Value2")
+		labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel, &a.editor.extraHeaders, "Header1: Value1")
 
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-host-rules", "域名解析规则 (host-resolver-rules)", &a.editor.hostRules, "MAP example.com 1.2.3.4")
+				labeledInput(c, p, "inp-host-rules", cat.EditorHostRulesLabel, &a.editor.hostRules, "MAP example.com 1.2.3.4")
 			})
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-resolver-range", "虚拟解析网段 (resolver-range)", &a.editor.resolverRange, "例如: 100.64.0.0/10")
+				labeledInput(c, p, "inp-resolver-range", cat.EditorResolverRangeLabel, &a.editor.resolverRange, "100.64.0.0/10")
 			})
 		})
 
-		switchRow(c, p, "inp-enable-log", "启用核心标准日志 (--log)", &a.editor.enableLog)
-		labeledInput(c, p, "inp-log-file", "日志文件路径 (可选，留空输出到实时日志面板)", &a.editor.logFile, "留空则输出到实时日志面板")
+		switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel, &a.editor.enableLog)
+		labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel, &a.editor.logFile, cat.EditorLogFileHint)
 
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-net-log", "NetLog 路径 (log-net-log)", &a.editor.logNetLog, "用于 Chrome NetLog 调试")
+				labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel, &a.editor.logNetLog, "")
 			})
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-ssl-key-log", "SSL KeyLog 路径 (ssl-key-log-file)", &a.editor.sslKeyLogFile, "用于 Wireshark 解密调试")
+				labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel, &a.editor.sslKeyLogFile, "")
 			})
 		})
 
-		labeledInput(c, p, "inp-extra-json", "附加 JSON 字段 (extraJson)", &a.editor.extraJSON, `例如: {"padding": true}`)
+		labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel, &a.editor.extraJSON, `{"padding": true}`)
 	})
 }
 
@@ -444,6 +445,7 @@ func (a *app) openImportDialog() {
 }
 
 func (a *app) renderImportDialog(c *ui.Context, p palette) {
+	cat := a.catalog()
 	ui.DialogBase(c.Key("import-dialog"), &a.importDlg.open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
 		panel.Column().
@@ -452,9 +454,8 @@ func (a *app) renderImportDialog(c *ui.Context, p palette) {
 			Radius(14).Background(p.card).Border(1, p.border).
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
 			Children(func() {
-				ui.Text(c, "导入服务配置").FontSize(16).FontWeight(700).TextColor(p.text)
-				ui.Text(c, "支持多行批量导入（每行一条），格式仅支持 https://user:pass@example.com、naive+https://user:pass@example.com 或完整的 config.json").
-					FontSize(12).TextColor(p.textMuted)
+				ui.Text(c, cat.ImportTitle).FontSize(16).FontWeight(700).TextColor(p.text)
+				ui.Text(c, cat.ImportDesc).FontSize(12).TextColor(p.textMuted)
 
 				if a.importDlg.errText != "" {
 					ui.Row(c).PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
@@ -465,23 +466,23 @@ func (a *app) renderImportDialog(c *ui.Context, p palette) {
 				labeledTextArea(
 					c, p,
 					"import-raw-input",
-					"链接或完整 config.json（支持多行粘贴）",
+					cat.ImportTitle,
 					&a.importDlg.rawInput,
-					"https://user:pass@example.com#Node-1\nnaive+https://user:pass@example.com:443?security=tls&sni=sni.example.com#Node-2\n或粘贴完整的 config.json",
+					"https://user:pass@example.com#Node-1\nnaive+https://user:pass@example.com:443?security=tls&sni=sni.example.com#Node-2\nsocks5://1.2.3.4:1080",
 					5, 10,
 				)
 
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(6, 0, 0, 0).Children(func() {
-					if actionChip(c.Key("import-read-clip"), p, iconPaste, "读取剪贴板", false).Clicked() {
+					if actionChip(c.Key("import-read-clip"), p, iconPaste, cat.ImportClipboard, false).Clicked() {
 						a.importDlg.rawInput = strings.TrimSpace(a.readClipboard())
 					}
 
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if ui.Button(c.Key("import-cancel"), "取消").Clicked() {
+						if ui.Button(c.Key("import-cancel"), cat.Cancel).Clicked() {
 							a.importDlg.open = false
 							a.importDlg.errText = ""
 						}
-						if ui.PrimaryButton(c.Key("import-confirm"), "解析并导入").Clicked() {
+						if ui.PrimaryButton(c.Key("import-confirm"), cat.ImportBtn).Clicked() {
 							a.confirmImportDialog()
 						}
 					})
@@ -546,6 +547,7 @@ func (a *app) openDeleteServiceDialog(svc config.Service) {
 }
 
 func (a *app) renderDeleteDialog(c *ui.Context, p palette) {
+	cat := a.catalog()
 	ui.DialogBase(c.Key("delete-dialog"), &a.deleteDlg.open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
 		panel.Column().
@@ -554,15 +556,18 @@ func (a *app) renderDeleteDialog(c *ui.Context, p palette) {
 			Radius(14).Background(p.card).Border(1, p.border).
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
 			Children(func() {
-				ui.Text(c, "确认删除服务").FontSize(16).FontWeight(700).TextColor(p.text)
-				ui.Text(c, fmt.Sprintf("确定要删除服务「%s」吗？如果该服务正在运行，将会自动停止。", a.deleteDlg.svcName)).
-					FontSize(13).TextColor(p.textMuted)
+				ui.Text(c, cat.DeleteTitle).FontSize(16).FontWeight(700).TextColor(p.text)
+				prompt := cat.DeleteConfirmMsg
+				if a.deleteDlg.svcName != "" {
+					prompt = fmt.Sprintf("「%s」: %s", a.deleteDlg.svcName, cat.DeleteConfirmMsg)
+				}
+				ui.Text(c, prompt).FontSize(13).TextColor(p.textMuted)
 
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Gap(8).Padding(6, 0, 0, 0).Children(func() {
-					if ui.Button(c.Key("delete-cancel"), "取消").Clicked() {
+					if ui.Button(c.Key("delete-cancel"), cat.Cancel).Clicked() {
 						a.deleteDlg.open = false
 					}
-					if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, "确认删除", p.red, false).Clicked() {
+					if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete, p.red, false).Clicked() {
 						a.confirmDeleteService()
 					}
 				})

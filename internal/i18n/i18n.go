@@ -94,7 +94,7 @@ type Catalog struct {
 	LogClear             string
 	LogClose             string
 
-	// Settings Page
+	// Settings Page & Preferences
 	SettingsTitle        string
 	LanguageLabel        string
 	LanguageDesc         string
@@ -103,6 +103,21 @@ type Catalog struct {
 	LanguageEn           string
 	AutoStartLabel       string
 	AutoStartDesc        string
+	AppearanceLabel      string
+	AppearanceDesc       string
+	ThemeLabel           string
+	AppearanceSystem     string
+	AppearanceLight      string
+	AppearanceDark       string
+	AppIconLabel         string
+	AppIconBoth          string
+	AppIconDock          string
+	AppIconMenubar       string
+	ClientSectionTitle   string
+	ClientVersionLabel   string
+	ClientAutoCheckLabel string
+	ClientAutoDlLabel    string
+	CheckClientUpdates   string
 	CoreSectionTitle     string
 	CoreVersionLabel     string
 	CheckUpdates         string
@@ -110,10 +125,28 @@ type Catalog struct {
 	UpToDate             string
 	Updating             string
 	InstallCore          string
+	CoreAutoCheckLabel   string
+	CoreAutoUpdateLabel  string
+	CoreUseRunningProxy  string
+	GitHubMirrorLabel    string
+	GitHubMirrorHint     string
+	UpdateProxyLabel     string
+	CustomCorePathLabel  string
+	CustomCorePathHint   string
+	TelemetrySectionTitle string
+	ProbeURLLabel        string
+	DownloadURLLabel     string
+	SaveSettings         string
 
 	// Editor Modal
 	EditNodeTitle        string
 	NewNodeTitle         string
+	EditorTabBasic       string
+	EditorTabAdvanced    string
+	EditorTabPreview     string
+	EditorAutoStartDesc  string
+	EditorSaveEdit       string
+	EditorSaveCreate     string
 	NodeKindLabel        string
 	NodeKindManaged      string
 	NodeKindExternal     string
@@ -121,11 +154,32 @@ type Catalog struct {
 	ExternalURILabel     string
 	ExternalURIHint      string
 	ListenPortLabel      string
+	EditorListenHint     string
 	ProxyURILabel        string
 	ProxyURIHint         string
+	EditorProxyHintFull  string
 	TagsLabel            string
 	TagsHint             string
+	EditorConcurrencyLabel string
+	EditorNoPQLabel      string
+	EditorTunnelTimeoutLabel string
+	EditorIdleTimeoutLabel string
+	EditorExtraHeadersLabel string
+	EditorHostRulesLabel string
+	EditorResolverRangeLabel string
+	EditorEnableLogLabel string
+	EditorLogFileLabel   string
+	EditorLogFileHint    string
+	EditorNetLogLabel    string
+	EditorSSLKeyLogLabel string
+	EditorExtraJSONLabel string
 	Save                 string
+
+	// Import & Delete
+	ImportTitle          string
+	ImportDesc           string
+	ImportBtn            string
+	DeleteTitle          string
 
 	// Tray & Menus
 	TrayShow             string

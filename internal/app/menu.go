@@ -12,35 +12,36 @@ func (a *app) installAppMenu() {
 	}
 	var top []*mygo.MenuItem
 
+	cat := a.catalog()
 	if runtime.GOOS == "darwin" {
 		top = append(top, &mygo.MenuItem{
 			Label: "NaiveClient",
 			Submenu: []*mygo.MenuItem{
-				{Role: mygo.MenuRole("about"), Label: "关于 NaiveClient"},
+				{Role: mygo.MenuRole("about"), Label: cat.MenuAbout},
 				{
-					Label: "检查 NaiveClient 更新…",
+					Label: cat.CheckClientUpdates + "…",
 					Click: func(*mygo.MenuItem, *mygo.Window) {
 						checkForClientUpdates()
 					},
 				},
 				mygo.Separator(),
 				{
-					Label:       "偏好设置...",
+					Label:       cat.MenuPreferences,
 					Accelerator: "CmdOrCtrl+,",
 					Click: func(*mygo.MenuItem, *mygo.Window) {
 						a.showMainWindow()
 						a.dispatchUI(func() {
-							a.openSettingsDialog()
+							a.activeTab = TabSettings
 						})
 					},
 				},
 				mygo.Separator(),
-				{Role: mygo.MenuRole("hide"), Label: "隐藏 NaiveClient"},
-				{Role: mygo.MenuRole("hideOthers"), Label: "隐藏其他"},
-				{Role: mygo.MenuRole("unhide"), Label: "全部显示"},
+				{Role: mygo.MenuRole("hide"), Label: cat.TrayHide},
+				{Role: mygo.MenuRole("hideOthers")},
+				{Role: mygo.MenuRole("unhide")},
 				mygo.Separator(),
 				{
-					Label:       "退出 NaiveClient",
+					Label:       cat.TrayQuit,
 					Accelerator: "CmdOrCtrl+Q",
 					Click: func(*mygo.MenuItem, *mygo.Window) {
 						a.quitting = true
@@ -55,10 +56,10 @@ func (a *app) installAppMenu() {
 	}
 
 	top = append(top, &mygo.MenuItem{
-		Label: "服务",
+		Label: cat.NavNodes,
 		Submenu: []*mygo.MenuItem{
 			{
-				Label:       "新建服务...",
+				Label:       cat.NewService + "...",
 				Accelerator: "CmdOrCtrl+N",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.showMainWindow()
@@ -68,7 +69,7 @@ func (a *app) installAppMenu() {
 				},
 			},
 			{
-				Label:       "从剪贴板导入...",
+				Label:       cat.ImportClipboard + "...",
 				Accelerator: "CmdOrCtrl+Shift+V",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.showMainWindow()
@@ -79,13 +80,13 @@ func (a *app) installAppMenu() {
 			},
 			mygo.Separator(),
 			{
-				Label: "检查客户端更新…",
+				Label: cat.CheckClientUpdates + "…",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					checkForClientUpdates()
 				},
 			},
 			{
-				Label:       "检查 NaiveProxy 核心更新",
+				Label:       cat.CheckUpdates,
 				Accelerator: "CmdOrCtrl+R",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.showMainWindow()
@@ -98,24 +99,24 @@ func (a *app) installAppMenu() {
 	})
 
 	top = append(top, &mygo.MenuItem{
-		Label: "编辑",
+		Label: cat.MenuEdit,
 		Submenu: []*mygo.MenuItem{
-			{Role: mygo.RoleUndo, Label: "撤销"},
-			{Role: mygo.MenuRole("redo"), Label: "重做"},
+			{Role: mygo.RoleUndo},
+			{Role: mygo.MenuRole("redo")},
 			mygo.Separator(),
-			{Role: mygo.MenuRole("cut"), Label: "剪切"},
-			{Role: mygo.MenuRole("copy"), Label: "复制"},
-			{Role: mygo.MenuRole("paste"), Label: "粘贴"},
-			{Role: mygo.MenuRole("selectAll"), Label: "全选"},
+			{Role: mygo.MenuRole("cut")},
+			{Role: mygo.MenuRole("copy")},
+			{Role: mygo.MenuRole("paste")},
+			{Role: mygo.MenuRole("selectAll")},
 		},
 	})
 
 	top = append(top, &mygo.MenuItem{
-		Label: "窗口",
+		Label: cat.MenuWindow,
 		Submenu: []*mygo.MenuItem{
-			{Role: mygo.MenuRole("minimize"), Label: "最小化"},
-			{Role: mygo.MenuRole("zoom"), Label: "缩放"},
-			{Role: mygo.MenuRole("close"), Label: "关闭窗口"},
+			{Role: mygo.MenuRole("minimize")},
+			{Role: mygo.MenuRole("zoom")},
+			{Role: mygo.MenuRole("close")},
 		},
 	})
 
