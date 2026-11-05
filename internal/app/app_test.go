@@ -413,10 +413,8 @@ func TestIdleFrameBudget(t *testing.T) {
 	}
 }
 
-// Regression test: DialogBase's panel defaults to horizontal box unless .Column() is set,
-// and ui.Scroll inside the dialog requires .Grow(1) with a bounded dialog height so the
-// header, scrollable body sections, and footer buttons stack vertically without overlapping.
-func TestSettingsDialog_LayoutAndSave(t *testing.T) {
+// Clicking '设置' on the toolbar navigates directly to the settings workbench page where preferences can be adjusted.
+func TestSettingsPage_ToolbarNavigationAndTheme(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 
 	if err := tt.Click("设置"); err != nil {
@@ -424,30 +422,18 @@ func TestSettingsDialog_LayoutAndSave(t *testing.T) {
 	}
 	tt.Frame()
 
-	hdr, ok := tt.Find("全局偏好设置")
-	if !ok {
-		t.Fatalf("expected settings dialog header '全局偏好设置'")
-	}
-	sec1, ok := tt.Find("外观与系统集成")
-	if !ok {
-		t.Fatalf("expected section 1 '外观与系统集成'")
-	}
-	secClient, ok := tt.Find("NaiveClient 客户端更新")
-	if !ok {
-		t.Fatalf("expected section 'NaiveClient 客户端更新'")
-	}
-	sec2, ok := tt.Find("NaiveProxy 核心与无感更新")
-	if !ok {
-		t.Fatalf("expected section 2 'NaiveProxy 核心与无感更新'")
-	}
-	saveBtn, ok := tt.Find("保存设置")
-	if !ok {
-		t.Fatalf("expected footer button '保存设置'")
+	if a.activeTab != TabSettings {
+		t.Fatalf("expected activeTab = TabSettings, got %v", a.activeTab)
 	}
 
-	if !(hdr.Y < sec1.Y && sec1.Y < secClient.Y && secClient.Y < sec2.Y && sec2.Y < saveBtn.Y) {
-		t.Fatalf("expected vertical stacking in settings dialog: hdr.Y=%v, sec1.Y=%v, secClient.Y=%v, sec2.Y=%v, saveBtn.Y=%v",
-			hdr.Y, sec1.Y, secClient.Y, sec2.Y, saveBtn.Y)
+	if _, ok := tt.Find("全局偏好设置"); !ok {
+		t.Fatalf("expected settings workbench header '全局偏好设置'")
+	}
+	if _, ok := tt.Find("外观与系统集成"); !ok {
+		t.Fatalf("expected section '外观与系统集成'")
+	}
+	if _, ok := tt.Find("NaiveProxy 核心与无感更新"); !ok {
+		t.Fatalf("expected section 'NaiveProxy 核心与无感更新'")
 	}
 
 	if err := tt.Click("深色"); err != nil {
@@ -455,14 +441,6 @@ func TestSettingsDialog_LayoutAndSave(t *testing.T) {
 	}
 	tt.Frame()
 
-	if err := tt.Click("保存设置"); err != nil {
-		t.Fatalf("click 保存设置: %v", err)
-	}
-	tt.Frame()
-
-	if a.settingsDlg.open {
-		t.Fatalf("expected settings dialog closed after clicking 保存设置")
-	}
 	if a.state.Appearance != appearanceDark {
 		t.Fatalf("expected state.Appearance = %q, got %q", appearanceDark, a.state.Appearance)
 	}

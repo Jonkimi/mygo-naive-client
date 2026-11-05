@@ -72,10 +72,9 @@ type app struct {
 	batchStage   string
 	batchCancel  context.CancelFunc
 
-	editor      editorForm
-	importDlg   importDialogState
-	deleteDlg   deleteDialogState
-	settingsDlg settingsForm
+	editor    editorForm
+	importDlg importDialogState
+	deleteDlg deleteDialogState
 
 	pendingToast string
 	clipboardMem string // fallback clipboard used in headless tests

@@ -17,8 +17,6 @@ func (a *app) view(c *ui.Context) {
 	c.OnShortcut(0, ui.KeyEscape, func() {
 		if a.activeLogDrawerID != "" {
 			a.activeLogDrawerID = ""
-		} else if a.settingsDlg.open {
-			a.settingsDlg.open = false
 		}
 	})
 	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
@@ -53,7 +51,6 @@ func (a *app) view(c *ui.Context) {
 	a.renderEditorDialog(c, p)
 	a.renderImportDialog(c, p)
 	a.renderDeleteDialog(c, p)
-	a.renderSettingsDialog(c, p)
 
 	if a.pendingToast != "" {
 		c.Toast(a.pendingToast)
@@ -108,113 +105,6 @@ func (a *app) applyThemeToContext(c *ui.Context) {
 	}
 }
 
-func (a *app) renderHeaderBanner(c *ui.Context, p palette) {
-	ui.Column(c).
-		PaddingX(20).PaddingY(14).Gap(10).
-		Background(p.surface).
-		BorderWidth(0, 0, 1, 0).BorderColor(p.border).
-		Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				// Left: App title + Naive core version & remote status
-				ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
-						Size(34, 34).Radius(9).Background(p.accentBg).
-						Children(func() {
-							ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
-						})
-
-					ui.Column(c).Gap(3).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Text(c, "NaiveClient").FontSize(16).FontWeight(700).TextColor(p.text)
-
-							if a.localVersion == "" {
-								statusBadge(c, "未安装 naive 核心", p.amber, p.amberBg)
-							} else {
-								statusBadge(c, "本地核心 "+a.localVersion, p.green, p.greenBg)
-							}
-
-							if a.hasUpdate && a.latestRelease != nil {
-								tagPill(c, "发现新版本 "+a.latestRelease.TagName, p.amber, p.amberBg)
-							} else if a.latestRelease != nil && a.localVersion != "" {
-								tagPill(c, "已是最新 ("+a.latestRelease.TagName+")", p.accentText, p.accentBg)
-							}
-						})
-
-						subText := a.coreStatusSubtitle()
-						ui.Text(c, subText).FontSize(12).TextColor(p.textMuted)
-					})
-				})
-
-				// Right: Check update & One-click seamless update buttons
-				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					checkLabel := "检查更新"
-					if a.checkingUpdate {
-						checkLabel = "检查中..."
-					}
-					if actionChip(c.Key("btn-check-update"), p, iconRefresh, checkLabel, a.checkingUpdate || a.updatingCore).Clicked() {
-						a.triggerCheckUpdate(true)
-					}
-
-					if a.localVersion == "" || a.hasUpdate || a.updatingCore {
-						updLabel := "下载并无感更新"
-						if a.localVersion == "" {
-							updLabel = "一键下载核心"
-						}
-						if a.updatingCore {
-							updLabel = "更新中..."
-						} else if a.latestRelease != nil && a.hasUpdate {
-							updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
-						}
-						if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Clicked() {
-							a.triggerSeamlessUpdate()
-						}
-					}
-				})
-			})
-
-			// Seamless update progress bar
-			if a.updatingCore || a.updateStageText != "" {
-				ui.Column(c).Gap(6).PaddingX(12).PaddingY(9).Radius(8).Background(p.elevated).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						stage := a.updateStageText
-						if stage == "" {
-							stage = "正在准备更新..."
-						}
-						ui.Text(c, stage).FontSize(12).FontWeight(500).TextColor(p.text)
-						if a.updatePercent > 0 {
-							ui.Text(c, fmt.Sprintf("%.0f%%", a.updatePercent)).FontSize(12).FontWeight(600).TextColor(p.accent)
-						}
-					})
-					if a.updatingCore {
-						pct := a.updatePercent
-						if pct < 4 {
-							pct = 4
-						}
-						if pct > 100 {
-							pct = 100
-						}
-						ui.Row(c).Height(6).Radius(999).Background(p.border).Children(func() {
-							ui.Box(c).HeightPercent(100).WidthPercent(float32(pct)).Radius(999).Background(p.accent)
-						})
-					}
-				})
-			}
-		})
-}
-
-func (a *app) coreStatusSubtitle() string {
-	if a.updateError != "" {
-		return "更新状态: " + a.updateError
-	}
-	if a.localVersion == "" {
-		return "尚未检测到本地 naive 可执行文件，点击右侧按钮将从 klzgrad/naiveproxy/releases 自动下载"
-	}
-	if a.hasUpdate && a.latestRelease != nil {
-		return fmt.Sprintf("GitHub 最新版本 %s 已发布，支持自动下载、SHA256 校验并无感热替换重启运行中的服务", a.latestRelease.TagName)
-	}
-	return fmt.Sprintf("核心路径: %s · 跟踪 klzgrad/naiveproxy/releases", a.resolveBinaryPath())
-}
-
 func (a *app) renderToolbar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	runningCount := 0
@@ -258,7 +148,7 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 						}
 					}
 					if actionChip(c.Key("btn-open-settings"), p, iconSettings, cat.ActionSettings, false).Clicked() {
-						a.openSettingsDialog()
+						a.activeTab = TabSettings
 					}
 				})
 			})
