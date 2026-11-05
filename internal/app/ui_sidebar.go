@@ -27,11 +27,11 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 
 			// Navigation items
 			ui.Column(c).Gap(4).Children(func() {
-				a.renderNavItem(c, p, TabNodes, cat.NavNodes, "⌘1")
-				a.renderNavItem(c, p, TabRouting, cat.NavRouting, "⌘2")
-				a.renderNavItem(c, p, TabInsights, cat.NavInsights, "⌘3")
-				a.renderNavItem(c, p, TabTailnet, cat.NavTailnet, "⌘4")
-				a.renderNavItem(c, p, TabSettings, cat.NavSettings, "⌘5")
+				a.renderNavItem(c, p, TabNodes, cat.NavNodes(), "⌘1")
+				a.renderNavItem(c, p, TabRouting, cat.NavRouting(), "⌘2")
+				a.renderNavItem(c, p, TabInsights, cat.NavInsights(), "⌘3")
+				a.renderNavItem(c, p, TabTailnet, cat.NavTailnet(), "⌘4")
+				a.renderNavItem(c, p, TabSettings, cat.NavSettings(), "⌘5")
 			})
 
 			// Spacer
@@ -92,11 +92,7 @@ func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette) {
 						if iconRefresh != nil {
 							ui.Icon(c, iconRefresh).Size(11, 11)
 						}
-						chkText := "检查"
-						if cat.Code == "en" {
-							chkText = "Check"
-						}
-						ui.Text(c, chkText).FontSize(10).FontWeight(500)
+						ui.Text(c, cat.CheckUpdates()).FontSize(10).FontWeight(500)
 					})
 				})
 				if checkBtn.Clicked() {
@@ -105,9 +101,9 @@ func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette) {
 			})
 
 			if a.localVersion == "" {
-				statusBadge(c, cat.CoreNotInstalled, p.amber, p.amberBg)
+				statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
 			} else {
-				statusBadge(c, cat.CoreLocal+a.localVersion, p.green, p.greenBg)
+				statusBadge(c, cat.CoreLocal()+a.localVersion, p.green, p.greenBg)
 			}
 
 			if a.hasUpdate && a.latestRelease != nil {
@@ -115,9 +111,9 @@ func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette) {
 			}
 
 			if a.localVersion == "" || a.hasUpdate || a.updatingCore {
-				updLabel := cat.InstallCore
+				updLabel := cat.InstallCore()
 				if a.updatingCore {
-					updLabel = cat.Updating
+					updLabel = cat.Updating()
 				} else if a.latestRelease != nil && a.hasUpdate {
 					updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
 				}

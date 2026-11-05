@@ -23,9 +23,9 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
-	"naive-client/internal/i18n"
 	"naive-client/internal/runner"
 	"naive-client/internal/updater"
+	"naive-client/locales"
 )
 
 func newTestApp(t *testing.T, initialServices []config.Service) (*app, *ui.Tester, string) {
@@ -55,7 +55,7 @@ done
 
 	a := newApp(tmpDir)
 	a.headless = true
-	a.state.Language = i18n.LangZhHans
+	a.state.Language = locales.LangZhHans
 	a.state.AutoCheckUpdate = false
 	a.state.Services = initialServices
 	a.saveState()
@@ -464,7 +464,7 @@ func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
 	}
 	tt.Frame()
 
-	if a.state.Language != i18n.LangEn {
+	if a.state.Language != locales.LangEn {
 		t.Fatalf("expected state.Language = LangEn, got %v", a.state.Language)
 	}
 
@@ -859,8 +859,8 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 	a.state.Language = "en"
 	a.saveState()
 	tt.Frame()
-	if a.catalog().Code != "en" {
-		t.Fatalf("expected catalog code 'en', got %q", a.catalog().Code)
+	if a.catalog().Code() != "en" {
+		t.Fatalf("expected catalog code 'en', got %q", a.catalog().Code())
 	}
 	if !tt.HasText("Nodes") {
 		t.Fatalf("expected English text 'Nodes' on screen, got texts: %v", tt.Texts())

@@ -17,16 +17,16 @@ func (a *app) installAppMenu() {
 		top = append(top, &mygo.MenuItem{
 			Label: "NaiveClient",
 			Submenu: []*mygo.MenuItem{
-				{Role: mygo.MenuRole("about"), Label: cat.MenuAbout},
+				{Role: mygo.MenuRole("about"), Label: cat.MenuAbout()},
 				{
-					Label: cat.CheckClientUpdates + "…",
+					Label: cat.CheckClientUpdates() + "…",
 					Click: func(*mygo.MenuItem, *mygo.Window) {
 						checkForClientUpdates()
 					},
 				},
 				mygo.Separator(),
 				{
-					Label:       cat.MenuPreferences,
+					Label:       cat.MenuPreferences(),
 					Accelerator: "CmdOrCtrl+,",
 					Click: func(*mygo.MenuItem, *mygo.Window) {
 						a.showMainWindow()
@@ -36,12 +36,12 @@ func (a *app) installAppMenu() {
 					},
 				},
 				mygo.Separator(),
-				{Role: mygo.MenuRole("hide"), Label: cat.TrayHide},
+				{Role: mygo.MenuRole("hide"), Label: cat.TrayHide()},
 				{Role: mygo.MenuRole("hideOthers")},
 				{Role: mygo.MenuRole("unhide")},
 				mygo.Separator(),
 				{
-					Label:       cat.TrayQuit,
+					Label:       cat.TrayQuit(),
 					Accelerator: "CmdOrCtrl+Q",
 					Click: func(*mygo.MenuItem, *mygo.Window) {
 						a.quitting = true
@@ -56,10 +56,10 @@ func (a *app) installAppMenu() {
 	}
 
 	top = append(top, &mygo.MenuItem{
-		Label: cat.NavNodes,
+		Label: cat.NavNodes(),
 		Submenu: []*mygo.MenuItem{
 			{
-				Label:       cat.NewService + "...",
+				Label:       cat.NewService() + "...",
 				Accelerator: "CmdOrCtrl+N",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.showMainWindow()
@@ -69,7 +69,7 @@ func (a *app) installAppMenu() {
 				},
 			},
 			{
-				Label:       cat.ImportClipboard + "...",
+				Label:       cat.ImportClipboard() + "...",
 				Accelerator: "CmdOrCtrl+Shift+V",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.showMainWindow()
@@ -80,13 +80,13 @@ func (a *app) installAppMenu() {
 			},
 			mygo.Separator(),
 			{
-				Label: cat.CheckClientUpdates + "…",
+				Label: cat.CheckClientUpdates() + "…",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					checkForClientUpdates()
 				},
 			},
 			{
-				Label:       cat.CheckUpdates,
+				Label:       cat.CheckUpdates(),
 				Accelerator: "CmdOrCtrl+R",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.showMainWindow()
@@ -99,7 +99,7 @@ func (a *app) installAppMenu() {
 	})
 
 	top = append(top, &mygo.MenuItem{
-		Label: cat.MenuEdit,
+		Label: cat.MenuEdit(),
 		Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleUndo},
 			{Role: mygo.MenuRole("redo")},
@@ -112,7 +112,7 @@ func (a *app) installAppMenu() {
 	})
 
 	top = append(top, &mygo.MenuItem{
-		Label: cat.MenuWindow,
+		Label: cat.MenuWindow(),
 		Submenu: []*mygo.MenuItem{
 			{Role: mygo.MenuRole("minimize")},
 			{Role: mygo.MenuRole("zoom")},

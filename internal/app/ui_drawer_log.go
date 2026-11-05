@@ -40,15 +40,15 @@ func (a *app) renderLogDrawer(c *ui.Context, p palette) {
 			// Header
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					ui.Text(c, cat.LogDrawerTitle).FontSize(14).FontWeight(700).TextColor(p.text)
+					ui.Text(c, cat.LogDrawerTitle()).FontSize(14).FontWeight(700).TextColor(p.text)
 					tagPill(c, name, p.accentText, p.accentBg)
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					if actionChip(c.Key("btn-drawer-clear"), p, iconTrash, cat.LogClear, false).Clicked() {
+					if actionChip(c.Key("btn-drawer-clear"), p, iconTrash, cat.LogClear(), false).Clicked() {
 						logs.Clear()
 					}
-					if actionChip(c.Key("btn-drawer-close"), p, iconClose, cat.LogClose, false).Clicked() {
+					if actionChip(c.Key("btn-drawer-close"), p, iconClose, cat.LogClose(), false).Clicked() {
 						a.activeLogDrawerID = ""
 					}
 				})

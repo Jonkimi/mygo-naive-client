@@ -13,9 +13,9 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
-	"naive-client/internal/i18n"
 	"naive-client/internal/runner"
 	"naive-client/internal/updater"
+	"naive-client/locales"
 )
 
 // TabID identifies a page in the sidebar navigation.
@@ -81,8 +81,19 @@ type app struct {
 	quitCh       chan struct{}
 }
 
-func (a *app) catalog() *i18n.Catalog {
-	return i18n.For(a.state.Language)
+func (a *app) catalog() locales.Messages {
+	return locales.In(locales.ResolveLocale(a.state.Language))
+}
+
+func (a *app) applyLanguagePolicy() {
+	if a.headless {
+		return
+	}
+	tag := ""
+	if a.state.Language != locales.LangSystem && a.state.Language != "" {
+		tag = a.state.Language
+	}
+	mygo.App.SetLocale(tag)
 }
 
 func (a *app) findService(id string) (config.Service, bool) {
@@ -152,6 +163,7 @@ func Run() error {
 			a.win.Hide()
 		})
 
+		a.applyLanguagePolicy()
 		a.installAppMenu()
 		a.applyAppIconPolicy()
 		a.boot()

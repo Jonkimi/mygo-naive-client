@@ -4,6 +4,10 @@
   "slug": "naive-client",
   "version": "0.0.1",
   "out": "build",
+  "i18n": {
+    "dir": "locales",
+    "source": "en"
+  },
   "updates": {
     "publicKey": "HjzqTnLkhxuS5VitxBQaFWN4jhdTCp2O/C/EnHp4z2I=",
     "github": "jonkimi/mygo-naive-client"

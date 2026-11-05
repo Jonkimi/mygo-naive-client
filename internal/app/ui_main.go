@@ -37,11 +37,11 @@ func (a *app) view(c *ui.Context) {
 			case TabSettings:
 				a.renderSettingsPage(c, p)
 			case TabRouting:
-				a.renderPlaceholderPage(c, p, a.catalog().NavRouting, "分流规则引擎将在阶段二就绪")
+				a.renderPlaceholderPage(c, p, a.catalog().NavRouting(), "分流规则引擎将在阶段二就绪")
 			case TabInsights:
-				a.renderPlaceholderPage(c, p, a.catalog().NavInsights, "洞察与拦截看板将在阶段三就绪")
+				a.renderPlaceholderPage(c, p, a.catalog().NavInsights(), "洞察与拦截看板将在阶段三就绪")
 			case TabTailnet:
-				a.renderPlaceholderPage(c, p, a.catalog().NavTailnet, "Tailnet 组网将在阶段五就绪")
+				a.renderPlaceholderPage(c, p, a.catalog().NavTailnet(), "Tailnet 组网将在阶段五就绪")
 			}
 		})
 	})
@@ -69,19 +69,19 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 			// Left: Gateway master switch
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 				ui.Box(c).Size(8, 8).Radius(999).Background(p.green)
-				ui.Text(c, cat.MasterGateway).FontSize(13).FontWeight(600).TextColor(p.text)
+				ui.Text(c, cat.MasterGateway()).FontSize(13).FontWeight(600).TextColor(p.text)
 			})
 
 			// Center: 3 Modes
 			ui.Row(c).AlignItems(ui.Center).Gap(4).Padding(2).Radius(6).Background(p.elevated).Children(func() {
-				tagPill(c, cat.ModePortOnly, p.accentText, p.accentBg)
-				tagPill(c, cat.ModeSysProxy, p.textMuted, ui.Transparent)
-				tagPill(c, cat.ModeTun, p.textMuted, ui.Transparent)
+				tagPill(c, cat.ModePortOnly(), p.accentText, p.accentBg)
+				tagPill(c, cat.ModeSysProxy(), p.textMuted, ui.Transparent)
+				tagPill(c, cat.ModeTun(), p.textMuted, ui.Transparent)
 			})
 
 			// Right: Tailnet status capsule
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				tagPill(c, "Tailnet: "+cat.TailnetNotConnected, p.textDim, p.elevated)
+				tagPill(c, "Tailnet: "+cat.TailnetNotConnected(), p.textDim, p.elevated)
 			})
 		})
 }
@@ -126,19 +126,19 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 					if runningCount > 0 {
 						statusBadge(c, cat.RunningCountBadge(runningCount), p.green, p.greenBg)
 					} else {
-						tagPill(c, cat.AllStoppedBadge, p.textMuted, p.elevated)
+						tagPill(c, cat.AllStoppedBadge(), p.textMuted, p.elevated)
 					}
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					if len(a.state.Services) > 0 {
-						if actionChip(c.Key("btn-start-all"), p, iconPlay, cat.ActionStartAll, runningCount == len(a.state.Services)).Clicked() {
+						if actionChip(c.Key("btn-start-all"), p, iconPlay, cat.ActionStartAll(), runningCount == len(a.state.Services)).Clicked() {
 							a.startAllServices()
 						}
-						if actionChip(c.Key("btn-stop-all"), p, iconStop, cat.ActionStopAll, runningCount == 0).Clicked() {
+						if actionChip(c.Key("btn-stop-all"), p, iconStop, cat.ActionStopAll(), runningCount == 0).Clicked() {
 							a.stopAllServices()
 						}
-						batchLabel := cat.ActionBatchTest
+						batchLabel := cat.ActionBatchTest()
 						if a.batchTesting && a.batchStage != "" {
 							batchLabel = a.batchStage
 						}
@@ -151,10 +151,10 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewService, p.accent, false).Clicked() {
+				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewService(), p.accent, false).Clicked() {
 					a.openCreateServiceDialog()
 				}
-				if actionChip(c.Key("btn-import-service"), p, iconPaste, cat.ImportClipboard, false).Clicked() {
+				if actionChip(c.Key("btn-import-service"), p, iconPaste, cat.ImportClipboard(), false).Clicked() {
 					a.openImportDialog()
 				}
 			})
@@ -191,13 +191,13 @@ func (a *app) renderEmptyState(c *ui.Context, p palette) {
 				Children(func() {
 					ui.Icon(c, iconShield).Size(24, 24)
 				})
-			ui.Text(c, cat.NoNodes).FontSize(15).FontWeight(600).TextColor(p.text)
-			ui.Text(c, cat.NoNodesDesc).FontSize(12).TextColor(p.textMuted)
+			ui.Text(c, cat.NoNodes()).FontSize(15).FontWeight(600).TextColor(p.text)
+			ui.Text(c, cat.NoNodesDesc()).FontSize(12).TextColor(p.textMuted)
 			ui.Row(c).AlignItems(ui.Center).Gap(10).Padding(8, 0, 0, 0).Children(func() {
-				if primaryPillButton(c.Key("empty-new-btn"), p, iconPlus, cat.AddNode, p.accent, false).Clicked() {
+				if primaryPillButton(c.Key("empty-new-btn"), p, iconPlus, cat.AddNode(), p.accent, false).Clicked() {
 					a.openCreateServiceDialog()
 				}
-				if actionChip(c.Key("empty-import-btn"), p, iconPaste, cat.ImportFromClipboard, false).Clicked() {
+				if actionChip(c.Key("empty-import-btn"), p, iconPaste, cat.ImportFromClipboard(), false).Clicked() {
 					a.openImportDialog()
 				}
 			})
@@ -221,9 +221,9 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
 
 					if svc.EffectiveKind() == config.KindExternalProxy {
-						tagPill(c, cat.TagExternalProxy, p.accentText, p.accentBg)
+						tagPill(c, cat.TagExternalProxy(), p.accentText, p.accentBg)
 					} else {
-						tagPill(c, cat.TagManagedNaive, p.textMuted, p.elevated)
+						tagPill(c, cat.TagManagedNaive(), p.textMuted, p.elevated)
 					}
 					for _, tag := range svc.Tags {
 						if tag != "" {
@@ -232,7 +232,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					}
 
 					if svc.AutoStart {
-						tagPill(c, cat.TagAutoStart, p.accentText, p.accentBg)
+						tagPill(c, cat.TagAutoStart(), p.accentText, p.accentBg)
 					}
 					if svc.InsecureConcurrency > 1 {
 						tagPill(c, fmt.Sprintf("%dx 并发", svc.InsecureConcurrency), p.textMuted, p.elevated)
@@ -247,20 +247,20 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						tagPill(c, fmt.Sprintf("已重试 %d 次", rt.Restarts), p.amber, p.amberBg)
 					}
 					if rt.Probing {
-						tagPill(c, cat.LatencyTesting, p.amber, p.amberBg)
+						tagPill(c, cat.LatencyTesting(), p.amber, p.amberBg)
 					} else if rt.ProbeError != "" {
-						tagPill(c, cat.LatencyFailed, p.red, p.redBg)
+						tagPill(c, cat.LatencyFailed(), p.red, p.redBg)
 					} else if rt.Latency > 0 {
 						tagPill(c, fmt.Sprintf("%d ms", max(1, rt.Latency.Milliseconds())), p.green, p.greenBg)
 					}
 					if rt.SpeedTesting {
 						if rt.DownloadSpeed > 0 {
-							tagPill(c, cat.DownloadTesting+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
+							tagPill(c, cat.DownloadTesting()+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
 						} else {
-							tagPill(c, cat.DownloadTesting, p.amber, p.amberBg)
+							tagPill(c, cat.DownloadTesting(), p.amber, p.amberBg)
 						}
 					} else if rt.SpeedError != "" {
-						tagPill(c, cat.DownloadFailed, p.red, p.redBg)
+						tagPill(c, cat.DownloadFailed(), p.red, p.redBg)
 					} else if rt.DownloadSpeed > 0 {
 						tagPill(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.green, p.greenBg)
 					}
@@ -268,11 +268,11 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 				// Primary Start/Stop toggle button
 				isRunning := rt.State == runner.StateRunning || rt.State == runner.StateStarting
-				toggleLabel := cat.ActionStart
+				toggleLabel := cat.ActionStart()
 				toggleIcon := iconPlay
 				toggleColor := p.accent
 				if isRunning {
-					toggleLabel = cat.ActionStop
+					toggleLabel = cat.ActionStop()
 					toggleIcon = iconStop
 					toggleColor = p.red
 				}
@@ -289,7 +289,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						listens = svc.PrimaryListen()
 					}
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Text(c, cat.LabelLocalListen).FontSize(12).TextColor(p.textMuted)
+						ui.Text(c, cat.LabelLocalListen()).FontSize(12).TextColor(p.textMuted)
 						ui.Text(c, listens).FontSize(12).FontWeight(600).TextColor(p.text)
 					})
 
@@ -299,17 +299,17 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					}
 					if remoteProxy != "" {
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							ui.Text(c, cat.LabelRemoteNode).FontSize(12).TextColor(p.textMuted)
+							ui.Text(c, cat.LabelRemoteNode()).FontSize(12).TextColor(p.textMuted)
 							ui.Text(c, remoteProxy).FontSize(12).FontWeight(500).TextColor(p.text)
 						})
 					}
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					if actionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit, false).Clicked() {
+					if actionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false).Clicked() {
 						a.openEditServiceDialog(svc)
 					}
-					if actionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete, false).Clicked() {
+					if actionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), false).Clicked() {
 						a.openDeleteServiceDialog(svc)
 					}
 				})
@@ -326,23 +326,23 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 			canTest := rt.State == runner.StateRunning
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Padding(2, 0, 0, 0).Children(func() {
 				localLink := svc.V2rayNSocksURI()
-				if actionChip(c.Key("copy-local"), p, iconCopy, cat.ActionCopyV2rayN, false).Tooltip(localLink).Clicked() {
+				if actionChip(c.Key("copy-local"), p, iconCopy, cat.ActionCopyV2rayN(), false).Tooltip(localLink).Clicked() {
 					a.copyV2rayNLink(svc)
 				}
 				naiveTip := svc.NaiveShareURI()
 				if naiveTip == "" {
-					naiveTip = cat.NoRemoteConfigured
+					naiveTip = cat.NoRemoteConfigured()
 				}
-				if actionChip(c.Key("copy-naive"), p, iconCopy, cat.ActionCopyNaive, false).Tooltip(naiveTip).Clicked() {
+				if actionChip(c.Key("copy-naive"), p, iconCopy, cat.ActionCopyNaive(), false).Tooltip(naiveTip).Clicked() {
 					a.copyNaiveShareLink(svc)
 				}
-				if actionChip(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency, !canTest || rt.Probing).Clicked() {
+				if actionChip(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency(), !canTest || rt.Probing).Clicked() {
 					a.triggerServiceProbe(svc)
 				}
-				if actionChip(c.Key("speed-btn"), p, iconDownload, cat.ActionDownload, !canTest || rt.SpeedTesting).Clicked() {
+				if actionChip(c.Key("speed-btn"), p, iconDownload, cat.ActionDownload(), !canTest || rt.SpeedTesting).Clicked() {
 					a.triggerServiceDownloadTest(svc)
 				}
-				if actionChip(c.Key("drawer-logs"), p, iconList, cat.ActionLogs, false).Clicked() {
+				if actionChip(c.Key("drawer-logs"), p, iconList, cat.ActionLogs(), false).Clicked() {
 					if a.activeLogDrawerID == svc.ID {
 						a.activeLogDrawerID = ""
 					} else {
@@ -362,13 +362,13 @@ func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State
 	cat := a.catalog()
 	switch st {
 	case runner.StateRunning:
-		statusBadge(c, cat.StatusRunning, p.green, p.greenBg)
+		statusBadge(c, cat.StatusRunning(), p.green, p.greenBg)
 	case runner.StateStarting:
-		statusBadge(c, cat.StatusStarting, p.amber, p.amberBg)
+		statusBadge(c, cat.StatusStarting(), p.amber, p.amberBg)
 	case runner.StateError:
-		statusBadge(c, cat.StatusError, p.red, p.redBg)
+		statusBadge(c, cat.StatusError(), p.red, p.redBg)
 	default:
-		statusBadge(c, cat.StatusStopped, p.textMuted, p.elevated)
+		statusBadge(c, cat.StatusStopped(), p.textMuted, p.elevated)
 	}
 }
 

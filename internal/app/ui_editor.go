@@ -215,15 +215,15 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 				// Header
 				cat := a.catalog()
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-					title := cat.EditNodeTitle
+					title := cat.EditNodeTitle()
 					if a.editor.isNew {
-						title = cat.NewNodeTitle
+						title = cat.NewNodeTitle()
 					}
 					ui.Text(c, title).FontSize(16).FontWeight(700).TextColor(p.text)
 					segmentedControl(c.Key("editor-tabs"), p, &a.editor.tab, []string{
-						cat.EditorTabBasic,
-						cat.EditorTabAdvanced,
-						cat.EditorTabPreview,
+						cat.EditorTabBasic(),
+						cat.EditorTabAdvanced(),
+						cat.EditorTabPreview(),
 					})
 				})
 
@@ -255,18 +255,18 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 					Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 							ui.Switch(c.Key("editor-autostart"), &a.editor.autoStart).
-								Label(cat.EditorAutoStartDesc)
-							ui.Text(c, cat.EditorAutoStartDesc).FontSize(12).TextColor(p.text)
+								Label(cat.EditorAutoStartDesc())
+							ui.Text(c, cat.EditorAutoStartDesc()).FontSize(12).TextColor(p.text)
 						})
 
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							if ui.Button(c.Key("editor-cancel"), cat.Cancel).Clicked() {
+							if ui.Button(c.Key("editor-cancel"), cat.Cancel()).Clicked() {
 								a.editor.open = false
 								a.editor.errText = ""
 							}
-							saveLabel := cat.EditorSaveEdit
+							saveLabel := cat.EditorSaveEdit()
 							if a.editor.isNew {
-								saveLabel = cat.EditorSaveCreate
+								saveLabel = cat.EditorSaveCreate()
 							}
 							if ui.PrimaryButton(c.Key("editor-save"), saveLabel).Clicked() {
 								a.saveEditorService()
@@ -281,33 +281,33 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 	cat := a.catalog()
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-			ui.Text(c, cat.NodeKindLabel).FontSize(12).TextColor(p.text)
+			ui.Text(c, cat.NodeKindLabel()).FontSize(12).TextColor(p.text)
 			segmentedControl(c.Key("editor-kind-segmented"), p, &a.editor.kindIndex, []string{
-				cat.NodeKindManaged,
-				cat.NodeKindExternal,
+				cat.NodeKindManaged(),
+				cat.NodeKindExternal(),
 			})
 		})
 
-		labeledInput(c, p, "inp-name", cat.NodeNameLabel, &a.editor.name, "HK-01")
-		labeledInput(c, p, "inp-tags", cat.TagsLabel, &a.editor.tagsInput, cat.TagsHint)
+		labeledInput(c, p, "inp-name", cat.NodeNameLabel(), &a.editor.name, "HK-01")
+		labeledInput(c, p, "inp-tags", cat.TagsLabel(), &a.editor.tagsInput, cat.TagsHint())
 
 		if a.editor.kindIndex == 1 {
-			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel, &a.editor.externalURI, cat.ExternalURIHint)
+			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel(), &a.editor.externalURI, cat.ExternalURIHint())
 			return
 		}
 
 		ui.Column(c).Gap(4).Children(func() {
-			labeledInput(c, p, "inp-listen", cat.ListenPortLabel, &a.editor.listenInput, "socks://127.0.0.1:1080")
-			ui.Text(c, cat.EditorListenHint).FontSize(11).TextColor(p.textMuted)
+			labeledInput(c, p, "inp-listen", cat.ListenPortLabel(), &a.editor.listenInput, "socks://127.0.0.1:1080")
+			ui.Text(c, cat.EditorListenHint()).FontSize(11).TextColor(p.textMuted)
 		})
 
 		ui.Column(c).Gap(4).Children(func() {
-			labeledInput(c, p, "inp-proxy", cat.ProxyURILabel, &a.editor.proxyInput, cat.ProxyURIHint)
-			ui.Text(c, cat.EditorProxyHintFull).FontSize(11).TextColor(p.textMuted)
+			labeledInput(c, p, "inp-proxy", cat.ProxyURILabel(), &a.editor.proxyInput, cat.ProxyURIHint())
+			ui.Text(c, cat.EditorProxyHintFull()).FontSize(11).TextColor(p.textMuted)
 		})
 
-		labeledInput(c, p, "inp-concurrency-basic", cat.EditorConcurrencyLabel, &a.editor.concurrencyStr, "1")
-		switchRow(c, p, "inp-nopq-basic", cat.EditorNoPQLabel, &a.editor.noPostQuantum)
+		labeledInput(c, p, "inp-concurrency-basic", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
+		switchRow(c, p, "inp-nopq-basic", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
 	})
 }
 
@@ -316,37 +316,37 @@ func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-tunnel-timeout", cat.EditorTunnelTimeoutLabel, &a.editor.tunnelTimeout, "")
+				labeledInput(c, p, "inp-tunnel-timeout", cat.EditorTunnelTimeoutLabel(), &a.editor.tunnelTimeout, "")
 			})
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-idle-timeout", cat.EditorIdleTimeoutLabel, &a.editor.idleTimeout, "")
+				labeledInput(c, p, "inp-idle-timeout", cat.EditorIdleTimeoutLabel(), &a.editor.idleTimeout, "")
 			})
 		})
 
-		labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel, &a.editor.extraHeaders, "Header1: Value1")
+		labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel(), &a.editor.extraHeaders, "Header1: Value1")
 
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-host-rules", cat.EditorHostRulesLabel, &a.editor.hostRules, "MAP example.com 1.2.3.4")
+				labeledInput(c, p, "inp-host-rules", cat.EditorHostRulesLabel(), &a.editor.hostRules, "MAP example.com 1.2.3.4")
 			})
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-resolver-range", cat.EditorResolverRangeLabel, &a.editor.resolverRange, "100.64.0.0/10")
+				labeledInput(c, p, "inp-resolver-range", cat.EditorResolverRangeLabel(), &a.editor.resolverRange, "100.64.0.0/10")
 			})
 		})
 
-		switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel, &a.editor.enableLog)
-		labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel, &a.editor.logFile, cat.EditorLogFileHint)
+		switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
+		labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
 
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel, &a.editor.logNetLog, "")
+				labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel(), &a.editor.logNetLog, "")
 			})
 			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel, &a.editor.sslKeyLogFile, "")
+				labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel(), &a.editor.sslKeyLogFile, "")
 			})
 		})
 
-		labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel, &a.editor.extraJSON, `{"padding": true}`)
+		labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"padding": true}`)
 	})
 }
 
@@ -454,8 +454,8 @@ func (a *app) renderImportDialog(c *ui.Context, p palette) {
 			Radius(14).Background(p.card).Border(1, p.border).
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
 			Children(func() {
-				ui.Text(c, cat.ImportTitle).FontSize(16).FontWeight(700).TextColor(p.text)
-				ui.Text(c, cat.ImportDesc).FontSize(12).TextColor(p.textMuted)
+				ui.Text(c, cat.ImportTitle()).FontSize(16).FontWeight(700).TextColor(p.text)
+				ui.Text(c, cat.ImportDesc()).FontSize(12).TextColor(p.textMuted)
 
 				if a.importDlg.errText != "" {
 					ui.Row(c).PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
@@ -466,23 +466,23 @@ func (a *app) renderImportDialog(c *ui.Context, p palette) {
 				labeledTextArea(
 					c, p,
 					"import-raw-input",
-					cat.ImportTitle,
+					cat.ImportTitle(),
 					&a.importDlg.rawInput,
 					"https://user:pass@example.com#Node-1\nnaive+https://user:pass@example.com:443?security=tls&sni=sni.example.com#Node-2\nsocks5://1.2.3.4:1080",
 					5, 10,
 				)
 
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(6, 0, 0, 0).Children(func() {
-					if actionChip(c.Key("import-read-clip"), p, iconPaste, cat.ImportClipboard, false).Clicked() {
+					if actionChip(c.Key("import-read-clip"), p, iconPaste, cat.ImportClipboard(), false).Clicked() {
 						a.importDlg.rawInput = strings.TrimSpace(a.readClipboard())
 					}
 
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if ui.Button(c.Key("import-cancel"), cat.Cancel).Clicked() {
+						if ui.Button(c.Key("import-cancel"), cat.Cancel()).Clicked() {
 							a.importDlg.open = false
 							a.importDlg.errText = ""
 						}
-						if ui.PrimaryButton(c.Key("import-confirm"), cat.ImportBtn).Clicked() {
+						if ui.PrimaryButton(c.Key("import-confirm"), cat.ImportBtn()).Clicked() {
 							a.confirmImportDialog()
 						}
 					})
@@ -556,18 +556,18 @@ func (a *app) renderDeleteDialog(c *ui.Context, p palette) {
 			Radius(14).Background(p.card).Border(1, p.border).
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
 			Children(func() {
-				ui.Text(c, cat.DeleteTitle).FontSize(16).FontWeight(700).TextColor(p.text)
-				prompt := cat.DeleteConfirmMsg
+				ui.Text(c, cat.DeleteTitle()).FontSize(16).FontWeight(700).TextColor(p.text)
+				prompt := cat.DeleteConfirmMsg()
 				if a.deleteDlg.svcName != "" {
-					prompt = fmt.Sprintf("「%s」: %s", a.deleteDlg.svcName, cat.DeleteConfirmMsg)
+					prompt = fmt.Sprintf("「%s」: %s", a.deleteDlg.svcName, cat.DeleteConfirmMsg())
 				}
 				ui.Text(c, prompt).FontSize(13).TextColor(p.textMuted)
 
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Gap(8).Padding(6, 0, 0, 0).Children(func() {
-					if ui.Button(c.Key("delete-cancel"), cat.Cancel).Clicked() {
+					if ui.Button(c.Key("delete-cancel"), cat.Cancel()).Clicked() {
 						a.deleteDlg.open = false
 					}
-					if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete, p.red, false).Clicked() {
+					if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete(), p.red, false).Clicked() {
 						a.confirmDeleteService()
 					}
 				})

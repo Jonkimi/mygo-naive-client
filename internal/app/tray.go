@@ -79,15 +79,15 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 	var items []*mygo.MenuItem
 
 	items = append(items, &mygo.MenuItem{
-		Label: cat.TrayShow,
+		Label: cat.TrayShow(),
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.showMainWindow()
 		},
 	})
 
-	verLabel := cat.CoreVersionLabel + ": " + cat.CoreNotInstalled
+	verLabel := cat.CoreVersionLabel() + ": " + cat.CoreNotInstalled()
 	if a.localVersion != "" {
-		verLabel = cat.CoreVersionLabel + ": " + a.localVersion
+		verLabel = cat.CoreVersionLabel() + ": " + a.localVersion
 	}
 	if a.hasUpdate && a.latestRelease != nil {
 		verLabel += fmt.Sprintf(" (-> %s)", a.latestRelease.TagName)
@@ -107,7 +107,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 
 	if len(a.state.Services) == 0 {
 		items = append(items, &mygo.MenuItem{
-			Label:    cat.NoNodes,
+			Label:    cat.NoNodes(),
 			Disabled: true,
 		})
 	} else {
@@ -130,7 +130,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 		}
 		items = append(items, mygo.Separator())
 		items = append(items, &mygo.MenuItem{
-			Label: cat.ActionStartAll,
+			Label: cat.ActionStartAll(),
 			Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.dispatchUI(func() {
 					a.startAllServices()
@@ -138,7 +138,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 			},
 		})
 		items = append(items, &mygo.MenuItem{
-			Label: cat.ActionStopAll,
+			Label: cat.ActionStopAll(),
 			Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.dispatchUI(func() {
 					a.stopAllServices()
@@ -149,13 +149,13 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 
 	items = append(items, mygo.Separator())
 	items = append(items, &mygo.MenuItem{
-		Label: cat.CheckClientUpdates + "…",
+		Label: cat.CheckClientUpdates() + "…",
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			checkForClientUpdates()
 		},
 	})
 	items = append(items, &mygo.MenuItem{
-		Label: cat.CheckUpdates,
+		Label: cat.CheckUpdates(),
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.dispatchUI(func() {
 				a.triggerCheckUpdate(true)
@@ -163,7 +163,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 		},
 	})
 	items = append(items, &mygo.MenuItem{
-		Label: cat.MenuPreferences,
+		Label: cat.MenuPreferences(),
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.showMainWindow()
 			a.dispatchUI(func() {
@@ -173,7 +173,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 	})
 	items = append(items, mygo.Separator())
 	items = append(items, &mygo.MenuItem{
-		Label: cat.TrayQuit,
+		Label: cat.TrayQuit(),
 		Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.quitting = true
 			if a.mgr != nil {
