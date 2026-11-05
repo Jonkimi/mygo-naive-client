@@ -147,9 +147,6 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 							a.triggerBatchTest()
 						}
 					}
-					if actionChip(c.Key("btn-open-settings"), p, iconSettings, cat.ActionSettings, false).Clicked() {
-						a.activeTab = TabSettings
-					}
 				})
 			})
 

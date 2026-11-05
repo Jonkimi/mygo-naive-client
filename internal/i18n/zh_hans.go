@@ -5,11 +5,11 @@ var ZhHans = &Catalog{
 	Code: string(LangZhHans),
 
 	// Navigation
-	NavNodes:    "节点与概览",
-	NavRouting:  "分流规则",
-	NavInsights: "洞察与拦截",
+	NavNodes:    "节点",
+	NavRouting:  "分流",
+	NavInsights: "洞察",
 	NavTailnet:  "组网",
-	NavSettings: "全局设置",
+	NavSettings: "设置",
 
 	// Topbar & Master Switch
 	MasterGateway:       "统一网关",

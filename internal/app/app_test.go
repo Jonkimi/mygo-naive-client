@@ -413,8 +413,8 @@ func TestIdleFrameBudget(t *testing.T) {
 	}
 }
 
-// Clicking '设置' on the toolbar navigates directly to the settings workbench page where preferences can be adjusted.
-func TestSettingsPage_ToolbarNavigationAndTheme(t *testing.T) {
+// Clicking '设置' on the sidebar navigates directly to the settings workbench page where preferences can be adjusted.
+func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 
 	if err := tt.Click("设置"); err != nil {
@@ -822,8 +822,8 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 	}
 
 	// 2. Click Settings sidebar item
-	if err := tt.Click("全局设置"); err != nil {
-		t.Fatalf("click 全局设置 failed: %v", err)
+	if err := tt.Click("设置"); err != nil {
+		t.Fatalf("click 设置 failed: %v", err)
 	}
 	tt.Frame()
 	if a.activeTab != TabSettings {
@@ -831,8 +831,8 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 	}
 
 	// Switch back to Nodes via click
-	if err := tt.Click("节点与概览"); err != nil {
-		t.Fatalf("click 节点与概览 failed: %v", err)
+	if err := tt.Click("节点"); err != nil {
+		t.Fatalf("click 节点 failed: %v", err)
 	}
 	tt.Frame()
 	if a.activeTab != TabNodes {
