@@ -112,6 +112,21 @@ func (a *app) installAppMenu() {
 	})
 
 	top = append(top, &mygo.MenuItem{
+		Label: cat.MenuView(),
+		Submenu: []*mygo.MenuItem{
+			{
+				Label:       cat.SidebarCollapse() + " / " + cat.SidebarExpand(),
+				Accelerator: "CmdOrCtrl+B",
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.dispatchUI(func() {
+						a.toggleSidebar()
+					})
+				},
+			},
+		},
+	})
+
+	top = append(top, &mygo.MenuItem{
 		Label: cat.MenuWindow(),
 		Submenu: []*mygo.MenuItem{
 			{Role: mygo.MenuRole("minimize")},

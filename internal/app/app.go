@@ -85,6 +85,14 @@ func (a *app) catalog() locales.Messages {
 	return locales.In(locales.ResolveLocale(a.state.Language))
 }
 
+func (a *app) toggleSidebar() {
+	a.state.SidebarCollapsed = !a.state.SidebarCollapsed
+	a.saveState()
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+}
+
 func (a *app) applyLanguagePolicy() {
 	if a.headless {
 		return

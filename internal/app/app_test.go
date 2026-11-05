@@ -866,3 +866,58 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 		t.Fatalf("expected English text 'Nodes' on screen, got texts: %v", tt.Texts())
 	}
 }
+
+// TestSidebarCollapseToggle verifies collapsing and expanding the sidebar via toggle button and Cmd+B.
+func TestSidebarCollapseToggle(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	tt.Frame()
+
+	if a.state.SidebarCollapsed {
+		t.Fatalf("expected sidebar to be expanded initially")
+	}
+
+	// 1. Click collapse button to collapse sidebar
+	if err := tt.Click(a.catalog().SidebarCollapse()); err != nil {
+		t.Fatalf("click collapse sidebar: %v", err)
+	}
+	tt.Frame()
+
+	if !a.state.SidebarCollapsed {
+		t.Fatalf("expected sidebar to be collapsed after clicking toggle button")
+	}
+
+	// 2. In collapsed state, clicking a nav item (Settings tooltip) switches tab
+	if err := tt.Click(a.catalog().NavSettings()); err != nil {
+		t.Fatalf("click nav item in collapsed sidebar: %v", err)
+	}
+	tt.Frame()
+	if a.activeTab != TabSettings {
+		t.Fatalf("expected activeTab = TabSettings, got %v", a.activeTab)
+	}
+
+	// 3. Press Cmd+B shortcut to expand sidebar back
+	tt.Key(ui.Cmd, ui.KeyB)
+	tt.Frame()
+
+	if a.state.SidebarCollapsed {
+		t.Fatalf("expected sidebar to be expanded after Cmd+B shortcut")
+	}
+
+	// 4. Press Cmd+B shortcut again to collapse sidebar
+	tt.Key(ui.Cmd, ui.KeyB)
+	tt.Frame()
+
+	if !a.state.SidebarCollapsed {
+		t.Fatalf("expected sidebar to be collapsed after second Cmd+B shortcut")
+	}
+
+	// 5. Click expand button in collapsed sidebar to expand back
+	if err := tt.Click(a.catalog().SidebarExpand()); err != nil {
+		t.Fatalf("click expand sidebar: %v", err)
+	}
+	tt.Frame()
+
+	if a.state.SidebarCollapsed {
+		t.Fatalf("expected sidebar to be expanded after clicking expand button")
+	}
+}

@@ -35,6 +35,7 @@ type PersistedState struct {
 	Language                string           `json:"language,omitempty"`
 	Appearance              string           `json:"appearance,omitempty"`
 	AppIcon                 string           `json:"appIcon,omitempty"`
+	SidebarCollapsed        bool             `json:"sidebarCollapsed,omitempty"`
 	AutoCheckUpdate         bool             `json:"autoCheckUpdate"`
 	AutoUpdateCore          bool             `json:"autoUpdateCore"`
 	UseRunningServiceForUpd bool             `json:"useRunningServiceForUpdate"`

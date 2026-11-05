@@ -94,6 +94,26 @@ func (msgs Messages) NavSettings() string {
 	return Catalog.Format(msgs.locale, "navSettings", nil)
 }
 
+// SidebarCollapse says "Collapse Sidebar"
+// in the language the app shows.
+func SidebarCollapse() string { return In(i18n.Locale()).SidebarCollapse() }
+
+// SidebarCollapse says "Collapse Sidebar"
+// in the language of msgs.
+func (msgs Messages) SidebarCollapse() string {
+	return Catalog.Format(msgs.locale, "sidebarCollapse", nil)
+}
+
+// SidebarExpand says "Expand Sidebar"
+// in the language the app shows.
+func SidebarExpand() string { return In(i18n.Locale()).SidebarExpand() }
+
+// SidebarExpand says "Expand Sidebar"
+// in the language of msgs.
+func (msgs Messages) SidebarExpand() string {
+	return Catalog.Format(msgs.locale, "sidebarExpand", nil)
+}
+
 // MasterGateway says "Gateway"
 // in the language the app shows.
 func MasterGateway() string { return In(i18n.Locale()).MasterGateway() }

@@ -6,6 +6,8 @@
   "navInsights": "Insights",
   "navTailnet": "Tailnet",
   "navSettings": "Settings",
+  "sidebarCollapse": "Collapse Sidebar",
+  "sidebarExpand": "Expand Sidebar",
   "masterGateway": "Gateway",
   "modePortOnly": "Port :10808",
   "modeSysProxy": "System Proxy",

@@ -24,6 +24,7 @@ func (a *app) view(c *ui.Context) {
 	c.OnShortcut(ui.Cmd, ui.Key3, func() { a.activeTab = TabInsights })
 	c.OnShortcut(ui.Cmd, ui.Key4, func() { a.activeTab = TabTailnet })
 	c.OnShortcut(ui.Cmd, ui.Key5, func() { a.activeTab = TabSettings })
+	c.OnShortcut(ui.Cmd, ui.KeyB, func() { a.toggleSidebar() })
 
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.renderSidebar(c, p)
