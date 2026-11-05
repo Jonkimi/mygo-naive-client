@@ -6,11 +6,14 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"naive-client/internal/i18n"
 )
 
 type settingsForm struct {
 	open             bool
 	scroll           ui.ScrollState
+	language         int
 	appearance       int
 	appIcon          int
 	openAtLogin      bool
@@ -27,6 +30,9 @@ type settingsForm struct {
 }
 
 var (
+	langCodes  = []i18n.Lang{i18n.LangSystem, i18n.LangZhHans, i18n.LangEn}
+	langLabels = []string{"跟随系统", "简体中文", "English"}
+
 	appearanceCodes  = []string{appearanceSystem, appearanceLight, appearanceDark}
 	appearanceLabels = []string{"跟随系统", "浅色", "深色"}
 
@@ -52,8 +58,17 @@ func (a *app) openSettingsDialog() {
 		clientAutoChecks = clientUpdateChecks()
 		clientAutoDl = clientUpdateDownloads()
 	}
+	langIdx := 0
+	for i, lc := range langCodes {
+		if lc == a.state.Language {
+			langIdx = i
+			break
+		}
+	}
+
 	a.settingsDlg = settingsForm{
 		open:             true,
+		language:         langIdx,
 		appearance:       indexOfCode(appearanceCodes, a.state.Appearance),
 		appIcon:          indexOfCode(appIconCodes, a.state.AppIcon),
 		openAtLogin:      openAtLogin,
@@ -92,6 +107,14 @@ func (a *app) renderSettingsDialog(c *ui.Context, p palette) {
 						// Section 1: Appearance & System Integration
 						ui.Column(c).Gap(12).Padding(14).Radius(10).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
 							ui.Text(c, "外观与系统集成").FontSize(13).FontWeight(600).TextColor(p.text)
+
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+								ui.Text(c, "显示语言").FontSize(12).TextColor(p.text)
+								if segmentedControl(c.Key("set-language"), p, &a.settingsDlg.language, langLabels) {
+									a.state.Language = langCodes[a.settingsDlg.language]
+									a.saveState()
+								}
+							})
 
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 								ui.Text(c, "界面主题").FontSize(12).TextColor(p.text)
@@ -173,6 +196,9 @@ func (a *app) renderSettingsDialog(c *ui.Context, p palette) {
 }
 
 func (a *app) saveSettingsDialog() {
+	if a.settingsDlg.language >= 0 && a.settingsDlg.language < len(langCodes) {
+		a.state.Language = langCodes[a.settingsDlg.language]
+	}
 	a.state.Appearance = appearanceCodes[a.settingsDlg.appearance]
 	if runtime.GOOS == "darwin" {
 		a.state.AppIcon = appIconCodes[a.settingsDlg.appIcon]
@@ -203,4 +229,51 @@ func (a *app) saveSettingsDialog() {
 	a.applyAppIconPolicy()
 	a.settingsDlg.open = false
 	a.toast("已保存全局设置")
+}
+
+func (a *app) renderSettingsPage(c *ui.Context, p palette) {
+	cat := a.catalog()
+
+	curLangIdx := 0
+	for i, lc := range langCodes {
+		if lc == a.state.Language {
+			curLangIdx = i
+			break
+		}
+	}
+
+	curAppIdx := indexOfCode(appearanceCodes, a.state.Appearance)
+
+	ui.Column(c).
+		Grow(1).Fill().
+		Padding(20).Gap(14).
+		Children(func() {
+			ui.Text(c, cat.SettingsTitle).FontSize(18).FontWeight(700).TextColor(p.text)
+
+			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				ui.Text(c, "外观与语言").FontSize(14).FontWeight(600).TextColor(p.text)
+
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+					ui.Column(c).Gap(2).Children(func() {
+						ui.Text(c, cat.LanguageLabel).FontSize(13).FontWeight(500).TextColor(p.text)
+						ui.Text(c, cat.LanguageDesc).FontSize(11).TextColor(p.textMuted)
+					})
+					if segmentedControl(c.Key("page-set-language"), p, &curLangIdx, langLabels) {
+						a.state.Language = langCodes[curLangIdx]
+						a.saveState()
+					}
+				})
+
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+					ui.Column(c).Gap(2).Children(func() {
+						ui.Text(c, "界面主题").FontSize(13).FontWeight(500).TextColor(p.text)
+						ui.Text(c, "切换浅色、深色或跟随系统").FontSize(11).TextColor(p.textMuted)
+					})
+					if segmentedControl(c.Key("page-set-appearance"), p, &curAppIdx, appearanceLabels) {
+						a.state.Appearance = appearanceCodes[curAppIdx]
+						a.saveState()
+					}
+				})
+			})
+		})
 }

@@ -203,13 +203,31 @@ func CheckPortsAvailable(svc config.Service) error {
 }
 
 // Start validates svc, checks port availability, writes config.json, and starts the naive process
-// with automatic crash supervision.
+// with automatic crash supervision. For KindExternalProxy, it enables the proxy directly without a subprocess.
 func (m *Manager) Start(svc config.Service) error {
 	if err := svc.Validate(); err != nil {
 		return err
 	}
 	// Stop existing run of this service if any
 	_ = m.Stop(svc.ID)
+
+	if svc.EffectiveKind() == config.KindExternalProxy {
+		m.mu.Lock()
+		inst := m.ensureInstanceLocked(svc.ID)
+		inst.svc = svc
+		inst.stopping = false
+		inst.cancel = nil
+		inst.done = nil
+		inst.cmd = nil
+		inst.status = Status{
+			State:     StateRunning,
+			StartedAt: time.Now(),
+		}
+		inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已启用: %s", time.Now().Format("15:04:05"), svc.RedactedProxy()))
+		m.mu.Unlock()
+		m.onChange()
+		return nil
+	}
 
 	m.mu.Lock()
 	bin := m.binPath
@@ -407,6 +425,17 @@ func (m *Manager) Stop(id string) error {
 		m.onChange()
 		return nil
 	}
+
+	if inst.svc.EffectiveKind() == config.KindExternalProxy {
+		inst.status.State = StateStopped
+		inst.status.PID = 0
+		inst.status.StartedAt = time.Time{}
+		inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已停止", time.Now().Format("15:04:05")))
+		m.mu.Unlock()
+		m.onChange()
+		return nil
+	}
+
 	inst.stopping = true
 	cancel := inst.cancel
 	done := inst.done
@@ -468,7 +497,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 	m.mu.Unlock()
 	m.onChange()
 
-	ep, err := config.ParseListenURI(svc.PrimaryListen())
+	ep, err := svc.OutboundEndpoint()
 	var rtt time.Duration
 	if err == nil {
 		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
@@ -521,7 +550,7 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 	m.mu.Unlock()
 	m.onChange()
 
-	ep, err := config.ParseListenURI(svc.PrimaryListen())
+	ep, err := svc.OutboundEndpoint()
 	var bps float64
 	if err == nil {
 		speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)

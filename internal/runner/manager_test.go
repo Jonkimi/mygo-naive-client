@@ -82,6 +82,41 @@ func TestManagerConcurrentStartAndStopAll(t *testing.T) {
 	}
 }
 
+func TestManagerExternalProxyLifecycle(t *testing.T) {
+	// Manager with empty binPath (no naive binary required)
+	mgr := NewManager("", t.TempDir(), nil)
+
+	extSvc := config.Service{
+		ID:          "ext-node",
+		Name:        "External Node",
+		Kind:        config.KindExternalProxy,
+		ExternalURI: "socks5://127.0.0.1:1080",
+	}
+
+	if err := mgr.Start(extSvc); err != nil {
+		t.Fatalf("Start external proxy failed: %v", err)
+	}
+
+	st := mgr.StatusOf("ext-node")
+	if st.State != StateRunning {
+		t.Fatalf("expected StateRunning, got %v", st.State)
+	}
+
+	running := mgr.RunningServices()
+	if len(running) != 1 || running[0].ID != "ext-node" {
+		t.Fatalf("expected RunningServices to contain ext-node, got: %+v", running)
+	}
+
+	if err := mgr.Stop("ext-node"); err != nil {
+		t.Fatalf("Stop external proxy failed: %v", err)
+	}
+
+	st = mgr.StatusOf("ext-node")
+	if st.State != StateStopped {
+		t.Fatalf("expected StateStopped after stop, got %v", st.State)
+	}
+}
+
 func TestManagerCrashBackoffAndPortCheck(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeNaiveScript(t, dir, true)

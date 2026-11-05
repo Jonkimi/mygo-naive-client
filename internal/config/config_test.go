@@ -84,9 +84,93 @@ func TestV2rayNSocksURI(t *testing.T) {
 		t.Errorf("V2rayNSocksURI() = %q, want %q", got, want)
 	}
 
-	// Paste import only supports https://, naive+https:// (or quic) and full config.json, so socks:// is rejected
-	if _, err := ParseImport(got, 1080); err == nil {
-		t.Errorf("expected error when importing socks:// URI")
+	// Paste import supports naive URIs, full config.json, and external proxy links (socks5/http)
+	imported, err := ParseImport(got, 1080)
+	if err != nil {
+		t.Fatalf("unexpected error when importing socks:// URI: %v", err)
+	}
+	if imported.EffectiveKind() != KindExternalProxy {
+		t.Errorf("imported.EffectiveKind() = %v, want %v", imported.EffectiveKind(), KindExternalProxy)
+	}
+}
+
+func TestOutboundEndpointAndNodeKind(t *testing.T) {
+	// 1. KindManagedNaive (default)
+	naiveSvc := Service{
+		ID:      "naive-1",
+		Name:    "Naive Node",
+		Listens: []string{"socks://127.0.0.1:1085"},
+		Proxies: []string{"https://u:p@hk.example.com"},
+	}
+	if naiveSvc.EffectiveKind() != KindManagedNaive {
+		t.Errorf("expected KindManagedNaive, got %v", naiveSvc.EffectiveKind())
+	}
+	ep, err := naiveSvc.OutboundEndpoint()
+	if err != nil {
+		t.Fatalf("OutboundEndpoint failed: %v", err)
+	}
+	if ep.Proto != "socks" || ep.DialAddr() != "127.0.0.1:1085" {
+		t.Errorf("unexpected OutboundEndpoint: %+v", ep)
+	}
+
+	// 2. KindExternalProxy
+	extSvc := Service{
+		ID:          "ext-1",
+		Name:        "External SOCKS5",
+		Kind:        KindExternalProxy,
+		Tags:        []string{"fast", "us"},
+		ExternalURI: "socks5://bob:pw@192.168.1.100:10808",
+	}
+	if extSvc.EffectiveKind() != KindExternalProxy {
+		t.Errorf("expected KindExternalProxy, got %v", extSvc.EffectiveKind())
+	}
+	extEp, err := extSvc.OutboundEndpoint()
+	if err != nil {
+		t.Fatalf("ext OutboundEndpoint failed: %v", err)
+	}
+	if extEp.Proto != "socks5" || extEp.Addr != "192.168.1.100" || extEp.Port != 10808 || extEp.User != "bob" || extEp.Pass != "pw" {
+		t.Errorf("unexpected extEp: %+v", extEp)
+	}
+	if err := extSvc.Validate(); err != nil {
+		t.Errorf("extSvc.Validate() failed: %v", err)
+	}
+
+	// 3. Validation failure for empty ExternalURI
+	badExt := Service{
+		Name: "Bad",
+		Kind: KindExternalProxy,
+	}
+	if err := badExt.Validate(); err == nil {
+		t.Error("expected error for empty ExternalURI in KindExternalProxy")
+	}
+}
+
+func TestParseExternalProxyImports(t *testing.T) {
+	// SOCKS5 with alias
+	svc, err := ParseImport("socks5://1.2.3.4:1080#US-Socks", 2000)
+	if err != nil {
+		t.Fatalf("ParseImport socks5 failed: %v", err)
+	}
+	if svc.EffectiveKind() != KindExternalProxy {
+		t.Errorf("expected KindExternalProxy, got %v", svc.EffectiveKind())
+	}
+	if svc.Name != "US-Socks" {
+		t.Errorf("Name = %q, want US-Socks", svc.Name)
+	}
+	if svc.ExternalURI != "socks5://1.2.3.4:1080" {
+		t.Errorf("ExternalURI = %q", svc.ExternalURI)
+	}
+
+	// HTTP proxy
+	httpSvc, err := ParseImport("http://alice:pw@proxy.com:8080#Corporate-HTTP", 2000)
+	if err != nil {
+		t.Fatalf("ParseImport http failed: %v", err)
+	}
+	if httpSvc.EffectiveKind() != KindExternalProxy {
+		t.Errorf("expected KindExternalProxy, got %v", httpSvc.EffectiveKind())
+	}
+	if httpSvc.Name != "Corporate-HTTP" {
+		t.Errorf("Name = %q", httpSvc.Name)
 	}
 }
 

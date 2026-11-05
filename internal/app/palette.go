@@ -8,10 +8,12 @@ type palette struct {
 	dark bool
 
 	bg        ui.Color
+	sidebarBg ui.Color
 	surface   ui.Color
 	card      ui.Color
 	cardHover ui.Color
 	elevated  ui.Color
+	drawerBg  ui.Color
 	codeBg    ui.Color
 
 	border       ui.Color
@@ -35,11 +37,13 @@ type palette struct {
 
 var lightPalette = palette{
 	dark:         false,
-	bg:           ui.RGB(247, 248, 250),
-	surface:      ui.RGB(255, 255, 255),
+	bg:           ui.RGB(242, 244, 248),
+	sidebarBg:    ui.RGB(242, 244, 248),
+	surface:      ui.RGB(248, 250, 252),
 	card:         ui.RGB(255, 255, 255),
-	cardHover:    ui.RGB(250, 251, 253),
+	cardHover:    ui.RGB(245, 247, 250),
 	elevated:     ui.RGB(241, 243, 247),
+	drawerBg:     ui.RGB(255, 255, 255),
 	codeBg:       ui.RGB(242, 244, 248),
 	border:       ui.RGB(224, 228, 235),
 	borderSubtle: ui.RGB(235, 238, 244),
@@ -59,14 +63,16 @@ var lightPalette = palette{
 
 var darkPalette = palette{
 	dark:         true,
-	bg:           ui.RGB(15, 17, 23),
-	surface:      ui.RGB(22, 25, 34),
-	card:         ui.RGB(24, 28, 38),
-	cardHover:    ui.RGB(30, 35, 47),
-	elevated:     ui.RGB(34, 39, 52),
-	codeBg:       ui.RGB(18, 21, 29),
-	border:       ui.RGB(45, 51, 67),
-	borderSubtle: ui.RGB(35, 40, 54),
+	bg:           ui.RGB(11, 13, 19),
+	sidebarBg:    ui.RGB(11, 13, 19),
+	surface:      ui.RGB(17, 20, 29),
+	card:         ui.RGB(24, 28, 40),
+	cardHover:    ui.RGB(32, 38, 54),
+	elevated:     ui.RGB(30, 35, 50),
+	drawerBg:     ui.RGB(26, 31, 44),
+	codeBg:       ui.RGB(14, 16, 24),
+	border:       ui.RGB(38, 44, 62),
+	borderSubtle: ui.RGB(28, 33, 47),
 	text:         ui.RGB(241, 245, 249),
 	textMuted:    ui.RGB(148, 163, 184),
 	textDim:      ui.RGB(100, 116, 139),

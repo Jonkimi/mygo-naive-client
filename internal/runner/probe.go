@@ -175,7 +175,7 @@ func ProxyTransport(ep config.ListenEndpoint) (*http.Transport, error) {
 			TLSHandshakeTimeout: 6 * time.Second,
 		}, nil
 
-	case "socks":
+	case "socks", "socks5", "socks5h":
 		return &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialSOCKS5(ctx, localAddr, ep.User, ep.Pass, addr)

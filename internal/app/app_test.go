@@ -23,6 +23,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
+	"naive-client/internal/i18n"
 	"naive-client/internal/runner"
 	"naive-client/internal/updater"
 )
@@ -54,6 +55,7 @@ done
 
 	a := newApp(tmpDir)
 	a.headless = true
+	a.state.Language = i18n.LangZhHans
 	a.state.AutoCheckUpdate = false
 	a.state.Services = initialServices
 	a.saveState()
@@ -786,5 +788,67 @@ func TestMainPanel_BatchSpeedTest(t *testing.T) {
 	}
 	if !foundSummary {
 		t.Fatalf("expected toast containing '一键测速完成', got texts: %q", tt.Texts())
+	}
+}
+
+func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
+	svcs := []config.Service{
+		{
+			ID:      "svc-1",
+			Name:    "HK-01",
+			Listens: []string{"socks://127.0.0.1:1080"},
+			Proxies: []string{"https://alice:secret@hk.example.com:443"},
+		},
+	}
+	a, tt, _ := newTestApp(t, svcs)
+
+	// 1. Initial tab is TabNodes
+	if a.activeTab != TabNodes {
+		t.Fatalf("expected initial tab TabNodes, got %v", a.activeTab)
+	}
+
+	// 2. Click Settings sidebar item
+	if err := tt.Click("全局设置"); err != nil {
+		t.Fatalf("click 全局设置 failed: %v", err)
+	}
+	tt.Frame()
+	if a.activeTab != TabSettings {
+		t.Fatalf("expected activeTab TabSettings, got %v", a.activeTab)
+	}
+
+	// Switch back to Nodes via click
+	if err := tt.Click("节点与概览"); err != nil {
+		t.Fatalf("click 节点与概览 failed: %v", err)
+	}
+	tt.Frame()
+	if a.activeTab != TabNodes {
+		t.Fatalf("expected activeTab TabNodes, got %v", a.activeTab)
+	}
+
+	// 3. Open Log Drawer
+	if err := tt.Click("日志"); err != nil {
+		t.Fatalf("click 日志 failed: %v", err)
+	}
+	tt.Frame()
+	if a.activeLogDrawerID != "svc-1" {
+		t.Fatalf("expected activeLogDrawerID to be 'svc-1', got %q", a.activeLogDrawerID)
+	}
+
+	// 4. Press Esc to close Log Drawer
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.activeLogDrawerID != "" {
+		t.Fatalf("expected activeLogDrawerID to be empty after Esc, got %q", a.activeLogDrawerID)
+	}
+
+	// 5. Language switching: set language to English and verify catalog changes
+	a.state.Language = "en"
+	a.saveState()
+	tt.Frame()
+	if a.catalog().Code != "en" {
+		t.Fatalf("expected catalog code 'en', got %q", a.catalog().Code)
+	}
+	if !tt.HasText("Nodes") {
+		t.Fatalf("expected English text 'Nodes' on screen, got texts: %v", tt.Texts())
 	}
 }

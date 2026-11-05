@@ -10,23 +10,37 @@ import (
 	"strings"
 )
 
-// Service describes a local NaiveProxy instance managed by the client.
-// Its fields map directly to klzgrad/naiveproxy's USAGE.txt options.
+// NodeKind identifies whether the service is a locally managed NaiveProxy subprocess
+// or an external SOCKS5 / HTTP proxy endpoint.
+type NodeKind string
+
+const (
+	KindManagedNaive  NodeKind = "naive"
+	KindExternalProxy NodeKind = "external"
+)
+
+// Service describes a local NaiveProxy instance or external proxy endpoint managed by the client.
+// For KindManagedNaive, its fields map directly to klzgrad/naiveproxy's USAGE.txt options.
 type Service struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	AutoStart bool   `json:"autoStart,omitempty"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	AutoStart bool     `json:"autoStart,omitempty"`
+	Kind      NodeKind `json:"kind,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+
+	// ExternalURI is used when Kind == KindExternalProxy (e.g. "socks5://1.2.3.4:1080", "http://host:8080").
+	ExternalURI string `json:"externalUri,omitempty"`
 
 	// Listen URIs: <LISTEN-PROTO>"://"[<USER>":"<PASS>"@"][<ADDR>][":"<PORT>]
 	// LISTEN-PROTO = "socks" | "http" | "redir"
 	// At least one listen entry is used; when multiple are specified, they emit
 	// a JSON array in config.json.
-	Listens []string `json:"listens"`
+	Listens []string `json:"listens,omitempty"`
 
 	// Proxy chains or URIs: <PROXY-PROTO>"://"[<USER>":"<PASS>"@"]<HOSTNAME>[":"<PORT>]
 	// PROXY-PROTO = "http" | "https" | "quic" | "socks"
 	// When multiple are specified, they must match the number of Listens.
-	Proxies []string `json:"proxies"`
+	Proxies []string `json:"proxies,omitempty"`
 
 	// Advanced options from USAGE.txt
 	InsecureConcurrency int    `json:"insecureConcurrency,omitempty"` // --insecure-concurrency=<N> (1..4 recommended)
@@ -43,6 +57,64 @@ type Service struct {
 
 	// ExtraJSON holds optional raw JSON key-values merged into the generated config.json.
 	ExtraJSON string `json:"extraJson,omitempty"`
+}
+
+// EffectiveKind returns KindExternalProxy if Kind == KindExternalProxy, else KindManagedNaive.
+func (s Service) EffectiveKind() NodeKind {
+	if s.Kind == KindExternalProxy {
+		return KindExternalProxy
+	}
+	return KindManagedNaive
+}
+
+// OutboundEndpoint returns the proxy dial endpoint for this service.
+// For KindManagedNaive, it returns the primary local listen address (e.g. socks://127.0.0.1:1080).
+// For KindExternalProxy, it parses and returns the remote proxy endpoint from ExternalURI.
+func (s Service) OutboundEndpoint() (ListenEndpoint, error) {
+	if s.EffectiveKind() == KindExternalProxy {
+		return ParseExternalURI(s.ExternalURI)
+	}
+	return ParseListenURI(s.PrimaryListen())
+}
+
+// ParseExternalURI parses an external proxy URI (socks5://, socks://, http://, https://).
+func ParseExternalURI(raw string) (ListenEndpoint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ListenEndpoint{}, errors.New("外部代理地址不能为空")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ListenEndpoint{}, fmt.Errorf("无效的外部代理地址 %q", raw)
+	}
+	proto := strings.ToLower(u.Scheme)
+	defaultPort := 1080
+	switch proto {
+	case "socks", "socks5", "socks5h":
+		proto = "socks5"
+	case "http", "https":
+		defaultPort = 8080
+	default:
+		return ListenEndpoint{}, fmt.Errorf("不支持的外部代理协议 %q (仅支持 socks5, socks, http, https)", u.Scheme)
+	}
+
+	host := u.Hostname()
+	port := defaultPort
+	if p := u.Port(); p != "" {
+		if parsedPort, err := strconv.Atoi(p); err == nil && parsedPort > 0 && parsedPort <= 65535 {
+			port = parsedPort
+		}
+	}
+	ep := ListenEndpoint{
+		Proto: proto,
+		Addr:  host,
+		Port:  port,
+	}
+	if u.User != nil {
+		ep.User = u.User.Username()
+		ep.Pass, _ = u.User.Password()
+	}
+	return ep, nil
 }
 
 // DefaultService returns a new Service pre-filled with sensible defaults.
@@ -81,6 +153,19 @@ func (s Service) PrimaryProxy() string {
 
 // RedactedProxy returns a display-safe summary of the primary proxy (hiding password).
 func (s Service) RedactedProxy() string {
+	if s.EffectiveKind() == KindExternalProxy {
+		u, err := url.Parse(s.ExternalURI)
+		if err != nil || u.Host == "" {
+			return s.ExternalURI
+		}
+		if u.User != nil {
+			username := u.User.Username()
+			if username != "" {
+				u.User = url.UserPassword(username, "***")
+			}
+		}
+		return u.String()
+	}
 	raw := s.PrimaryProxy()
 	if raw == "" {
 		return "直连 (无代理)"
@@ -201,10 +286,19 @@ func ParseListenURI(raw string) (ListenEndpoint, error) {
 	return ep, nil
 }
 
-// Validate checks whether the service configuration satisfies USAGE.txt rules.
+// Validate checks whether the service configuration satisfies USAGE.txt rules or external proxy constraints.
 func (s Service) Validate() error {
 	if strings.TrimSpace(s.Name) == "" {
 		return errors.New("服务名称不能为空")
+	}
+	if s.EffectiveKind() == KindExternalProxy {
+		if strings.TrimSpace(s.ExternalURI) == "" {
+			return errors.New("外部代理地址 (externalUri) 不能为空")
+		}
+		if _, err := ParseExternalURI(s.ExternalURI); err != nil {
+			return err
+		}
+		return nil
 	}
 	listens := cleanSlice(s.Listens)
 	if len(listens) == 0 {
@@ -279,6 +373,9 @@ func ValidateProxyChain(chain string) error {
 
 // ToConfigJSON generates the JSON bytes expected by `naive config.json`.
 func (s Service) ToConfigJSON() ([]byte, error) {
+	if s.EffectiveKind() == KindExternalProxy {
+		return nil, errors.New("外部代理节点无需生成 config.json")
+	}
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}

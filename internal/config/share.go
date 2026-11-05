@@ -144,6 +144,23 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 	}
 
 	switch scheme {
+	case "socks", "socks5", "socks5h", "http":
+		cleanURL := &url.URL{
+			Scheme: scheme,
+			User:   u.User,
+			Host:   u.Host,
+			Path:   u.Path,
+		}
+		if name == "" {
+			name = u.Host
+		}
+		svc := Service{
+			Name:        name,
+			Kind:        KindExternalProxy,
+			ExternalURI: cleanURL.String(),
+		}
+		return svc, nil
+
 	case "naive+https", "naive+quic", "https", "quic":
 		proxyScheme := strings.TrimPrefix(scheme, "naive+")
 		q := u.Query()

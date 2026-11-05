@@ -14,10 +14,40 @@ func (a *app) view(c *ui.Context) {
 	a.applyThemeToContext(c)
 	p := paletteFor(c.Theme())
 
-	ui.Column(c).Fill().Background(p.bg).Children(func() {
-		a.renderHeaderBanner(c, p)
-		a.renderToolbar(c, p)
-		a.renderServiceList(c, p)
+	c.OnShortcut(0, ui.KeyEscape, func() {
+		if a.activeLogDrawerID != "" {
+			a.activeLogDrawerID = ""
+		} else if a.settingsDlg.open {
+			a.settingsDlg.open = false
+		}
+	})
+	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
+	c.OnShortcut(ui.Cmd, ui.Key2, func() { a.activeTab = TabRouting })
+	c.OnShortcut(ui.Cmd, ui.Key3, func() { a.activeTab = TabInsights })
+	c.OnShortcut(ui.Cmd, ui.Key4, func() { a.activeTab = TabTailnet })
+	c.OnShortcut(ui.Cmd, ui.Key5, func() { a.activeTab = TabSettings })
+
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+		a.renderSidebar(c, p)
+
+		ui.Column(c.Key("main")).Grow(1).Background(p.surface).Children(func() {
+			a.renderTopControlBar(c, p)
+			switch a.activeTab {
+			case TabNodes:
+				a.renderToolbar(c, p)
+				a.renderServiceList(c, p)
+			case TabSettings:
+				a.renderSettingsPage(c, p)
+			case TabRouting:
+				a.renderPlaceholderPage(c, p, a.catalog().NavRouting, "分流规则引擎将在阶段二就绪")
+			case TabInsights:
+				a.renderPlaceholderPage(c, p, a.catalog().NavInsights, "洞察与拦截看板将在阶段三就绪")
+			case TabTailnet:
+				a.renderPlaceholderPage(c, p, a.catalog().NavTailnet, "Tailnet 组网将在阶段五就绪")
+			}
+		})
+
+		a.renderLogDrawer(c, p)
 	})
 
 	a.renderEditorDialog(c, p)
@@ -29,6 +59,44 @@ func (a *app) view(c *ui.Context) {
 		c.Toast(a.pendingToast)
 		a.pendingToast = ""
 	}
+}
+
+func (a *app) renderTopControlBar(c *ui.Context, p palette) {
+	cat := a.catalog()
+	ui.Row(c).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).
+		PaddingX(20).PaddingY(10).
+		Background(p.surface).
+		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
+		Children(func() {
+			// Left: Gateway master switch
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Box(c).Size(8, 8).Radius(999).Background(p.green)
+				ui.Text(c, cat.MasterGateway).FontSize(13).FontWeight(600).TextColor(p.text)
+			})
+
+			// Center: 3 Modes
+			ui.Row(c).AlignItems(ui.Center).Gap(4).Padding(2).Radius(6).Background(p.elevated).Children(func() {
+				tagPill(c, cat.ModePortOnly, p.accentText, p.accentBg)
+				tagPill(c, cat.ModeSysProxy, p.textMuted, ui.Transparent)
+				tagPill(c, cat.ModeTun, p.textMuted, ui.Transparent)
+			})
+
+			// Right: Tailnet status capsule
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				tagPill(c, "Tailnet: "+cat.TailnetNotConnected, p.textDim, p.elevated)
+			})
+		})
+}
+
+func (a *app) renderPlaceholderPage(c *ui.Context, p palette, title, desc string) {
+	ui.Column(c).
+		AlignItems(ui.Center).Justify(ui.Center).
+		Grow(1).Fill().Gap(10).
+		Children(func() {
+			ui.Text(c, title).FontSize(16).FontWeight(700).TextColor(p.text)
+			ui.Text(c, desc).FontSize(12).TextColor(p.textMuted)
+		})
 }
 
 func (a *app) applyThemeToContext(c *ui.Context) {
@@ -156,19 +224,42 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 		}
 	}
 
-	ui.Row(c).
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		PaddingX(20).PaddingY(12).
+	ui.Column(c).
+		PaddingX(20).PaddingY(10).Gap(8).
 		Background(p.bg).
 		Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				ui.Text(c, fmt.Sprintf("本地服务 (%d)", len(a.state.Services))).
-					FontSize(14).FontWeight(600).TextColor(p.text)
-				if runningCount > 0 {
-					statusBadge(c, fmt.Sprintf("%d 个运行中", runningCount), p.green, p.greenBg)
-				} else {
-					tagPill(c, "全部已停止", p.textMuted, p.elevated)
-				}
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+					ui.Text(c, fmt.Sprintf("本地服务 (%d)", len(a.state.Services))).
+						FontSize(14).FontWeight(600).TextColor(p.text)
+					if runningCount > 0 {
+						statusBadge(c, fmt.Sprintf("%d 个运行中", runningCount), p.green, p.greenBg)
+					} else {
+						tagPill(c, "全部已停止", p.textMuted, p.elevated)
+					}
+				})
+
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					if len(a.state.Services) > 0 {
+						if actionChip(c.Key("btn-start-all"), p, iconPlay, "全部启动", runningCount == len(a.state.Services)).Clicked() {
+							a.startAllServices()
+						}
+						if actionChip(c.Key("btn-stop-all"), p, iconStop, "全部停止", runningCount == 0).Clicked() {
+							a.stopAllServices()
+						}
+						batchLabel := "一键测速"
+						if a.batchTesting && a.batchStage != "" {
+							batchLabel = a.batchStage
+						}
+						batchDisabled := runningCount == 0 && !a.batchTesting
+						if actionChip(c.Key("btn-batch-test"), p, iconBolt, batchLabel, batchDisabled).Clicked() {
+							a.triggerBatchTest()
+						}
+					}
+					if actionChip(c.Key("btn-open-settings"), p, iconSettings, "设置", false).Clicked() {
+						a.openSettingsDialog()
+					}
+				})
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
@@ -177,25 +268,6 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 				}
 				if actionChip(c.Key("btn-import-service"), p, iconPaste, "剪贴板导入", false).Clicked() {
 					a.openImportDialog()
-				}
-				if len(a.state.Services) > 0 {
-					if actionChip(c.Key("btn-start-all"), p, iconPlay, "全部启动", runningCount == len(a.state.Services)).Clicked() {
-						a.startAllServices()
-					}
-					if actionChip(c.Key("btn-stop-all"), p, iconStop, "全部停止", runningCount == 0).Clicked() {
-						a.stopAllServices()
-					}
-					batchLabel := "一键测速"
-					if a.batchTesting && a.batchStage != "" {
-						batchLabel = a.batchStage
-					}
-					batchDisabled := runningCount == 0 && !a.batchTesting
-					if actionChip(c.Key("btn-batch-test"), p, iconBolt, batchLabel, batchDisabled).Clicked() {
-						a.triggerBatchTest()
-					}
-				}
-				if actionChip(c.Key("btn-open-settings"), p, iconSettings, "设置", false).Clicked() {
-					a.openSettingsDialog()
 				}
 			})
 		})
@@ -259,6 +331,17 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					a.renderRuntimeStatusBadge(c, p, rt.State)
 					ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
 
+					if svc.EffectiveKind() == config.KindExternalProxy {
+						tagPill(c, "EXTERNAL", p.accentText, p.accentBg)
+					} else {
+						tagPill(c, "NAIVE", p.textMuted, p.elevated)
+					}
+					for _, tag := range svc.Tags {
+						if tag != "" {
+							tagPill(c, "#"+tag, p.accentText, p.accentBg)
+						}
+					}
+
 					if svc.AutoStart {
 						tagPill(c, "自启动", p.accentText, p.accentBg)
 					}
@@ -309,60 +392,22 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 				}
 			})
 
-			// Row 2: Local listen endpoint(s) & Remote proxy summary
-			ui.Row(c).AlignItems(ui.Center).Gap(16).Children(func() {
-				listens := strings.Join(svc.Listens, ", ")
-				if listens == "" {
-					listens = svc.PrimaryListen()
-				}
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, "本地监听:").FontSize(12).TextColor(p.textMuted)
-					ui.Text(c, listens).FontSize(12).FontWeight(600).TextColor(p.text)
-				})
+			// Row 2: Local listen endpoint(s) & Remote proxy summary + Edit/Delete
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+					listens := strings.Join(svc.Listens, ", ")
+					if listens == "" {
+						listens = svc.PrimaryListen()
+					}
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Text(c, "本地监听:").FontSize(12).TextColor(p.textMuted)
+						ui.Text(c, listens).FontSize(12).FontWeight(600).TextColor(p.text)
+					})
 
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, "远端节点:").FontSize(12).TextColor(p.textMuted)
-					ui.Text(c, svc.RedactedProxy()).FontSize(12).FontWeight(500).TextColor(p.text)
-				})
-			})
-
-			// Error Banner if process failed or crashed
-			if rt.LastError != "" {
-				ui.Row(c).AlignItems(ui.Center).PaddingX(10).PaddingY(7).Radius(7).Background(p.redBg).Children(func() {
-					ui.Text(c, "运行异常: "+rt.LastError).FontSize(12).FontWeight(500).TextColor(p.red)
-				})
-			}
-
-			// Row 3: Quick Actions bar
-			canTest := rt.State == runner.StateRunning
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(2, 0, 0, 0).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					localLink := svc.V2rayNSocksURI()
-					if actionChip(c.Key("copy-local"), p, iconCopy, "复制本地链接", false).Tooltip(localLink).Clicked() {
-						a.copyV2rayNLink(svc)
-					}
-					naiveTip := svc.NaiveShareURI()
-					if naiveTip == "" {
-						naiveTip = "未配置可导出的远端节点"
-					}
-					if actionChip(c.Key("copy-naive"), p, iconCopy, "复制 Naive 链接", false).Tooltip(naiveTip).Clicked() {
-						a.copyNaiveShareLink(svc)
-					}
-					if actionChip(c.Key("probe-btn"), p, iconBolt, "延迟测速", !canTest || rt.Probing).Clicked() {
-						a.triggerServiceProbe(svc)
-					}
-					if actionChip(c.Key("speed-btn"), p, iconDownload, "下载测速", !canTest || rt.SpeedTesting).Clicked() {
-						a.triggerServiceDownloadTest(svc)
-					}
-					logIcon := iconChevronDown
-					logLabel := "实时日志"
-					if logsOpen {
-						logIcon = iconChevronUp
-						logLabel = "收起日志"
-					}
-					if actionChip(c.Key("toggle-logs"), p, logIcon, logLabel, false).Clicked() {
-						a.expandedLogs[svc.ID] = !logsOpen
-					}
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Text(c, "远端节点:").FontSize(12).TextColor(p.textMuted)
+						ui.Text(c, svc.RedactedProxy()).FontSize(12).FontWeight(500).TextColor(p.text)
+					})
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -373,6 +418,42 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						a.openDeleteServiceDialog(svc)
 					}
 				})
+			})
+
+			// Error Banner if process failed or crashed
+			if rt.LastError != "" {
+				ui.Row(c).AlignItems(ui.Center).PaddingX(10).PaddingY(7).Radius(7).Background(p.redBg).Children(func() {
+					ui.Text(c, "运行异常: "+rt.LastError).FontSize(12).FontWeight(500).TextColor(p.red)
+				})
+			}
+
+			// Row 3: Action chips row
+			canTest := rt.State == runner.StateRunning
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Padding(2, 0, 0, 0).Children(func() {
+				localLink := svc.V2rayNSocksURI()
+				if actionChip(c.Key("copy-local"), p, iconCopy, "复制本地链接", false).Tooltip(localLink).Clicked() {
+					a.copyV2rayNLink(svc)
+				}
+				naiveTip := svc.NaiveShareURI()
+				if naiveTip == "" {
+					naiveTip = "未配置可导出的远端节点"
+				}
+				if actionChip(c.Key("copy-naive"), p, iconCopy, "复制 Naive 链接", false).Tooltip(naiveTip).Clicked() {
+					a.copyNaiveShareLink(svc)
+				}
+				if actionChip(c.Key("probe-btn"), p, iconBolt, "延迟测速", !canTest || rt.Probing).Clicked() {
+					a.triggerServiceProbe(svc)
+				}
+				if actionChip(c.Key("speed-btn"), p, iconDownload, "下载测速", !canTest || rt.SpeedTesting).Clicked() {
+					a.triggerServiceDownloadTest(svc)
+				}
+				if actionChip(c.Key("drawer-logs"), p, iconList, "日志", false).Clicked() {
+					if a.activeLogDrawerID == svc.ID {
+						a.activeLogDrawerID = ""
+					} else {
+						a.activeLogDrawerID = svc.ID
+					}
+				}
 			})
 
 			// Row 4: Collapsible Real-time Log Viewer

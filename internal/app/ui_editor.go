@@ -12,14 +12,17 @@ import (
 )
 
 type editorForm struct {
-	open      bool
-	isNew     bool
-	tab       int
-	scroll    ui.ScrollState
-	errText   string
-	svcID     string
-	name      string
-	autoStart bool
+	open        bool
+	isNew       bool
+	tab         int
+	kindIndex   int // 0: NaiveProxy, 1: External SOCKS5/HTTP
+	scroll      ui.ScrollState
+	errText     string
+	svcID       string
+	name        string
+	autoStart   bool
+	tagsInput   string
+	externalURI string
 
 	listenInput string
 	proxyInput  string
@@ -69,13 +72,21 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		idle = strconv.Itoa(svc.IdleTimeout)
 	}
 
+	kindIdx := 0
+	if svc.EffectiveKind() == config.KindExternalProxy {
+		kindIdx = 1
+	}
+
 	a.editor = editorForm{
 		open:           true,
 		isNew:          isNew,
 		tab:            0,
+		kindIndex:      kindIdx,
 		svcID:          svc.ID,
 		name:           svc.Name,
 		autoStart:      svc.AutoStart,
+		tagsInput:      strings.Join(svc.Tags, ", "),
+		externalURI:    svc.ExternalURI,
 		listenInput:    listens,
 		proxyInput:     proxies,
 		concurrencyStr: conc,
@@ -94,10 +105,39 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 }
 
 func (a *app) buildServiceFromEditor() (config.Service, error) {
+	kind := config.KindManagedNaive
+	if a.editor.kindIndex == 1 {
+		kind = config.KindExternalProxy
+	}
+
+	var tags []string
+	for _, part := range strings.Split(a.editor.tagsInput, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			tags = append(tags, strings.TrimPrefix(t, "#"))
+		}
+	}
+
+	if kind == config.KindExternalProxy {
+		svc := config.Service{
+			ID:          a.editor.svcID,
+			Name:        strings.TrimSpace(a.editor.name),
+			AutoStart:   a.editor.autoStart,
+			Kind:        config.KindExternalProxy,
+			Tags:        tags,
+			ExternalURI: strings.TrimSpace(a.editor.externalURI),
+		}
+		if err := svc.Validate(); err != nil {
+			return svc, err
+		}
+		return svc, nil
+	}
+
 	svc := config.Service{
 		ID:                a.editor.svcID,
 		Name:              strings.TrimSpace(a.editor.name),
 		AutoStart:         a.editor.autoStart,
+		Kind:              config.KindManagedNaive,
+		Tags:              tags,
 		Listens:           splitMultiValues(a.editor.listenInput),
 		Proxies:           splitLinesNonEmpty(a.editor.proxyInput),
 		ExtraHeaders:      strings.TrimSpace(a.editor.extraHeaders),
@@ -238,7 +278,21 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 
 func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 	ui.Column(c).Gap(12).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+			ui.Text(c, "节点类型").FontSize(12).TextColor(p.text)
+			segmentedControl(c.Key("editor-kind-segmented"), p, &a.editor.kindIndex, []string{
+				"NaiveProxy (内置托管)",
+				"外部代理 (SOCKS5/HTTP)",
+			})
+		})
+
 		labeledInput(c, p, "inp-name", "服务名称 (Alias)", &a.editor.name, "例如: 香港 HK-01")
+		labeledInput(c, p, "inp-tags", "服务器标签 (Tags，逗号分隔)", &a.editor.tagsInput, "例如: hk, fast, ai")
+
+		if a.editor.kindIndex == 1 {
+			labeledInput(c, p, "inp-external-uri", "外部代理地址", &a.editor.externalURI, "socks5://1.2.3.4:1080 或 http://user:pass@host:8080")
+			return
+		}
 
 		ui.Column(c).Gap(4).Children(func() {
 			labeledInput(c, p, "inp-listen", "本地监听地址 (listen)", &a.editor.listenInput, "socks://127.0.0.1:1080 或 http://127.0.0.1:8080 (多个用逗号分隔)")

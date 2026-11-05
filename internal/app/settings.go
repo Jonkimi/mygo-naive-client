@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"naive-client/internal/config"
+	"naive-client/internal/i18n"
 	"naive-client/internal/updater"
 )
 
@@ -31,6 +32,7 @@ const (
 // PersistedState holds the client settings and configured NaiveProxy services.
 type PersistedState struct {
 	Services                []config.Service `json:"services"`
+	Language                i18n.Lang        `json:"language,omitempty"`
 	Appearance              string           `json:"appearance,omitempty"`
 	AppIcon                 string           `json:"appIcon,omitempty"`
 	AutoCheckUpdate         bool             `json:"autoCheckUpdate"`
@@ -49,6 +51,7 @@ type PersistedState struct {
 func defaultPersistedState() PersistedState {
 	return PersistedState{
 		Services:                []config.Service{},
+		Language:                i18n.LangSystem,
 		Appearance:              appearanceSystem,
 		AppIcon:                 appIconBoth,
 		AutoCheckUpdate:         true,

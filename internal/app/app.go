@@ -13,8 +13,20 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
+	"naive-client/internal/i18n"
 	"naive-client/internal/runner"
 	"naive-client/internal/updater"
+)
+
+// TabID identifies a page in the sidebar navigation.
+type TabID int
+
+const (
+	TabNodes TabID = iota
+	TabRouting
+	TabInsights
+	TabTailnet
+	TabSettings
 )
 
 type importDialogState struct {
@@ -51,6 +63,10 @@ type app struct {
 	mainScroll   ui.ScrollState
 	expandedLogs map[string]bool
 
+	activeTab         TabID
+	activeLogDrawerID string
+	searchQuery       string
+
 	batchTesting bool
 	batchStage   string
 	batchCancel  context.CancelFunc
@@ -63,6 +79,19 @@ type app struct {
 	pendingToast string
 	clipboardMem string // fallback clipboard used in headless tests
 	quitCh       chan struct{}
+}
+
+func (a *app) catalog() *i18n.Catalog {
+	return i18n.For(a.state.Language)
+}
+
+func (a *app) findService(id string) (config.Service, bool) {
+	for _, s := range a.state.Services {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return config.Service{}, false
 }
 
 // Run launches the NaiveClient desktop application.
