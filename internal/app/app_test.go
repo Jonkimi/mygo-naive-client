@@ -2296,3 +2296,38 @@ func TestRouting_PresetI18nLanguageSwitching(t *testing.T) {
 		t.Fatalf("expected Chinese preset rule names after switching back, got texts: %v", tt.Texts())
 	}
 }
+
+// Tests that custom DoH settings update the DNS resolver upstreams and bootstrap domains.
+func TestApp_CustomDoHConfiguration(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.initDNS()
+
+	boot, remote := a.resolver.Upstreams()
+	if len(boot) != 2 || len(remote) != 2 {
+		t.Fatalf("expected 2 default boot and remote upstreams, got %v / %v", boot, remote)
+	}
+
+	a.state.BootstrapDoH = "https://custom-dns.mycorp.internal/dns-query"
+	a.state.RemoteDoH = "https://9.9.9.9/dns-query, https://dns.quad9.net/dns-query"
+	a.initDNS()
+
+	newBoot, newRemote := a.resolver.Upstreams()
+	if len(newBoot) != 1 || newBoot[0] != "https://custom-dns.mycorp.internal/dns-query" {
+		t.Fatalf("unexpected custom bootstrap doh: %v", newBoot)
+	}
+	if len(newRemote) != 2 || newRemote[0] != "https://9.9.9.9/dns-query" {
+		t.Fatalf("unexpected custom remote doh: %v", newRemote)
+	}
+
+	domains := a.collectBootstrapDomains()
+	foundInternal := false
+	for _, d := range domains {
+		if d == "custom-dns.mycorp.internal" {
+			foundInternal = true
+			break
+		}
+	}
+	if !foundInternal {
+		t.Fatalf("expected custom-dns.mycorp.internal in bootstrap domains, got %v", domains)
+	}
+}

@@ -325,3 +325,37 @@ func TestResolver_CacheAndStaleWhileRevalidate(t *testing.T) {
 		t.Fatalf("expected refreshed value 1.2.3.2, got %v", ans4)
 	}
 }
+
+// Tests updating DoH upstreams dynamically with SetUpstreams.
+func TestResolver_SetUpstreams(t *testing.T) {
+	res := internaldns.NewResolver(internaldns.ResolverOptions{})
+	boot, remote := res.Upstreams()
+	if len(boot) != 2 || boot[0] != internaldns.DefaultBootstrapDoH[0] {
+		t.Fatalf("expected default bootstrap DoH, got %v", boot)
+	}
+	if len(remote) != 2 || remote[0] != internaldns.DefaultRemoteDoH[0] {
+		t.Fatalf("expected default remote DoH, got %v", remote)
+	}
+
+	customBoot := []string{"https://custom-boot.com/dns-query"}
+	customRemote := []string{"https://custom-remote.com/dns-query"}
+	res.SetUpstreams(customBoot, customRemote)
+
+	newBoot, newRemote := res.Upstreams()
+	if len(newBoot) != 1 || newBoot[0] != customBoot[0] {
+		t.Fatalf("expected custom bootstrap DoH, got %v", newBoot)
+	}
+	if len(newRemote) != 1 || newRemote[0] != customRemote[0] {
+		t.Fatalf("expected custom remote DoH, got %v", newRemote)
+	}
+
+	// Reset to empty -> reverts to default
+	res.SetUpstreams(nil, nil)
+	revertBoot, revertRemote := res.Upstreams()
+	if len(revertBoot) != 2 || revertBoot[0] != internaldns.DefaultBootstrapDoH[0] {
+		t.Fatalf("expected reverted default bootstrap DoH, got %v", revertBoot)
+	}
+	if len(revertRemote) != 2 || revertRemote[0] != internaldns.DefaultRemoteDoH[0] {
+		t.Fatalf("expected reverted default remote DoH, got %v", revertRemote)
+	}
+}

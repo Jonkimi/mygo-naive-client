@@ -770,6 +770,20 @@ func (a *app) startGateway() error {
 	return nil
 }
 
+func parseDoHList(s string, defaults []string) []string {
+	var list []string
+	for _, part := range strings.Split(s, ",") {
+		clean := strings.TrimSpace(part)
+		if clean != "" {
+			list = append(list, clean)
+		}
+	}
+	if len(list) == 0 {
+		return defaults
+	}
+	return list
+}
+
 func (a *app) collectBootstrapDomains() []string {
 	var domains []string
 	seen := make(map[string]bool)
@@ -800,19 +814,32 @@ func (a *app) collectBootstrapDomains() []string {
 			}
 		}
 	}
-	add("dns.alidns.com")
-	add("doh.pub")
-	add("1.1.1.1")
-	add("dns.google")
+
+	for _, ep := range parseDoHList(a.state.BootstrapDoH, dns.DefaultBootstrapDoH) {
+		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
+			add(u.Hostname())
+		}
+	}
+	for _, ep := range parseDoHList(a.state.RemoteDoH, dns.DefaultRemoteDoH) {
+		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
+			add(u.Hostname())
+		}
+	}
+
 	return domains
 }
 
 func (a *app) initDNS() {
 	bootDomains := a.collectBootstrapDomains()
+	bootDoH := parseDoHList(a.state.BootstrapDoH, dns.DefaultBootstrapDoH)
+	remoteDoH := parseDoHList(a.state.RemoteDoH, dns.DefaultRemoteDoH)
+
 	if a.resolver == nil {
 		a.resolver = dns.NewResolver(dns.ResolverOptions{
 			Router:           a.router,
 			BootstrapDomains: bootDomains,
+			BootstrapDoH:     bootDoH,
+			RemoteDoH:        remoteDoH,
 			IPCache:          a.ipCache,
 			DialProxy: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				conn, _, err := a.dialThroughPool(ctx, addr)
@@ -822,6 +849,7 @@ func (a *app) initDNS() {
 	} else {
 		a.resolver.SetBootstrapDomains(bootDomains)
 		a.resolver.SetRouter(a.router)
+		a.resolver.SetUpstreams(bootDoH, remoteDoH)
 	}
 }
 
