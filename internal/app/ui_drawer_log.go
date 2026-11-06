@@ -53,7 +53,10 @@ func (a *app) renderLogDrawer(c *ui.Context, p palette) {
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					if actionChip(c.Key("btn-drawer-clear"), p, iconTrash, cat.LogClear(), false).Clicked() {
+					if actionChip(c.Key("btn-drawer-copy"), p, iconCopy, cat.LogCopy(), len(lines) == 0).Clicked() {
+						a.writeClipboard(strings.Join(lines, "\n"), "已复制服务运行日志")
+					}
+					if actionChip(c.Key("btn-drawer-clear"), p, iconTrash, cat.LogClear(), len(lines) == 0).Clicked() {
 						logs.Clear()
 					}
 					if actionChip(c.Key("btn-drawer-close"), p, iconClose, cat.LogClose(), false).Clicked() {
@@ -70,7 +73,7 @@ func (a *app) renderLogDrawer(c *ui.Context, p palette) {
 				BorderWidth(1, 1, 1, 1).BorderColor(p.borderSubtle).
 				Children(func() {
 					if len(lines) == 0 {
-						ui.Text(c, "No logs recorded yet...").FontSize(11).TextColor(p.textDim)
+						ui.Text(c, cat.LogEmpty()).FontSize(11).TextColor(p.textDim)
 					} else {
 						joined := strings.Join(lines, "\n")
 						ui.Text(c, joined).FontSize(11).TextColor(p.text).LineHeight(1.4)

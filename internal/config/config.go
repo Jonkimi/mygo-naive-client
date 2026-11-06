@@ -193,6 +193,34 @@ func (s Service) RedactedProxy() string {
 	return strings.Join(out, " -> ")
 }
 
+// CompactRemoteEndpoint returns a concise protocol://host:port summary without credentials
+// for clean display in service cards.
+func (s Service) CompactRemoteEndpoint() string {
+	if s.EffectiveKind() == KindExternalProxy {
+		u, err := url.Parse(s.ExternalURI)
+		if err != nil || u.Host == "" {
+			return s.ExternalURI
+		}
+		return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	}
+	raw := s.PrimaryProxy()
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		u, err := url.Parse(part)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			out = append(out, part)
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s://%s", u.Scheme, u.Host))
+	}
+	return strings.Join(out, " → ")
+}
+
 // ListenEndpoint parses a listen URI into protocol, host, and port.
 // According to USAGE.txt:
 // LISTEN-URI = <LISTEN-PROTO>"://"[<USER>":"<PASS>"@"][<ADDR>][":"<PORT>]
