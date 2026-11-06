@@ -38,6 +38,9 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 			// Spacer
 			ui.Box(c).Grow(1)
 
+			// Dedicated collapse/expand toggle button at bottom of navigation
+			a.renderSidebarToggleButton(c, p, collapsed)
+
 			// Bottom core status capsule
 			a.renderCoreStatusCapsule(c, p, collapsed)
 		})
@@ -47,24 +50,18 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	cat := a.catalog()
 
 	if collapsed {
-		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 6, 0).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 4, 0).Children(func() {
 			logoBtn := ui.ButtonBase(c.Key("sidebar-brand-collapsed")).
 				Label(cat.SidebarExpand()).
 				Size(36, 36).Radius(8).Background(p.accentBg).
 				AlignItems(ui.Center).Justify(ui.Center).
-				Tooltip(cat.SidebarExpand() + " (⌘B)")
-
-			hovered := logoBtn.Hovered()
-			if hovered {
-				logoBtn.Background(p.accent)
-			}
-			logoBtn.Children(func() {
-				if hovered {
-					ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.accentText)
-				} else {
+				Tooltip(cat.SidebarExpand() + " (⌘B)").
+				Children(func() {
 					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
-				}
-			})
+				})
+			if logoBtn.Hovered() {
+				logoBtn.Background(p.cardHover)
+			}
 			if logoBtn.Clicked() {
 				a.toggleSidebar()
 			}
@@ -91,12 +88,55 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 				ui.Icon(c, iconSidebarCollapse).Size(14, 14).TextColor(p.textDim)
 			})
 		if toggleBtn.Hovered() {
-			toggleBtn.Background(p.elevated)
+			toggleBtn.Background(p.cardHover)
 		}
 		if toggleBtn.Clicked() {
 			a.toggleSidebar()
 		}
 	})
+}
+
+func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool) {
+	cat := a.catalog()
+
+	if collapsed {
+		btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
+			Label(cat.SidebarExpand()).
+			Size(44, 34).Radius(8).
+			Background(p.surface).Border(1, p.borderSubtle).
+			AlignItems(ui.Center).Justify(ui.Center).
+			Tooltip(cat.SidebarExpand() + " (⌘B)").
+			Children(func() {
+				ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.textMuted)
+			})
+		if btn.Hovered() {
+			btn.Background(p.cardHover)
+		}
+		if btn.Clicked() {
+			a.toggleSidebar()
+		}
+		return
+	}
+
+	btn := ui.Row(c.Key("btn-sidebar-toggle-bottom")).
+		Label(cat.SidebarCollapse()).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).
+		PaddingX(10).PaddingY(7).Radius(6).
+		Background(ui.Transparent).
+		Tooltip(cat.SidebarCollapse() + " (⌘B)").
+		Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+				ui.Icon(c, iconSidebarCollapse).Size(15, 15).TextColor(p.textDim)
+				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted)
+			})
+			ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim)
+		})
+	if btn.Hovered() {
+		btn.Background(p.cardHover)
+	}
+	if btn.Clicked() {
+		a.toggleSidebar()
+	}
 }
 
 func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, label, shortcut string, collapsed bool) {

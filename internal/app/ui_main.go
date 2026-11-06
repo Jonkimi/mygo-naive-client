@@ -67,26 +67,8 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 		Background(p.surface).
 		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
 		Children(func() {
-			// Left: Gateway master switch (and expand button when sidebar is collapsed)
+			// Left: Gateway master switch
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				if a.state.SidebarCollapsed {
-					expandBtn := ui.ButtonBase(c.Key("btn-sidebar-expand-topbar")).
-						Label(cat.SidebarExpand()).
-						Size(28, 28).Radius(6).
-						Background(p.elevated).Border(1, p.borderSubtle).
-						AlignItems(ui.Center).Justify(ui.Center).
-						Tooltip(cat.SidebarExpand() + " (⌘B)").
-						Children(func() {
-							ui.Icon(c, iconSidebarExpand).Size(14, 14).TextColor(p.text)
-						})
-					if expandBtn.Hovered() {
-						expandBtn.Background(p.cardHover)
-					}
-					if expandBtn.Clicked() {
-						a.toggleSidebar()
-					}
-				}
-
 				ui.Box(c).Size(8, 8).Radius(999).Background(p.green)
 				ui.Text(c, cat.MasterGateway()).FontSize(13).FontWeight(600).TextColor(p.text)
 			})
