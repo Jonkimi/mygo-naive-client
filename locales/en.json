@@ -35,6 +35,8 @@
   "geodataSectionTitle": "Routing GeoData Database",
   "geodataStatusReady": "GeoData Ready",
   "geodataStatusMissing": "GeoData Missing (click to download)",
+  "geodataDownloadGuide": "Ruleset database not downloaded. Click to download complete category database.",
+  "geodataDownloading": "Downloading and verifying Loyalsoldier ruleset...",
   "resetPresets": "Reset Defaults",
   "navInsights": "Insights",
   "navTailnet": "Tailnet",

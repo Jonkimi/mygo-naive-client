@@ -1578,6 +1578,16 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	}
 	tt.Frame()
 
+	// Since geodata is missing initially, verify download guidance banner is shown
+	if !tt.HasText(a.catalog().GeodataDownloadGuide()) {
+		t.Fatalf("expected GeodataDownloadGuide when database missing, got texts: %v", tt.Texts())
+	}
+
+	// Now simulate ruleset loaded with real parsed tags from files
+	a.geoSiteTags = []string{"category-ai-!cn", "cn", "apple", "openai"}
+	a.geoIPTags = []string{"cn", "private"}
+	tt.Frame()
+
 	// Verify suggestion chips are displayed
 	if !tt.HasText("+ category-ai-!cn") || !tt.HasText("+ cn") {
 		t.Fatalf("expected '+ category-ai-!cn' and '+ cn' suggestion chips, got texts: %v", tt.Texts())

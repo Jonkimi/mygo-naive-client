@@ -253,7 +253,7 @@ func filterSuggestedTags(allTags []string, currentTags []string, query string, m
 	return matches
 }
 
-func chipsTagInput(
+func (a *app) renderChipsTagInput(
 	c *ui.Context,
 	p palette,
 	key string,
@@ -263,6 +263,7 @@ func chipsTagInput(
 	placeholder string,
 	allKnownTags []string,
 ) {
+	cat := a.catalog()
 	ui.Column(c).Gap(6).Children(func() {
 		// Label row with count
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -325,24 +326,43 @@ func chipsTagInput(
 				}
 			})
 
-		// Suggestion chips row
-		suggestions := filterSuggestedTags(allKnownTags, *tags, *query, 7)
-		if len(suggestions) > 0 {
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-				for _, sug := range suggestions {
-					sugTag := sug
-					btn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-sug-%s", key, sugTag))).
-						Radius(4).PaddingX(6).PaddingY(2).
-						Background(p.elevated).
-						Children(func() {
-							ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
-						})
-					if btn.Clicked() {
-						addTag(tags, sugTag)
-						*query = ""
+		// Suggestions or download guidance
+		if len(allKnownTags) == 0 {
+			guideText := cat.GeodataDownloadGuide()
+			if a.updatingGeoData {
+				guideText = cat.GeodataDownloading()
+			}
+			btn := ui.ButtonBase(c.Key(key + "-guide-download")).
+				Radius(4).PaddingX(8).PaddingY(3).
+				Background(p.elevated).Border(1, p.amber.Alpha(0.3)).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+						ui.Icon(c, iconDownload).Size(11, 11).TextColor(p.amber)
+						ui.Text(c, guideText).FontSize(11).TextColor(p.amber)
+					})
+				})
+			if btn.Clicked() && !a.updatingGeoData {
+				a.triggerUpdateGeoData()
+			}
+		} else {
+			suggestions := filterSuggestedTags(allKnownTags, *tags, *query, 7)
+			if len(suggestions) > 0 {
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+					for _, sug := range suggestions {
+						sugTag := sug
+						btn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-sug-%s", key, sugTag))).
+							Radius(4).PaddingX(6).PaddingY(2).
+							Background(p.elevated).
+							Children(func() {
+								ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
+							})
+						if btn.Clicked() {
+							addTag(tags, sugTag)
+							*query = ""
+						}
 					}
-				}
-			})
+				})
+			}
 		}
 	})
 }
@@ -632,10 +652,10 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 					labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
 				} else {
 					// GeoSite tags chip-input
-					chipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags())
+					a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags())
 
 					// GeoIP tags chip-input
-					chipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags())
+					a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags())
 				}
 
 				// Error display
