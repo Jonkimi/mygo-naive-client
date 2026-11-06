@@ -1,7 +1,10 @@
 package app
 
 import (
+	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -176,6 +179,106 @@ func TestInsights_TopPanelsEqualHeight(t *testing.T) {
 	if rectBlocked.H != rectAllowed.H {
 		t.Fatalf("expected top blocked and allowed panels to be equal height, got blocked=%.1f allowed=%.1f",
 			rectBlocked.H, rectAllowed.H)
+	}
+}
+
+func encodeTestBytesField(fieldNum int, data []byte) []byte {
+	val := uint64((fieldNum << 3) | 2)
+	var out []byte
+	buf := make([]byte, 10)
+	n := binary.PutUvarint(buf, val)
+	out = append(out, buf[:n]...)
+	n = binary.PutUvarint(buf, uint64(len(data)))
+	out = append(out, buf[:n]...)
+	out = append(out, data...)
+	return out
+}
+
+func encodeTestVarintField(fieldNum int, v uint64) []byte {
+	val := uint64((fieldNum << 3) | 0)
+	var out []byte
+	buf := make([]byte, 10)
+	n := binary.PutUvarint(buf, val)
+	out = append(out, buf[:n]...)
+	n = binary.PutUvarint(buf, v)
+	out = append(out, buf[:n]...)
+	return out
+}
+
+// Tests that enabling and disabling built-in ad blocking or protection shares a single GeoSiteDB instance and releases cachedAdsRules when turned off.
+// Regression: setBlockerBlockAds previously ran syncBlockerRules before saveState, loading a duplicate GeoSiteDB copy and never clearing cachedAdsRules on disable.
+func TestInsights_BlockerSharesAndReleasesGeoAdsMemory(t *testing.T) {
+	a, _, _ := newTestApp(t, []config.Service{})
+
+	// Write a mock geosite.dat containing CATEGORY-ADS-ALL and CN
+	var domAd []byte
+	domAd = append(domAd, encodeTestVarintField(1, 2)...)
+	domAd = append(domAd, encodeTestBytesField(2, []byte("doubleclick.net"))...)
+	var entryAds []byte
+	entryAds = append(entryAds, encodeTestBytesField(1, []byte("CATEGORY-ADS-ALL"))...)
+	entryAds = append(entryAds, encodeTestBytesField(2, domAd)...)
+
+	var domCN []byte
+	domCN = append(domCN, encodeTestVarintField(1, 2)...)
+	domCN = append(domCN, encodeTestBytesField(2, []byte("baidu.com"))...)
+	var entryCN []byte
+	entryCN = append(entryCN, encodeTestBytesField(1, []byte("CN"))...)
+	entryCN = append(entryCN, encodeTestBytesField(2, domCN)...)
+
+	var geoSiteList []byte
+	geoSiteList = append(geoSiteList, encodeTestBytesField(1, entryAds)...)
+	geoSiteList = append(geoSiteList, encodeTestBytesField(1, entryCN)...)
+
+	geoDir := a.geodataDir()
+	if err := os.MkdirAll(geoDir, 0o755); err != nil {
+		t.Fatalf("mkdir geodata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(geoDir, "geosite.dat"), geoSiteList, 0o644); err != nil {
+		t.Fatalf("write geosite.dat: %v", err)
+	}
+
+	// Start with ad blocking disabled
+	a.setBlockerBlockAds(false)
+	if a.cachedAdsRules != nil {
+		t.Fatalf("expected cachedAdsRules to be nil when BlockerBlockAds is false")
+	}
+	if a.cachedSiteDB != nil && a.cachedSiteDB.HasTag("category-ads-all") {
+		t.Fatalf("expected cachedSiteDB not to hold category-ads-all when disabled")
+	}
+
+	// Enable ad blocking: cachedSiteDB and cachedAdsRules.GeoAds must point to the exact same GeoSiteDB
+	a.setBlockerBlockAds(true)
+	if a.cachedSiteDB == nil || !a.cachedSiteDB.HasTag("category-ads-all") {
+		t.Fatalf("expected cachedSiteDB to load category-ads-all when enabled")
+	}
+	if a.cachedAdsRules == nil || a.cachedAdsRules.GeoAds != a.cachedSiteDB {
+		t.Fatalf("expected cachedAdsRules.GeoAds (%p) to share the exact same pointer as cachedSiteDB (%p)",
+			a.cachedAdsRules.GeoAds, a.cachedSiteDB)
+	}
+	if a.blocker.RuleCount() == 0 {
+		t.Fatalf("expected blocker RuleCount > 0 when enabled")
+	}
+
+	// Pause protection: cachedAdsRules and blocker ruleset must be cleared
+	a.toggleBlockerEnabled()
+	if a.cachedAdsRules != nil {
+		t.Fatalf("expected cachedAdsRules to be nil when protection is paused")
+	}
+	if a.blocker.RuleCount() != 0 {
+		t.Fatalf("expected blocker RuleCount == 0 when protection is paused, got %d", a.blocker.RuleCount())
+	}
+
+	// Re-enable protection, then disable ad blocking: both cachedAdsRules and category-ads-all in cachedSiteDB must be released
+	a.toggleBlockerEnabled()
+	if a.cachedAdsRules == nil || a.cachedAdsRules.GeoAds != a.cachedSiteDB {
+		t.Fatalf("expected cachedAdsRules to re-bind to cachedSiteDB when protection is re-enabled")
+	}
+	a.setBlockerBlockAds(false)
+	if a.cachedAdsRules != nil {
+		t.Fatalf("expected cachedAdsRules to be cleared when BlockerBlockAds is disabled")
+	}
+	if a.cachedSiteDB != nil && a.cachedSiteDB.HasTag("category-ads-all") {
+		t.Fatalf("expected category-ads-all to be unloaded from cachedSiteDB when disabled")
 	}
 }
 
