@@ -20,7 +20,8 @@ func newTrieNode() *trieNode {
 // SuffixTrie stores domain suffixes with reversed dot-separated labels.
 // For example, "doubleclick.net" is stored as "net" -> "doubleclick".
 type SuffixTrie struct {
-	root *trieNode
+	root  *trieNode
+	count int
 }
 
 // NewSuffixTrie creates an empty reversed-label suffix trie.
@@ -46,7 +47,10 @@ func (t *SuffixTrie) Insert(domain, rule string) {
 		}
 		curr = next
 	}
-	curr.isEnd = true
+	if !curr.isEnd {
+		curr.isEnd = true
+		t.count++
+	}
 	curr.rule = rule
 }
 
@@ -174,11 +178,10 @@ func (m *ExactMap) Len() int {
 	return len(m.rules)
 }
 
-// Count returns the number of rule endpoints in the suffix trie.
+// Count returns the number of rule endpoints in the suffix trie in O(1) time.
 func (t *SuffixTrie) Count() int {
-	count := 0
-	t.Walk(func(_, _ string) {
-		count++
-	})
-	return count
+	if t == nil {
+		return 0
+	}
+	return t.count
 }

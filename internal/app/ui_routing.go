@@ -7,16 +7,24 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/routing"
-	"naive-client/internal/runner"
 )
 
-func (a *app) activeNodesForTags(tags []string) int {
-	count := 0
+func (a *app) activeNodesForTags(tags []string, precomputedRunning ...map[string]bool) int {
 	if a.mgr == nil || len(tags) == 0 {
 		return 0
 	}
+	var running map[string]bool
+	if len(precomputedRunning) > 0 && precomputedRunning[0] != nil {
+		running = precomputedRunning[0]
+	} else {
+		running = a.mgr.RunningServiceIDs()
+	}
+	if len(running) == 0 {
+		return 0
+	}
+	count := 0
 	for _, svc := range a.state.Services {
-		if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+		if running[svc.ID] {
 			for _, t := range svc.Tags {
 				matched := false
 				for _, targetTag := range tags {
@@ -50,8 +58,20 @@ func (a *app) allKnownServiceTags() []string {
 	return list
 }
 
-func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string) string {
+func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string, precomputedRunning ...map[string]bool) string {
 	if a.tracker == nil || a.mgr == nil {
+		return ""
+	}
+	if act.Type != routing.ActionProxyTag && act.Type != routing.ActionProxyPool {
+		return ""
+	}
+	var running map[string]bool
+	if len(precomputedRunning) > 0 && precomputedRunning[0] != nil {
+		running = precomputedRunning[0]
+	} else {
+		running = a.mgr.RunningServiceIDs()
+	}
+	if len(running) == 0 {
 		return ""
 	}
 	var candidates []string
@@ -59,7 +79,7 @@ func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string)
 	case routing.ActionProxyTag:
 		tags := act.GetTags()
 		for _, s := range a.state.Services {
-			if a.mgr.StatusOf(s.ID).State == runner.StateRunning {
+			if running[s.ID] {
 				for _, t := range s.Tags {
 					matched := false
 					for _, targetTag := range tags {
@@ -77,7 +97,7 @@ func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string)
 		}
 	case routing.ActionProxyPool:
 		for _, s := range a.state.Services {
-			if a.mgr.StatusOf(s.ID).State == runner.StateRunning {
+			if running[s.ID] {
 				candidates = append(candidates, s.ID)
 			}
 		}
@@ -88,13 +108,12 @@ func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string)
 	if targetHost == "" {
 		targetHost = "example.com"
 	}
-	bestID, ok := a.tracker.SelectBest(candidates, targetHost)
+	bestID, sc, ok := a.tracker.PeekBest(candidates, targetHost)
 	if !ok {
 		return ""
 	}
 	for _, s := range a.state.Services {
 		if s.ID == bestID {
-			sc := a.tracker.GetScore(bestID)
 			if sc.EWMA > 0 {
 				return fmt.Sprintf("驻留: %s (%dms)", s.Name, max(1, sc.EWMA.Milliseconds()))
 			}
@@ -104,12 +123,15 @@ func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string)
 	return ""
 }
 
-func (a *app) preferredNodeForRule(rule routing.Rule) string {
+func (a *app) preferredNodeForRule(rule routing.Rule, precomputedRunning ...map[string]bool) string {
+	if rule.Action.Type != routing.ActionProxyTag && rule.Action.Type != routing.ActionProxyPool {
+		return ""
+	}
 	targetHost := "example.com"
 	if len(rule.DomainSuffix) > 0 {
 		targetHost = rule.DomainSuffix[0]
 	}
-	return a.preferredNodeForAction(rule.Action, targetHost)
+	return a.preferredNodeForAction(rule.Action, targetHost, precomputedRunning...)
 }
 
 func (a *app) openCreateRuleDialog() {
@@ -224,6 +246,8 @@ func (a *app) deleteRule(id string) {
 func (a *app) resetRoutingPresets() {
 	a.state.RoutingRules = routing.DefaultPresets()
 	a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}
+	a.state.BlockerBlockAds = true
+	a.syncBlockerRules()
 	a.saveState()
 	a.toast("已恢复为默认分流预设")
 	if a.win != nil {
@@ -567,7 +591,7 @@ func (a *app) saveRuleEditor() {
 	}
 }
 
-func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routing.Rule, hasGeo bool) {
+func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routing.Rule, hasGeo bool, runningIDs map[string]bool) {
 	cat := a.catalog()
 	hasGeoCriteria := len(rule.GeoSite) > 0 || len(rule.GeoIP) > 0
 	hasOtherCriteria := len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0
@@ -620,8 +644,17 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					enabled := rule.Enabled
 					toggleKey := fmt.Sprintf("toggle-rule-%s", rule.ID)
 					if ui.Switch(c.Key(toggleKey), &enabled).Label(toggleKey).Changed() {
-						a.state.RoutingRules[ruleIndex].Enabled = enabled
-						a.saveState()
+						if rule.ID == "preset-block-ads" {
+							a.setBlockerBlockAds(enabled)
+							if enabled {
+								a.toast("已启用内置广告拦截")
+							} else {
+								a.toast("已关闭内置广告拦截")
+							}
+						} else {
+							a.state.RoutingRules[ruleIndex].Enabled = enabled
+							a.saveState()
+						}
 					}
 				})
 			})
@@ -641,7 +674,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
 				case routing.ActionProxyTag:
 					tags := rule.Action.GetTags()
-					activeNodes := a.activeNodesForTags(tags)
+					activeNodes := a.activeNodesForTags(tags, runningIDs)
 					var tagLabels []string
 					for _, t := range tags {
 						tagLabels = append(tagLabels, "#"+t)
@@ -675,7 +708,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					}
 				}
 
-				if pref := a.preferredNodeForRule(rule); pref != "" {
+				if pref := a.preferredNodeForRule(rule, runningIDs); pref != "" {
 					tagPill(c, pref, p.accentText, p.accentBg)
 				}
 			})
@@ -685,10 +718,13 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 	cat := a.catalog()
 	hasGeo := a.hasGeoData()
+	var runningIDs map[string]bool
+	if a.mgr != nil {
+		runningIDs = a.mgr.RunningServiceIDs()
+	}
 
 	ui.Scroll(c.Key("routing-page-scroll")).
-		TrackScroll(&a.routingPageScroll).
-		Grow(1).Fill().
+		Grow(1).Fill().MinHeight(0).
 		Padding(20, 24, 30, 24).Gap(16).
 		Children(func() {
 			// Page Title & Header Actions
@@ -769,7 +805,7 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 			if len(customRules) > 0 {
 				ui.Grid(c.Key("custom-rules-grid")).Columns(2).Gap(12).Children(func() {
 					for i := range customRules {
-						a.renderRuleCard(c, p, customIndices[i], customRules[i], hasGeo)
+						a.renderRuleCard(c, p, customIndices[i], customRules[i], hasGeo, runningIDs)
 					}
 				})
 			} else {
@@ -789,14 +825,14 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 
 			ui.Grid(c.Key("preset-rules-grid")).Columns(2).Gap(12).Children(func() {
 				for i := range presetRules {
-					a.renderRuleCard(c, p, presetIndices[i], presetRules[i], hasGeo)
+					a.renderRuleCard(c, p, presetIndices[i], presetRules[i], hasGeo, runningIDs)
 				}
-				a.renderFinalFallbackCard(c, p)
+				a.renderFinalFallbackCard(c, p, runningIDs)
 			})
 		})
 }
 
-func (a *app) renderFinalFallbackCard(c *ui.Context, p palette) {
+func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[string]bool) {
 	cat := a.catalog()
 
 	// Final Fallback Rule Card (Undeletable, Always Active)
@@ -842,7 +878,7 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette) {
 					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
 				case routing.ActionProxyTag:
 					tags := a.state.RoutingFinal.GetTags()
-					activeNodes := a.activeNodesForTags(tags)
+					activeNodes := a.activeNodesForTags(tags, runningIDs)
 					var tagLabels []string
 					for _, t := range tags {
 						tagLabels = append(tagLabels, "#"+t)
@@ -867,7 +903,7 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette) {
 					}
 				}
 
-				if pref := a.preferredNodeForAction(a.state.RoutingFinal, ""); pref != "" {
+				if pref := a.preferredNodeForAction(a.state.RoutingFinal, "", runningIDs); pref != "" {
 					tagPill(c, pref, p.accentText, p.accentBg)
 				}
 			})

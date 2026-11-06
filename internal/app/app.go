@@ -105,11 +105,10 @@ type app struct {
 	updatePercent   float64
 	updateError     string
 
-	mainScroll         ui.ScrollState
-	settingsPageScroll ui.ScrollState
-	routingPageScroll  ui.ScrollState
-	insightsPageScroll ui.ScrollState
-	expandedLogs       map[string]bool
+	openAtLogin      bool
+	geoDataReady     bool
+	gatewayPortInput string
+	expandedLogs     map[string]bool
 
 	activeTab          TabID
 	activeLogDrawerID  string
@@ -283,7 +282,7 @@ func newApp(dataDir string) *app {
 		Denylist:  st.BlockerDenylist,
 		Disabled:  !st.BlockerEnabled,
 	})
-	return &app{
+	a := &app{
 		dataDir:      dataDir,
 		state:        st,
 		expandedLogs: make(map[string]bool),
@@ -294,6 +293,8 @@ func newApp(dataDir string) *app {
 		blocker:      blk,
 		quitCh:       make(chan struct{}),
 	}
+	a.refreshGeoDataStatus()
+	return a
 }
 
 func (a *app) initSubsystems() {
@@ -333,6 +334,9 @@ func (a *app) syncBinaryPathAndVersion() {
 }
 
 func (a *app) boot() {
+	if !a.headless {
+		a.openAtLogin = mygo.App.OpenAtLogin()
+	}
 	if a.sysproxy != nil {
 		_ = a.sysproxy.RecoverIfDirty()
 	}
@@ -962,6 +966,7 @@ func (a *app) availableGeoIPTags() []string {
 }
 
 func (a *app) loadGeoDataIfPresent() {
+	a.refreshGeoDataStatus()
 	a.loadGeoTagsIfPresent()
 	if a.router == nil {
 		return
@@ -996,13 +1001,17 @@ func (a *app) loadGeoDataIfPresent() {
 	}
 }
 
-func (a *app) hasGeoData() bool {
+func (a *app) refreshGeoDataStatus() {
 	dir := a.geodataDir()
 	ipPath := filepath.Join(dir, "geoip.dat")
 	sitePath := filepath.Join(dir, "geosite.dat")
 	st1, err1 := os.Stat(ipPath)
 	st2, err2 := os.Stat(sitePath)
-	return err1 == nil && err2 == nil && st1.Size() > 0 && st2.Size() > 0
+	a.geoDataReady = err1 == nil && err2 == nil && st1.Size() > 0 && st2.Size() > 0
+}
+
+func (a *app) hasGeoData() bool {
+	return a.geoDataReady
 }
 
 func (a *app) triggerUpdateGeoData() {
@@ -1034,6 +1043,7 @@ func (a *app) triggerUpdateGeoData() {
 				a.toast("规则库更新失败: " + err.Error())
 			} else {
 				a.syncRouter()
+				a.syncBlockerRules()
 				a.toast("规则库已更新并重新加载")
 			}
 			if a.win != nil {
@@ -1412,13 +1422,26 @@ func (a *app) toggleBlockerEnabled() {
 }
 
 func (a *app) toggleBlockerBlockAds() {
-	a.state.BlockerBlockAds = !a.state.BlockerBlockAds
-	a.syncBlockerRules()
-	a.saveState()
+	a.setBlockerBlockAds(!a.state.BlockerBlockAds)
 	if a.state.BlockerBlockAds {
 		a.toast("已启用内置广告拦截")
 	} else {
 		a.toast("已关闭内置广告拦截")
+	}
+}
+
+func (a *app) setBlockerBlockAds(enabled bool) {
+	a.state.BlockerBlockAds = enabled
+	for i := range a.state.RoutingRules {
+		if a.state.RoutingRules[i].ID == "preset-block-ads" {
+			a.state.RoutingRules[i].Enabled = enabled
+			break
+		}
+	}
+	a.syncBlockerRules()
+	a.saveState()
+	if a.win != nil {
+		a.win.Invalidate()
 	}
 }
 

@@ -80,7 +80,7 @@ type instance struct {
 
 // Manager supervises multiple independent local NaiveProxy service processes.
 type Manager struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	binPath    string
 	workDir    string
 	instances  map[string]*instance
@@ -105,8 +105,8 @@ func NewManager(binPath, workDir string, onChange func()) *Manager {
 
 // BinaryPath returns the current naive binary path.
 func (m *Manager) BinaryPath() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.binPath
 }
 
@@ -129,12 +129,38 @@ func (m *Manager) BinaryExists() bool {
 
 // StatusOf returns a snapshot of the runtime status for service id.
 func (m *Manager) StatusOf(id string) Status {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if inst, ok := m.instances[id]; ok {
 		return inst.status
 	}
 	return Status{State: StateStopped}
+}
+
+// RunningServiceIDs returns a set of IDs for all services currently in StateRunning.
+func (m *Manager) RunningServiceIDs() map[string]bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make(map[string]bool, len(m.instances))
+	for id, inst := range m.instances {
+		if inst.status.State == StateRunning {
+			res[id] = true
+		}
+	}
+	return res
+}
+
+// RunningOrStartingCount returns the total number of services currently in StateRunning or StateStarting.
+func (m *Manager) RunningOrStartingCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, inst := range m.instances {
+		if inst.status.State == StateRunning || inst.status.State == StateStarting {
+			count++
+		}
+	}
+	return count
 }
 
 // LogsOf returns the LogBuffer for service id, creating one if needed.
@@ -162,8 +188,8 @@ func (m *Manager) ensureInstanceLocked(id string) *instance {
 
 // RunningIDs returns the IDs of all services currently running or starting.
 func (m *Manager) RunningIDs() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var ids []string
 	for id, inst := range m.instances {
 		if inst.status.State == StateRunning || inst.status.State == StateStarting {
@@ -173,10 +199,10 @@ func (m *Manager) RunningIDs() []string {
 	return ids
 }
 
-//RunningServices returns the service configurations of all currently running services.
+// RunningServices returns the service configurations of all currently running services.
 func (m *Manager) RunningServices() []config.Service {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var out []config.Service
 	for _, inst := range m.instances {
 		if inst.status.State == StateRunning || inst.status.State == StateStarting {
