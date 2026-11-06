@@ -64,6 +64,86 @@ func (msgs Messages) NavRouting() string {
 	return Catalog.Format(msgs.locale, "navRouting", nil)
 }
 
+// RoutingTitle says "Routing Rules"
+// in the language the app shows.
+func RoutingTitle() string { return In(i18n.Locale()).RoutingTitle() }
+
+// RoutingTitle says "Routing Rules"
+// in the language of msgs.
+func (msgs Messages) RoutingTitle() string {
+	return Catalog.Format(msgs.locale, "routingTitle", nil)
+}
+
+// RoutingSubtitle says "Rule-based adaptive traffic dispatcher and tag pools"
+// in the language the app shows.
+func RoutingSubtitle() string { return In(i18n.Locale()).RoutingSubtitle() }
+
+// RoutingSubtitle says "Rule-based adaptive traffic dispatcher and tag pools"
+// in the language of msgs.
+func (msgs Messages) RoutingSubtitle() string {
+	return Catalog.Format(msgs.locale, "routingSubtitle", nil)
+}
+
+// RoutingPresetsSection says "Preset Rule Groups"
+// in the language the app shows.
+func RoutingPresetsSection() string { return In(i18n.Locale()).RoutingPresetsSection() }
+
+// RoutingPresetsSection says "Preset Rule Groups"
+// in the language of msgs.
+func (msgs Messages) RoutingPresetsSection() string {
+	return Catalog.Format(msgs.locale, "routingPresetsSection", nil)
+}
+
+// RoutingFinalFallback says "Default Fallback Outbound"
+// in the language the app shows.
+func RoutingFinalFallback() string { return In(i18n.Locale()).RoutingFinalFallback() }
+
+// RoutingFinalFallback says "Default Fallback Outbound"
+// in the language of msgs.
+func (msgs Messages) RoutingFinalFallback() string {
+	return Catalog.Format(msgs.locale, "routingFinalFallback", nil)
+}
+
+// RoutingTagPool says "Tag Pool"
+// in the language the app shows.
+func RoutingTagPool() string { return In(i18n.Locale()).RoutingTagPool() }
+
+// RoutingTagPool says "Tag Pool"
+// in the language of msgs.
+func (msgs Messages) RoutingTagPool() string {
+	return Catalog.Format(msgs.locale, "routingTagPool", nil)
+}
+
+// RoutingDirect says "Direct"
+// in the language the app shows.
+func RoutingDirect() string { return In(i18n.Locale()).RoutingDirect() }
+
+// RoutingDirect says "Direct"
+// in the language of msgs.
+func (msgs Messages) RoutingDirect() string {
+	return Catalog.Format(msgs.locale, "routingDirect", nil)
+}
+
+// RoutingBlock says "Block"
+// in the language the app shows.
+func RoutingBlock() string { return In(i18n.Locale()).RoutingBlock() }
+
+// RoutingBlock says "Block"
+// in the language of msgs.
+func (msgs Messages) RoutingBlock() string {
+	return Catalog.Format(msgs.locale, "routingBlock", nil)
+}
+
+// RoutingProxyPool says "Active Proxy Pool"
+// in the language the app shows.
+func RoutingProxyPool() string { return In(i18n.Locale()).RoutingProxyPool() }
+
+// RoutingProxyPool says "Active Proxy Pool"
+// in the language of msgs.
+func (msgs Messages) RoutingProxyPool() string {
+	return Catalog.Format(msgs.locale, "routingProxyPool", nil)
+}
+
 // NavInsights says "Insights"
 // in the language the app shows.
 func NavInsights() string { return In(i18n.Locale()).NavInsights() }

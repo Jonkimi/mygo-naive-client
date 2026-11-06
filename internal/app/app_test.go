@@ -25,6 +25,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
+	"naive-client/internal/routing"
 	"naive-client/internal/runner"
 	"naive-client/internal/updater"
 	"naive-client/locales"
@@ -1221,5 +1222,165 @@ func TestGateway_EndToEndProxyAndTelemetry(t *testing.T) {
 	best, ok := a.tracker.SelectBest([]string{"svc-ext"}, "api.openai.com")
 	if !ok || best != "svc-ext" {
 		t.Fatalf("expected affinity locked to svc-ext, got %v (ok=%v)", best, ok)
+	}
+}
+
+// Tests that incoming requests are dispatched according to routing rules (BLOCK, PROXY_TAG, PROXY_POOL).
+func TestGateway_RoutingRulesDispatching(t *testing.T) {
+	// Mock upstream echo/socks server
+	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("proxyLn listen: %v", err)
+	}
+	defer proxyLn.Close()
+
+	go func() {
+		for {
+			conn, err := proxyLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 256)
+				if _, err := io.ReadAtLeast(c, buf, 3); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{0x05, 0x00}) // NO_AUTH
+				reqBuf := make([]byte, 256)
+				if _, err := io.ReadAtLeast(c, reqBuf, 7); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+				io.Copy(c, c)
+			}(conn)
+		}
+	}()
+
+	proxyHost, proxyPortStr, _ := net.SplitHostPort(proxyLn.Addr().String())
+	proxyPort, _ := strconv.Atoi(proxyPortStr)
+
+	// Node 1: AI tag
+	svcA := config.Service{
+		ID:          "node-ai",
+		Name:        "US AI Node",
+		Kind:        config.KindExternalProxy,
+		ExternalURI: fmt.Sprintf("socks5://%s:%d", proxyHost, proxyPort),
+		Tags:        []string{"AI", "US"},
+	}
+	// Node 2: General tag
+	svcB := config.Service{
+		ID:          "node-general",
+		Name:        "HK General Node",
+		Kind:        config.KindExternalProxy,
+		ExternalURI: fmt.Sprintf("socks5://%s:%d", proxyHost, proxyPort),
+		Tags:        []string{"HK"},
+	}
+
+	a, _, _ := newTestApp(t, []config.Service{svcA, svcB})
+	gwPort := freeLocalPort(t)
+	a.state.GatewayPort = gwPort
+	a.state.GatewayEnabled = true
+	_ = a.mgr.Start(svcA)
+	_ = a.mgr.Start(svcB)
+
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	// 1. Target "chatgpt.com:443" should match AI preset rule -> routed to "node-ai"
+	c1, err := net.DialTimeout("tcp", a.gateway.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer c1.Close()
+	_, _ = c1.Write([]byte{0x05, 0x01, 0x00})
+	rBuf := make([]byte, 2)
+	_, _ = io.ReadFull(c1, rBuf)
+
+	targetDomain := "chatgpt.com"
+	req := []byte{0x05, 0x01, 0x00, 0x03, byte(len(targetDomain))}
+	req = append(req, []byte(targetDomain)...)
+	req = append(req, 0x01, 0xbb)
+	_, _ = c1.Write(req)
+	resp1 := make([]byte, 10)
+	_, err = io.ReadFull(c1, resp1)
+	if err != nil || resp1[1] != 0x00 {
+		t.Fatalf("expected connect success for chatgpt.com, got %v (err=%v)", resp1, err)
+	}
+	// Verify telemetry recorded on "node-ai"
+	if a.tracker.GetScore("node-ai").EWMA == 0 {
+		t.Fatalf("expected telemetry recorded on node-ai for chatgpt.com")
+	}
+
+	// 2. Target "doubleclick.net:443" should match Ad Blocker -> BLOCK (reply error)
+	c2, err := net.DialTimeout("tcp", a.gateway.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer c2.Close()
+	_, _ = c2.Write([]byte{0x05, 0x01, 0x00})
+	_, _ = io.ReadFull(c2, rBuf)
+
+	blockDomain := "pagead2.doubleclick.net"
+	req2 := []byte{0x05, 0x01, 0x00, 0x03, byte(len(blockDomain))}
+	req2 = append(req2, []byte(blockDomain)...)
+	req2 = append(req2, 0x01, 0xbb)
+	_, _ = c2.Write(req2)
+	resp2 := make([]byte, 10)
+	_, err = io.ReadFull(c2, resp2)
+	// Code 0x05 (Connection refused) or error expected
+	if err == nil && resp2[1] == 0x00 {
+		t.Fatalf("expected connection to doubleclick.net to be blocked, but succeeded")
+	}
+}
+
+// Tests that pressing Cmd+2 switches to TabRouting and toggling rules updates router state.
+func TestRoutingWorkbench_NavigationAndToggle(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// 1. Initial tab should be TabNodes
+	if a.activeTab != TabNodes {
+		t.Fatalf("expected initial tab TabNodes, got %v", a.activeTab)
+	}
+
+	// 2. Press Cmd+2 to switch to TabRouting
+	tt.Key(ui.Cmd, ui.Key2)
+	tt.Frame()
+
+	if a.activeTab != TabRouting {
+		t.Fatalf("expected activeTab TabRouting after Cmd+2, got %v", a.activeTab)
+	}
+
+	// 3. Verify Routing Page elements are present
+	if !tt.HasText(a.catalog().RoutingTitle()) {
+		t.Fatalf("expected routing title %q, got: %v", a.catalog().RoutingTitle(), tt.Texts())
+	}
+	if !tt.HasText("广告拦截 (Ad Blocker)") {
+		t.Fatalf("expected preset rule '广告拦截 (Ad Blocker)' on page, got: %v", tt.Texts())
+	}
+
+	// 4. Verify initial rule enabled state
+	if !a.state.RoutingRules[0].Enabled {
+		t.Fatalf("expected rule 0 enabled initially")
+	}
+
+	// 5. Toggle first rule (toggle-rule-preset-block-ads)
+	r, ok := tt.Find("toggle-rule-preset-block-ads")
+	if !ok {
+		t.Fatalf("expected switch toggle for 'toggle-rule-preset-block-ads'")
+	}
+	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	tt.Frame()
+
+	if a.state.RoutingRules[0].Enabled {
+		t.Fatalf("expected rule 0 disabled after toggle click")
+	}
+
+	// Verify router updated and matches fallback instead of BLOCK
+	act, _ := a.router.Match("pagead2.doubleclick.net:443")
+	if act.Type == routing.ActionBlock {
+		t.Fatalf("expected doubleclick.net not blocked after disabling rule")
 	}
 }

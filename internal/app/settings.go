@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"naive-client/internal/config"
+	"naive-client/internal/routing"
 	"naive-client/internal/updater"
 	"naive-client/locales"
 )
@@ -40,6 +41,8 @@ type PersistedState struct {
 	GatewayPort             int              `json:"gatewayPort,omitempty"`
 	TrafficMode             string           `json:"trafficMode,omitempty"`
 	SystemProxyBypass       []string         `json:"systemProxyBypass,omitempty"`
+	RoutingRules            []routing.Rule   `json:"routingRules,omitempty"`
+	RoutingFinal            routing.RouteAction `json:"routingFinal,omitempty"`
 	AutoCheckUpdate         bool             `json:"autoCheckUpdate"`
 	AutoUpdateCore          bool             `json:"autoUpdateCore"`
 	UseRunningServiceForUpd bool             `json:"useRunningServiceForUpdate"`
@@ -62,6 +65,8 @@ func defaultPersistedState() PersistedState {
 		GatewayEnabled:          true,
 		GatewayPort:             10808,
 		TrafficMode:             "port",
+		RoutingRules:            routing.DefaultPresets(),
+		RoutingFinal:            routing.RouteAction{Type: routing.ActionProxyPool},
 		AutoCheckUpdate:         true,
 		AutoUpdateCore:          true,
 		UseRunningServiceForUpd: true,
@@ -112,6 +117,12 @@ func (a *app) loadState() {
 	if st.TrafficMode == "" {
 		st.TrafficMode = "port"
 	}
+	if len(st.RoutingRules) == 0 {
+		st.RoutingRules = routing.DefaultPresets()
+	}
+	if st.RoutingFinal.Type == "" {
+		st.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}
+	}
 	if st.AppIcon == "" {
 		st.AppIcon = appIconBoth
 	}
@@ -127,9 +138,11 @@ func (a *app) loadState() {
 		}
 	}
 	a.state = st
+	a.syncRouter()
 }
 
 func (a *app) saveState() {
+	a.syncRouter()
 	dir := a.userDataDir()
 	_ = os.MkdirAll(dir, 0o755)
 	raw, err := json.MarshalIndent(a.state, "", "  ")
