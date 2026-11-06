@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -10,16 +11,22 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	collapsed := a.state.SidebarCollapsed
 
-	var width float32 = 190
-	var paddingH float32 = 10
+	var targetWidth float32 = 190
+	var targetPaddingH float32 = 10
 	if collapsed {
-		width = 62
-		paddingH = 6
+		targetWidth = 62
+		targetPaddingH = 6
 	}
 
-	ui.Column(c.Key("sidebar")).
+	sidebar := ui.Column(c.Key("sidebar"))
+	anim := ui.Animation{Spring: ui.SpringOptions{Duration: 220 * time.Millisecond, Bounce: 0.04}}
+	width := sidebar.AnimateTo("width", targetWidth, anim)
+	paddingH := sidebar.AnimateTo("paddingH", targetPaddingH, anim)
+
+	sidebar.
 		Width(width).
 		Padding(10, paddingH, 10, paddingH).Gap(8).
+		Clip().
 		Background(p.sidebarBg).
 		BorderWidth(0, 1, 0, 0).BorderColor(p.borderSubtle).
 		Children(func() {
@@ -65,7 +72,7 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 				Children(func() {
 					ui.Image(c, iconBrandFor(p.dark)).Size(16, 16)
 				})
-			ui.Text(c, "NaiveClient").FontSize(15).FontWeight(700).TextColor(p.text)
+			ui.Text(c, "NaiveClient").FontSize(15).FontWeight(700).TextColor(p.text).NoWrap()
 		})
 	})
 }
@@ -101,9 +108,9 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
 				ui.Icon(c, iconSidebarCollapse).Size(15, 15).TextColor(p.textDim)
-				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted)
+				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted).NoWrap()
 			})
-			ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim)
+			ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim).NoWrap()
 		})
 	if btn.Hovered() {
 		btn.Background(p.cardHover)
@@ -158,9 +165,9 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 				if icon != nil {
 					ui.Icon(c, icon).Size(16, 16).TextColor(fg)
 				}
-				ui.Text(c, label).FontSize(13).FontWeight(weight).TextColor(fg)
+				ui.Text(c, label).FontSize(13).FontWeight(weight).TextColor(fg).NoWrap()
 			})
-			ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim)
+			ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
 		})
 
 	if !active && btn.Hovered() {
