@@ -101,6 +101,11 @@ type app struct {
 	updatingGeoData bool
 	geoSiteTags     []string
 	geoIPTags       []string
+	cachedIPDB      *geodata.GeoIPDB
+	cachedSiteDB    *geodata.GeoSiteDB
+	cachedIPTags    []string
+	cachedSiteTags  []string
+	cachedAdsRules  *blocker.ParsedRules
 	updateStageText string
 	updatePercent   float64
 	updateError     string
@@ -943,42 +948,64 @@ func (a *app) geodataDir() string {
 	return filepath.Join(a.userDataDir(), "geodata")
 }
 
-func (a *app) loadGeoTagsIfPresent() {
-	dir := a.geodataDir()
-	if f, err := os.Open(filepath.Join(dir, "geosite.dat")); err == nil {
-		defer f.Close()
-		if tags, err := geodata.ListGeoTags(f); err == nil && len(tags) > 0 {
-			a.geoSiteTags = tags
+func sameTagSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ma := make(map[string]bool, len(a))
+	for _, t := range a {
+		ma[strings.ToUpper(strings.TrimSpace(t))] = true
+	}
+	for _, t := range b {
+		if !ma[strings.ToUpper(strings.TrimSpace(t))] {
+			return false
 		}
 	}
-	if f, err := os.Open(filepath.Join(dir, "geoip.dat")); err == nil {
-		defer f.Close()
-		if tags, err := geodata.ListGeoTags(f); err == nil && len(tags) > 0 {
-			a.geoIPTags = tags
+	return true
+}
+
+func (a *app) loadGeoTagsIfPresent() {
+	dir := a.geodataDir()
+	if len(a.geoSiteTags) == 0 {
+		if f, err := os.Open(filepath.Join(dir, "geosite.dat")); err == nil {
+			defer f.Close()
+			if tags, err := geodata.ListGeoTags(f); err == nil && len(tags) > 0 {
+				a.geoSiteTags = tags
+			}
+		}
+	}
+	if len(a.geoIPTags) == 0 {
+		if f, err := os.Open(filepath.Join(dir, "geoip.dat")); err == nil {
+			defer f.Close()
+			if tags, err := geodata.ListGeoTags(f); err == nil && len(tags) > 0 {
+				a.geoIPTags = tags
+			}
 		}
 	}
 }
 
 func (a *app) availableGeoSiteTags() []string {
+	if len(a.geoSiteTags) == 0 {
+		a.loadGeoTagsIfPresent()
+	}
 	return a.geoSiteTags
 }
 
 func (a *app) availableGeoIPTags() []string {
+	if len(a.geoIPTags) == 0 {
+		a.loadGeoTagsIfPresent()
+	}
 	return a.geoIPTags
 }
 
 func (a *app) loadGeoDataIfPresent() {
 	a.refreshGeoDataStatus()
-	a.loadGeoTagsIfPresent()
 	if a.router == nil {
 		return
 	}
 	dir := a.geodataDir()
 	ipPath := filepath.Join(dir, "geoip.dat")
 	sitePath := filepath.Join(dir, "geosite.dat")
-
-	var ipDB *geodata.GeoIPDB
-	var siteDB *geodata.GeoSiteDB
 
 	var reqIPTags []string
 	var reqSiteTags []string
@@ -989,18 +1016,49 @@ func (a *app) loadGeoDataIfPresent() {
 		}
 	}
 
-	if f, err := os.Open(ipPath); err == nil {
-		defer f.Close()
-		ipDB, _ = geodata.LoadGeoIP(f, reqIPTags)
-	}
-	if f, err := os.Open(sitePath); err == nil {
-		defer f.Close()
-		siteDB, _ = geodata.LoadGeoSite(f, reqSiteTags)
+	var ipDB *geodata.GeoIPDB
+	if len(reqIPTags) > 0 {
+		ipDB = a.cachedIPDB
+		if ipDB == nil || !sameTagSet(reqIPTags, a.cachedIPTags) {
+			if f, err := os.Open(ipPath); err == nil {
+				if loaded, err := geodata.LoadGeoIP(f, reqIPTags); err == nil {
+					ipDB = loaded
+					a.cachedIPDB = loaded
+					a.cachedIPTags = append([]string(nil), reqIPTags...)
+					if len(a.geoIPTags) == 0 && len(loaded.AllTags()) > 0 {
+						a.geoIPTags = loaded.AllTags()
+					}
+				}
+				_ = f.Close()
+			}
+		}
+	} else {
+		a.cachedIPDB = nil
+		a.cachedIPTags = nil
 	}
 
-	if ipDB != nil || siteDB != nil {
-		a.router.SetGeoData(ipDB, siteDB)
+	var siteDB *geodata.GeoSiteDB
+	if len(reqSiteTags) > 0 {
+		siteDB = a.cachedSiteDB
+		if siteDB == nil || !sameTagSet(reqSiteTags, a.cachedSiteTags) {
+			if f, err := os.Open(sitePath); err == nil {
+				if loaded, err := geodata.LoadGeoSite(f, reqSiteTags); err == nil {
+					siteDB = loaded
+					a.cachedSiteDB = loaded
+					a.cachedSiteTags = append([]string(nil), reqSiteTags...)
+					if len(a.geoSiteTags) == 0 && len(loaded.AllTags()) > 0 {
+						a.geoSiteTags = loaded.AllTags()
+					}
+				}
+				_ = f.Close()
+			}
+		}
+	} else {
+		a.cachedSiteDB = nil
+		a.cachedSiteTags = nil
 	}
+
+	a.router.SetGeoData(ipDB, siteDB)
 }
 
 func (a *app) refreshGeoDataStatus() {
@@ -1044,6 +1102,13 @@ func (a *app) triggerUpdateGeoData() {
 			if err != nil {
 				a.toast("规则库更新失败: " + err.Error())
 			} else {
+				a.cachedIPDB = nil
+				a.cachedSiteDB = nil
+				a.cachedIPTags = nil
+				a.cachedSiteTags = nil
+				a.cachedAdsRules = nil
+				a.geoSiteTags = nil
+				a.geoIPTags = nil
 				a.syncRouter()
 				a.syncBlockerRules()
 				a.toast("规则库已更新并重新加载")
@@ -1282,44 +1347,62 @@ func (a *app) syncBlockerRules() {
 	if a.blocker == nil {
 		return
 	}
-	merged := blocker.NewParsedRules()
 
-	// 1. Built-in geosite category-ads-all
-	if a.state.BlockerBlockAds {
-		dir := a.geodataDir()
-		sitePath := filepath.Join(dir, "geosite.dat")
-		if f, err := os.Open(sitePath); err == nil {
-			if adsDB, err := geodata.LoadGeoSite(f, []string{"category-ads-all"}); err == nil && adsDB != nil {
-				for _, entry := range adsDB.TagEntries("category-ads-all") {
-					if entry.IsFull {
-						merged.BlockExact.Set(entry.Value, "category-ads-all")
-					} else {
-						merged.BlockTrie.Insert(entry.Value, "category-ads-all")
-					}
-				}
+	// 1. Built-in geosite category-ads-all (reuse cachedSiteDB when available to avoid re-reading geosite.dat)
+	if a.state.BlockerBlockAds && a.cachedAdsRules == nil {
+		adsDB := a.cachedSiteDB
+		if adsDB == nil || !adsDB.HasTag("category-ads-all") {
+			sitePath := filepath.Join(a.geodataDir(), "geosite.dat")
+			if f, err := os.Open(sitePath); err == nil {
+				adsDB, _ = geodata.LoadGeoSite(f, []string{"category-ads-all"})
+				_ = f.Close()
 			}
-			_ = f.Close()
+		}
+		if adsDB != nil && adsDB.HasTag("category-ads-all") {
+			cached := blocker.NewParsedRules()
+			cached.GeoAds = adsDB
+			a.cachedAdsRules = cached
 		}
 	}
 
 	// 2. External Subscriptions cached on disk
-	subDir := filepath.Join(a.userDataDir(), "blocker_cache")
-	_ = os.MkdirAll(subDir, 0o755)
-	for _, subURL := range a.state.BlockerSubscriptions {
-		subURL = strings.TrimSpace(subURL)
-		if subURL == "" {
-			continue
-		}
-		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(subURL)))
-		cachePath := filepath.Join(subDir, hash+".txt")
-		if f, err := os.Open(cachePath); err == nil {
-			if parsed, err := blocker.ParseRuleStream(f, subURL); err == nil {
-				merged.Merge(parsed)
+	var extRules []*blocker.ParsedRules
+	if len(a.state.BlockerSubscriptions) > 0 {
+		subDir := filepath.Join(a.userDataDir(), "blocker_cache")
+		_ = os.MkdirAll(subDir, 0o755)
+		for _, subURL := range a.state.BlockerSubscriptions {
+			subURL = strings.TrimSpace(subURL)
+			if subURL == "" {
+				continue
 			}
-			_ = f.Close()
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(subURL)))
+			cachePath := filepath.Join(subDir, hash+".txt")
+			if f, err := os.Open(cachePath); err == nil {
+				if parsed, err := blocker.ParseRuleStream(f, subURL); err == nil {
+					extRules = append(extRules, parsed)
+				}
+				_ = f.Close()
+			}
 		}
 	}
 
+	// Fast path: if no external subscription rules exist, share cachedAdsRules directly without cloning maps
+	if len(extRules) == 0 {
+		if a.state.BlockerBlockAds && a.cachedAdsRules != nil {
+			a.blocker.SwapRuleset(a.cachedAdsRules)
+		} else {
+			a.blocker.SwapRuleset(blocker.NewParsedRules())
+		}
+		return
+	}
+
+	merged := blocker.NewParsedRules()
+	if a.state.BlockerBlockAds && a.cachedAdsRules != nil {
+		merged.Merge(a.cachedAdsRules)
+	}
+	for _, parsed := range extRules {
+		merged.Merge(parsed)
+	}
 	a.blocker.SwapRuleset(merged)
 }
 

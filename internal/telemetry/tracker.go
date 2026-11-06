@@ -14,6 +14,7 @@ const (
 	hysteresisRTTDelta      = 30 * time.Millisecond
 	hysteresisRatioDelta    = 0.20
 	defaultInitialRTT       = 150 * time.Millisecond
+	maxTrackerDomains       = 2000
 )
 
 type NodeStats struct {
@@ -85,6 +86,14 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 		st.ConsecutiveFailures++
 		st.LastFailure = time.Now()
 		if root != "" {
+			if len(t.domainErrors) >= maxTrackerDomains && t.domainErrors[root] == nil {
+				for k := range t.domainErrors {
+					delete(t.domainErrors, k)
+					if len(t.domainErrors) < maxTrackerDomains/2 {
+						break
+					}
+				}
+			}
 			if t.domainErrors[root] == nil {
 				t.domainErrors[root] = make(map[string]int)
 			}
@@ -107,6 +116,14 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 
 	if root != "" {
 		if _, ok := t.affinity[root]; !ok {
+			if len(t.affinity) >= maxTrackerDomains {
+				for k := range t.affinity {
+					delete(t.affinity, k)
+					if len(t.affinity) < maxTrackerDomains/2 {
+						break
+					}
+				}
+			}
 			t.affinity[root] = nodeID
 		}
 	}

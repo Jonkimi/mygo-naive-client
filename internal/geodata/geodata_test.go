@@ -147,3 +147,38 @@ func TestListGeoTags(t *testing.T) {
 		}
 	}
 }
+
+// Tests that passing an empty requestedTags list loads zero entries instead of loading the entire database.
+func TestLoadGeoData_EmptyRequestedTagsLoadsNothing(t *testing.T) {
+	var cidrMsg []byte
+	cidrMsg = append(cidrMsg, encodeBytesField(1, net.ParseIP("1.2.3.0").To4())...)
+	cidrMsg = append(cidrMsg, encodeVarintField(2, 24)...)
+	var entryCN []byte
+	entryCN = append(entryCN, encodeBytesField(1, []byte("CN"))...)
+	entryCN = append(entryCN, encodeBytesField(2, cidrMsg)...)
+	geoIPList := encodeBytesField(1, entryCN)
+
+	ipDB, err := LoadGeoIP(bytes.NewReader(geoIPList), nil)
+	if err != nil {
+		t.Fatalf("LoadGeoIP: %v", err)
+	}
+	if ipDB.MatchIP("CN", net.ParseIP("1.2.3.4")) {
+		t.Fatalf("expected empty requestedTags to load no GeoIP entries")
+	}
+
+	var domMsg []byte
+	domMsg = append(domMsg, encodeVarintField(1, 2)...)
+	domMsg = append(domMsg, encodeBytesField(2, []byte("openai.com"))...)
+	var entryOpenAI []byte
+	entryOpenAI = append(entryOpenAI, encodeBytesField(1, []byte("OPENAI"))...)
+	entryOpenAI = append(entryOpenAI, encodeBytesField(2, domMsg)...)
+	geoSiteList := encodeBytesField(1, entryOpenAI)
+
+	siteDB, err := LoadGeoSite(bytes.NewReader(geoSiteList), nil)
+	if err != nil {
+		t.Fatalf("LoadGeoSite: %v", err)
+	}
+	if siteDB.MatchDomain("OPENAI", "api.openai.com") {
+		t.Fatalf("expected empty requestedTags to load no GeoSite entries")
+	}
+}

@@ -4,96 +4,80 @@ import (
 	"strings"
 )
 
-// trieNode represents a single label node in the reversed-label suffix trie.
-type trieNode struct {
-	children map[string]*trieNode
-	isEnd    bool
-	rule     string
-}
-
-func newTrieNode() *trieNode {
-	return &trieNode{
-		children: make(map[string]*trieNode),
-	}
-}
-
-// SuffixTrie stores domain suffixes with reversed dot-separated labels.
-// For example, "doubleclick.net" is stored as "net" -> "doubleclick".
+// SuffixTrie stores domain suffix rules and matches domain suffixes efficiently.
+// It uses a flat map with uint16 interned rule IDs and scans suffix boundaries (dots)
+// from shortest to longest suffix, minimizing bucket size and GC pointer scanning.
 type SuffixTrie struct {
-	root  *trieNode
-	count int
+	rules    map[string]uint16
+	ruleList []string
+	ruleIdx  map[string]uint16
 }
 
-// NewSuffixTrie creates an empty reversed-label suffix trie.
+// NewSuffixTrie creates an empty suffix matcher.
 func NewSuffixTrie() *SuffixTrie {
 	return &SuffixTrie{
-		root: newTrieNode(),
+		rules:   make(map[string]uint16),
+		ruleIdx: make(map[string]uint16),
 	}
 }
 
-// Insert adds a domain suffix rule into the trie.
+func (t *SuffixTrie) internRule(rule string) uint16 {
+	if id, ok := t.ruleIdx[rule]; ok {
+		return id
+	}
+	t.ruleList = append(t.ruleList, rule)
+	id := uint16(len(t.ruleList))
+	t.ruleIdx[rule] = id
+	return id
+}
+
+func (t *SuffixTrie) ruleByID(id uint16) string {
+	if id == 0 || int(id) > len(t.ruleList) {
+		return ""
+	}
+	return t.ruleList[id-1]
+}
+
+// Insert adds a domain suffix rule.
 func (t *SuffixTrie) Insert(domain, rule string) {
-	labels := splitDomainReversed(domain)
-	if len(labels) == 0 {
+	d := normalizeDomain(domain)
+	if d == "" {
 		return
 	}
-
-	curr := t.root
-	for _, label := range labels {
-		next, exists := curr.children[label]
-		if !exists {
-			next = newTrieNode()
-			curr.children[label] = next
-		}
-		curr = next
-	}
-	if !curr.isEnd {
-		curr.isEnd = true
-		t.count++
-	}
-	curr.rule = rule
+	t.rules[d] = t.internRule(rule)
 }
 
 // Match checks whether domain (or any parent suffix of domain) matches an inserted rule.
+// Suffixes are evaluated from shortest (widest) to longest.
 func (t *SuffixTrie) Match(domain string) (bool, string) {
-	labels := splitDomainReversed(domain)
-	if len(labels) == 0 {
+	d := normalizeDomain(domain)
+	if d == "" {
 		return false, ""
 	}
 
-	curr := t.root
-	for _, label := range labels {
-		next, exists := curr.children[label]
-		if !exists {
-			return false, ""
+	// Check candidate suffixes from shortest to longest (right to left across dots)
+	for i := len(d) - 1; i >= 0; i-- {
+		if d[i] == '.' {
+			sub := d[i+1:]
+			if id, ok := t.rules[sub]; ok {
+				return true, t.ruleByID(id)
+			}
 		}
-		curr = next
-		if curr.isEnd {
-			return true, curr.rule
-		}
+	}
+	if id, ok := t.rules[d]; ok {
+		return true, t.ruleByID(id)
 	}
 	return false, ""
 }
 
 // Walk traverses all rules in the SuffixTrie and invokes fn for each rule.
 func (t *SuffixTrie) Walk(fn func(domain, rule string)) {
-	if t == nil || t.root == nil {
+	if t == nil {
 		return
 	}
-	var walk func(n *trieNode, labels []string)
-	walk = func(n *trieNode, labels []string) {
-		if n.isEnd {
-			parts := make([]string, len(labels))
-			for i, l := range labels {
-				parts[len(labels)-1-i] = l
-			}
-			fn(strings.Join(parts, "."), n.rule)
-		}
-		for label, child := range n.children {
-			walk(child, append(labels, label))
-		}
+	for domain, id := range t.rules {
+		fn(domain, t.ruleByID(id))
 	}
-	walk(t.root, nil)
 }
 
 // Merge copies all rules from other into t.
@@ -101,52 +85,60 @@ func (t *SuffixTrie) Merge(other *SuffixTrie) {
 	if other == nil {
 		return
 	}
-	other.Walk(func(domain, rule string) {
-		t.Insert(domain, rule)
-	})
+	for domain, id := range other.rules {
+		t.rules[domain] = t.internRule(other.ruleByID(id))
+	}
 }
 
-// splitDomainReversed cleans domain and splits it into labels in reversed order.
-// e.g. "pagead2.doubleclick.net." -> ["net", "doubleclick", "pagead2"]
-func splitDomainReversed(domain string) []string {
-	domain = normalizeDomain(domain)
-	if domain == "" {
-		return nil
+// Count returns the number of rule endpoints in O(1) time.
+func (t *SuffixTrie) Count() int {
+	if t == nil {
+		return 0
 	}
-	parts := strings.Split(domain, ".")
-	// Reverse parts
-	n := len(parts)
-	rev := make([]string, n)
-	for i, part := range parts {
-		if part == "" {
-			return nil
-		}
-		rev[n-1-i] = part
-	}
-	return rev
+	return len(t.rules)
 }
 
 func normalizeDomain(domain string) string {
 	return strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
 }
 
-// ExactMap holds domain rules requiring exact string equality.
+// ExactMap holds domain rules requiring exact string equality with uint16 interned rule IDs.
 type ExactMap struct {
-	rules map[string]string
+	rules    map[string]uint16
+	ruleList []string
+	ruleIdx  map[string]uint16
 }
 
 // NewExactMap creates an empty exact match map.
 func NewExactMap() *ExactMap {
 	return &ExactMap{
-		rules: make(map[string]string),
+		rules:   make(map[string]uint16),
+		ruleIdx: make(map[string]uint16),
 	}
+}
+
+func (m *ExactMap) internRule(rule string) uint16 {
+	if id, ok := m.ruleIdx[rule]; ok {
+		return id
+	}
+	m.ruleList = append(m.ruleList, rule)
+	id := uint16(len(m.ruleList))
+	m.ruleIdx[rule] = id
+	return id
+}
+
+func (m *ExactMap) ruleByID(id uint16) string {
+	if id == 0 || int(id) > len(m.ruleList) {
+		return ""
+	}
+	return m.ruleList[id-1]
 }
 
 // Set sets a domain exact match rule.
 func (m *ExactMap) Set(domain, rule string) {
 	d := normalizeDomain(domain)
 	if d != "" {
-		m.rules[d] = rule
+		m.rules[d] = m.internRule(rule)
 	}
 }
 
@@ -156,8 +148,11 @@ func (m *ExactMap) Match(domain string) (bool, string) {
 	if d == "" {
 		return false, ""
 	}
-	rule, ok := m.rules[d]
-	return ok, rule
+	id, ok := m.rules[d]
+	if !ok {
+		return false, ""
+	}
+	return true, m.ruleByID(id)
 }
 
 // Merge copies all rules from other into m.
@@ -165,8 +160,8 @@ func (m *ExactMap) Merge(other *ExactMap) {
 	if m == nil || other == nil {
 		return
 	}
-	for k, v := range other.rules {
-		m.rules[k] = v
+	for k, id := range other.rules {
+		m.rules[k] = m.internRule(other.ruleByID(id))
 	}
 }
 
@@ -176,12 +171,4 @@ func (m *ExactMap) Len() int {
 		return 0
 	}
 	return len(m.rules)
-}
-
-// Count returns the number of rule endpoints in the suffix trie in O(1) time.
-func (t *SuffixTrie) Count() int {
-	if t == nil {
-		return 0
-	}
-	return t.count
 }
