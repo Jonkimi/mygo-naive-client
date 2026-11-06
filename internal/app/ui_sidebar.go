@@ -11,21 +11,32 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	collapsed := a.state.SidebarCollapsed
 
-	var targetWidth float32 = 190
-	var targetPaddingH float32 = 10
-	if collapsed {
-		targetWidth = 62
-		targetPaddingH = 6
+	targetWidth := a.currentSidebarTargetWidth()
+	width := targetWidth
+
+	if a.sidebarAnimActive {
+		elapsed := time.Since(a.sidebarAnimStart)
+		const duration = 240 * time.Millisecond
+		if elapsed >= duration {
+			a.sidebarAnimActive = false
+			a.sidebarAnimWidth = targetWidth
+			width = targetWidth
+		} else {
+			t := float32(elapsed) / float32(duration)
+			// Smooth cubic ease out: 1 - (1-t)^3
+			eased := 1 - (1-t)*(1-t)*(1-t)
+			width = a.sidebarAnimFrom + (a.sidebarAnimTo-a.sidebarAnimFrom)*eased
+			a.sidebarAnimWidth = width
+			// Request next animation frame across display link
+			c.AnimationFrame()
+		}
+	} else {
+		a.sidebarAnimWidth = targetWidth
 	}
 
-	sidebar := ui.Column(c.Key("sidebar"))
-	anim := ui.Animation{Spring: ui.SpringOptions{Duration: 220 * time.Millisecond, Bounce: 0.04}}
-	width := sidebar.AnimateTo("width", targetWidth, anim)
-	paddingH := sidebar.AnimateTo("paddingH", targetPaddingH, anim)
-
-	sidebar.
+	ui.Column(c.Key("sidebar")).
 		Width(width).
-		Padding(10, paddingH, 10, paddingH).Gap(8).
+		Padding(10, 10, 10, 10).Gap(8).
 		Clip().
 		Background(p.sidebarBg).
 		BorderWidth(0, 1, 0, 0).BorderColor(p.borderSubtle).
@@ -55,22 +66,22 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 
 func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	if collapsed {
-		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 4, 0).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Padding(24, 0, 4, 0).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
-				Size(36, 36).Radius(8).Background(p.accentBg).
+				Size(40, 40).Radius(8).Background(p.accentBg).
 				Children(func() {
-					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
+					ui.Image(c, iconBrandFor(p.dark)).Size(20, 20)
 				})
 		})
 		return
 	}
 
-	ui.Row(c).AlignItems(ui.Center).Padding(30, 4, 6, 4).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Padding(24, 6, 4, 6).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
-				Size(30, 30).Radius(8).Background(p.accentBg).
+				Size(32, 32).Radius(8).Background(p.accentBg).
 				Children(func() {
-					ui.Image(c, iconBrandFor(p.dark)).Size(16, 16)
+					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
 				})
 			ui.Text(c, "NaiveClient").FontSize(15).FontWeight(700).TextColor(p.text).NoWrap()
 		})
@@ -83,7 +94,7 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 	if collapsed {
 		btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
 			Label(cat.SidebarExpand()).
-			Size(44, 34).Radius(8).
+			Size(40, 40).Radius(8).
 			Background(p.surface).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(cat.SidebarExpand() + " (⌘B)").
@@ -102,11 +113,11 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 	btn := ui.Row(c.Key("btn-sidebar-toggle-bottom")).
 		Label(cat.SidebarCollapse()).
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		PaddingX(10).PaddingY(7).Radius(6).
+		PaddingX(10).PaddingY(8).Radius(8).
 		Background(ui.Transparent).
 		Tooltip(cat.SidebarCollapse() + " (⌘B)").
 		Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 				ui.Icon(c, iconSidebarCollapse).Size(15, 15).TextColor(p.textDim)
 				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted).NoWrap()
 			})
@@ -138,7 +149,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	if collapsed {
 		btn := ui.ButtonBase(c.Key(key)).
 			Label(label).
-			Size(44, 38).Radius(8).
+			Size(40, 40).Radius(8).
 			Background(bg).
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(fmt.Sprintf("%s (%s)", label, shortcut)).
@@ -158,10 +169,10 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 
 	btn := ui.Row(c.Key(key)).
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		PaddingX(10).PaddingY(8).Radius(6).
+		PaddingX(10).PaddingY(9).Radius(8).
 		Background(bg).
 		Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 				if icon != nil {
 					ui.Icon(c, icon).Size(16, 16).TextColor(fg)
 				}
@@ -193,7 +204,7 @@ func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette, collapsed bool) 
 		}
 
 		btn := ui.ButtonBase(c.Key("btn-core-status-collapsed")).
-			Size(44, 36).Radius(8).
+			Size(40, 40).Radius(8).
 			Background(p.surface).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(statusTip).
