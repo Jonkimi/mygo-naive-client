@@ -9,8 +9,22 @@ import (
 	"strings"
 )
 
+var (
+	ipv4Masks [33]net.IPMask
+	ipv6Masks [129]net.IPMask
+)
+
+func init() {
+	for i := 0; i <= 32; i++ {
+		ipv4Masks[i] = net.CIDRMask(i, 32)
+	}
+	for i := 0; i <= 128; i++ {
+		ipv6Masks[i] = net.CIDRMask(i, 128)
+	}
+}
+
 type GeoIPDB struct {
-	tags    map[string][]*net.IPNet
+	tags    map[string][]net.IPNet
 	allTags []string
 }
 
@@ -21,6 +35,59 @@ func (db *GeoIPDB) AllTags() []string {
 	return db.allTags
 }
 
+func (db *GeoIPDB) HasTag(tag string) bool {
+	if db == nil {
+		return false
+	}
+	_, ok := db.tags[strings.ToUpper(strings.TrimSpace(tag))]
+	return ok
+}
+
+func (db *GeoIPDB) MissingTags(requestedTags []string) []string {
+	var missing []string
+	seen := make(map[string]bool, len(requestedTags))
+	for _, t := range requestedTags {
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean == "" || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		if !db.HasTag(clean) {
+			missing = append(missing, clean)
+		}
+	}
+	return missing
+}
+
+func (db *GeoIPDB) WithTags(requestedTags []string, extra *GeoIPDB) *GeoIPDB {
+	out := &GeoIPDB{
+		tags: make(map[string][]net.IPNet, len(requestedTags)),
+	}
+	if db != nil && len(db.allTags) > 0 {
+		out.allTags = db.allTags
+	} else if extra != nil && len(extra.allTags) > 0 {
+		out.allTags = extra.allTags
+	}
+	for _, t := range requestedTags {
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean == "" {
+			continue
+		}
+		if extra != nil {
+			if nets, ok := extra.tags[clean]; ok {
+				out.tags[clean] = nets
+				continue
+			}
+		}
+		if db != nil {
+			if nets, ok := db.tags[clean]; ok {
+				out.tags[clean] = nets
+			}
+		}
+	}
+	return out
+}
+
 func (db *GeoIPDB) MatchIP(tag string, ip net.IP) bool {
 	if db == nil || ip == nil {
 		return false
@@ -29,8 +96,8 @@ func (db *GeoIPDB) MatchIP(tag string, ip net.IP) bool {
 	if !ok {
 		return false
 	}
-	for _, n := range nets {
-		if n.Contains(ip) {
+	for i := range nets {
+		if nets[i].Contains(ip) {
 			return true
 		}
 	}
@@ -61,6 +128,51 @@ func (db *GeoSiteDB) HasTag(tag string) bool {
 	}
 	_, ok := db.indices[strings.ToUpper(strings.TrimSpace(tag))]
 	return ok
+}
+
+func (db *GeoSiteDB) MissingTags(requestedTags []string) []string {
+	var missing []string
+	seen := make(map[string]bool, len(requestedTags))
+	for _, t := range requestedTags {
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean == "" || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		if !db.HasTag(clean) {
+			missing = append(missing, clean)
+		}
+	}
+	return missing
+}
+
+func (db *GeoSiteDB) WithTags(requestedTags []string, extra *GeoSiteDB) *GeoSiteDB {
+	out := &GeoSiteDB{
+		indices: make(map[string]*siteTagIndex, len(requestedTags)),
+	}
+	if db != nil && len(db.allTags) > 0 {
+		out.allTags = db.allTags
+	} else if extra != nil && len(extra.allTags) > 0 {
+		out.allTags = extra.allTags
+	}
+	for _, t := range requestedTags {
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean == "" {
+			continue
+		}
+		if extra != nil {
+			if idx, ok := extra.indices[clean]; ok {
+				out.indices[clean] = idx
+				continue
+			}
+		}
+		if db != nil {
+			if idx, ok := db.indices[clean]; ok {
+				out.indices[clean] = idx
+			}
+		}
+	}
+	return out
 }
 
 func (db *GeoSiteDB) TagRuleCount(tag string) int {
@@ -233,18 +345,16 @@ func skipStreamField(br *bufio.Reader, wireType int) error {
 	}
 }
 
-// streamTopLevelEntries streams length-delimited field 1 entries from r using a single reusable scratch buffer,
-// avoiding multi-megabyte io.ReadAll allocations.
-func streamTopLevelEntries(r io.Reader, fn func(entryBytes []byte)) error {
+// streamFilteredEntries streams top-level field 1 entries from r, reading only the leading tag name first
+// and discarding unrequested entries directly from the stream without allocating multi-megabyte buffers.
+func streamFilteredEntries(r io.Reader, tagFilter map[string]bool, fn func(countryCode string, payload []byte)) error {
 	br := bufio.NewReaderSize(r, 32*1024)
 	var scratch []byte
+	var codeBuf [256]byte
 
 	for {
 		header, err := binary.ReadUvarint(br)
 		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
 			return nil
 		}
 		fieldNum := int(header >> 3)
@@ -261,20 +371,136 @@ func streamTopLevelEntries(r io.Reader, fn func(entryBytes []byte)) error {
 		if err != nil {
 			return io.ErrUnexpectedEOF
 		}
-		length := int(lenVal)
-		if length < 0 {
+		entryLen := int(lenVal)
+		if entryLen <= 0 {
+			continue
+		}
+
+		// Peek at the first byte of the entry: in GeoIP/GeoSite protobuf, field 1 (country_code, wireType 2) has tag 0x0a.
+		firstByte, err := br.ReadByte()
+		if err != nil {
 			return io.ErrUnexpectedEOF
 		}
-		if cap(scratch) < length {
-			scratch = make([]byte, length)
+		remaining := entryLen - 1
+
+		if firstByte == 0x0a && remaining > 0 {
+			codeLen, nVarint, err := readStreamUvarint(br, remaining)
+			if err != nil {
+				return err
+			}
+			remaining -= nVarint
+			if codeLen >= 0 && codeLen <= len(codeBuf) && codeLen <= remaining {
+				if _, err := io.ReadFull(br, codeBuf[:codeLen]); err != nil {
+					return io.ErrUnexpectedEOF
+				}
+				remaining -= codeLen
+				countryCode := cleanUpperASCII(codeBuf[:codeLen])
+				if len(tagFilter) > 0 && !tagFilter[countryCode] {
+					if remaining > 0 {
+						if _, err := io.CopyN(io.Discard, br, int64(remaining)); err != nil {
+							return io.ErrUnexpectedEOF
+						}
+					}
+					continue
+				}
+				if cap(scratch) < remaining {
+					scratch = make([]byte, remaining)
+				} else {
+					scratch = scratch[:remaining]
+				}
+				if remaining > 0 {
+					if _, err := io.ReadFull(br, scratch); err != nil {
+						return io.ErrUnexpectedEOF
+					}
+				}
+				fn(countryCode, scratch)
+				continue
+			}
+			// Fallback if codeLen exceeds codeBuf: unread is not possible after ReadUvarint, so reconstruct into scratch
+			if cap(scratch) < entryLen {
+				scratch = make([]byte, entryLen)
+			} else {
+				scratch = scratch[:entryLen]
+			}
+			scratch[0] = firstByte
+			n := binary.PutUvarint(scratch[1:], uint64(codeLen))
+			if _, err := io.ReadFull(br, scratch[1+n:]); err != nil {
+				return io.ErrUnexpectedEOF
+			}
+			fn("", scratch)
+			continue
+		}
+
+		// Fallback when field 1 is not the very first field in the entry
+		if cap(scratch) < entryLen {
+			scratch = make([]byte, entryLen)
 		} else {
-			scratch = scratch[:length]
+			scratch = scratch[:entryLen]
 		}
-		if _, err := io.ReadFull(br, scratch); err != nil {
-			return io.ErrUnexpectedEOF
+		scratch[0] = firstByte
+		if remaining > 0 {
+			if _, err := io.ReadFull(br, scratch[1:]); err != nil {
+				return io.ErrUnexpectedEOF
+			}
 		}
-		fn(scratch)
+		fn("", scratch)
 	}
+}
+
+func readStreamUvarint(br *bufio.Reader, maxBytes int) (int, int, error) {
+	var x uint64
+	var s uint
+	for i := 0; i < maxBytes && i < binary.MaxVarintLen64; i++ {
+		b, err := br.ReadByte()
+		if err != nil {
+			return 0, i, io.ErrUnexpectedEOF
+		}
+		if b < 0x80 {
+			if i == binary.MaxVarintLen64-1 && b > 1 {
+				return 0, i + 1, errors.New("varint overflow")
+			}
+			return int(x | uint64(b)<<s), i + 1, nil
+		}
+		x |= uint64(b&0x7f) << s
+		s += 7
+	}
+	return 0, 0, errors.New("invalid varint")
+}
+
+func cleanUpperASCII(b []byte) string {
+	start := 0
+	for start < len(b) && (b[start] == ' ' || b[start] == '\t' || b[start] == '\n' || b[start] == '\r') {
+		start++
+	}
+	end := len(b)
+	for end > start && (b[end-1] == ' ' || b[end-1] == '\t' || b[end-1] == '\n' || b[end-1] == '\r') {
+		end--
+	}
+	b = b[start:end]
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+func trimLowerASCIIBytes(b []byte) []byte {
+	start := 0
+	for start < len(b) && (b[start] == ' ' || b[start] == '\t' || b[start] == '\n' || b[start] == '\r') {
+		start++
+	}
+	end := len(b)
+	for end > start && (b[end-1] == ' ' || b[end-1] == '\t' || b[end-1] == '\n' || b[end-1] == '\r') {
+		end--
+	}
+	b = b[start:end]
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return b
 }
 
 // LoadGeoIP loads and unmarshals only the requested tags from a Loyalsoldier geoip.dat protobuf stream.
@@ -287,14 +513,13 @@ func LoadGeoIP(r io.Reader, requestedTags []string) (*GeoIPDB, error) {
 		}
 	}
 
-	db := &GeoIPDB{tags: make(map[string][]*net.IPNet)}
+	db := &GeoIPDB{tags: make(map[string][]net.IPNet, len(tagFilter))}
 	if len(tagFilter) == 0 {
 		return db, nil
 	}
-	seenTags := make(map[string]bool)
 
-	err := streamTopLevelEntries(r, func(entryBytes []byte) {
-		parseGeoIPEntry(entryBytes, tagFilter, seenTags, db)
+	err := streamFilteredEntries(r, tagFilter, func(countryCode string, payload []byte) {
+		parseGeoIPEntry(countryCode, payload, tagFilter, db)
 	})
 	if err != nil {
 		return nil, err
@@ -303,10 +528,33 @@ func LoadGeoIP(r io.Reader, requestedTags []string) (*GeoIPDB, error) {
 	return db, nil
 }
 
-func parseGeoIPEntry(b []byte, filter map[string]bool, seenTags map[string]bool, db *GeoIPDB) {
-	var countryCode string
-	var cidrs []*net.IPNet
+func measureCIDRIPBytes(b []byte) int {
+	offset := 0
+	for offset < len(b) {
+		header, err := readVarint(b, &offset)
+		if err != nil {
+			break
+		}
+		fieldNum := int(header >> 3)
+		wireType := int(header & 0x07)
+		if fieldNum == 1 && wireType == 2 {
+			ipBytes, err := readBytes(b, &offset)
+			if err != nil {
+				return 0
+			}
+			return len(ipBytes)
+		}
+		if err := skipField(b, wireType, &offset); err != nil {
+			return 0
+		}
+	}
+	return 0
+}
 
+func parseGeoIPEntry(countryCode string, b []byte, filter map[string]bool, db *GeoIPDB) {
+	// Pass 1: resolve countryCode (if not already extracted) and count CIDRs + IP bytes for single-slab allocation
+	cidrCount := 0
+	totalIPBytes := 0
 	offset := 0
 	for offset < len(b) {
 		header, err := readVarint(b, &offset)
@@ -317,27 +565,60 @@ func parseGeoIPEntry(b []byte, filter map[string]bool, seenTags map[string]bool,
 		wireType := int(header & 0x07)
 
 		switch fieldNum {
-		case 1: // country_code string
+		case 1:
 			codeBytes, err := readBytes(b, &offset)
 			if err != nil {
 				return
 			}
-			rawTag := strings.TrimSpace(string(codeBytes))
-			lowerTag := strings.ToLower(rawTag)
-			if lowerTag != "" && !seenTags[lowerTag] {
-				seenTags[lowerTag] = true
-				db.allTags = append(db.allTags, lowerTag)
-			}
-			countryCode = strings.ToUpper(rawTag)
+			countryCode = cleanUpperASCII(codeBytes)
 			if len(filter) > 0 && !filter[countryCode] {
-				return // Skip parsing the rest of this unrequested entry
+				return
 			}
-		case 2: // cidr message
+		case 2:
 			cidrBytes, err := readBytes(b, &offset)
 			if err != nil {
 				return
 			}
-			if ipNet := parseCIDRMessage(cidrBytes); ipNet != nil {
+			if ipLen := measureCIDRIPBytes(cidrBytes); ipLen > 0 {
+				cidrCount++
+				totalIPBytes += ipLen
+			}
+		default:
+			if err := skipField(b, wireType, &offset); err != nil {
+				return
+			}
+		}
+	}
+
+	if countryCode == "" || (len(filter) > 0 && !filter[countryCode]) || cidrCount == 0 {
+		return
+	}
+
+	cidrs := make([]net.IPNet, 0, cidrCount)
+	ipArena := make([]byte, 0, totalIPBytes)
+
+	// Pass 2: populate cidrs using the preallocated ipArena and static masks
+	offset = 0
+	for offset < len(b) {
+		header, err := readVarint(b, &offset)
+		if err != nil {
+			break
+		}
+		fieldNum := int(header >> 3)
+		wireType := int(header & 0x07)
+
+		switch fieldNum {
+		case 1:
+			_, _ = readBytes(b, &offset)
+		case 2:
+			cidrBytes, err := readBytes(b, &offset)
+			if err != nil {
+				return
+			}
+			var ok bool
+			var ipNet net.IPNet
+			ipNet, ipArena, ok = parseCIDRMessageInto(cidrBytes, ipArena)
+			if ok {
 				cidrs = append(cidrs, ipNet)
 			}
 		default:
@@ -347,13 +628,13 @@ func parseGeoIPEntry(b []byte, filter map[string]bool, seenTags map[string]bool,
 		}
 	}
 
-	if countryCode != "" && len(cidrs) > 0 {
+	if len(cidrs) > 0 {
 		db.tags[countryCode] = append(db.tags[countryCode], cidrs...)
 	}
 }
 
-func parseCIDRMessage(b []byte) *net.IPNet {
-	var ip net.IP
+func parseCIDRMessageInto(b []byte, ipArena []byte) (net.IPNet, []byte, bool) {
+	var rawIP []byte
 	prefix := 32
 
 	offset := 0
@@ -369,62 +650,110 @@ func parseCIDRMessage(b []byte) *net.IPNet {
 		case 1: // ip bytes
 			ipBytes, err := readBytes(b, &offset)
 			if err != nil {
-				return nil
+				return net.IPNet{}, ipArena, false
 			}
-			ip = append(net.IP(nil), ipBytes...)
+			rawIP = ipBytes
 		case 2: // prefix uint32
 			p, err := readVarint(b, &offset)
 			if err != nil {
-				return nil
+				return net.IPNet{}, ipArena, false
 			}
 			prefix = int(p)
 		default:
 			if err := skipField(b, wireType, &offset); err != nil {
-				return nil
+				return net.IPNet{}, ipArena, false
 			}
 		}
 	}
 
-	if ip == nil {
-		return nil
+	if len(rawIP) == 0 {
+		return net.IPNet{}, ipArena, false
 	}
+	start := len(ipArena)
+	ipArena = append(ipArena, rawIP...)
+	ip := net.IP(ipArena[start : start+len(rawIP)])
+
 	var mask net.IPMask
 	if ip.To4() != nil {
-		mask = net.CIDRMask(prefix, 32)
+		if prefix < 0 {
+			prefix = 0
+		} else if prefix > 32 {
+			prefix = 32
+		}
+		mask = ipv4Masks[prefix]
 	} else {
-		mask = net.CIDRMask(prefix, 128)
+		if prefix < 0 {
+			prefix = 0
+		} else if prefix > 128 {
+			prefix = 128
+		}
+		mask = ipv6Masks[prefix]
 	}
-	return &net.IPNet{IP: ip, Mask: mask}
+	return net.IPNet{IP: ip, Mask: mask}, ipArena, true
 }
 
 // ListGeoTags scans a Loyalsoldier geoip.dat or geosite.dat protobuf stream and extracts
 // all tag and category names without parsing payload CIDRs or domain lists.
 func ListGeoTags(r io.Reader) ([]string, error) {
+	br := bufio.NewReaderSize(r, 32*1024)
 	var tags []string
 	seen := make(map[string]bool)
+	var codeBuf [256]byte
 
-	err := streamTopLevelEntries(r, func(entryBytes []byte) {
-		// Field 1 of entryBytes is string country_code (the tag/category name)
-		tagOffset := 0
-		if tagOffset < len(entryBytes) {
-			tagHeader, err := readVarint(entryBytes, &tagOffset)
-			if err == nil && (tagHeader>>3) == 1 && (tagHeader&0x07) == 2 {
-				tagBytes, err := readBytes(entryBytes, &tagOffset)
-				if err == nil {
-					tag := strings.ToLower(strings.TrimSpace(string(tagBytes)))
-					if tag != "" && !seen[tag] {
-						seen[tag] = true
-						tags = append(tags, tag)
-					}
+	for {
+		header, err := binary.ReadUvarint(br)
+		if err != nil {
+			return tags, nil
+		}
+		fieldNum := int(header >> 3)
+		wireType := int(header & 0x07)
+
+		if fieldNum != 1 || wireType != 2 {
+			if err := skipStreamField(br, wireType); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		lenVal, err := binary.ReadUvarint(br)
+		if err != nil {
+			return nil, io.ErrUnexpectedEOF
+		}
+		entryLen := int(lenVal)
+		if entryLen <= 0 {
+			continue
+		}
+
+		firstByte, err := br.ReadByte()
+		if err != nil {
+			return nil, io.ErrUnexpectedEOF
+		}
+		remaining := entryLen - 1
+
+		if firstByte == 0x0a && remaining > 0 {
+			codeLen, nVarint, err := readStreamUvarint(br, remaining)
+			if err != nil {
+				return nil, err
+			}
+			remaining -= nVarint
+			if codeLen >= 0 && codeLen <= len(codeBuf) && codeLen <= remaining {
+				if _, err := io.ReadFull(br, codeBuf[:codeLen]); err != nil {
+					return nil, io.ErrUnexpectedEOF
+				}
+				remaining -= codeLen
+				tag := string(trimLowerASCIIBytes(codeBuf[:codeLen]))
+				if tag != "" && !seen[tag] {
+					seen[tag] = true
+					tags = append(tags, tag)
 				}
 			}
 		}
-	})
-	if err != nil {
-		return nil, err
+		if remaining > 0 {
+			if _, err := io.CopyN(io.Discard, br, int64(remaining)); err != nil {
+				return nil, io.ErrUnexpectedEOF
+			}
+		}
 	}
-
-	return tags, nil
 }
 
 func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
@@ -437,15 +766,14 @@ func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
 	}
 
 	db := &GeoSiteDB{
-		indices: make(map[string]*siteTagIndex),
+		indices: make(map[string]*siteTagIndex, len(tagFilter)),
 	}
 	if len(tagFilter) == 0 {
 		return db, nil
 	}
-	seenTags := make(map[string]bool)
 
-	err := streamTopLevelEntries(r, func(entryBytes []byte) {
-		parseGeoSiteEntry(entryBytes, tagFilter, seenTags, db)
+	err := streamFilteredEntries(r, tagFilter, func(countryCode string, payload []byte) {
+		parseGeoSiteEntry(countryCode, payload, tagFilter, db)
 	})
 	if err != nil {
 		return nil, err
@@ -454,10 +782,8 @@ func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
 	return db, nil
 }
 
-func parseGeoSiteEntry(b []byte, filter map[string]bool, seenTags map[string]bool, db *GeoSiteDB) {
-	var countryCode string
-	var idx *siteTagIndex
-
+func inspectDomainMessage(b []byte) (typ int, val []byte) {
+	typ = 2 // default domain suffix
 	offset := 0
 	for offset < len(b) {
 		header, err := readVarint(b, &offset)
@@ -468,41 +794,66 @@ func parseGeoSiteEntry(b []byte, filter map[string]bool, seenTags map[string]boo
 		wireType := int(header & 0x07)
 
 		switch fieldNum {
-		case 1: // country_code string
+		case 1:
+			t, err := readVarint(b, &offset)
+			if err != nil {
+				return typ, nil
+			}
+			typ = int(t)
+		case 2:
+			valBytes, err := readBytes(b, &offset)
+			if err != nil {
+				return typ, nil
+			}
+			val = trimLowerASCIIBytes(valBytes)
+		default:
+			if err := skipField(b, wireType, &offset); err != nil {
+				return typ, nil
+			}
+		}
+	}
+	return typ, val
+}
+
+func parseGeoSiteEntry(countryCode string, b []byte, filter map[string]bool, db *GeoSiteDB) {
+	// Pass 1: count domain types and total string bytes for single-slab string arena + exact-sized maps
+	var exactCount, suffixCount, kwCount, totalStrBytes int
+	offset := 0
+	for offset < len(b) {
+		header, err := readVarint(b, &offset)
+		if err != nil {
+			break
+		}
+		fieldNum := int(header >> 3)
+		wireType := int(header & 0x07)
+
+		switch fieldNum {
+		case 1:
 			codeBytes, err := readBytes(b, &offset)
 			if err != nil {
 				return
 			}
-			rawTag := strings.TrimSpace(string(codeBytes))
-			lowerTag := strings.ToLower(rawTag)
-			if lowerTag != "" && !seenTags[lowerTag] {
-				seenTags[lowerTag] = true
-				db.allTags = append(db.allTags, lowerTag)
-			}
-			countryCode = strings.ToUpper(rawTag)
+			countryCode = cleanUpperASCII(codeBytes)
 			if len(filter) > 0 && !filter[countryCode] {
-				return // Skip parsing the rest of this unrequested entry
+				return
 			}
-			idx = db.indices[countryCode]
-			if idx == nil {
-				idx = &siteTagIndex{
-					exact:  make(map[string]struct{}),
-					suffix: make(map[string]struct{}),
-				}
-				db.indices[countryCode] = idx
-			}
-		case 2: // domain message
+		case 2:
 			domBytes, err := readBytes(b, &offset)
 			if err != nil {
 				return
 			}
-			if idx == nil {
-				idx = &siteTagIndex{
-					exact:  make(map[string]struct{}),
-					suffix: make(map[string]struct{}),
+			typ, val := inspectDomainMessage(domBytes)
+			if len(val) > 0 {
+				totalStrBytes += len(val)
+				switch typ {
+				case 3:
+					exactCount++
+				case 0:
+					kwCount++
+				default:
+					suffixCount++
 				}
 			}
-			parseDomainMessageInto(domBytes, idx)
 		default:
 			if err := skipField(b, wireType, &offset); err != nil {
 				return
@@ -510,18 +861,14 @@ func parseGeoSiteEntry(b []byte, filter map[string]bool, seenTags map[string]boo
 		}
 	}
 
-	if countryCode != "" && idx != nil && (len(idx.exact) > 0 || len(idx.suffix) > 0 || len(idx.keywords) > 0) {
-		db.indices[countryCode] = idx
-	} else if countryCode != "" {
-		delete(db.indices, countryCode)
+	if countryCode == "" || (len(filter) > 0 && !filter[countryCode]) || (exactCount+suffixCount+kwCount) == 0 {
+		return
 	}
-}
 
-func parseDomainMessageInto(b []byte, idx *siteTagIndex) {
-	typ := 2 // default domain suffix
-	var val string
-
-	offset := 0
+	// Build a single contiguous string backing slab for all domains in this tag
+	var sb strings.Builder
+	sb.Grow(totalStrBytes)
+	offset = 0
 	for offset < len(b) {
 		header, err := readVarint(b, &offset)
 		if err != nil {
@@ -529,36 +876,66 @@ func parseDomainMessageInto(b []byte, idx *siteTagIndex) {
 		}
 		fieldNum := int(header >> 3)
 		wireType := int(header & 0x07)
-
-		switch fieldNum {
-		case 1: // type enum
-			t, err := readVarint(b, &offset)
+		if fieldNum == 2 && wireType == 2 {
+			domBytes, err := readBytes(b, &offset)
 			if err != nil {
 				return
 			}
-			typ = int(t)
-		case 2: // value string
-			valBytes, err := readBytes(b, &offset)
-			if err != nil {
-				return
+			_, val := inspectDomainMessage(domBytes)
+			if len(val) > 0 {
+				_, _ = sb.Write(val)
 			}
-			val = strings.ToLower(strings.TrimSpace(string(valBytes)))
-		default:
+		} else {
 			if err := skipField(b, wireType, &offset); err != nil {
 				return
 			}
 		}
 	}
+	bigStr := sb.String()
 
-	if val == "" {
-		return
+	idx := db.indices[countryCode]
+	if idx == nil {
+		idx = &siteTagIndex{
+			exact:    make(map[string]struct{}, exactCount),
+			suffix:   make(map[string]struct{}, suffixCount),
+			keywords: make([]string, 0, kwCount),
+		}
 	}
-	switch typ {
-	case 3:
-		idx.exact[val] = struct{}{}
-	case 0:
-		idx.keywords = append(idx.keywords, val)
-	default:
-		idx.suffix[val] = struct{}{}
+
+	// Pass 2: slice substrings out of bigStr into pre-sized maps (0 small-object heap allocations, 0 map hashGrow)
+	strPos := 0
+	offset = 0
+	for offset < len(b) {
+		header, err := readVarint(b, &offset)
+		if err != nil {
+			break
+		}
+		fieldNum := int(header >> 3)
+		wireType := int(header & 0x07)
+		if fieldNum == 2 && wireType == 2 {
+			domBytes, err := readBytes(b, &offset)
+			if err != nil {
+				break
+			}
+			typ, val := inspectDomainMessage(domBytes)
+			if len(val) > 0 {
+				dom := bigStr[strPos : strPos+len(val)]
+				strPos += len(val)
+				switch typ {
+				case 3:
+					idx.exact[dom] = struct{}{}
+				case 0:
+					idx.keywords = append(idx.keywords, dom)
+				default:
+					idx.suffix[dom] = struct{}{}
+				}
+			}
+		} else {
+			if err := skipField(b, wireType, &offset); err != nil {
+				break
+			}
+		}
 	}
+
+	db.indices[countryCode] = idx
 }

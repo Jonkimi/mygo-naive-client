@@ -950,15 +950,25 @@ func (a *app) geodataDir() string {
 }
 
 func sameTagSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
 	ma := make(map[string]bool, len(a))
 	for _, t := range a {
-		ma[strings.ToUpper(strings.TrimSpace(t))] = true
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean != "" {
+			ma[clean] = true
+		}
 	}
+	mb := make(map[string]bool, len(b))
 	for _, t := range b {
-		if !ma[strings.ToUpper(strings.TrimSpace(t))] {
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean != "" {
+			mb[clean] = true
+		}
+	}
+	if len(ma) != len(mb) {
+		return false
+	}
+	for k := range ma {
+		if !mb[k] {
 			return false
 		}
 	}
@@ -1003,9 +1013,15 @@ func isCategoryAdsBlockRule(r routing.Rule) bool {
 	if r.ID == "preset-block-ads" {
 		return true
 	}
-	return r.Action.Type == routing.ActionBlock &&
-		len(r.GeoSite) == 1 &&
-		strings.EqualFold(strings.TrimSpace(r.GeoSite[0]), "category-ads-all")
+	if r.Action.Type != routing.ActionBlock {
+		return false
+	}
+	for _, tag := range r.GeoSite {
+		if strings.EqualFold(strings.TrimSpace(tag), "category-ads-all") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *app) releaseUnusedMemory() {
@@ -1048,10 +1064,15 @@ func (a *app) loadGeoDataIfPresent() {
 	if len(reqIPTags) > 0 {
 		ipDB = a.cachedIPDB
 		if ipDB == nil || !sameTagSet(reqIPTags, a.cachedIPTags) {
-			if f, err := os.Open(ipPath); err == nil {
-				if loaded, err := geodata.LoadGeoIP(f, reqIPTags); err == nil {
-					ipDB = loaded
-					a.cachedIPDB = loaded
+			missingIP := ipDB.MissingTags(reqIPTags)
+			if len(missingIP) == 0 && ipDB != nil {
+				ipDB = ipDB.WithTags(reqIPTags, nil)
+				a.cachedIPDB = ipDB
+				a.cachedIPTags = append([]string(nil), reqIPTags...)
+			} else if f, err := os.Open(ipPath); err == nil {
+				if loaded, err := geodata.LoadGeoIP(f, missingIP); err == nil {
+					ipDB = ipDB.WithTags(reqIPTags, loaded)
+					a.cachedIPDB = ipDB
 					a.cachedIPTags = append([]string(nil), reqIPTags...)
 				}
 				_ = f.Close()
@@ -1066,10 +1087,15 @@ func (a *app) loadGeoDataIfPresent() {
 	if len(reqSiteTags) > 0 {
 		siteDB = a.cachedSiteDB
 		if siteDB == nil || !sameTagSet(reqSiteTags, a.cachedSiteTags) {
-			if f, err := os.Open(sitePath); err == nil {
-				if loaded, err := geodata.LoadGeoSite(f, reqSiteTags); err == nil {
-					siteDB = loaded
-					a.cachedSiteDB = loaded
+			missingSite := siteDB.MissingTags(reqSiteTags)
+			if len(missingSite) == 0 && siteDB != nil {
+				siteDB = siteDB.WithTags(reqSiteTags, nil)
+				a.cachedSiteDB = siteDB
+				a.cachedSiteTags = append([]string(nil), reqSiteTags...)
+			} else if f, err := os.Open(sitePath); err == nil {
+				if loaded, err := geodata.LoadGeoSite(f, missingSite); err == nil {
+					siteDB = siteDB.WithTags(reqSiteTags, loaded)
+					a.cachedSiteDB = siteDB
 					a.cachedSiteTags = append([]string(nil), reqSiteTags...)
 				}
 				_ = f.Close()
@@ -1082,7 +1108,7 @@ func (a *app) loadGeoDataIfPresent() {
 
 	a.router.SetGeoData(ipDB, siteDB)
 	a.syncBlockerRules()
-	if (prevIPDB != nil && prevIPDB != a.cachedIPDB) || (prevSiteDB != nil && prevSiteDB != a.cachedSiteDB) {
+	if prevIPDB != a.cachedIPDB || prevSiteDB != a.cachedSiteDB {
 		a.releaseUnusedMemory()
 	}
 }
