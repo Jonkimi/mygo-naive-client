@@ -63,7 +63,7 @@ func defaultPersistedState() PersistedState {
 		Appearance:              appearanceSystem,
 		AppIcon:                 appIconBoth,
 		GatewayEnabled:          true,
-		GatewayPort:             10808,
+		GatewayPort:             10809,
 		TrafficMode:             "port",
 		RoutingRules:            routing.DefaultPresets(),
 		RoutingFinal:            routing.RouteAction{Type: routing.ActionProxyPool},
@@ -112,13 +112,79 @@ func (a *app) loadState() {
 		st.Appearance = appearanceSystem
 	}
 	if st.GatewayPort <= 0 {
-		st.GatewayPort = 10808
+		st.GatewayPort = 10809
 	}
 	if st.TrafficMode == "" {
 		st.TrafficMode = "port"
 	}
 	if len(st.RoutingRules) == 0 {
 		st.RoutingRules = routing.DefaultPresets()
+	} else {
+		var cleanedRules []routing.Rule
+		hasLanDirect := false
+		for i := range st.RoutingRules {
+			r := st.RoutingRules[i]
+			if r.ID == "preset-telegram" {
+				r.ID = "preset-gfw"
+				r.Name = "GFW 专线"
+				r.Description = "加速受 GFW 阻断的境外网站与服务"
+				r.GeoSite = []string{"gfw"}
+				r.Action = routing.RouteAction{Type: routing.ActionProxyTag, Tag: "GFW", Tags: []string{"GFW"}}
+			}
+			if r.ID == "preset-cn-direct" {
+				// Merged into preset-lan-direct ("绕过大陆及局域网")
+				continue
+			}
+			if r.ID == "preset-lan-direct" {
+				hasLanDirect = true
+				r.Name = "绕过大陆及局域网"
+				r.Description = "中国大陆网站与局域网私有网段直连，不走代理"
+				r.GeoSite = []string{"cn"}
+				r.GeoIP = []string{"cn", "private"}
+				if len(r.IPCidr) == 0 {
+					r.IPCidr = []string{
+						"127.0.0.0/8",
+						"10.0.0.0/8",
+						"172.16.0.0/12",
+						"192.168.0.0/16",
+						"169.254.0.0/16",
+						"::1/128",
+						"fc00::/7",
+						"fe80::/10",
+					}
+				}
+				if len(r.DomainSuffix) == 0 {
+					r.DomainSuffix = []string{
+						"local",
+						"localhost",
+						"internal",
+						"lan",
+					}
+				}
+			}
+			switch r.ID {
+			case "preset-block-ads":
+				r.Name = "广告拦截"
+				r.DomainSuffix = nil
+				r.IPCidr = nil
+			case "preset-ai-services":
+				r.Name = "AI 服务"
+				r.DomainSuffix = nil
+				r.IPCidr = nil
+			case "preset-streaming":
+				r.Name = "流媒体服务"
+				r.DomainSuffix = nil
+				r.IPCidr = nil
+			case "preset-gfw":
+				r.DomainSuffix = nil
+				r.IPCidr = nil
+			}
+			cleanedRules = append(cleanedRules, r)
+		}
+		if !hasLanDirect {
+			cleanedRules = append(cleanedRules, routing.DefaultPresets()[4])
+		}
+		st.RoutingRules = cleanedRules
 	}
 	if st.RoutingFinal.Type == "" {
 		st.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}

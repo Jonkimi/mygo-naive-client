@@ -978,9 +978,12 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 	}
 	a, tt, _ := newTestApp(t, svcs)
 
-	// 1. Top bar reflects the service's actual port (:1080) instead of a hardcoded :10808
-	if !tt.HasText("仅端口 :1080") {
-		t.Fatalf("expected top bar to reflect actual port '仅端口 :1080', got texts: %v", tt.Texts())
+	// 1. Top bar reflects gateway endpoint and traffic mode pill
+	if !tt.HasText("网关 127.0.0.1:10809") {
+		t.Fatalf("expected top bar to reflect '网关 127.0.0.1:10809', got texts: %v", tt.Texts())
+	}
+	if !tt.HasText("仅端口") {
+		t.Fatalf("expected top bar to reflect mode '仅端口', got texts: %v", tt.Texts())
 	}
 
 	// 2. Single-service toolbar omits redundant '全部启动'/'全部停止' buttons
@@ -993,7 +996,11 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 		t.Fatalf("expected compact remote endpoint 'https://codex.sfchenlab.com:443' on card, got: %v", tt.Texts())
 	}
 
-	// 4. Clicking an upcoming mode pill (TUN) shows a feedback toast
+	// 4. Opening mode dropdown and clicking upcoming mode (TUN) shows a feedback toast
+	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
+		t.Fatalf("open mode dropdown: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click(a.catalog().ModeTun()); err != nil {
 		t.Fatalf("click ModeTun: %v", err)
 	}
@@ -1067,7 +1074,11 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 		t.Fatalf("expected initial traffic mode 'port', got %q", a.state.TrafficMode)
 	}
 
-	// Click "系统代理" mode pill
+	// Open mode dropdown and choose "系统代理"
+	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
+		t.Fatalf("open mode dropdown: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click(a.catalog().ModeSysProxy()); err != nil {
 		t.Fatalf("click ModeSysProxy: %v", err)
 	}
@@ -1080,10 +1091,13 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 		t.Fatalf("expected sysproxy active after clicking ModeSysProxy")
 	}
 
-	// Click port mode pill to switch back
-	portLabel := a.primaryGatewayPortLabel()
-	if err := tt.Click(portLabel); err != nil {
-		t.Fatalf("click port label %q: %v", portLabel, err)
+	// Open dropdown to switch back to "仅端口"
+	if err := tt.Click(a.catalog().ModeSysProxy()); err != nil {
+		t.Fatalf("open mode dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
+		t.Fatalf("click ModePortOnly: %v", err)
 	}
 	tt.Frame()
 
@@ -1304,6 +1318,16 @@ func TestGateway_RoutingRulesDispatching(t *testing.T) {
 	gwPort := freeLocalPort(t)
 	a.state.GatewayPort = gwPort
 	a.state.GatewayEnabled = true
+	// Give rules test domain suffixes since preset rules no longer include hardcoded domains
+	for i := range a.state.RoutingRules {
+		switch a.state.RoutingRules[i].ID {
+		case "preset-ai-services":
+			a.state.RoutingRules[i].DomainSuffix = []string{"chatgpt.com"}
+		case "preset-block-ads":
+			a.state.RoutingRules[i].DomainSuffix = []string{"doubleclick.net"}
+		}
+	}
+	a.syncRouter()
 	_ = a.mgr.Start(svcA)
 	_ = a.mgr.Start(svcB)
 
@@ -1380,8 +1404,8 @@ func TestRoutingWorkbench_NavigationAndToggle(t *testing.T) {
 	if !tt.HasText(a.catalog().RoutingTitle()) {
 		t.Fatalf("expected routing title %q, got: %v", a.catalog().RoutingTitle(), tt.Texts())
 	}
-	if !tt.HasText("广告拦截 (Ad Blocker)") {
-		t.Fatalf("expected preset rule '广告拦截 (Ad Blocker)' on page, got: %v", tt.Texts())
+	if !tt.HasText("广告拦截") {
+		t.Fatalf("expected preset rule '广告拦截' on page, got: %v", tt.Texts())
 	}
 
 	// 4. Verify initial rule enabled state
@@ -1525,6 +1549,13 @@ func TestGateway_OnDemandTagPoolAutoStart(t *testing.T) {
 	gwPort := freeLocalPort(t)
 	a.state.GatewayPort = gwPort
 	a.state.GatewayEnabled = true
+	// Give AI preset rule a test domain suffix since presets no longer include hardcoded domains
+	for i := range a.state.RoutingRules {
+		if a.state.RoutingRules[i].ID == "preset-ai-services" {
+			a.state.RoutingRules[i].DomainSuffix = []string{"chatgpt.com"}
+		}
+	}
+	a.syncRouter()
 	// Notice: svcA is NOT started!
 	if a.mgr.StatusOf("dormant-ai-node").State == runner.StateRunning {
 		t.Fatalf("dormant node should not be running initially")
@@ -1593,8 +1624,8 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	if !tt.HasText(a.catalog().RoutingGeodataBanner()) {
 		t.Fatalf("expected RoutingGeodataBanner when database missing")
 	}
-	if !tt.HasText("geosite:category-ads-all (待规则库)") {
-		t.Fatalf("expected '待规则库' warning tag for presets without geodata, got texts: %v", tt.Texts())
+	if !tt.HasText(a.catalog().RulePendingGeoData()) {
+		t.Fatalf("expected RulePendingGeoData warning status badge on card when geodata missing")
 	}
 
 	// Create a rule with GeoSite and GeoIP using quick-pick suggestions
@@ -1675,7 +1706,490 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	if len(createdRule.GeoIP) != 1 || createdRule.GeoIP[0] != "cn" {
 		t.Fatalf("expected geoip:cn in created rule, got %v", createdRule.GeoIP)
 	}
+	// Verify in drawer that geosite:cn and geoip:cn are displayed
+	a.activeRuleDrawerID = createdRule.ID
+	tt.Frame()
 	if !tt.HasText("geosite:cn") || !tt.HasText("geoip:cn") {
-		t.Fatalf("expected geosite:cn and geoip:cn pills on the workbench")
+		t.Fatalf("expected geosite:cn and geoip:cn pills in the detail drawer")
+	}
+}
+
+// Tests that filterSuggestedTags performs two-sided fuzzy matching (substring/contains)
+// and prefix matching priority, without returning unrelated tags when query is non-empty.
+func TestRouting_FilterSuggestedTags(t *testing.T) {
+	allTags := []string{"category-ai-!cn", "openai", "apple", "google", "cn", "ai-chat"}
+	current := []string{"openai"}
+
+	// When query is "ai", should return "ai-chat" (prefix), "category-ai-!cn" (contains).
+	// "openai" is already in current, so it must be excluded.
+	// "apple", "google", "cn" do not contain "ai", so they must NOT be returned.
+	matches := filterSuggestedTags(allTags, current, "ai", 10)
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches for 'ai', got %v", matches)
+	}
+	if matches[0] != "ai-chat" || matches[1] != "category-ai-!cn" {
+		t.Fatalf("expected ['ai-chat', 'category-ai-!cn'], got %v", matches)
+	}
+
+	// Two-sided fuzzy: substring in the middle
+	matchesLe := filterSuggestedTags(allTags, nil, "ppl", 10)
+	if len(matchesLe) != 1 || matchesLe[0] != "apple" {
+		t.Fatalf("expected ['apple'] for query 'ppl', got %v", matchesLe)
+	}
+
+	// Empty query returns top suggestions excluding current
+	emptyMatches := filterSuggestedTags(allTags, current, "", 3)
+	if len(emptyMatches) != 3 {
+		t.Fatalf("expected 3 suggestions for empty query, got %v", emptyMatches)
+	}
+	for _, m := range emptyMatches {
+		if m == "openai" {
+			t.Fatalf("expected 'openai' to be excluded from empty query suggestions")
+		}
+	}
+}
+
+// Tests that Outbound Action Target Tags supports multi-chips and matches nodes with any of the tags.
+func TestRouting_TargetTagsMultiChips(t *testing.T) {
+	svcA := config.Service{
+		ID:   "node-us",
+		Name: "US Node",
+		Tags: []string{"US", "Fast"},
+	}
+	svcB := config.Service{
+		ID:   "node-ai",
+		Name: "AI Node",
+		Tags: []string{"AI"},
+	}
+	a, tt, _ := newTestApp(t, []config.Service{svcA, svcB})
+
+	// Open create rule dialog
+	a.openCreateRuleDialog()
+	tt.Frame()
+
+	// Default tag is "AI", add "US" tag via comma or addTag
+	addTag(&a.ruleEditor.tags, "US")
+	if len(a.ruleEditor.tags) != 2 {
+		t.Fatalf("expected 2 tags in editor, got %v", a.ruleEditor.tags)
+	}
+
+	a.ruleEditor.name = "Multi-tag rule"
+	a.ruleEditor.domainsInput = "test.internal"
+	a.saveRuleEditor()
+	tt.Frame()
+
+	createdRule := a.state.RoutingRules[len(a.state.RoutingRules)-1]
+	tags := createdRule.Action.GetTags()
+	if len(tags) != 2 || tags[0] != "AI" || tags[1] != "US" {
+		t.Fatalf("expected tags ['AI', 'US'], got %v", tags)
+	}
+
+	// Verify allKnownServiceTags extracts distinct tags
+	known := a.allKnownServiceTags()
+	if len(known) != 3 {
+		t.Fatalf("expected 3 distinct service tags, got %v", known)
+	}
+}
+
+// Tests that the undeletable Final Fallback card renders at the end of the routing page,
+// can be opened for editing, and updating its outbound action saves to state.RoutingFinal.
+func TestRouting_FinalFallbackCardAndDialog(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabRouting // Routing page
+	tt.Frame()
+
+	// 1. Verify card and match-all criteria exist
+	if !tt.HasText(a.catalog().RoutingFinalFallback()) {
+		t.Fatalf("expected final fallback card title %q", a.catalog().RoutingFinalFallback())
+	}
+	if !tt.HasText("FINAL") || !tt.HasText(a.catalog().RoutingFinalAlwaysActive()) {
+		t.Fatalf("expected 'FINAL' badge and always-active pill")
+	}
+
+	// 2. Open edit dialog on final fallback rule
+	a.openEditFinalRuleDialog()
+	tt.Frame()
+
+	if !a.ruleEditor.open || !a.ruleEditor.isFinal {
+		t.Fatalf("expected rule editor to be open in isFinal mode")
+	}
+	if !tt.HasText(a.catalog().EditFinalRule()) {
+		t.Fatalf("expected edit dialog title %q", a.catalog().EditFinalRule())
+	}
+
+	// 3. Change outbound action to DIRECT (index 2)
+	a.ruleEditor.actionIndex = 2 // DIRECT
+	a.saveRuleEditor()
+	tt.Frame()
+
+	if a.ruleEditor.open {
+		t.Fatalf("expected rule editor to close after save")
+	}
+	if a.state.RoutingFinal.Type != routing.ActionDirect {
+		t.Fatalf("expected RoutingFinal.Type to be DIRECT, got %v", a.state.RoutingFinal.Type)
+	}
+
+	// 4. Re-open and set to Tag Pool with custom tags
+	a.openEditFinalRuleDialog()
+	tt.Frame()
+
+	a.ruleEditor.actionIndex = 0 // Tag Pool
+	a.ruleEditor.tags = nil
+	addTag(&a.ruleEditor.tags, "HK")
+	addTag(&a.ruleEditor.tags, "US")
+	a.saveRuleEditor()
+	tt.Frame()
+
+	if a.state.RoutingFinal.Type != routing.ActionProxyTag {
+		t.Fatalf("expected RoutingFinal.Type to be PROXY_TAG, got %v", a.state.RoutingFinal.Type)
+	}
+	tags := a.state.RoutingFinal.GetTags()
+	if len(tags) != 2 || tags[0] != "HK" || tags[1] != "US" {
+		t.Fatalf("expected RoutingFinal tags ['HK', 'US'], got %v", tags)
+	}
+}
+
+// Tests the UX optimizations: GeoData tab as default, no hardcoded preset domains,
+// no concrete domain names rendered on cards, and 2-cards-per-row layout.
+func TestRouting_PresetUXOptimizations(t *testing.T) {
+	// 1. Verify default presets have no hardcoded domain suffixes (except preset-lan-direct for local/lan domains)
+	lanPresetFound := false
+	for _, r := range routing.DefaultPresets() {
+		if r.ID == "preset-lan-direct" {
+			lanPresetFound = true
+			if len(r.IPCidr) != 8 {
+				t.Fatalf("expected preset-lan-direct to have 8 default LAN IP CIDRs, got %v", r.IPCidr)
+			}
+		} else if len(r.DomainSuffix) > 0 {
+			t.Fatalf("expected preset rule %s to have no DomainSuffix, got %v", r.Name, r.DomainSuffix)
+		}
+	}
+	if !lanPresetFound {
+		t.Fatalf("expected preset-lan-direct in DefaultPresets")
+	}
+
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// 2. Verify editor defaults to tab 0 (GeoData)
+	a.openCreateRuleDialog()
+	tt.Frame()
+	if a.ruleEditor.tab != 0 {
+		t.Fatalf("expected create dialog tab to be 0 (GeoData), got %d", a.ruleEditor.tab)
+	}
+	a.ruleEditor.open = false
+
+	// 3. Verify editing a preset defaults to tab 0 (GeoData)
+	a.openEditRuleDialog(a.state.RoutingRules[0])
+	tt.Frame()
+	if a.ruleEditor.tab != 0 {
+		t.Fatalf("expected edit preset dialog tab to be 0 (GeoData), got %d", a.ruleEditor.tab)
+	}
+	a.ruleEditor.open = false
+
+	// 4. Verify custom domains and IP CIDRs do NOT render on rule cards (delegated to detail drawer)
+	a.state.RoutingRules[0].DomainSuffix = []string{"super-secret-domain-1.xyz", "super-secret-domain-2.xyz"}
+	a.state.RoutingRules[0].IPCidr = []string{"192.168.0.0/16", "10.0.0.0/8"}
+	tt.Frame()
+	if tt.HasText("super-secret-domain-1.xyz") || tt.HasText("super-secret-domain-2.xyz") {
+		t.Fatalf("concrete domain names should not be displayed on rule cards")
+	}
+	if tt.HasText("192.168.0.0/16") || tt.HasText("10.0.0.0/8") {
+		t.Fatalf("concrete IP CIDRs should not be displayed on rule cards")
+	}
+	if tt.HasText("+1") {
+		t.Fatalf("overflow pill '+N' should no longer be displayed on rule cards")
+	}
+
+	// 5. Verify GFW 专线 preset exists with geosite:gfw
+	foundGFW := false
+	for _, r := range a.state.RoutingRules {
+		if r.ID == "preset-gfw" && r.Name == "GFW 专线" {
+			if len(r.GeoSite) == 1 && r.GeoSite[0] == "gfw" {
+				foundGFW = true
+			}
+		}
+	}
+	if !foundGFW {
+		t.Fatalf("expected preset-gfw with geosite:gfw")
+	}
+	if !tt.HasText("GFW 专线") {
+		t.Fatalf("expected 'GFW 专线' on routing workbench")
+	}
+}
+
+func TestRouting_RuleDrawerDetails(t *testing.T) {
+	// Rule detail drawer shows full criteria details and 0 在线 warning badge, while cards stay clean without criteria tags
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// 1. Verify Outbound Action badge says '#AI (0 在线)' when no nodes online
+	if !tt.HasText("#AI (0 在线)") {
+		t.Fatalf("expected outbound tag badge '#AI (0 在线)' when 0 nodes online")
+	}
+
+	// 2. Setup preset-ai-services with criteria
+	aiRuleIdx := -1
+	for i, r := range a.state.RoutingRules {
+		if r.ID == "preset-ai-services" {
+			aiRuleIdx = i
+			break
+		}
+	}
+	if aiRuleIdx == -1 {
+		t.Fatalf("preset-ai-services not found")
+	}
+	a.state.RoutingRules[aiRuleIdx].GeoSite = []string{"category-ai-!cn", "openai", "claude"}
+	tt.Frame()
+
+	// Criteria tags and +N are not shown on card
+	if tt.HasText("+1") || tt.HasText("geosite:category-ai-!cn") {
+		t.Fatalf("criteria tags and +N should not appear on card")
+	}
+
+	// 3. Open Rule Detail Drawer
+	if a.activeRuleDrawerID != "" {
+		t.Fatalf("drawer should initially be closed")
+	}
+	a.activeRuleDrawerID = "preset-ai-services"
+	tt.Frame()
+
+	if !tt.HasText(a.catalog().RuleDrawerTitle()) {
+		t.Fatalf("expected rule drawer title %q", a.catalog().RuleDrawerTitle())
+	}
+	if !tt.HasText("0 个匹配节点在线 (无可用专线节点)") {
+		t.Fatalf("expected zero nodes online warning text in drawer")
+	}
+	// Full criteria are shown in drawer
+	if !tt.HasText("geosite:category-ai-!cn") || !tt.HasText("geosite:openai") {
+		t.Fatalf("expected detailed geosite tags in drawer")
+	}
+
+	// 4. In drawer, click edit button -> opens edit dialog and closes drawer
+	a.openEditRuleDialog(a.state.RoutingRules[aiRuleIdx])
+	a.activeRuleDrawerID = ""
+	tt.Frame()
+
+	if a.activeRuleDrawerID != "" {
+		t.Fatalf("expected drawer to close when editing")
+	}
+	if !a.ruleEditor.open {
+		t.Fatalf("expected rule editor dialog to open")
+	}
+	a.ruleEditor.open = false
+
+	// 5. Test Fallback detail drawer
+	a.activeRuleDrawerID = "final"
+	tt.Frame()
+	if !tt.HasText("FINAL") {
+		t.Fatalf("expected 'FINAL' badge in final rule drawer")
+	}
+
+	// 6. Test Esc closes rule drawer
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.activeRuleDrawerID != "" {
+		t.Fatalf("expected activeRuleDrawerID to be empty after Esc, got %q", a.activeRuleDrawerID)
+	}
+}
+
+func TestRouting_PresetProtectionAndFallbackInPresetGroup(t *testing.T) {
+	// Preset rules cannot be deleted but can be disabled; fallback card renders as the 6th card in preset group
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// 1. Preset rules should NOT have delete button (accessibility label ActionDelete)
+	if _, found := tt.Find(a.catalog().ActionDelete()); found {
+		t.Fatalf("preset rules should not have a delete button")
+	}
+
+	// 2. Calling deleteRule on a preset rule should do nothing
+	presetID := "preset-block-ads"
+	prevRuleCount := len(a.state.RoutingRules)
+	a.deleteRule(presetID)
+	if len(a.state.RoutingRules) != prevRuleCount {
+		t.Fatalf("preset rule %q was deleted, but preset rules must be protected from deletion", presetID)
+	}
+
+	// 3. Preset rules can be disabled/enabled via switch
+	toggleKey := "toggle-rule-" + presetID
+	if _, found := tt.Find(toggleKey); !found {
+		t.Fatalf("expected switch toggle for preset rule %q", presetID)
+	}
+	// Toggle preset rule to false
+	a.state.RoutingRules[0].Enabled = false
+	a.saveState()
+	tt.Frame()
+	if a.state.RoutingRules[0].Enabled {
+		t.Fatalf("expected preset rule %q to be disabled", presetID)
+	}
+
+	// 4. Custom rule should have delete button and can be deleted
+	a.state.RoutingRules = append(a.state.RoutingRules, routing.Rule{
+		ID:      "custom-rule-1",
+		Name:    "自定义规则 1",
+		Enabled: true,
+		Action:  routing.RouteAction{Type: routing.ActionDirect},
+	})
+	tt.Frame()
+
+	if _, found := tt.Find(a.catalog().ActionDelete()); !found {
+		t.Fatalf("custom rule should have a delete button")
+	}
+	a.deleteRule("custom-rule-1")
+	foundCustom := false
+	for _, r := range a.state.RoutingRules {
+		if r.ID == "custom-rule-1" {
+			foundCustom = true
+		}
+	}
+	if foundCustom {
+		t.Fatalf("custom rule was not deleted")
+	}
+
+	// 5. Preset Rule Group should have 6 items (5 presets + 1 fallback)
+	if !tt.HasText(a.catalog().RoutingCustomSection()) {
+		t.Fatalf("expected custom rules section title %q", a.catalog().RoutingCustomSection())
+	}
+	if !tt.HasText(a.catalog().RoutingPresetsSection()) {
+		t.Fatalf("expected preset rules section title %q", a.catalog().RoutingPresetsSection())
+	}
+	// Preset count badge should be "6"
+	if !tt.HasText("6") {
+		t.Fatalf("expected preset count badge '6' in preset section header")
+	}
+	if !tt.HasText(a.catalog().RoutingFinalFallback()) {
+		t.Fatalf("expected fallback card title %q", a.catalog().RoutingFinalFallback())
+	}
+	if !tt.HasText("FINAL") {
+		t.Fatalf("expected 'FINAL' badge on fallback card")
+	}
+	if !tt.HasText("绕过大陆及局域网") {
+		t.Fatalf("expected '绕过大陆及局域网' preset rule in preset group")
+	}
+}
+
+func TestRouting_ProxyPoolActiveCountBadge(t *testing.T) {
+	// ActionProxyPool shows 0 在线 when no services running, and updates when running
+	p := freeLocalPort(t)
+	a, tt, _ := newTestApp(t, []config.Service{
+		{
+			ID:      "svc-1",
+			Name:    "Service 1",
+			Tags:    []string{"hk"},
+			Listens: []string{fmt.Sprintf("socks://127.0.0.1:%d", p)},
+			Proxies: []string{"https://user:pass@example.com:443"},
+		},
+	})
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// Initially 0 running -> "全局活跃代理池 (0 在线)"
+	if !tt.HasText(a.catalog().RoutingProxyPool() + " (0 在线)") {
+		t.Fatalf("expected proxy pool badge '%s (0 在线)', got texts: %v", a.catalog().RoutingProxyPool(), tt.Texts())
+	}
+
+	// Start svc-1 -> 1 running -> "全局活跃代理池 (1 在线)"
+	if err := a.mgr.Start(a.state.Services[0]); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+	tt.Frame()
+
+	if !tt.HasText(a.catalog().RoutingProxyPool() + " (1 在线)") {
+		t.Fatalf("expected proxy pool badge '%s (1 在线)', got texts: %v", a.catalog().RoutingProxyPool(), tt.Texts())
+	}
+}
+
+func TestNodes_TagFilterBar(t *testing.T) {
+	// Nodes page shows tag filter bar, filters services on click, and clears filter on 全部
+	svcs := []config.Service{
+		{ID: "svc-hk", Name: "Node HK", Tags: []string{"hk"}},
+		{ID: "svc-us", Name: "Node US", Tags: []string{"us"}},
+		{ID: "svc-all", Name: "Node Multi", Tags: []string{"hk", "us"}},
+	}
+	a, tt, _ := newTestApp(t, svcs)
+	a.activeTab = TabNodes
+	tt.Frame()
+
+	// 1. Tag filter bar is rendered with '全部', '#hk', '#us'
+	if !tt.HasText("全部") || !tt.HasText("#hk") || !tt.HasText("#us") {
+		t.Fatalf("expected tag filter bar chips, got texts: %v", tt.Texts())
+	}
+
+	// All 3 nodes are initially displayed
+	if !tt.HasText("Node HK") || !tt.HasText("Node US") || !tt.HasText("Node Multi") {
+		t.Fatalf("all nodes should initially be displayed")
+	}
+
+	// 2. Click #hk filter -> should display Node HK and Node Multi, but NOT Node US
+	a.activeTagFilter = "hk"
+	tt.Frame()
+
+	if !tt.HasText("Node HK") || !tt.HasText("Node Multi") {
+		t.Fatalf("Node HK and Node Multi should be displayed for hk tag filter")
+	}
+	if tt.HasText("Node US") {
+		t.Fatalf("Node US should be filtered out when hk tag is active")
+	}
+
+	// 3. Click #us filter -> should display Node US and Node Multi, but NOT Node HK
+	a.activeTagFilter = "us"
+	tt.Frame()
+
+	if !tt.HasText("Node US") || !tt.HasText("Node Multi") {
+		t.Fatalf("Node US and Node Multi should be displayed for us tag filter")
+	}
+	if tt.HasText("Node HK") {
+		t.Fatalf("Node HK should be filtered out when us tag is active")
+	}
+
+	// 4. Click '全部' -> resets filter, all 3 nodes displayed
+	a.activeTagFilter = ""
+	tt.Frame()
+
+	if !tt.HasText("Node HK") || !tt.HasText("Node US") || !tt.HasText("Node Multi") {
+		t.Fatalf("all 3 nodes should be displayed when filter is cleared")
+	}
+}
+
+func TestRouting_PresetI18nLanguageSwitching(t *testing.T) {
+	// Preset rule names and descriptions dynamically follow the active language setting
+	a, tt, _ := newTestApp(t, nil)
+	a.state.Language = locales.LangZhHans
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// 1. In Simplified Chinese, preset rules show Chinese names
+	if !tt.HasText("广告拦截") || !tt.HasText("AI 服务") || !tt.HasText("流媒体服务") || !tt.HasText("GFW 专线") || !tt.HasText("绕过大陆及局域网") {
+		t.Fatalf("expected Chinese preset rule names in zh-Hans mode, got texts: %v", tt.Texts())
+	}
+
+	// 2. Switch language to English
+	a.state.Language = locales.LangEn
+	tt.Frame()
+
+	if !tt.HasText("Block Ads") || !tt.HasText("AI Services") || !tt.HasText("Streaming Services") || !tt.HasText("GFW Proxy") || !tt.HasText("Bypass Mainland & LAN") {
+		t.Fatalf("expected English preset rule names in en mode, got texts: %v", tt.Texts())
+	}
+
+	// 3. Open rule drawer in English
+	a.activeRuleDrawerID = "preset-block-ads"
+	tt.Frame()
+
+	if !tt.HasText("Block Ads") || !tt.HasText("Basic Info") {
+		t.Fatalf("expected English title and basic info in drawer, got texts: %v", tt.Texts())
+	}
+	a.activeRuleDrawerID = ""
+	tt.Frame()
+
+	// 4. Switch back to Simplified Chinese
+	a.state.Language = locales.LangZhHans
+	tt.Frame()
+
+	if !tt.HasText("广告拦截") || !tt.HasText("AI 服务") {
+		t.Fatalf("expected Chinese preset rule names after switching back, got texts: %v", tt.Texts())
 	}
 }

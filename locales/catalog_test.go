@@ -22,6 +22,21 @@ func TestCatalogLanguages(t *testing.T) {
 	if en.LocalServicesLabel(4) != "Services (4)" {
 		t.Fatalf("expected 'Services (4)', got %q", en.LocalServicesLabel(4))
 	}
+	if en.PresetRuleBlockAds() != "Block Ads" {
+		t.Fatalf("expected 'Block Ads', got %q", en.PresetRuleBlockAds())
+	}
+	if en.PresetRuleAIServices() != "AI Services" {
+		t.Fatalf("expected 'AI Services', got %q", en.PresetRuleAIServices())
+	}
+	if en.PresetRuleStreaming() != "Streaming Services" {
+		t.Fatalf("expected 'Streaming Services', got %q", en.PresetRuleStreaming())
+	}
+	if en.PresetRuleGFW() != "GFW Proxy" {
+		t.Fatalf("expected 'GFW Proxy', got %q", en.PresetRuleGFW())
+	}
+	if en.PresetRuleBypassLan() != "Bypass Mainland & LAN" {
+		t.Fatalf("expected 'Bypass Mainland & LAN', got %q", en.PresetRuleBypassLan())
+	}
 
 	// Simplified Chinese
 	zh := In("zh-Hans")
@@ -36,5 +51,20 @@ func TestCatalogLanguages(t *testing.T) {
 	}
 	if zh.LocalServicesLabel(4) != "本地服务 (4)" {
 		t.Fatalf("expected '本地服务 (4)', got %q", zh.LocalServicesLabel(4))
+	}
+	if zh.PresetRuleBlockAds() != "广告拦截" {
+		t.Fatalf("expected '广告拦截', got %q", zh.PresetRuleBlockAds())
+	}
+	if zh.PresetRuleAIServices() != "AI 服务" {
+		t.Fatalf("expected 'AI 服务', got %q", zh.PresetRuleAIServices())
+	}
+	if zh.PresetRuleStreaming() != "流媒体服务" {
+		t.Fatalf("expected '流媒体服务', got %q", zh.PresetRuleStreaming())
+	}
+	if zh.PresetRuleGFW() != "GFW 专线" {
+		t.Fatalf("expected 'GFW 专线', got %q", zh.PresetRuleGFW())
+	}
+	if zh.PresetRuleBypassLan() != "绕过大陆及局域网" {
+		t.Fatalf("expected '绕过大陆及局域网', got %q", zh.PresetRuleBypassLan())
 	}
 }

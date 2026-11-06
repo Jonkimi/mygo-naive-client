@@ -18,6 +18,9 @@ func (a *app) view(c *ui.Context) {
 		if a.activeLogDrawerID != "" {
 			a.activeLogDrawerID = ""
 		}
+		if a.activeRuleDrawerID != "" {
+			a.activeRuleDrawerID = ""
+		}
 	})
 	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
 	c.OnShortcut(ui.Cmd, ui.Key2, func() { a.activeTab = TabRouting })
@@ -35,6 +38,7 @@ func (a *app) view(c *ui.Context) {
 			switch a.activeTab {
 			case TabNodes:
 				a.renderToolbar(c, p)
+				a.renderTagFilterBar(c, p)
 				a.renderServiceList(c, p)
 			case TabSettings:
 				a.renderSettingsPage(c, p)
@@ -49,6 +53,7 @@ func (a *app) view(c *ui.Context) {
 	})
 
 	a.renderLogDrawer(c, p)
+	a.renderRuleDrawer(c, p)
 
 	a.renderEditorDialog(c, p)
 	a.renderImportDialog(c, p)
@@ -72,16 +77,17 @@ func (a *app) activeRunningCount() int {
 	return count
 }
 
-func (a *app) primaryGatewayPortLabel() string {
+func (a *app) gatewayEndpointLabel() string {
 	cat := a.catalog()
 	port := a.state.GatewayPort
 	if port <= 0 {
-		port = 10808
+		port = 10809
 	}
-	if cat.Code() == "en" {
-		return fmt.Sprintf("Port :%d", port)
-	}
-	return fmt.Sprintf("仅端口 :%d", port)
+	return fmt.Sprintf("%s 127.0.0.1:%d", cat.MasterGateway(), port)
+}
+
+func (a *app) primaryGatewayPortLabel() string {
+	return a.catalog().ModePortOnly()
 }
 
 func (a *app) renderTopControlBar(c *ui.Context, p palette) {
@@ -101,59 +107,84 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 			// Left: Gateway live status indicator
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 				ui.Box(c).Size(8, 8).Radius(999).Background(dotColor)
-				ui.Text(c, cat.MasterGateway()).FontSize(13).FontWeight(600).TextColor(p.text)
+				ui.Text(c, a.gatewayEndpointLabel()).FontSize(12).FontWeight(400).TextColor(p.textMuted)
 			})
 
-			// Center: Active mode & upcoming modes with clear interactive feedback
-			ui.Row(c).AlignItems(ui.Center).Gap(4).Padding(2).Radius(6).Background(p.elevated).Children(func() {
-				// 1. Port only mode
-				portActive := a.state.TrafficMode == "port" || a.state.TrafficMode == ""
-				portBtn := ui.ButtonBase(c.Key("mode-port")).
-					PaddingX(8).PaddingY(3).Radius(6).
-					Background(ui.Transparent)
-				if portActive {
-					portBtn.Background(p.accentBg)
-				}
-				portBtn.Children(func() {
-					fg := p.textMuted
-					if portActive {
-						fg = p.accentText
-					}
-					ui.Text(c, a.primaryGatewayPortLabel()).FontSize(11).FontWeight(500).TextColor(fg)
-				})
-				if portBtn.Clicked() {
-					_ = a.setTrafficMode("port")
-				}
+			// Center: Active mode dropdown selector with label
+			activeMode := a.state.TrafficMode
+			if activeMode == "" {
+				activeMode = "port"
+			}
+			var activeLabel string
+			switch activeMode {
+			case "sysproxy":
+				activeLabel = cat.ModeSysProxy()
+			case "tun":
+				activeLabel = cat.ModeTun()
+			default:
+				activeLabel = cat.ModePortOnly()
+			}
 
-				// 2. System Proxy mode
-				sysActive := a.state.TrafficMode == "sysproxy"
-				sysBtn := ui.ButtonBase(c.Key("mode-sysproxy")).
-					PaddingX(8).PaddingY(3).Radius(6).
-					Background(ui.Transparent)
-				if sysActive {
-					sysBtn.Background(p.accentBg)
-				}
-				sysBtn.Children(func() {
-					fg := p.textMuted
-					if sysActive {
-						fg = p.accentText
-					}
-					ui.Text(c, cat.ModeSysProxy()).FontSize(11).FontWeight(500).TextColor(fg)
-				})
-				if sysBtn.Clicked() {
-					_ = a.setTrafficMode("sysproxy")
-				}
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Text(c, cat.TrafficModeLabel()).FontSize(11).FontWeight(400).TextColor(p.textMuted)
 
-				// 3. TUN mode (coming soon in Phase 4)
-				tunBtn := ui.ButtonBase(c.Key("mode-tun")).
-					PaddingX(8).PaddingY(3).Radius(6).
-					Background(ui.Transparent).
-					Tooltip(cat.ModeComingSoonTip()).
+				selectedMode := activeMode
+				sel := ui.SelectBase(c.Key("select-traffic-mode"), &selectedMode)
+				sel.Trigger.
+					Gap(6).PaddingX(10).PaddingY(4).Radius(6).
+					Background(p.elevated).Border(1, p.borderSubtle).
+					AlignItems(ui.Center).
 					Children(func() {
-						ui.Text(c, cat.ModeTun()).FontSize(11).FontWeight(500).TextColor(p.textDim)
+						ui.Text(c, activeLabel).FontSize(11).FontWeight(400).TextColor(p.textMuted)
+						ui.Icon(c, iconChevronDown).Size(11, 11).TextColor(p.textDim)
 					})
-				if tunBtn.Clicked() {
-					a.toast(cat.ModeComingSoonTip())
+				if sel.Trigger.Hovered() {
+					sel.Trigger.Background(p.cardHover)
+				}
+
+				sel.Popup(func(panel ui.Element) {
+					panel.Margin(4, 0, 0, 0).Padding(4).Radius(8).
+						Background(p.card).Border(1, p.borderSubtle).
+						Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+
+					modes := []struct {
+						id    string
+						label string
+						tip   string
+					}{
+						{id: "port", label: cat.ModePortOnly(), tip: ""},
+						{id: "sysproxy", label: cat.ModeSysProxy(), tip: ""},
+						{id: "tun", label: cat.ModeTun(), tip: cat.ModeComingSoonTip()},
+					}
+
+					for _, m := range modes {
+						item := sel.Item(m.id).Gap(8).PaddingX(10).PaddingY(6).Radius(6).AlignItems(ui.Center)
+						if item.Highlighted() {
+							item.Background(p.accentBg)
+						}
+						item.Children(func() {
+							fg := p.textMuted
+							if item.Highlighted() {
+								fg = p.accentText
+							} else if m.id == activeMode {
+								fg = p.text
+							} else if m.id == "tun" {
+								fg = p.textDim
+							}
+							ui.Text(c, m.label).FontSize(12).FontWeight(400).TextColor(fg)
+							if m.tip != "" {
+								ui.Text(c, "("+m.tip+")").FontSize(10).TextColor(p.textDim)
+							}
+						})
+					}
+				})
+
+				if sel.Trigger.Changed() {
+					if selectedMode == "tun" {
+						a.toast(cat.ModeComingSoonTip())
+					} else if selectedMode != a.state.TrafficMode {
+						_ = a.setTrafficMode(selectedMode)
+					}
 				}
 			})
 
@@ -262,7 +293,100 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 		})
 }
 
+func (a *app) filteredServices() []config.Service {
+	if a.activeTagFilter == "" {
+		return a.state.Services
+	}
+	var filtered []config.Service
+	for _, svc := range a.state.Services {
+		for _, t := range svc.Tags {
+			if strings.EqualFold(strings.TrimSpace(t), a.activeTagFilter) {
+				filtered = append(filtered, svc)
+				break
+			}
+		}
+	}
+	return filtered
+}
+
+func (a *app) renderTagFilterBar(c *ui.Context, p palette) {
+	tags := a.allKnownServiceTags()
+	if len(tags) == 0 {
+		return
+	}
+
+	ui.Row(c.Key("tag-filter-bar")).
+		AlignItems(ui.Center).Gap(6).Wrap().
+		Padding(0, 20, 10, 20).
+		Children(func() {
+			// "全部" (All) chip
+			allActive := a.activeTagFilter == ""
+			allBg := p.card
+			allFg := p.textMuted
+			allBorder := p.borderSubtle
+			if allActive {
+				allBg = p.accentBg
+				allFg = p.accentText
+				allBorder = p.accent.Alpha(0.3)
+			}
+			allBtn := ui.ButtonBase(c.Key("filter-tag-all")).
+				PaddingX(10).PaddingY(4).Radius(999).
+				Background(allBg).Border(1, allBorder)
+			allBtn.Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+					ui.Text(c, "全部").FontSize(11).FontWeight(600).TextColor(allFg)
+					ui.Text(c, fmt.Sprint(len(a.state.Services))).FontSize(10).TextColor(allFg.Alpha(0.7))
+				})
+			})
+			if allBtn.Clicked() {
+				a.activeTagFilter = ""
+			}
+
+			// Individual tag chips
+			for _, t := range tags {
+				tag := t
+				count := 0
+				for _, s := range a.state.Services {
+					for _, st := range s.Tags {
+						if strings.EqualFold(strings.TrimSpace(st), tag) {
+							count++
+							break
+						}
+					}
+				}
+
+				isActive := strings.EqualFold(a.activeTagFilter, tag)
+				chipBg := p.card
+				chipFg := p.textMuted
+				chipBorder := p.borderSubtle
+				if isActive {
+					chipBg = p.accentBg
+					chipFg = p.accentText
+					chipBorder = p.accent.Alpha(0.3)
+				}
+				tagBtn := ui.ButtonBase(c.Key("filter-tag-" + strings.ToLower(tag))).
+					PaddingX(10).PaddingY(4).Radius(999).
+					Background(chipBg).Border(1, chipBorder)
+				tagBtn.Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+						ui.Text(c, "#"+tag).FontSize(11).FontWeight(600).TextColor(chipFg)
+						ui.Text(c, fmt.Sprint(count)).FontSize(10).TextColor(chipFg.Alpha(0.7))
+					})
+				})
+				if tagBtn.Clicked() {
+					if isActive {
+						a.activeTagFilter = ""
+					} else {
+						a.activeTagFilter = tag
+					}
+				}
+			}
+		})
+}
+
 func (a *app) renderServiceList(c *ui.Context, p palette) {
+	services := a.filteredServices()
+
 	ui.Scroll(c.Key("service-scroll")).
 		TrackScroll(&a.mainScroll).
 		Fill().
@@ -273,8 +397,22 @@ func (a *app) renderServiceList(c *ui.Context, p palette) {
 				a.renderEmptyState(c, p)
 				return
 			}
-			for i := range a.state.Services {
-				svc := a.state.Services[i]
+			if len(services) == 0 {
+				ui.Column(c.Key("filter-empty-state")).
+					AlignItems(ui.Center).Justify(ui.Center).
+					Padding(32).Gap(12).
+					Radius(12).Background(p.card).Border(1, p.borderSubtle).
+					Children(func() {
+						ui.Text(c, fmt.Sprintf("暂无带有 #%s 标签的节点", a.activeTagFilter)).
+							FontSize(13).FontWeight(600).TextColor(p.textMuted)
+						if subtleActionChip(c.Key("btn-clear-tag-filter"), p, nil, "查看全部节点", false).Clicked() {
+							a.activeTagFilter = ""
+						}
+					})
+				return
+			}
+			for i := range services {
+				svc := services[i]
 				a.renderServiceCard(c.Key(svc.ID), p, svc)
 			}
 		})
