@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -998,6 +999,22 @@ func (a *app) availableGeoIPTags() []string {
 	return a.geoIPTags
 }
 
+func isCategoryAdsBlockRule(r routing.Rule) bool {
+	if r.ID == "preset-block-ads" {
+		return true
+	}
+	return r.Action.Type == routing.ActionBlock &&
+		len(r.GeoSite) == 1 &&
+		strings.EqualFold(strings.TrimSpace(r.GeoSite[0]), "category-ads-all")
+}
+
+func (a *app) releaseUnusedMemory() {
+	if a.headless {
+		return
+	}
+	debug.FreeOSMemory()
+}
+
 func (a *app) loadGeoDataIfPresent() {
 	a.refreshGeoDataStatus()
 	if a.router == nil {
@@ -1009,12 +1026,23 @@ func (a *app) loadGeoDataIfPresent() {
 
 	var reqIPTags []string
 	var reqSiteTags []string
+	hasAdsRuleInRouting := false
 	for _, r := range a.state.RoutingRules {
-		if r.Enabled {
-			reqIPTags = append(reqIPTags, r.GeoIP...)
-			reqSiteTags = append(reqSiteTags, r.GeoSite...)
+		if isCategoryAdsBlockRule(r) {
+			hasAdsRuleInRouting = true
 		}
+		if !r.Enabled {
+			continue
+		}
+		reqIPTags = append(reqIPTags, r.GeoIP...)
+		reqSiteTags = append(reqSiteTags, r.GeoSite...)
 	}
+	if !hasAdsRuleInRouting && a.state.BlockerEnabled && a.state.BlockerBlockAds {
+		reqSiteTags = append(reqSiteTags, "category-ads-all")
+	}
+
+	prevIPDB := a.cachedIPDB
+	prevSiteDB := a.cachedSiteDB
 
 	var ipDB *geodata.GeoIPDB
 	if len(reqIPTags) > 0 {
@@ -1025,9 +1053,6 @@ func (a *app) loadGeoDataIfPresent() {
 					ipDB = loaded
 					a.cachedIPDB = loaded
 					a.cachedIPTags = append([]string(nil), reqIPTags...)
-					if len(a.geoIPTags) == 0 && len(loaded.AllTags()) > 0 {
-						a.geoIPTags = loaded.AllTags()
-					}
 				}
 				_ = f.Close()
 			}
@@ -1046,9 +1071,6 @@ func (a *app) loadGeoDataIfPresent() {
 					siteDB = loaded
 					a.cachedSiteDB = loaded
 					a.cachedSiteTags = append([]string(nil), reqSiteTags...)
-					if len(a.geoSiteTags) == 0 && len(loaded.AllTags()) > 0 {
-						a.geoSiteTags = loaded.AllTags()
-					}
 				}
 				_ = f.Close()
 			}
@@ -1059,6 +1081,10 @@ func (a *app) loadGeoDataIfPresent() {
 	}
 
 	a.router.SetGeoData(ipDB, siteDB)
+	a.syncBlockerRules()
+	if (prevIPDB != nil && prevIPDB != a.cachedIPDB) || (prevSiteDB != nil && prevSiteDB != a.cachedSiteDB) {
+		a.releaseUnusedMemory()
+	}
 }
 
 func (a *app) refreshGeoDataStatus() {
@@ -1348,10 +1374,27 @@ func (a *app) syncBlockerRules() {
 		return
 	}
 
-	// 1. Built-in geosite category-ads-all (reuse cachedSiteDB when available to avoid re-reading geosite.dat)
-	if a.state.BlockerBlockAds && a.cachedAdsRules == nil {
-		adsDB := a.cachedSiteDB
-		if adsDB == nil || !adsDB.HasTag("category-ads-all") {
+	prevAds := a.cachedAdsRules
+	if !a.state.BlockerEnabled {
+		a.cachedAdsRules = nil
+		a.blocker.SwapRuleset(blocker.NewParsedRules())
+		if prevAds != nil {
+			a.releaseUnusedMemory()
+		}
+		return
+	}
+
+	// 1. Built-in geosite category-ads-all (always share cachedSiteDB when available so only one copy exists)
+	if a.state.BlockerBlockAds {
+		var adsDB *geodata.GeoSiteDB
+		if a.cachedSiteDB != nil && a.cachedSiteDB.HasTag("category-ads-all") {
+			adsDB = a.cachedSiteDB
+		} else if a.cachedAdsRules != nil && a.cachedAdsRules.GeoAds != nil {
+			if prev, ok := a.cachedAdsRules.GeoAds.(*geodata.GeoSiteDB); ok && prev.HasTag("category-ads-all") {
+				adsDB = prev
+			}
+		}
+		if adsDB == nil {
 			sitePath := filepath.Join(a.geodataDir(), "geosite.dat")
 			if f, err := os.Open(sitePath); err == nil {
 				adsDB, _ = geodata.LoadGeoSite(f, []string{"category-ads-all"})
@@ -1362,7 +1405,11 @@ func (a *app) syncBlockerRules() {
 			cached := blocker.NewParsedRules()
 			cached.GeoAds = adsDB
 			a.cachedAdsRules = cached
+		} else {
+			a.cachedAdsRules = nil
 		}
+	} else {
+		a.cachedAdsRules = nil
 	}
 
 	// 2. External Subscriptions cached on disk
@@ -1393,6 +1440,9 @@ func (a *app) syncBlockerRules() {
 		} else {
 			a.blocker.SwapRuleset(blocker.NewParsedRules())
 		}
+		if prevAds != nil && a.cachedAdsRules == nil {
+			a.releaseUnusedMemory()
+		}
 		return
 	}
 
@@ -1404,6 +1454,9 @@ func (a *app) syncBlockerRules() {
 		merged.Merge(parsed)
 	}
 	a.blocker.SwapRuleset(merged)
+	if prevAds != nil && a.cachedAdsRules == nil {
+		a.releaseUnusedMemory()
+	}
 }
 
 func (a *app) addBlockerAllowlist(domain string) {
@@ -1529,12 +1582,11 @@ func (a *app) toggleBlockerBlockAds() {
 func (a *app) setBlockerBlockAds(enabled bool) {
 	a.state.BlockerBlockAds = enabled
 	for i := range a.state.RoutingRules {
-		if a.state.RoutingRules[i].ID == "preset-block-ads" {
+		if isCategoryAdsBlockRule(a.state.RoutingRules[i]) {
 			a.state.RoutingRules[i].Enabled = enabled
 			break
 		}
 	}
-	a.syncBlockerRules()
 	a.saveState()
 	if a.win != nil {
 		a.win.Invalidate()

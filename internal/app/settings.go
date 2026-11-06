@@ -203,7 +203,7 @@ func (a *app) loadState() {
 		}
 		st.RoutingRules = cleanedRules
 		for _, r := range st.RoutingRules {
-			if r.ID == "preset-block-ads" {
+			if isCategoryAdsBlockRule(r) {
 				st.BlockerBlockAds = r.Enabled
 				break
 			}

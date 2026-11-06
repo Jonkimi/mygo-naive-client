@@ -247,7 +247,6 @@ func (a *app) resetRoutingPresets() {
 	a.state.RoutingRules = routing.DefaultPresets()
 	a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}
 	a.state.BlockerBlockAds = true
-	a.syncBlockerRules()
 	a.saveState()
 	a.toast("已恢复为默认分流预设")
 	if a.win != nil {
@@ -644,7 +643,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					enabled := rule.Enabled
 					toggleKey := fmt.Sprintf("toggle-rule-%s", rule.ID)
 					if ui.Switch(c.Key(toggleKey), &enabled).Label(toggleKey).Changed() {
-						if rule.ID == "preset-block-ads" {
+						if isCategoryAdsBlockRule(rule) {
 							a.setBlockerBlockAds(enabled)
 							if enabled {
 								a.toast("已启用内置广告拦截")
