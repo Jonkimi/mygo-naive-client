@@ -52,10 +52,19 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 				Label(cat.SidebarExpand()).
 				Size(36, 36).Radius(8).Background(p.accentBg).
 				AlignItems(ui.Center).Justify(ui.Center).
-				Tooltip(cat.SidebarExpand() + " (⌘B)").
-				Children(func() {
+				Tooltip(cat.SidebarExpand() + " (⌘B)")
+
+			hovered := logoBtn.Hovered()
+			if hovered {
+				logoBtn.Background(p.accent)
+			}
+			logoBtn.Children(func() {
+				if hovered {
+					ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.accentText)
+				} else {
 					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
-				})
+				}
+			})
 			if logoBtn.Clicked() {
 				a.toggleSidebar()
 			}

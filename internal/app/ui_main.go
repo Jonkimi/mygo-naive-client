@@ -72,14 +72,15 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 				if a.state.SidebarCollapsed {
 					expandBtn := ui.ButtonBase(c.Key("btn-sidebar-expand-topbar")).
 						Label(cat.SidebarExpand()).
-						Size(26, 26).Radius(6).Background(ui.Transparent).
+						Size(28, 28).Radius(6).
+						Background(p.elevated).Border(1, p.borderSubtle).
 						AlignItems(ui.Center).Justify(ui.Center).
 						Tooltip(cat.SidebarExpand() + " (⌘B)").
 						Children(func() {
-							ui.Icon(c, iconSidebarExpand).Size(14, 14).TextColor(p.textMuted)
+							ui.Icon(c, iconSidebarExpand).Size(14, 14).TextColor(p.text)
 						})
 					if expandBtn.Hovered() {
-						expandBtn.Background(p.elevated)
+						expandBtn.Background(p.cardHover)
 					}
 					if expandBtn.Clicked() {
 						a.toggleSidebar()
