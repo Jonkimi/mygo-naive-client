@@ -7,17 +7,15 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-const collapsedTileSize float32 = 40
+const collapsedTileSize float32 = 36
 
 func (a *app) renderSidebar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	collapsed := a.state.SidebarCollapsed
 
 	var targetWidth float32 = 190
-	var targetPaddingH float32 = 10
 	if collapsed {
-		targetWidth = 62
-		targetPaddingH = 8
+		targetWidth = 56
 	}
 
 	sidebar := ui.Column(c.Key("sidebar"))
@@ -26,11 +24,10 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 	}
 	anim := ui.Animation{Spring: ui.SpringOptions{Duration: 220 * time.Millisecond, Bounce: 0.04}}
 	width := sidebar.AnimateTo("width", targetWidth, anim)
-	paddingH := sidebar.AnimateTo("paddingH", targetPaddingH, anim)
 
 	sidebar.
 		Width(width).
-		Padding(10, paddingH, 10, paddingH).Gap(8).
+		Padding(10, 10, 10, 10).Gap(8).
 		Clip().
 		Background(p.sidebarBg).
 		BorderWidth(0, 1, 0, 0).BorderColor(p.borderSubtle).
@@ -64,7 +61,7 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 
 func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	if collapsed {
-		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 4, 0).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 6, 0).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 				Size(collapsedTileSize, collapsedTileSize).Radius(8).Background(p.accentBg).
 				Children(func() {
@@ -74,12 +71,12 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 		return
 	}
 
-	ui.Row(c).AlignItems(ui.Center).Padding(30, 4, 6, 4).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Padding(28, 2, 6, 2).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
-				Size(30, 30).Radius(8).Background(p.accentBg).
+				Size(collapsedTileSize, collapsedTileSize).Radius(8).Background(p.accentBg).
 				Children(func() {
-					ui.Image(c, iconBrandFor(p.dark)).Size(16, 16)
+					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
 				})
 			ui.Text(c, "NaiveClient").FontSize(15).FontWeight(700).TextColor(p.text).NoWrap()
 		})
@@ -93,11 +90,11 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 		btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
 			Label(cat.SidebarExpand()).
 			Size(collapsedTileSize, collapsedTileSize).Radius(8).
-			Background(p.surface).Border(1, p.borderSubtle).
+			Background(ui.Transparent).
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(cat.SidebarExpand() + " (⌘B)").
 			Children(func() {
-				ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.textMuted)
+				ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.textDim)
 			})
 		if btn.Hovered() {
 			btn.Background(p.cardHover)
@@ -111,12 +108,12 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 	btn := ui.Row(c.Key("btn-sidebar-toggle-bottom")).
 		Label(cat.SidebarCollapse()).
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		PaddingX(10).PaddingY(7).Radius(6).
+		Height(collapsedTileSize).PaddingX(10).Radius(8).
 		Background(ui.Transparent).
 		Tooltip(cat.SidebarCollapse() + " (⌘B)").
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
-				ui.Icon(c, iconSidebarCollapse).Size(15, 15).TextColor(p.textDim)
+				ui.Icon(c, iconSidebarCollapse).Size(16, 16).TextColor(p.textDim)
 				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted).NoWrap()
 			})
 			ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim).NoWrap()
@@ -153,7 +150,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 			Tooltip(fmt.Sprintf("%s (%s)", label, shortcut)).
 			Children(func() {
 				if icon != nil {
-					ui.Icon(c, icon).Size(18, 18).TextColor(fg)
+					ui.Icon(c, icon).Size(16, 16).TextColor(fg)
 				}
 			})
 		if !active && btn.Hovered() {
@@ -167,7 +164,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 
 	btn := ui.Row(c.Key(key)).
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		PaddingX(10).PaddingY(8).Radius(6).
+		Height(collapsedTileSize).PaddingX(10).Radius(8).
 		Background(bg).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
@@ -207,7 +204,7 @@ func (a *app) renderCoreStatusCapsule(c *ui.Context, p palette, collapsed bool) 
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(statusTip).
 			Children(func() {
-				ui.Box(c).Size(10, 10).Radius(999).Background(dotColor)
+				ui.Box(c).Size(8, 8).Radius(999).Background(dotColor)
 			})
 		if btn.Hovered() {
 			btn.Background(p.cardHover)
