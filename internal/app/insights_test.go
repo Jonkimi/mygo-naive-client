@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -147,3 +148,34 @@ func TestInsights_RuleManagementDrawer(t *testing.T) {
 		t.Fatalf("expected custom-allowed.com removed from allowlist")
 	}
 }
+
+// Tests that Top Blocked Domains panel and Top Allowed Domains panel are equal in height,
+// even when they contain an uneven number of items.
+func TestInsights_TopPanelsEqualHeight(t *testing.T) {
+	a, tt, _ := newTestApp(t, []config.Service{})
+
+	a.activeTab = TabInsights
+	tt.Frame()
+
+	// 5 blocked items vs 1 allowed item
+	for i := 1; i <= 5; i++ {
+		a.blocker.Logger().Record(fmt.Sprintf("blocked-%d.com", i), blocker.SourceDNS, blocker.VerdictBlocked, "ad-rule")
+	}
+	a.blocker.Logger().Record("only-allowed.com", blocker.SourceGateway, blocker.VerdictAllowed, "")
+	tt.Frame()
+
+	rectBlocked, ok1 := tt.Find("panel-top-blocked")
+	if !ok1 {
+		t.Fatalf("expected panel-top-blocked")
+	}
+	rectAllowed, ok2 := tt.Find("panel-top-allowed")
+	if !ok2 {
+		t.Fatalf("expected panel-top-allowed")
+	}
+
+	if rectBlocked.H != rectAllowed.H {
+		t.Fatalf("expected top blocked and allowed panels to be equal height, got blocked=%.1f allowed=%.1f",
+			rectBlocked.H, rectAllowed.H)
+	}
+}
+

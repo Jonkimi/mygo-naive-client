@@ -221,9 +221,10 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 	topBlocked := a.blocker.Logger().GetTopBlocked(10)
 	topAllowed := a.blocker.Logger().GetTopAllowed(10)
 
-	ui.Row(c.Key("insights-top-row")).Gap(10).Children(func() {
+	ui.Row(c.Key("insights-top-row")).AlignItems(ui.Stretch).Gap(10).Children(func() {
 		// Top Blocked Panel
 		ui.Column(c.Key("top-blocked-panel")).Grow(1).
+			Label("panel-top-blocked").
 			Padding(12, 14, 12, 14).Radius(8).
 			Background(p.card).Border(1, p.borderSubtle).Gap(6).
 			Children(func() {
@@ -233,7 +234,9 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 				})
 
 				if len(topBlocked) == 0 {
-					ui.Text(c, "暂无拦截记录").FontSize(11).TextColor(p.textDim).PaddingY(10)
+					ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).PaddingY(16).Children(func() {
+						ui.Text(c, "暂无拦截记录").FontSize(11).TextColor(p.textDim)
+					})
 				} else {
 					for _, item := range topBlocked {
 						dom := item.Domain
@@ -259,11 +262,13 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 								})
 							})
 					}
+					ui.Box(c).Grow(1)
 				}
 			})
 
 		// Top Allowed Panel
 		ui.Column(c.Key("top-allowed-panel")).Grow(1).
+			Label("panel-top-allowed").
 			Padding(12, 14, 12, 14).Radius(8).
 			Background(p.card).Border(1, p.borderSubtle).Gap(6).
 			Children(func() {
@@ -273,7 +278,9 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 				})
 
 				if len(topAllowed) == 0 {
-					ui.Text(c, "暂无放行记录").FontSize(11).TextColor(p.textDim).PaddingY(10)
+					ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).PaddingY(16).Children(func() {
+						ui.Text(c, "暂无放行记录").FontSize(11).TextColor(p.textDim)
+					})
 				} else {
 					for _, item := range topAllowed {
 						dom := item.Domain
@@ -299,6 +306,7 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 								})
 							})
 					}
+					ui.Box(c).Grow(1)
 				}
 			})
 	})
