@@ -2297,26 +2297,30 @@ func TestRouting_PresetI18nLanguageSwitching(t *testing.T) {
 	}
 }
 
-// Tests that custom DoH settings update the DNS resolver upstreams and bootstrap domains.
+// Tests that custom 3-tier DNS settings update the DNS resolver upstreams and bootstrap domains.
 func TestApp_CustomDoHConfiguration(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
 
-	boot, remote := a.resolver.Upstreams()
-	if len(boot) != 2 || len(remote) != 2 {
-		t.Fatalf("expected 2 default boot and remote upstreams, got %v / %v", boot, remote)
+	boot, dom, remote := a.resolver.Upstreams()
+	if len(boot) != 2 || len(dom) != 2 || len(remote) != 2 {
+		t.Fatalf("expected 2 default boot, dom, and remote upstreams, got %v / %v / %v", boot, dom, remote)
 	}
 
-	a.state.BootstrapDoH = "https://custom-dns.mycorp.internal/dns-query"
-	a.state.RemoteDoH = "https://9.9.9.9/dns-query, https://dns.quad9.net/dns-query"
+	a.state.BootstrapDNS = "119.29.29.29"
+	a.state.DomesticDNS = "https://custom-dns.mycorp.internal/dns-query"
+	a.state.RemoteDNS = "https://9.9.9.9/dns-query, https://dns.quad9.net/dns-query"
 	a.initDNS()
 
-	newBoot, newRemote := a.resolver.Upstreams()
-	if len(newBoot) != 1 || newBoot[0] != "https://custom-dns.mycorp.internal/dns-query" {
-		t.Fatalf("unexpected custom bootstrap doh: %v", newBoot)
+	newBoot, newDom, newRemote := a.resolver.Upstreams()
+	if len(newBoot) != 1 || newBoot[0] != "119.29.29.29" {
+		t.Fatalf("unexpected custom bootstrap dns: %v", newBoot)
+	}
+	if len(newDom) != 1 || newDom[0] != "https://custom-dns.mycorp.internal/dns-query" {
+		t.Fatalf("unexpected custom domestic dns: %v", newDom)
 	}
 	if len(newRemote) != 2 || newRemote[0] != "https://9.9.9.9/dns-query" {
-		t.Fatalf("unexpected custom remote doh: %v", newRemote)
+		t.Fatalf("unexpected custom remote dns: %v", newRemote)
 	}
 
 	domains := a.collectBootstrapDomains()

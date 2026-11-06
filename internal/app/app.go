@@ -770,7 +770,21 @@ func (a *app) startGateway() error {
 	return nil
 }
 
-func parseDoHList(s string, defaults []string) []string {
+func (a *app) effectiveDomesticDNS() string {
+	if a.state.DomesticDNS != "" {
+		return a.state.DomesticDNS
+	}
+	return a.state.BootstrapDoH
+}
+
+func (a *app) effectiveRemoteDNS() string {
+	if a.state.RemoteDNS != "" {
+		return a.state.RemoteDNS
+	}
+	return a.state.RemoteDoH
+}
+
+func parseDNSList(s string, defaults []string) []string {
 	var list []string
 	for _, part := range strings.Split(s, ",") {
 		clean := strings.TrimSpace(part)
@@ -815,10 +829,8 @@ func (a *app) collectBootstrapDomains() []string {
 		}
 	}
 
-	// Only collect domestic / direct bootstrap DoH domains to prevent direct deadlock.
-	// Overseas remote DoH domains must NOT be included here, as they are resolved
-	// by remote proxy nodes and must not be forced to direct physical resolution or bypass TUN.
-	for _, ep := range parseDoHList(a.state.BootstrapDoH, dns.DefaultBootstrapDoH) {
+	// Collect domestic DoH domains to ensure they can be resolved via Bootstrap DNS without deadlocking.
+	for _, ep := range parseDNSList(a.effectiveDomesticDNS(), dns.DefaultDomesticDoH) {
 		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
 			add(u.Hostname())
 		}
@@ -829,14 +841,16 @@ func (a *app) collectBootstrapDomains() []string {
 
 func (a *app) initDNS() {
 	bootDomains := a.collectBootstrapDomains()
-	bootDoH := parseDoHList(a.state.BootstrapDoH, dns.DefaultBootstrapDoH)
-	remoteDoH := parseDoHList(a.state.RemoteDoH, dns.DefaultRemoteDoH)
+	bootDNS := parseDNSList(a.state.BootstrapDNS, dns.DefaultBootstrapDNS)
+	domDoH := parseDNSList(a.effectiveDomesticDNS(), dns.DefaultDomesticDoH)
+	remoteDoH := parseDNSList(a.effectiveRemoteDNS(), dns.DefaultRemoteDoH)
 
 	if a.resolver == nil {
 		a.resolver = dns.NewResolver(dns.ResolverOptions{
 			Router:           a.router,
 			BootstrapDomains: bootDomains,
-			BootstrapDoH:     bootDoH,
+			BootstrapDNS:     bootDNS,
+			DomesticDoH:      domDoH,
 			RemoteDoH:        remoteDoH,
 			IPCache:          a.ipCache,
 			DialProxy: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -847,7 +861,7 @@ func (a *app) initDNS() {
 	} else {
 		a.resolver.SetBootstrapDomains(bootDomains)
 		a.resolver.SetRouter(a.router)
-		a.resolver.SetUpstreams(bootDoH, remoteDoH)
+		a.resolver.SetUpstreams(bootDNS, domDoH, remoteDoH)
 	}
 }
 

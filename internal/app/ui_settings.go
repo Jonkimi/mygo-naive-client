@@ -247,11 +247,15 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.DohSectionDesc()).FontSize(11).TextColor(p.textDim)
 				})
 
-				if labeledInput(c, p, "page-set-doh-bootstrap", cat.DohBootstrapLabel(), &a.state.BootstrapDoH, cat.DohBootstrapHint()).Changed() {
+				if labeledInput(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, cat.DnsDomesticHint()).Changed() {
 					a.saveState()
 					a.initDNS()
 				}
-				if labeledInput(c, p, "page-set-doh-remote", cat.DohRemoteLabel(), &a.state.RemoteDoH, cat.DohRemoteHint()).Changed() {
+				if labeledInput(c, p, "page-set-dns-remote", cat.DnsRemoteLabel(), &a.state.RemoteDNS, cat.DnsRemoteHint()).Changed() {
+					a.saveState()
+					a.initDNS()
+				}
+				if labeledInput(c, p, "page-set-dns-bootstrap", cat.DnsBootstrapLabel(), &a.state.BootstrapDNS, cat.DnsBootstrapHint()).Changed() {
 					a.saveState()
 					a.initDNS()
 				}

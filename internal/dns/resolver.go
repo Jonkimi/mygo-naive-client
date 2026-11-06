@@ -21,14 +21,21 @@ import (
 )
 
 var (
-	DefaultBootstrapDoH = []string{
-		"https://223.5.5.5/dns-query",
-		"https://1.12.12.12/dns-query",
+	DefaultBootstrapDNS = []string{
+		"223.5.5.5:53",
+		"119.29.29.29:53",
+	}
+	DefaultDomesticDoH = []string{
+		"https://dns.alidns.com/dns-query",
+		"https://doh.pub/dns-query",
 	}
 	DefaultRemoteDoH = []string{
 		"https://1.1.1.1/dns-query",
 		"https://dns.google/dns-query",
 	}
+
+	// Deprecated: Alias for DefaultDomesticDoH
+	DefaultBootstrapDoH = DefaultDomesticDoH
 )
 
 type Blocker interface {
@@ -40,9 +47,11 @@ type ResolverOptions struct {
 	MagicDNSEndpoint string
 	Blocker          Blocker
 	BootstrapDomains []string
+	BootstrapDNS     []string // Pure IP DNS servers (e.g. "223.5.5.5:53") for resolving node and DNS domains
+	DomesticDoH      []string // Domestic DoH for mainland & direct routing
+	RemoteDoH        []string // Remote DoH for proxy routing
+	BootstrapDoH     []string // Backward compatibility alias for DomesticDoH
 	Router           *routing.Router
-	BootstrapDoH     []string
-	RemoteDoH        []string
 	DialDirect       func(ctx context.Context, network, addr string) (net.Conn, error)
 	DialProxy        func(ctx context.Context, network, addr string) (net.Conn, error)
 	IPCache          *ipcache.Cache
@@ -69,8 +78,14 @@ type Resolver struct {
 }
 
 func NewResolver(opts ResolverOptions) *Resolver {
-	if len(opts.BootstrapDoH) == 0 {
-		opts.BootstrapDoH = DefaultBootstrapDoH
+	if len(opts.DomesticDoH) == 0 && len(opts.BootstrapDoH) > 0 {
+		opts.DomesticDoH = opts.BootstrapDoH
+	}
+	if len(opts.DomesticDoH) == 0 {
+		opts.DomesticDoH = DefaultDomesticDoH
+	}
+	if len(opts.BootstrapDNS) == 0 {
+		opts.BootstrapDNS = DefaultBootstrapDNS
 	}
 	if len(opts.RemoteDoH) == 0 {
 		opts.RemoteDoH = DefaultRemoteDoH
@@ -152,29 +167,37 @@ func (r *Resolver) SetRouter(router *routing.Router) {
 	r.opts.Router = router
 }
 
-func (r *Resolver) SetUpstreams(bootstrap []string, remote []string) {
+func (r *Resolver) SetUpstreams(bootstrapDNS []string, domesticDoH []string, remoteDoH []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(bootstrap) > 0 {
-		r.opts.BootstrapDoH = bootstrap
+
+	if len(bootstrapDNS) > 0 {
+		r.opts.BootstrapDNS = bootstrapDNS
 	} else {
-		r.opts.BootstrapDoH = DefaultBootstrapDoH
+		r.opts.BootstrapDNS = DefaultBootstrapDNS
 	}
-	if len(remote) > 0 {
-		r.opts.RemoteDoH = remote
+	if len(domesticDoH) > 0 {
+		r.opts.DomesticDoH = domesticDoH
+	} else {
+		r.opts.DomesticDoH = DefaultDomesticDoH
+	}
+	if len(remoteDoH) > 0 {
+		r.opts.RemoteDoH = remoteDoH
 	} else {
 		r.opts.RemoteDoH = DefaultRemoteDoH
 	}
 }
 
-func (r *Resolver) Upstreams() ([]string, []string) {
+func (r *Resolver) Upstreams() ([]string, []string, []string) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	bootCopy := make([]string, len(r.opts.BootstrapDoH))
-	copy(bootCopy, r.opts.BootstrapDoH)
-	remoteCopy := make([]string, len(r.opts.RemoteDoH))
-	copy(remoteCopy, r.opts.RemoteDoH)
-	return bootCopy, remoteCopy
+	bCopy := make([]string, len(r.opts.BootstrapDNS))
+	copy(bCopy, r.opts.BootstrapDNS)
+	dCopy := make([]string, len(r.opts.DomesticDoH))
+	copy(dCopy, r.opts.DomesticDoH)
+	rCopy := make([]string, len(r.opts.RemoteDoH))
+	copy(rCopy, r.opts.RemoteDoH)
+	return bCopy, dCopy, rCopy
 }
 
 func (r *Resolver) SetBlocker(blocker Blocker) {
@@ -276,10 +299,15 @@ func (r *Resolver) fetchAndCache(ctx context.Context, req *dns.Msg, domain strin
 	var resp *dns.Msg
 	var err error
 
-	// Determine upstream: Bootstrap (Stage 3) vs Remote (Stage 4)
-	if r.isBootstrapOrDirect(domain) {
-		resp, err = r.queryDoH(ctx, r.directHTTPClient, r.opts.BootstrapDoH, req)
+	// Determine upstream:
+	// 1. Stage 3a: Bootstrap domains (proxy node hostnames, DoH hostnames) -> query pure IP Bootstrap DNS
+	if r.isBootstrap(domain) {
+		resp, err = r.queryBootstrapDNS(ctx, req)
+	} else if r.isDomesticOrDirect(domain) {
+		// 2. Stage 3b: Domestic / Direct / geosite:cn -> query Domestic DoH (direct over physical NIC)
+		resp, err = r.queryDoH(ctx, r.directHTTPClient, r.opts.DomesticDoH, req)
 	} else {
+		// 3. Stage 4: Remote / Overseas -> query Remote DoH (over proxy tunnel)
 		resp, err = r.queryDoH(ctx, r.proxyHTTPClient, r.opts.RemoteDoH, req)
 	}
 
@@ -291,6 +319,53 @@ func (r *Resolver) fetchAndCache(ctx context.Context, req *dns.Msg, domain strin
 	r.storeCache(cacheKey, resp)
 
 	return resp, nil
+}
+
+func (r *Resolver) queryBootstrapDNS(ctx context.Context, req *dns.Msg) (*dns.Msg, error) {
+	var lastErr error
+	for _, srv := range r.opts.BootstrapDNS {
+		addr := srv
+		if !strings.Contains(addr, ":") {
+			addr = net.JoinHostPort(addr, "53")
+		}
+		resp, _, err := r.dnsClient.ExchangeContext(ctx, req, addr)
+		if err == nil && resp != nil {
+			resp.Id = req.Id
+			return resp, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("all bootstrap dns servers failed")
+}
+
+func (r *Resolver) isBootstrap(domain string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.bootstrapSet[domain]
+	return ok
+}
+
+func (r *Resolver) isDomesticOrDirect(domain string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// 1. Private or local domain
+	if isPrivateDomain(domain) {
+		return true
+	}
+
+	// 2. Router matches DIRECT
+	if r.opts.Router != nil {
+		action, _ := r.opts.Router.Match(domain)
+		if action.Type == routing.ActionDirect {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *Resolver) checkHosts(req *dns.Msg, domain string, qtype uint16) *dns.Msg {
@@ -345,30 +420,7 @@ func (r *Resolver) queryMagicDNS(ctx context.Context, req *dns.Msg) (*dns.Msg, e
 	return resp, err
 }
 
-func (r *Resolver) isBootstrapOrDirect(domain string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 
-	// 1. In BootstrapDomains
-	if _, ok := r.bootstrapSet[domain]; ok {
-		return true
-	}
-
-	// 2. Private or local domain
-	if isPrivateDomain(domain) {
-		return true
-	}
-
-	// 3. Router matches DIRECT
-	if r.opts.Router != nil {
-		action, _ := r.opts.Router.Match(domain)
-		if action.Type == routing.ActionDirect {
-			return true
-		}
-	}
-
-	return false
-}
 
 func isPrivateDomain(domain string) bool {
 	if domain == "localhost" ||
