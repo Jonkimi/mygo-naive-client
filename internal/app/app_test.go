@@ -2324,7 +2324,9 @@ func TestApp_CustomDoHConfiguration(t *testing.T) {
 	for _, d := range domains {
 		if d == "custom-dns.mycorp.internal" {
 			foundInternal = true
-			break
+		}
+		if d == "dns.quad9.net" {
+			t.Fatalf("remote DoH domain dns.quad9.net must NOT be included in bootstrap domains")
 		}
 	}
 	if !foundInternal {
