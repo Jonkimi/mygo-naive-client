@@ -47,29 +47,18 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 }
 
 func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
-	cat := a.catalog()
-
 	if collapsed {
 		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 4, 0).Children(func() {
-			logoBtn := ui.ButtonBase(c.Key("sidebar-brand-collapsed")).
-				Label(cat.SidebarExpand()).
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 				Size(36, 36).Radius(8).Background(p.accentBg).
-				AlignItems(ui.Center).Justify(ui.Center).
-				Tooltip(cat.SidebarExpand() + " (⌘B)").
 				Children(func() {
 					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
 				})
-			if logoBtn.Hovered() {
-				logoBtn.Background(p.cardHover)
-			}
-			if logoBtn.Clicked() {
-				a.toggleSidebar()
-			}
 		})
 		return
 	}
 
-	ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(30, 4, 6, 4).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Padding(30, 4, 6, 4).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 				Size(30, 30).Radius(8).Background(p.accentBg).
@@ -78,21 +67,6 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 				})
 			ui.Text(c, "NaiveClient").FontSize(15).FontWeight(700).TextColor(p.text)
 		})
-
-		toggleBtn := ui.ButtonBase(c.Key("btn-sidebar-toggle")).
-			Label(cat.SidebarCollapse()).
-			Size(26, 26).Radius(6).Background(ui.Transparent).
-			AlignItems(ui.Center).Justify(ui.Center).
-			Tooltip(cat.SidebarCollapse() + " (⌘B)").
-			Children(func() {
-				ui.Icon(c, iconSidebarCollapse).Size(14, 14).TextColor(p.textDim)
-			})
-		if toggleBtn.Hovered() {
-			toggleBtn.Background(p.cardHover)
-		}
-		if toggleBtn.Clicked() {
-			a.toggleSidebar()
-		}
 	})
 }
 
