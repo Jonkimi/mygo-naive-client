@@ -239,5 +239,22 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					a.saveState()
 				}
 			})
+
+			// Section 3.5: Split-DoH & DNS Resolution
+			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, cat.DohSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+					ui.Text(c, cat.DohSectionDesc()).FontSize(11).TextColor(p.textDim)
+				})
+
+				if labeledInput(c, p, "page-set-doh-bootstrap", cat.DohBootstrapLabel(), &a.state.BootstrapDoH, cat.DohBootstrapHint()).Changed() {
+					a.saveState()
+					a.initDNS()
+				}
+				if labeledInput(c, p, "page-set-doh-remote", cat.DohRemoteLabel(), &a.state.RemoteDoH, cat.DohRemoteHint()).Changed() {
+					a.saveState()
+					a.initDNS()
+				}
+			})
 		})
 }

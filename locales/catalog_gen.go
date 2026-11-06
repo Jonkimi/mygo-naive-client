@@ -906,6 +906,66 @@ func (msgs Messages) GatewayPortHint() string {
 	return Catalog.Format(msgs.locale, "gatewayPortHint", nil)
 }
 
+// DohSectionTitle says "Split-DoH & Anti-Deadlock DNS"
+// in the language the app shows.
+func DohSectionTitle() string { return In(i18n.Locale()).DohSectionTitle() }
+
+// DohSectionTitle says "Split-DoH & Anti-Deadlock DNS"
+// in the language of msgs.
+func (msgs Messages) DohSectionTitle() string {
+	return Catalog.Format(msgs.locale, "dohSectionTitle", nil)
+}
+
+// DohSectionDesc says "Configure domestic direct & remote proxy DoH upstreams (comma-separated)"
+// in the language the app shows.
+func DohSectionDesc() string { return In(i18n.Locale()).DohSectionDesc() }
+
+// DohSectionDesc says "Configure domestic direct & remote proxy DoH upstreams (comma-separated)"
+// in the language of msgs.
+func (msgs Messages) DohSectionDesc() string {
+	return Catalog.Format(msgs.locale, "dohSectionDesc", nil)
+}
+
+// DohBootstrapLabel says "Domestic / Direct DoH Upstream"
+// in the language the app shows.
+func DohBootstrapLabel() string { return In(i18n.Locale()).DohBootstrapLabel() }
+
+// DohBootstrapLabel says "Domestic / Direct DoH Upstream"
+// in the language of msgs.
+func (msgs Messages) DohBootstrapLabel() string {
+	return Catalog.Format(msgs.locale, "dohBootstrapLabel", nil)
+}
+
+// DohBootstrapHint says "Leave empty for defaults: AliDNS and DNSPub"
+// in the language the app shows.
+func DohBootstrapHint() string { return In(i18n.Locale()).DohBootstrapHint() }
+
+// DohBootstrapHint says "Leave empty for defaults: AliDNS and DNSPub"
+// in the language of msgs.
+func (msgs Messages) DohBootstrapHint() string {
+	return Catalog.Format(msgs.locale, "dohBootstrapHint", nil)
+}
+
+// DohRemoteLabel says "Remote / Proxy DoH Upstream"
+// in the language the app shows.
+func DohRemoteLabel() string { return In(i18n.Locale()).DohRemoteLabel() }
+
+// DohRemoteLabel says "Remote / Proxy DoH Upstream"
+// in the language of msgs.
+func (msgs Messages) DohRemoteLabel() string {
+	return Catalog.Format(msgs.locale, "dohRemoteLabel", nil)
+}
+
+// DohRemoteHint says "Leave empty for defaults: Cloudflare and Google DNS"
+// in the language the app shows.
+func DohRemoteHint() string { return In(i18n.Locale()).DohRemoteHint() }
+
+// DohRemoteHint says "Leave empty for defaults: Cloudflare and Google DNS"
+// in the language of msgs.
+func (msgs Messages) DohRemoteHint() string {
+	return Catalog.Format(msgs.locale, "dohRemoteHint", nil)
+}
+
 // TrafficModeLabel says "Mode"
 // in the language the app shows.
 func TrafficModeLabel() string { return In(i18n.Locale()).TrafficModeLabel() }

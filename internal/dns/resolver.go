@@ -152,6 +152,31 @@ func (r *Resolver) SetRouter(router *routing.Router) {
 	r.opts.Router = router
 }
 
+func (r *Resolver) SetUpstreams(bootstrap []string, remote []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(bootstrap) > 0 {
+		r.opts.BootstrapDoH = bootstrap
+	} else {
+		r.opts.BootstrapDoH = DefaultBootstrapDoH
+	}
+	if len(remote) > 0 {
+		r.opts.RemoteDoH = remote
+	} else {
+		r.opts.RemoteDoH = DefaultRemoteDoH
+	}
+}
+
+func (r *Resolver) Upstreams() ([]string, []string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	bootCopy := make([]string, len(r.opts.BootstrapDoH))
+	copy(bootCopy, r.opts.BootstrapDoH)
+	remoteCopy := make([]string, len(r.opts.RemoteDoH))
+	copy(remoteCopy, r.opts.RemoteDoH)
+	return bootCopy, remoteCopy
+}
+
 func (r *Resolver) SetBlocker(blocker Blocker) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
