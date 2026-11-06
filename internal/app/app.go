@@ -766,16 +766,6 @@ func (a *app) geodataDir() string {
 	return filepath.Join(a.userDataDir(), "geodata")
 }
 
-var defaultGeoSitePresets = []string{
-	"category-ai-!cn", "category-ai-cn", "cn", "apple", "google", "telegram",
-	"category-ads-all", "openai", "github", "netflix", "spotify", "microsoft",
-	"bilibili", "geolocation-!cn",
-}
-
-var defaultGeoIPPresets = []string{
-	"cn", "private", "telegram", "hk", "jp", "us", "sg",
-}
-
 func (a *app) loadGeoTagsIfPresent() {
 	dir := a.geodataDir()
 	if f, err := os.Open(filepath.Join(dir, "geosite.dat")); err == nil {
@@ -793,17 +783,11 @@ func (a *app) loadGeoTagsIfPresent() {
 }
 
 func (a *app) availableGeoSiteTags() []string {
-	if len(a.geoSiteTags) > 0 {
-		return a.geoSiteTags
-	}
-	return defaultGeoSitePresets
+	return a.geoSiteTags
 }
 
 func (a *app) availableGeoIPTags() []string {
-	if len(a.geoIPTags) > 0 {
-		return a.geoIPTags
-	}
-	return defaultGeoIPPresets
+	return a.geoIPTags
 }
 
 func (a *app) loadGeoDataIfPresent() {

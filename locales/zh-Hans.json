@@ -35,6 +35,8 @@
   "geodataSectionTitle": "分流规则数据库 (Loyalsoldier Geodata)",
   "geodataStatusReady": "规则库已就绪",
   "geodataStatusMissing": "规则库未就绪 (点击下载)",
+  "geodataDownloadGuide": "分流数据库尚未下载，点击下载并加载完整类别库",
+  "geodataDownloading": "正在下载并校验最新 Loyalsoldier 规则库...",
   "resetPresets": "恢复默认预设",
   "navInsights": "洞察",
   "navTailnet": "组网",

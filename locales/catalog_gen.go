@@ -384,6 +384,26 @@ func (msgs Messages) GeodataStatusMissing() string {
 	return Catalog.Format(msgs.locale, "geodataStatusMissing", nil)
 }
 
+// GeodataDownloadGuide says "Ruleset database not downloaded. Click to download complete category database."
+// in the language the app shows.
+func GeodataDownloadGuide() string { return In(i18n.Locale()).GeodataDownloadGuide() }
+
+// GeodataDownloadGuide says "Ruleset database not downloaded. Click to download complete category database."
+// in the language of msgs.
+func (msgs Messages) GeodataDownloadGuide() string {
+	return Catalog.Format(msgs.locale, "geodataDownloadGuide", nil)
+}
+
+// GeodataDownloading says "Downloading and verifying Loyalsoldier ruleset..."
+// in the language the app shows.
+func GeodataDownloading() string { return In(i18n.Locale()).GeodataDownloading() }
+
+// GeodataDownloading says "Downloading and verifying Loyalsoldier ruleset..."
+// in the language of msgs.
+func (msgs Messages) GeodataDownloading() string {
+	return Catalog.Format(msgs.locale, "geodataDownloading", nil)
+}
+
 // ResetPresets says "Reset Defaults"
 // in the language the app shows.
 func ResetPresets() string { return In(i18n.Locale()).ResetPresets() }
