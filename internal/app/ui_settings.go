@@ -184,16 +184,6 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				if switchRow(c, p, "page-set-auto-update-core", cat.CoreAutoUpdateLabel(), &a.state.AutoUpdateCore) {
 					a.saveState()
 				}
-				if switchRow(c, p, "page-set-use-running", cat.CoreUseRunningProxy(), &a.state.UseRunningServiceForUpd) {
-					a.saveState()
-				}
-
-				if labeledInput(c, p, "page-set-gh-mirror", cat.GitHubMirrorLabel(), &a.state.GitHubMirror, cat.GitHubMirrorHint()).Changed() {
-					a.saveState()
-				}
-				if labeledInput(c, p, "page-set-upd-proxy", cat.UpdateProxyLabel(), &a.state.UpdateProxy, "socks://127.0.0.1:1080").Changed() {
-					a.saveState()
-				}
 				if labeledInput(c, p, "page-set-custom-bin", cat.CustomCorePathLabel(), &a.state.CustomNaiveBinaryPath, cat.CustomCorePathHint()).Changed() {
 					a.saveState()
 					a.syncBinaryPathAndVersion()
@@ -219,6 +209,24 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 						}
 					})
 				})
+			})
+
+			// Section 2.8: Unified Resource Downloads & Update Channels
+			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, cat.DownloadChannelTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+					ui.Text(c, cat.DownloadChannelDesc()).FontSize(11).TextColor(p.textDim)
+				})
+
+				if switchRow(c, p, "page-set-use-running", cat.CoreUseRunningProxy(), &a.state.UseRunningServiceForUpd) {
+					a.saveState()
+				}
+				if labeledInput(c, p, "page-set-gh-mirror", cat.GitHubMirrorLabel(), &a.state.GitHubMirror, cat.GitHubMirrorHint()).Changed() {
+					a.saveState()
+				}
+				if labeledInput(c, p, "page-set-upd-proxy", cat.UpdateProxyLabel(), &a.state.UpdateProxy, "socks://127.0.0.1:1080").Changed() {
+					a.saveState()
+				}
 			})
 
 			// Section 3: Telemetry & Network Testing

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"naive-client/internal/config"
-	"naive-client/internal/runner"
+	"naive-client/internal/updater"
 )
 
 const (
@@ -29,6 +29,7 @@ type UpdateOptions struct {
 	GeoSiteURL    string
 	GeoSiteSumURL string
 	GitHubMirror  string
+	ProxyURL      string
 	ProxyEP       *config.ListenEndpoint
 }
 
@@ -68,12 +69,11 @@ func Update(ctx context.Context, opts UpdateOptions, onProgress func(stage strin
 	}
 
 	// Build HTTP client
-	client := &http.Client{Timeout: 60 * time.Second}
-	if opts.ProxyEP != nil {
-		if tr, err := runner.ProxyTransport(*opts.ProxyEP); err == nil {
-			client.Transport = tr
-		}
-	}
+	client := updater.NewHTTPClient(updater.HTTPClientOptions{
+		ProxyURL:      opts.ProxyURL,
+		LocalEndpoint: opts.ProxyEP,
+		Timeout:       60 * time.Second,
+	})
 
 	// 1. Download & verify geoip.dat
 	ipDest := filepath.Join(opts.DestDir, "geoip.dat")

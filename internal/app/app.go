@@ -853,6 +853,7 @@ func (a *app) triggerUpdateGeoData() {
 		opts := geodata.UpdateOptions{
 			DestDir:      a.geodataDir(),
 			GitHubMirror: a.state.GitHubMirror,
+			ProxyURL:     strings.TrimSpace(a.state.UpdateProxy),
 			ProxyEP:      ep,
 		}
 		err := geodata.Update(context.Background(), opts, nil)

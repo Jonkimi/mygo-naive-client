@@ -1504,21 +1504,41 @@ func (msgs Messages) CoreAutoUpdateLabel() string {
 	return Catalog.Format(msgs.locale, "coreAutoUpdateLabel", nil)
 }
 
-// CoreUseRunningProxy says "Route update checks and downloads through running proxy"
+// DownloadChannelTitle says "Resource Downloads & Proxy Channels"
+// in the language the app shows.
+func DownloadChannelTitle() string { return In(i18n.Locale()).DownloadChannelTitle() }
+
+// DownloadChannelTitle says "Resource Downloads & Proxy Channels"
+// in the language of msgs.
+func (msgs Messages) DownloadChannelTitle() string {
+	return Catalog.Format(msgs.locale, "downloadChannelTitle", nil)
+}
+
+// DownloadChannelDesc says "Shared network and mirror settings for downloading NaiveProxy core and Loyalsoldier routing databases."
+// in the language the app shows.
+func DownloadChannelDesc() string { return In(i18n.Locale()).DownloadChannelDesc() }
+
+// DownloadChannelDesc says "Shared network and mirror settings for downloading NaiveProxy core and Loyalsoldier routing databases."
+// in the language of msgs.
+func (msgs Messages) DownloadChannelDesc() string {
+	return Catalog.Format(msgs.locale, "downloadChannelDesc", nil)
+}
+
+// CoreUseRunningProxy says "Route update checks and downloads through running proxy (for core & ruleset)"
 // in the language the app shows.
 func CoreUseRunningProxy() string { return In(i18n.Locale()).CoreUseRunningProxy() }
 
-// CoreUseRunningProxy says "Route update checks and downloads through running proxy"
+// CoreUseRunningProxy says "Route update checks and downloads through running proxy (for core & ruleset)"
 // in the language of msgs.
 func (msgs Messages) CoreUseRunningProxy() string {
 	return Catalog.Format(msgs.locale, "coreUseRunningProxy", nil)
 }
 
-// GitHubMirrorLabel says "GitHub Mirror Prefix (optional)"
+// GitHubMirrorLabel says "GitHub Mirror Prefix (for core & ruleset)"
 // in the language the app shows.
 func GitHubMirrorLabel() string { return In(i18n.Locale()).GitHubMirrorLabel() }
 
-// GitHubMirrorLabel says "GitHub Mirror Prefix (optional)"
+// GitHubMirrorLabel says "GitHub Mirror Prefix (for core & ruleset)"
 // in the language of msgs.
 func (msgs Messages) GitHubMirrorLabel() string {
 	return Catalog.Format(msgs.locale, "gitHubMirrorLabel", nil)
@@ -1534,11 +1554,11 @@ func (msgs Messages) GitHubMirrorHint() string {
 	return Catalog.Format(msgs.locale, "gitHubMirrorHint", nil)
 }
 
-// UpdateProxyLabel says "Dedicated Update Proxy URI (optional)"
+// UpdateProxyLabel says "Dedicated Download Proxy URI (for core & ruleset, optional)"
 // in the language the app shows.
 func UpdateProxyLabel() string { return In(i18n.Locale()).UpdateProxyLabel() }
 
-// UpdateProxyLabel says "Dedicated Update Proxy URI (optional)"
+// UpdateProxyLabel says "Dedicated Download Proxy URI (for core & ruleset, optional)"
 // in the language of msgs.
 func (msgs Messages) UpdateProxyLabel() string {
 	return Catalog.Format(msgs.locale, "updateProxyLabel", nil)

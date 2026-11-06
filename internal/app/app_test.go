@@ -442,6 +442,9 @@ func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 	if _, ok := tt.Find("NaiveProxy 核心与无感更新"); !ok {
 		t.Fatalf("expected section 'NaiveProxy 核心与无感更新'")
 	}
+	if _, ok := tt.Find(a.catalog().DownloadChannelTitle()); !ok {
+		t.Fatalf("expected section %q", a.catalog().DownloadChannelTitle())
+	}
 
 	if err := tt.Click("深色"); err != nil {
 		t.Fatalf("click 深色 theme option: %v", err)
