@@ -138,7 +138,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	}
 
 	hasBadge := tab == TabSettings && (a.localVersion == "" || a.hasUpdate)
-	isUpcoming := tab == TabInsights || tab == TabTailnet
+	isUpcoming := tab == TabTailnet
 	if !active && isUpcoming {
 		fg = p.textDim
 	}
