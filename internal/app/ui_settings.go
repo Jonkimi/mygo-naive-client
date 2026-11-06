@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"runtime"
+	"strconv"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -106,6 +107,38 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				}
 				if switchRow(c, p, "page-set-open-login", cat.AutoStartLabel(), &openAtLogin) && !a.headless {
 					_ = mygo.App.SetOpenAtLogin(openAtLogin)
+				}
+			})
+
+			// Section 1.5: Unified Gateway & Traffic Takeover
+			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, cat.GatewaySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+					if a.gateway != nil && a.state.GatewayEnabled {
+						statusBadge(c, "Running :"+fmt.Sprint(a.state.GatewayPort), p.green, p.greenBg)
+					} else {
+						statusBadge(c, cat.StatusStopped(), p.textDim, p.elevated)
+					}
+				})
+
+				if switchRow(c, p, "page-set-gateway-enable", cat.GatewayAutoStart(), &a.state.GatewayEnabled) {
+					a.saveState()
+					if a.state.GatewayEnabled {
+						_ = a.startGateway()
+					} else {
+						a.stopGateway()
+					}
+				}
+
+				portStr := fmt.Sprintf("%d", a.state.GatewayPort)
+				if labeledInput(c, p, "page-set-gateway-port", cat.GatewayPortLabel(), &portStr, cat.GatewayPortHint()).Changed() {
+					if parsed, err := strconv.Atoi(portStr); err == nil && parsed > 0 && parsed <= 65535 {
+						a.state.GatewayPort = parsed
+						a.saveState()
+						if a.state.GatewayEnabled {
+							_ = a.startGateway()
+						}
+					}
 				}
 			})
 

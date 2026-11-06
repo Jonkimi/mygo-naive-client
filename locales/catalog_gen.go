@@ -124,6 +124,46 @@ func (msgs Messages) MasterGateway() string {
 	return Catalog.Format(msgs.locale, "masterGateway", nil)
 }
 
+// GatewaySectionTitle says "Unified Gateway & Traffic Takeover"
+// in the language the app shows.
+func GatewaySectionTitle() string { return In(i18n.Locale()).GatewaySectionTitle() }
+
+// GatewaySectionTitle says "Unified Gateway & Traffic Takeover"
+// in the language of msgs.
+func (msgs Messages) GatewaySectionTitle() string {
+	return Catalog.Format(msgs.locale, "gatewaySectionTitle", nil)
+}
+
+// GatewayAutoStart says "Enable Unified In-Process Gateway"
+// in the language the app shows.
+func GatewayAutoStart() string { return In(i18n.Locale()).GatewayAutoStart() }
+
+// GatewayAutoStart says "Enable Unified In-Process Gateway"
+// in the language of msgs.
+func (msgs Messages) GatewayAutoStart() string {
+	return Catalog.Format(msgs.locale, "gatewayAutoStart", nil)
+}
+
+// GatewayPortLabel says "Gateway Mixed Port"
+// in the language the app shows.
+func GatewayPortLabel() string { return In(i18n.Locale()).GatewayPortLabel() }
+
+// GatewayPortLabel says "Gateway Mixed Port"
+// in the language of msgs.
+func (msgs Messages) GatewayPortLabel() string {
+	return Catalog.Format(msgs.locale, "gatewayPortLabel", nil)
+}
+
+// GatewayPortHint says "Default 10808 (Mixed HTTP & SOCKS5)"
+// in the language the app shows.
+func GatewayPortHint() string { return In(i18n.Locale()).GatewayPortHint() }
+
+// GatewayPortHint says "Default 10808 (Mixed HTTP & SOCKS5)"
+// in the language of msgs.
+func (msgs Messages) GatewayPortHint() string {
+	return Catalog.Format(msgs.locale, "gatewayPortHint", nil)
+}
+
 // ModePortOnly says "Port :10808"
 // in the language the app shows.
 func ModePortOnly() string { return In(i18n.Locale()).ModePortOnly() }
