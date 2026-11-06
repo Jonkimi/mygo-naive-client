@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
+	"naive-client/internal/dns"
+	"naive-client/internal/dns/ipcache"
 	"naive-client/internal/gateway"
 	"naive-client/internal/geodata"
 	"naive-client/internal/routing"
@@ -83,6 +86,9 @@ type app struct {
 	gateway  *gateway.Gateway
 	sysproxy *sysproxy.Sysproxy
 	router   *routing.Router
+	ipCache  *ipcache.Cache
+	resolver *dns.Resolver
+	dnsServer *dns.Server
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -260,6 +266,7 @@ func Run() error {
 func newApp(dataDir string) *app {
 	recPath := filepath.Join(dataDir, "network-recovery.json")
 	st := defaultPersistedState()
+	cache := ipcache.New(10000)
 	return &app{
 		dataDir:      dataDir,
 		state:        st,
@@ -267,6 +274,7 @@ func newApp(dataDir string) *app {
 		tracker:      telemetry.NewTracker(),
 		sysproxy:     sysproxy.New(recPath),
 		router:       routing.NewRouter(st.RoutingRules, st.RoutingFinal),
+		ipCache:      cache,
 		quitCh:       make(chan struct{}),
 	}
 }
@@ -738,9 +746,12 @@ func (a *app) startGateway() error {
 	if port <= 0 {
 		port = 10809
 	}
+	a.initDNS()
+
 	gw, err := gateway.New(gateway.Options{
 		BindAddr: fmt.Sprintf("127.0.0.1:%d", port),
 		Tracker:  a.tracker,
+		IPCache:  a.ipCache,
 		DialTarget: func(ctx context.Context, target string) (net.Conn, string, error) {
 			return a.dialThroughPool(ctx, target)
 		},
@@ -759,7 +770,66 @@ func (a *app) startGateway() error {
 	return nil
 }
 
+func (a *app) collectBootstrapDomains() []string {
+	var domains []string
+	seen := make(map[string]bool)
+	add := func(host string) {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return
+		}
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.ToLower(host)
+		if net.ParseIP(host) == nil && !seen[host] {
+			seen[host] = true
+			domains = append(domains, host)
+		}
+	}
+
+	for _, svc := range a.state.Services {
+		for _, p := range svc.Proxies {
+			if u, err := url.Parse(p); err == nil && u.Hostname() != "" {
+				add(u.Hostname())
+			}
+		}
+		if svc.ExternalURI != "" {
+			if u, err := url.Parse(svc.ExternalURI); err == nil && u.Hostname() != "" {
+				add(u.Hostname())
+			}
+		}
+	}
+	add("dns.alidns.com")
+	add("doh.pub")
+	add("1.1.1.1")
+	add("dns.google")
+	return domains
+}
+
+func (a *app) initDNS() {
+	bootDomains := a.collectBootstrapDomains()
+	if a.resolver == nil {
+		a.resolver = dns.NewResolver(dns.ResolverOptions{
+			Router:           a.router,
+			BootstrapDomains: bootDomains,
+			IPCache:          a.ipCache,
+			DialProxy: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, _, err := a.dialThroughPool(ctx, addr)
+				return conn, err
+			},
+		})
+	} else {
+		a.resolver.SetBootstrapDomains(bootDomains)
+		a.resolver.SetRouter(a.router)
+	}
+}
+
 func (a *app) stopGateway() {
+	if a.dnsServer != nil {
+		_ = a.dnsServer.Stop()
+		a.dnsServer = nil
+	}
 	if a.sysproxy != nil {
 		_ = a.sysproxy.Unset()
 	}
@@ -916,6 +986,10 @@ func (a *app) triggerUpdateGeoData() {
 func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
 	a.loadGeoDataIfPresent()
+	if a.resolver != nil {
+		a.resolver.SetRouter(a.router)
+		a.resolver.SetBootstrapDomains(a.collectBootstrapDomains())
+	}
 }
 
 func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, string, error) {

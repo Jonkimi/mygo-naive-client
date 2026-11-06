@@ -12,8 +12,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"naive-client/internal/dns/ipcache"
+	"naive-client/internal/dns/sniffer"
 	"naive-client/internal/telemetry"
 )
+
+type Blocker interface {
+	Match(domain string) (blocked bool, rule string)
+}
 
 type DialTargetFunc func(ctx context.Context, target string) (net.Conn, string, error)
 
@@ -21,6 +27,8 @@ type Options struct {
 	BindAddr   string
 	Tracker    *telemetry.Tracker
 	DialTarget DialTargetFunc
+	IPCache    *ipcache.Cache
+	Blocker    Blocker
 }
 
 type Gateway struct {
@@ -121,6 +129,24 @@ func (g *Gateway) handleConn(conn net.Conn) {
 	}
 }
 
+func (g *Gateway) resolveHost(host string, br *bufio.Reader) string {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host
+	}
+	if g.opts.IPCache != nil {
+		if domain, ok := g.opts.IPCache.Lookup(ip); ok && domain != "" {
+			return domain
+		}
+	}
+	if br != nil {
+		if sniffed, _, err := sniffer.Sniff(br); err == nil && sniffed != "" {
+			return sniffed
+		}
+	}
+	return host
+}
+
 func (g *Gateway) handleSocks5(conn net.Conn, br *bufio.Reader) {
 	// 1. Negotiation
 	header := make([]byte, 2)
@@ -184,7 +210,16 @@ func (g *Gateway) handleSocks5(conn net.Conn, br *bufio.Reader) {
 		return
 	}
 	port := binary.BigEndian.Uint16(portBytes[:])
-	target := net.JoinHostPort(host, strconv.Itoa(int(port)))
+	effectiveHost := g.resolveHost(host, nil)
+	target := net.JoinHostPort(effectiveHost, strconv.Itoa(int(port)))
+
+	// Check Blocker
+	if g.opts.Blocker != nil {
+		if blocked, _ := g.opts.Blocker.Match(effectiveHost); blocked {
+			_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+			return
+		}
+	}
 
 	// 3. Dial target
 	dialStart := time.Now()
@@ -192,7 +227,7 @@ func (g *Gateway) handleSocks5(conn net.Conn, br *bufio.Reader) {
 	dialRTT := time.Since(dialStart)
 
 	if g.opts.Tracker != nil && nodeID != "" {
-		g.opts.Tracker.RecordDial(nodeID, host, dialRTT, dialErr)
+		g.opts.Tracker.RecordDial(nodeID, effectiveHost, dialRTT, dialErr)
 	}
 
 	if dialErr != nil {
@@ -204,6 +239,13 @@ func (g *Gateway) handleSocks5(conn net.Conn, br *bufio.Reader) {
 	// Reply SOCKS5 Success
 	if _, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); err != nil {
 		return
+	}
+
+	// Sniff first payload if host was raw IP
+	if net.ParseIP(host) != nil && g.opts.IPCache != nil {
+		if sniffed, _, err := sniffer.Sniff(br); err == nil && sniffed != "" {
+			g.opts.IPCache.Put(net.ParseIP(host), sniffed)
+		}
 	}
 
 	// 4. Relay
@@ -221,9 +263,19 @@ func (g *Gateway) handleHTTP(conn net.Conn, br *bufio.Reader) {
 		if target == "" {
 			target = req.Host
 		}
-		host, _, err := net.SplitHostPort(target)
+		host, port, err := net.SplitHostPort(target)
 		if err != nil {
 			host = target
+			port = "443"
+		}
+		effectiveHost := g.resolveHost(host, nil)
+		target = net.JoinHostPort(effectiveHost, port)
+
+		if g.opts.Blocker != nil {
+			if blocked, _ := g.opts.Blocker.Match(effectiveHost); blocked {
+				_, _ = conn.Write([]byte("HTTP/1.1 403 Forbidden\r\n\r\n"))
+				return
+			}
 		}
 
 		dialStart := time.Now()
@@ -231,7 +283,7 @@ func (g *Gateway) handleHTTP(conn net.Conn, br *bufio.Reader) {
 		dialRTT := time.Since(dialStart)
 
 		if g.opts.Tracker != nil && nodeID != "" {
-			g.opts.Tracker.RecordDial(nodeID, host, dialRTT, dialErr)
+			g.opts.Tracker.RecordDial(nodeID, effectiveHost, dialRTT, dialErr)
 		}
 
 		if dialErr != nil {
@@ -256,9 +308,19 @@ func (g *Gateway) handleHTTP(conn net.Conn, br *bufio.Reader) {
 	if !hasPort(target) {
 		target = net.JoinHostPort(target, "80")
 	}
-	host, _, err := net.SplitHostPort(target)
+	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		host = target
+		port = "80"
+	}
+	effectiveHost := g.resolveHost(host, nil)
+	target = net.JoinHostPort(effectiveHost, port)
+
+	if g.opts.Blocker != nil {
+		if blocked, _ := g.opts.Blocker.Match(effectiveHost); blocked {
+			_, _ = conn.Write([]byte("HTTP/1.1 403 Forbidden\r\n\r\n"))
+			return
+		}
 	}
 
 	dialStart := time.Now()
@@ -266,7 +328,7 @@ func (g *Gateway) handleHTTP(conn net.Conn, br *bufio.Reader) {
 	dialRTT := time.Since(dialStart)
 
 	if g.opts.Tracker != nil && nodeID != "" {
-		g.opts.Tracker.RecordDial(nodeID, host, dialRTT, dialErr)
+		g.opts.Tracker.RecordDial(nodeID, effectiveHost, dialRTT, dialErr)
 	}
 
 	if dialErr != nil {
@@ -302,6 +364,8 @@ func (g *Gateway) relay(client, remote net.Conn) {
 		_, _ = io.Copy(remote, client)
 		if tc, ok := remote.(*net.TCPConn); ok {
 			_ = tc.CloseWrite()
+		} else {
+			_ = remote.Close()
 		}
 	}()
 
@@ -310,6 +374,8 @@ func (g *Gateway) relay(client, remote net.Conn) {
 		_, _ = io.Copy(client, remote)
 		if tc, ok := client.(*net.TCPConn); ok {
 			_ = tc.CloseWrite()
+		} else {
+			_ = client.Close()
 		}
 	}()
 
