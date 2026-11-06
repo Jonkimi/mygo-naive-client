@@ -144,6 +144,156 @@ func (msgs Messages) RoutingProxyPool() string {
 	return Catalog.Format(msgs.locale, "routingProxyPool", nil)
 }
 
+// NewRule says "New Rule"
+// in the language the app shows.
+func NewRule() string { return In(i18n.Locale()).NewRule() }
+
+// NewRule says "New Rule"
+// in the language of msgs.
+func (msgs Messages) NewRule() string {
+	return Catalog.Format(msgs.locale, "newRule", nil)
+}
+
+// EditRule says "Edit Rule"
+// in the language the app shows.
+func EditRule() string { return In(i18n.Locale()).EditRule() }
+
+// EditRule says "Edit Rule"
+// in the language of msgs.
+func (msgs Messages) EditRule() string {
+	return Catalog.Format(msgs.locale, "editRule", nil)
+}
+
+// DeleteRule says "Delete Rule"
+// in the language the app shows.
+func DeleteRule() string { return In(i18n.Locale()).DeleteRule() }
+
+// DeleteRule says "Delete Rule"
+// in the language of msgs.
+func (msgs Messages) DeleteRule() string {
+	return Catalog.Format(msgs.locale, "deleteRule", nil)
+}
+
+// RuleNameLabel says "Rule Name"
+// in the language the app shows.
+func RuleNameLabel() string { return In(i18n.Locale()).RuleNameLabel() }
+
+// RuleNameLabel says "Rule Name"
+// in the language of msgs.
+func (msgs Messages) RuleNameLabel() string {
+	return Catalog.Format(msgs.locale, "ruleNameLabel", nil)
+}
+
+// RuleDescLabel says "Description"
+// in the language the app shows.
+func RuleDescLabel() string { return In(i18n.Locale()).RuleDescLabel() }
+
+// RuleDescLabel says "Description"
+// in the language of msgs.
+func (msgs Messages) RuleDescLabel() string {
+	return Catalog.Format(msgs.locale, "ruleDescLabel", nil)
+}
+
+// RuleActionLabel says "Outbound Action"
+// in the language the app shows.
+func RuleActionLabel() string { return In(i18n.Locale()).RuleActionLabel() }
+
+// RuleActionLabel says "Outbound Action"
+// in the language of msgs.
+func (msgs Messages) RuleActionLabel() string {
+	return Catalog.Format(msgs.locale, "ruleActionLabel", nil)
+}
+
+// RuleTagLabel says "Target Tag"
+// in the language the app shows.
+func RuleTagLabel() string { return In(i18n.Locale()).RuleTagLabel() }
+
+// RuleTagLabel says "Target Tag"
+// in the language of msgs.
+func (msgs Messages) RuleTagLabel() string {
+	return Catalog.Format(msgs.locale, "ruleTagLabel", nil)
+}
+
+// RuleTagHint says "e.g. AI, Media, US"
+// in the language the app shows.
+func RuleTagHint() string { return In(i18n.Locale()).RuleTagHint() }
+
+// RuleTagHint says "e.g. AI, Media, US"
+// in the language of msgs.
+func (msgs Messages) RuleTagHint() string {
+	return Catalog.Format(msgs.locale, "ruleTagHint", nil)
+}
+
+// RuleDomainsLabel says "Domain Suffixes (one per line)"
+// in the language the app shows.
+func RuleDomainsLabel() string { return In(i18n.Locale()).RuleDomainsLabel() }
+
+// RuleDomainsLabel says "Domain Suffixes (one per line)"
+// in the language of msgs.
+func (msgs Messages) RuleDomainsLabel() string {
+	return Catalog.Format(msgs.locale, "ruleDomainsLabel", nil)
+}
+
+// RuleDomainsHint says "e.g. openai.com\nchatgpt.com"
+// in the language the app shows.
+func RuleDomainsHint() string { return In(i18n.Locale()).RuleDomainsHint() }
+
+// RuleDomainsHint says "e.g. openai.com\nchatgpt.com"
+// in the language of msgs.
+func (msgs Messages) RuleDomainsHint() string {
+	return Catalog.Format(msgs.locale, "ruleDomainsHint", nil)
+}
+
+// RuleCIDRsLabel says "IP-CIDR Ranges (one per line)"
+// in the language the app shows.
+func RuleCIDRsLabel() string { return In(i18n.Locale()).RuleCIDRsLabel() }
+
+// RuleCIDRsLabel says "IP-CIDR Ranges (one per line)"
+// in the language of msgs.
+func (msgs Messages) RuleCIDRsLabel() string {
+	return Catalog.Format(msgs.locale, "ruleCIDRsLabel", nil)
+}
+
+// RuleCIDRsHint says "e.g. 192.168.0.0/16\n10.0.0.0/8"
+// in the language the app shows.
+func RuleCIDRsHint() string { return In(i18n.Locale()).RuleCIDRsHint() }
+
+// RuleCIDRsHint says "e.g. 192.168.0.0/16\n10.0.0.0/8"
+// in the language of msgs.
+func (msgs Messages) RuleCIDRsHint() string {
+	return Catalog.Format(msgs.locale, "ruleCIDRsHint", nil)
+}
+
+// RuleKeywordsLabel says "Domain Keywords"
+// in the language the app shows.
+func RuleKeywordsLabel() string { return In(i18n.Locale()).RuleKeywordsLabel() }
+
+// RuleKeywordsLabel says "Domain Keywords"
+// in the language of msgs.
+func (msgs Messages) RuleKeywordsLabel() string {
+	return Catalog.Format(msgs.locale, "ruleKeywordsLabel", nil)
+}
+
+// RuleKeywordsHint says "e.g. netflix, spotify"
+// in the language the app shows.
+func RuleKeywordsHint() string { return In(i18n.Locale()).RuleKeywordsHint() }
+
+// RuleKeywordsHint says "e.g. netflix, spotify"
+// in the language of msgs.
+func (msgs Messages) RuleKeywordsHint() string {
+	return Catalog.Format(msgs.locale, "ruleKeywordsHint", nil)
+}
+
+// ResetPresets says "Reset Defaults"
+// in the language the app shows.
+func ResetPresets() string { return In(i18n.Locale()).ResetPresets() }
+
+// ResetPresets says "Reset Defaults"
+// in the language of msgs.
+func (msgs Messages) ResetPresets() string {
+	return Catalog.Format(msgs.locale, "resetPresets", nil)
+}
+
 // NavInsights says "Insights"
 // in the language the app shows.
 func NavInsights() string { return In(i18n.Locale()).NavInsights() }

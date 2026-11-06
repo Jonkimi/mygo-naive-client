@@ -53,6 +53,7 @@ func (a *app) view(c *ui.Context) {
 	a.renderEditorDialog(c, p)
 	a.renderImportDialog(c, p)
 	a.renderDeleteDialog(c, p)
+	a.renderRuleEditorDialog(c, p)
 
 	if a.pendingToast != "" {
 		c.Toast(a.pendingToast)
