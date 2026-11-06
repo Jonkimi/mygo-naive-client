@@ -1579,8 +1579,8 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	tt.Frame()
 
 	// Verify suggestion chips are displayed
-	if !tt.HasText("+ apple") || !tt.HasText("+ cn") {
-		t.Fatalf("expected '+ apple' and '+ cn' suggestion chips, got texts: %v", tt.Texts())
+	if !tt.HasText("+ category-ai-!cn") || !tt.HasText("+ cn") {
+		t.Fatalf("expected '+ category-ai-!cn' and '+ cn' suggestion chips, got texts: %v", tt.Texts())
 	}
 	if err := tt.Click("+ cn"); err != nil {
 		t.Fatalf("click '+ cn': %v", err)
