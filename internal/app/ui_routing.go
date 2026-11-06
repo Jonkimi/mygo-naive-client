@@ -264,6 +264,8 @@ func (a *app) renderChipsTagInput(
 	allKnownTags []string,
 ) {
 	cat := a.catalog()
+	isDisabled := len(allKnownTags) == 0
+
 	ui.Column(c).Gap(6).Children(func() {
 		// Label row with count
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -274,10 +276,19 @@ func (a *app) renderChipsTagInput(
 		})
 
 		// Container box mimicking a chip-input field
+		contBg := p.surface
+		contBorder := p.borderSubtle
+		var contOpacity float32 = 1.0
+		if isDisabled {
+			contBg = p.elevated.Alpha(0.4)
+			contBorder = p.borderSubtle.Alpha(0.4)
+			contOpacity = 0.65
+		}
+
 		ui.Row(c.Key(key+"-container")).
 			AlignItems(ui.Center).Gap(6).Wrap().
 			Padding(6, 8, 6, 8).Radius(6).
-			Background(p.surface).Border(1, p.borderSubtle).
+			Background(contBg).Border(1, contBorder).Opacity(contOpacity).
 			Children(func() {
 				// Render existing tags as chips
 				for idx, t := range *tags {
@@ -289,40 +300,50 @@ func (a *app) renderChipsTagInput(
 						Background(p.elevated).Border(1, p.borderSubtle).
 						Children(func() {
 							ui.Text(c, tagVal).FontSize(11).FontWeight(500).TextColor(p.text)
-							closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-del-%s", key, tagVal))).
-								Label("del-tag-" + tagVal).
-								Radius(999).PaddingX(2).
-								Background(ui.Transparent).
-								Children(func() {
-									ui.Text(c, "×").FontSize(11).FontWeight(700).TextColor(p.textDim)
-								})
-							if closeBtn.Clicked() {
-								var newTags []string
-								for i, elem := range *tags {
-									if i != tagIdx {
-										newTags = append(newTags, elem)
+							if !isDisabled {
+								closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-del-%s", key, tagVal))).
+									Label("del-tag-" + tagVal).
+									Radius(999).PaddingX(2).
+									Background(ui.Transparent).
+									Children(func() {
+										ui.Text(c, "×").FontSize(11).FontWeight(700).TextColor(p.textDim)
+									})
+								if closeBtn.Clicked() {
+									var newTags []string
+									for i, elem := range *tags {
+										if i != tagIdx {
+											newTags = append(newTags, elem)
+										}
 									}
+									*tags = newTags
 								}
-								*tags = newTags
 							}
 						})
 				}
 
 				// Inline text input to type and add new tag
+				inpPlaceholder := placeholder
+				if isDisabled {
+					inpPlaceholder = cat.GeodataStatusMissing()
+				}
 				ui.TextInput(c.Key(key+"-input"), query).
 					Label(label).
-					Placeholder(placeholder).
+					Placeholder(inpPlaceholder).
 					Height(24).Radius(4).
 					FontSize(11).
+					Disabled(isDisabled).
+					ReadOnly(isDisabled).
 					Background(ui.Transparent).Border(0, ui.Transparent)
 
-				q := *query
-				if strings.Contains(q, ",") || strings.Contains(q, "\n") {
-					parts := parseCommaOrLines(q)
-					for _, pt := range parts {
-						addTag(tags, pt)
+				if !isDisabled {
+					q := *query
+					if strings.Contains(q, ",") || strings.Contains(q, "\n") {
+						parts := parseCommaOrLines(q)
+						for _, pt := range parts {
+							addTag(tags, pt)
+						}
+						*query = ""
 					}
-					*query = ""
 				}
 			})
 
