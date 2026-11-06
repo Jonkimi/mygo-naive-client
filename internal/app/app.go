@@ -815,12 +815,10 @@ func (a *app) collectBootstrapDomains() []string {
 		}
 	}
 
+	// Only collect domestic / direct bootstrap DoH domains to prevent direct deadlock.
+	// Overseas remote DoH domains must NOT be included here, as they are resolved
+	// by remote proxy nodes and must not be forced to direct physical resolution or bypass TUN.
 	for _, ep := range parseDoHList(a.state.BootstrapDoH, dns.DefaultBootstrapDoH) {
-		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
-			add(u.Hostname())
-		}
-	}
-	for _, ep := range parseDoHList(a.state.RemoteDoH, dns.DefaultRemoteDoH) {
 		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
 			add(u.Hostname())
 		}
