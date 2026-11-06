@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"runtime"
 
 	"github.com/egoist/mygo"
@@ -114,6 +115,33 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.CoreSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 					if actionChip(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), a.checkingUpdate || a.updatingCore).Clicked() {
 						a.triggerCheckUpdate(true)
+					}
+				})
+
+				// Core version and seamless update status banner
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(10).Radius(8).
+					Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						if a.localVersion == "" {
+							statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
+						} else {
+							statusBadge(c, cat.CoreLocal()+a.localVersion, p.green, p.greenBg)
+						}
+						if a.hasUpdate && a.latestRelease != nil {
+							tagPill(c, "新版本 "+a.latestRelease.TagName, p.amber, p.amberBg)
+						}
+					})
+
+					if a.localVersion == "" || a.hasUpdate || a.updatingCore {
+						updLabel := cat.InstallCore()
+						if a.updatingCore {
+							updLabel = cat.Updating()
+						} else if a.latestRelease != nil && a.hasUpdate {
+							updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
+						}
+						if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Clicked() {
+							a.triggerSeamlessUpdate()
+						}
 					}
 				})
 

@@ -105,8 +105,8 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 	a, tt, _ := newTestApp(t, svcs)
 
 	// Verify initial state shows both services stopped and core version detected
-	if _, ok := tt.Find("本地核心 v143.0.7499.109-2"); !ok {
-		t.Fatalf("expected detected local version badge on main panel")
+	if a.localVersion != "v143.0.7499.109-2" {
+		t.Fatalf("expected detected local version v143.0.7499.109-2, got %q", a.localVersion)
 	}
 
 	// Click "全部启动" to start both services concurrently
@@ -272,7 +272,7 @@ func TestImportDialog_FromNaiveShareLink(t *testing.T) {
 	}
 }
 
-func TestSeamlessUpdateFromMainPanel(t *testing.T) {
+func TestSeamlessUpdateFromSettings(t *testing.T) {
 	p1 := freeLocalPort(t)
 	svcs := []config.Service{
 		{
@@ -357,6 +357,10 @@ done
 		},
 	}
 	a.hasUpdate = true
+	// Navigate to Settings where core management & seamless update are housed
+	if err := tt.Click(a.catalog().NavSettings()); err != nil {
+		t.Fatalf("click settings: %v", err)
+	}
 	tt.Frame()
 
 	// Verify update button is shown and click it
