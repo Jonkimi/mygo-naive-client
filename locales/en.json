@@ -25,6 +25,8 @@
   "ruleCIDRsHint": "e.g. 192.168.0.0/16\n10.0.0.0/8",
   "ruleKeywordsLabel": "Domain Keywords",
   "ruleKeywordsHint": "e.g. netflix, spotify",
+  "ruleTabCriteria": "Domains & IPs",
+  "ruleTabGeoData": "GeoData Rules",
   "ruleGeoSiteLabel": "GeoSite Tags",
   "ruleGeoSiteHint": "e.g. cn, apple, google, category-ads-all",
   "ruleGeoIPLabel": "GeoIP Tags",

@@ -284,6 +284,26 @@ func (msgs Messages) RuleKeywordsHint() string {
 	return Catalog.Format(msgs.locale, "ruleKeywordsHint", nil)
 }
 
+// RuleTabCriteria says "Domains & IPs"
+// in the language the app shows.
+func RuleTabCriteria() string { return In(i18n.Locale()).RuleTabCriteria() }
+
+// RuleTabCriteria says "Domains & IPs"
+// in the language of msgs.
+func (msgs Messages) RuleTabCriteria() string {
+	return Catalog.Format(msgs.locale, "ruleTabCriteria", nil)
+}
+
+// RuleTabGeoData says "GeoData Rules"
+// in the language the app shows.
+func RuleTabGeoData() string { return In(i18n.Locale()).RuleTabGeoData() }
+
+// RuleTabGeoData says "GeoData Rules"
+// in the language of msgs.
+func (msgs Messages) RuleTabGeoData() string {
+	return Catalog.Format(msgs.locale, "ruleTabGeoData", nil)
+}
+
 // RuleGeoSiteLabel says "GeoSite Tags"
 // in the language the app shows.
 func RuleGeoSiteLabel() string { return In(i18n.Locale()).RuleGeoSiteLabel() }
