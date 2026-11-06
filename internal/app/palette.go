@@ -121,10 +121,57 @@ func actionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disable
 	btn := ui.ButtonBase(c).
 		Height(28).PaddingX(10).Radius(6).
 		Background(bg).
-		Border(1, p.borderSubtle).
-		Disabled(disabled)
+		Border(1, p.borderSubtle)
 	if !disabled && btn.Hovered() {
 		btn.Background(p.cardHover)
+	}
+	return btn.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
+			if iconSVG != nil {
+				ui.Icon(c, iconSVG).Size(13, 13)
+			}
+			ui.Text(c, label).FontSize(12).FontWeight(500)
+		})
+	})
+}
+
+func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
+	fg := p.textMuted
+	bg := ui.Transparent
+	if disabled {
+		fg = p.textDim
+	}
+	btn := ui.ButtonBase(c).
+		Height(28).PaddingX(8).Radius(6).
+		Background(bg).
+		Disabled(disabled)
+	if !disabled && btn.Hovered() {
+		fg = p.text
+		btn.Background(p.elevated)
+	}
+	return btn.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
+			if iconSVG != nil {
+				ui.Icon(c, iconSVG).Size(13, 13)
+			}
+			ui.Text(c, label).FontSize(12).FontWeight(500)
+		})
+	})
+}
+
+func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
+	fg := p.textMuted
+	bg := ui.Transparent
+	if disabled {
+		fg = p.textDim
+	}
+	btn := ui.ButtonBase(c).
+		Height(28).PaddingX(8).Radius(6).
+		Background(bg).
+		Disabled(disabled)
+	if !disabled && btn.Hovered() {
+		fg = p.red
+		btn.Background(p.redBg)
 	}
 	return btn.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {

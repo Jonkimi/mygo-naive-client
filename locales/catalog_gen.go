@@ -674,6 +674,16 @@ func (msgs Messages) LogAutoScroll() string {
 	return Catalog.Format(msgs.locale, "logAutoScroll", nil)
 }
 
+// LogCopy says "Copy"
+// in the language the app shows.
+func LogCopy() string { return In(i18n.Locale()).LogCopy() }
+
+// LogCopy says "Copy"
+// in the language of msgs.
+func (msgs Messages) LogCopy() string {
+	return Catalog.Format(msgs.locale, "logCopy", nil)
+}
+
 // LogClear says "Clear"
 // in the language the app shows.
 func LogClear() string { return In(i18n.Locale()).LogClear() }
@@ -692,6 +702,66 @@ func LogClose() string { return In(i18n.Locale()).LogClose() }
 // in the language of msgs.
 func (msgs Messages) LogClose() string {
 	return Catalog.Format(msgs.locale, "logClose", nil)
+}
+
+// LogEmpty says "No logs recorded yet. Output will stream here once the service starts."
+// in the language the app shows.
+func LogEmpty() string { return In(i18n.Locale()).LogEmpty() }
+
+// LogEmpty says "No logs recorded yet. Output will stream here once the service starts."
+// in the language of msgs.
+func (msgs Messages) LogEmpty() string {
+	return Catalog.Format(msgs.locale, "logEmpty", nil)
+}
+
+// TestRequiresRunning says "Start the service first to run latency or speed tests"
+// in the language the app shows.
+func TestRequiresRunning() string { return In(i18n.Locale()).TestRequiresRunning() }
+
+// TestRequiresRunning says "Start the service first to run latency or speed tests"
+// in the language of msgs.
+func (msgs Messages) TestRequiresRunning() string {
+	return Catalog.Format(msgs.locale, "testRequiresRunning", nil)
+}
+
+// AllRunningTip says "All services are currently running"
+// in the language the app shows.
+func AllRunningTip() string { return In(i18n.Locale()).AllRunningTip() }
+
+// AllRunningTip says "All services are currently running"
+// in the language of msgs.
+func (msgs Messages) AllRunningTip() string {
+	return Catalog.Format(msgs.locale, "allRunningTip", nil)
+}
+
+// AllStoppedTip says "No services are currently running"
+// in the language the app shows.
+func AllStoppedTip() string { return In(i18n.Locale()).AllStoppedTip() }
+
+// AllStoppedTip says "No services are currently running"
+// in the language of msgs.
+func (msgs Messages) AllStoppedTip() string {
+	return Catalog.Format(msgs.locale, "allStoppedTip", nil)
+}
+
+// ModeComingSoonTip says "System Proxy and TUN Mode will be available in an upcoming release"
+// in the language the app shows.
+func ModeComingSoonTip() string { return In(i18n.Locale()).ModeComingSoonTip() }
+
+// ModeComingSoonTip says "System Proxy and TUN Mode will be available in an upcoming release"
+// in the language of msgs.
+func (msgs Messages) ModeComingSoonTip() string {
+	return Catalog.Format(msgs.locale, "modeComingSoonTip", nil)
+}
+
+// BadgeSoon says "Soon"
+// in the language the app shows.
+func BadgeSoon() string { return In(i18n.Locale()).BadgeSoon() }
+
+// BadgeSoon says "Soon"
+// in the language of msgs.
+func (msgs Messages) BadgeSoon() string {
+	return Catalog.Format(msgs.locale, "badgeSoon", nil)
 }
 
 // SettingsTitle says "Preferences"

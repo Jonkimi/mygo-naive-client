@@ -200,7 +200,7 @@ func (a *app) initSubsystems() {
 	a.mgr.OnLog = func(id string) {
 		if a.win != nil {
 			a.win.Update(func() {
-				if a.expandedLogs[id] {
+				if a.activeLogDrawerID == id || a.expandedLogs[id] {
 					a.win.Invalidate()
 				}
 			})
@@ -299,6 +299,7 @@ func (a *app) toggleService(svc config.Service) {
 }
 
 func (a *app) startAllServices() {
+	cat := a.catalog()
 	started := 0
 	var lastErr error
 	for _, svc := range a.state.Services {
@@ -314,21 +315,26 @@ func (a *app) startAllServices() {
 		a.toast("启动失败: " + lastErr.Error())
 	} else if started > 0 {
 		a.toast(fmt.Sprintf("已启动 %d 个服务", started))
+	} else if len(a.state.Services) > 0 {
+		a.toast(cat.AllRunningTip())
 	}
 	a.rebuildTrayMenu()
 }
 
 func (a *app) stopAllServices() {
+	cat := a.catalog()
 	stopped := a.mgr.StopAll()
 	if len(stopped) > 0 {
 		a.toast(fmt.Sprintf("已停止 %d 个服务", len(stopped)))
+	} else if len(a.state.Services) > 0 {
+		a.toast(cat.AllStoppedTip())
 	}
 	a.rebuildTrayMenu()
 }
 
 func (a *app) triggerServiceProbe(svc config.Service) {
 	if a.mgr.StatusOf(svc.ID).State != runner.StateRunning {
-		a.toast("请先启动服务后再进行延迟测速")
+		a.toast(a.catalog().TestRequiresRunning())
 		return
 	}
 	a.mgr.ProbeService(svc, a.state.ProbeURL)
@@ -336,7 +342,7 @@ func (a *app) triggerServiceProbe(svc config.Service) {
 
 func (a *app) triggerServiceDownloadTest(svc config.Service) {
 	if a.mgr.StatusOf(svc.ID).State != runner.StateRunning {
-		a.toast("请先启动服务后再进行下载测速")
+		a.toast(a.catalog().TestRequiresRunning())
 		return
 	}
 	a.mgr.DownloadTestService(svc, a.state.DownloadTestURL)
@@ -361,7 +367,7 @@ func (a *app) triggerBatchTest() {
 		}
 	}
 	if len(targets) == 0 {
-		a.toast("当前没有运行中的服务")
+		a.toast(a.catalog().TestRequiresRunning())
 		return
 	}
 

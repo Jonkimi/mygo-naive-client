@@ -58,7 +58,7 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 
 func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	if collapsed {
-		ui.Column(c).AlignItems(ui.Center).Padding(28, 0, 6, 0).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Padding(4, 0, 6, 0).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 				Size(collapsedTileSize, collapsedTileSize).Radius(8).Background(p.accentBg).
 				Children(func() {
@@ -68,7 +68,7 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 		return
 	}
 
-	ui.Row(c).AlignItems(ui.Center).Padding(28, 2, 6, 2).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Padding(4, 2, 6, 2).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 				Size(collapsedTileSize, collapsedTileSize).Radius(8).Background(p.accentBg).
@@ -138,14 +138,22 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	}
 
 	hasBadge := tab == TabSettings && (a.localVersion == "" || a.hasUpdate)
+	isUpcoming := tab == TabRouting || tab == TabInsights || tab == TabTailnet
+	if !active && isUpcoming {
+		fg = p.textDim
+	}
 	key := fmt.Sprintf("nav-item-%d", tab)
 	if collapsed {
+		tip := fmt.Sprintf("%s (%s)", label, shortcut)
+		if isUpcoming {
+			tip = fmt.Sprintf("%s · %s (%s)", label, a.catalog().BadgeSoon(), shortcut)
+		}
 		btn := ui.ButtonBase(c.Key(key)).
 			Label(label).
 			Size(collapsedTileSize, collapsedTileSize).Radius(8).
 			Background(bg).
 			AlignItems(ui.Center).Justify(ui.Center).
-			Tooltip(fmt.Sprintf("%s (%s)", label, shortcut)).
+			Tooltip(tip).
 			Children(func() {
 				if icon != nil {
 					ui.Icon(c, icon).Size(16, 16).TextColor(fg)
@@ -177,7 +185,11 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 					ui.Box(c).Size(6, 6).Radius(999).Background(p.amber)
 				}
 			})
-			ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
+			if isUpcoming {
+				tagPill(c, a.catalog().BadgeSoon(), p.textDim, p.elevated)
+			} else {
+				ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
+			}
 		})
 
 	if !active && btn.Hovered() {

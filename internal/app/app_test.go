@@ -925,3 +925,76 @@ func TestSidebarCollapseToggle(t *testing.T) {
 		t.Fatalf("expected sidebar to be expanded after clicking expand button")
 	}
 }
+
+// TestTopBarAndCompactCardUX verifies dynamic port reflection, upcoming mode feedback, core status navigation, and compact route rendering.
+func TestTopBarAndCompactCardUX(t *testing.T) {
+	svcs := []config.Service{
+		{
+			ID:      "svc-single",
+			Name:    "naive-bwg",
+			Listens: []string{"socks://127.0.0.1:1080"},
+			Proxies: []string{"https://d_user:secret@codex.sfchenlab.com:443"},
+		},
+	}
+	a, tt, _ := newTestApp(t, svcs)
+
+	// 1. Top bar reflects the service's actual port (:1080) instead of a hardcoded :10808
+	if !tt.HasText("仅端口 :1080") {
+		t.Fatalf("expected top bar to reflect actual port '仅端口 :1080', got texts: %v", tt.Texts())
+	}
+
+	// 2. Single-service toolbar omits redundant '全部启动'/'全部停止' buttons
+	if _, ok := tt.Find(a.catalog().ActionStartAll()); ok {
+		t.Fatalf("expected '全部启动' to be hidden when only 1 service exists")
+	}
+
+	// 3. Card displays compact remote host without inline credentials
+	if !tt.HasText("https://codex.sfchenlab.com:443") {
+		t.Fatalf("expected compact remote endpoint 'https://codex.sfchenlab.com:443' on card, got: %v", tt.Texts())
+	}
+
+	// 4. Clicking an upcoming mode pill shows a feedback toast
+	if err := tt.Click(a.catalog().ModeSysProxy()); err != nil {
+		t.Fatalf("click ModeSysProxy: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText(a.catalog().ModeComingSoonTip()) {
+		t.Fatalf("expected coming soon toast after clicking ModeSysProxy, got: %v", tt.Texts())
+	}
+
+	// 5. Clicking the top bar core version badge navigates directly to Settings
+	if err := tt.Click(a.catalog().CoreLocal() + a.localVersion); err != nil {
+		t.Fatalf("click top bar core status: %v", err)
+	}
+	tt.Frame()
+	if a.activeTab != TabSettings {
+		t.Fatalf("expected clicking core status to switch to TabSettings, got %v", a.activeTab)
+	}
+
+	// 6. Switch back to Nodes and verify disabled test button tooltip & click toast guidance
+	tt.Key(ui.Cmd, ui.Key1)
+	tt.Frame()
+
+	// Hover over stopped latency probe button
+	r, ok := tt.Find("延迟测速")
+	if !ok {
+		t.Fatalf("could not find '延迟测速'")
+	}
+	tt.Move(r.X+r.W/2, r.Y+r.H/2)
+	tt.Advance(time.Second)
+	if !tt.HasText(a.catalog().TestRequiresRunning()) {
+		t.Fatalf("expected tooltip %q when hovering stopped probe button, got texts: %v", a.catalog().TestRequiresRunning(), tt.Texts())
+	}
+
+	// Clicking stopped latency probe button shows toast guidance without starting test
+	if err := tt.Click("延迟测速"); err != nil {
+		t.Fatalf("click 延迟测速: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText(a.catalog().TestRequiresRunning()) {
+		t.Fatalf("expected toast %q after clicking stopped probe button, got texts: %v", a.catalog().TestRequiresRunning(), tt.Texts())
+	}
+	if a.mgr.StatusOf("svc-single").Probing {
+		t.Fatalf("expected no probe started on stopped service")
+	}
+}
