@@ -767,8 +767,9 @@ func (a *app) geodataDir() string {
 }
 
 var defaultGeoSitePresets = []string{
-	"cn", "apple", "google", "telegram", "category-ads-all", "openai", "github",
-	"netflix", "spotify", "microsoft", "bilibili", "geolocation-!cn",
+	"category-ai-!cn", "category-ai-cn", "cn", "apple", "google", "telegram",
+	"category-ads-all", "openai", "github", "netflix", "spotify", "microsoft",
+	"bilibili", "geolocation-!cn",
 }
 
 var defaultGeoIPPresets = []string{
