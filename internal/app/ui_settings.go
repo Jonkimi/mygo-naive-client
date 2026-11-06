@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/dns"
 	"naive-client/locales"
 )
 
@@ -17,7 +18,65 @@ var (
 	appearanceCodes = []string{appearanceSystem, appearanceLight, appearanceDark}
 
 	appIconCodes = []string{appIconBoth, appIconDock, appIconMenubar}
+
+	domesticDNSPresets = []string{
+		"https://223.5.5.5/dns-query",
+		"https://dns.alidns.com/dns-query",
+		"https://1.12.12.12/dns-query",
+		"https://doh.pub/dns-query",
+	}
+
+	remoteDNSPresets = []string{
+		"https://1.1.1.1/dns-query",
+		"https://cloudflare-dns.com/dns-query",
+		"https://8.8.8.8/dns-query",
+		"https://dns.google/dns-query",
+		"https://dns.quad9.net/dns-query",
+		"https://doh.opendns.com/dns-query",
+	}
+
+	bootstrapDNSPresets = []string{
+		"223.5.5.5",
+		"119.29.29.29",
+		"114.114.114.114",
+		"180.76.76.76",
+		"1.12.12.12",
+	}
 )
+
+func ensureSelectOption(opts []string, cur string) []string {
+	if cur == "" {
+		return opts
+	}
+	for _, o := range opts {
+		if o == cur {
+			return opts
+		}
+	}
+	res := make([]string, 0, len(opts)+1)
+	res = append(res, cur)
+	res = append(res, opts...)
+	return res
+}
+
+func dnsSelectRow(c *ui.Context, p palette, key, label string, value *string, defaultValue string, presets []string, hint string) bool {
+	cur := *value
+	if cur == "" {
+		cur = defaultValue
+	}
+	options := ensureSelectOption(presets, cur)
+	changed := false
+
+	ui.Row(c).AlignItems(ui.Center).Gap(14).Children(func() {
+		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(p.text).Width(120).Shrink(0)
+		if ui.Select(c.Key(key), &cur, options).Label(label).Width(270).Shrink(0).Changed() {
+			*value = cur
+			changed = true
+		}
+		ui.Text(c, hint).FontSize(11).TextColor(p.textDim).Grow(1)
+	})
+	return changed
+}
 
 func indexOfCode(codes []string, v string) int {
 	for i, c := range codes {
@@ -247,15 +306,15 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.DohSectionDesc()).FontSize(11).TextColor(p.textDim)
 				})
 
-				if labeledInput(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, cat.DnsDomesticHint()).Changed() {
+				if dnsSelectRow(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, dns.DefaultDomesticDoH[0], domesticDNSPresets, cat.DnsDomesticHint()) {
 					a.saveState()
 					a.initDNS()
 				}
-				if labeledInput(c, p, "page-set-dns-remote", cat.DnsRemoteLabel(), &a.state.RemoteDNS, cat.DnsRemoteHint()).Changed() {
+				if dnsSelectRow(c, p, "page-set-dns-remote", cat.DnsRemoteLabel(), &a.state.RemoteDNS, dns.DefaultRemoteDoH[0], remoteDNSPresets, cat.DnsRemoteHint()) {
 					a.saveState()
 					a.initDNS()
 				}
-				if labeledInput(c, p, "page-set-dns-bootstrap", cat.DnsBootstrapLabel(), &a.state.BootstrapDNS, cat.DnsBootstrapHint()).Changed() {
+				if dnsSelectRow(c, p, "page-set-dns-bootstrap", cat.DnsBootstrapLabel(), &a.state.BootstrapDNS, bootstrapDNSPresets[0], bootstrapDNSPresets, cat.DnsBootstrapHint()) {
 					a.saveState()
 					a.initDNS()
 				}

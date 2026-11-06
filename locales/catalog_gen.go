@@ -916,11 +916,11 @@ func (msgs Messages) DohSectionTitle() string {
 	return Catalog.Format(msgs.locale, "dohSectionTitle", nil)
 }
 
-// DohSectionDesc says "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS (comma-separated)"
+// DohSectionDesc says "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS"
 // in the language the app shows.
 func DohSectionDesc() string { return In(i18n.Locale()).DohSectionDesc() }
 
-// DohSectionDesc says "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS (comma-separated)"
+// DohSectionDesc says "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS"
 // in the language of msgs.
 func (msgs Messages) DohSectionDesc() string {
 	return Catalog.Format(msgs.locale, "dohSectionDesc", nil)
@@ -936,11 +936,11 @@ func (msgs Messages) DnsDomesticLabel() string {
 	return Catalog.Format(msgs.locale, "dnsDomesticLabel", nil)
 }
 
-// DnsDomesticHint says "Default: https://223.5.5.5/dns-query (invoked during routing for resolution)"
+// DnsDomesticHint says "By default, invoked only during routing for resolution"
 // in the language the app shows.
 func DnsDomesticHint() string { return In(i18n.Locale()).DnsDomesticHint() }
 
-// DnsDomesticHint says "Default: https://223.5.5.5/dns-query (invoked during routing for resolution)"
+// DnsDomesticHint says "By default, invoked only during routing for resolution"
 // in the language of msgs.
 func (msgs Messages) DnsDomesticHint() string {
 	return Catalog.Format(msgs.locale, "dnsDomesticHint", nil)
@@ -956,11 +956,11 @@ func (msgs Messages) DnsRemoteLabel() string {
 	return Catalog.Format(msgs.locale, "dnsRemoteLabel", nil)
 }
 
-// DnsRemoteHint says "Default: https://1.1.1.1/dns-query (invoked during routing; ensure remote node can reach it)"
+// DnsRemoteHint says "By default, invoked only during routing for resolution; ensure the remote server can reach this DNS"
 // in the language the app shows.
 func DnsRemoteHint() string { return In(i18n.Locale()).DnsRemoteHint() }
 
-// DnsRemoteHint says "Default: https://1.1.1.1/dns-query (invoked during routing; ensure remote node can reach it)"
+// DnsRemoteHint says "By default, invoked only during routing for resolution; ensure the remote server can reach this DNS"
 // in the language of msgs.
 func (msgs Messages) DnsRemoteHint() string {
 	return Catalog.Format(msgs.locale, "dnsRemoteHint", nil)
@@ -976,11 +976,11 @@ func (msgs Messages) DnsBootstrapLabel() string {
 	return Catalog.Format(msgs.locale, "dnsBootstrapLabel", nil)
 }
 
-// DnsBootstrapHint says "Default: 223.5.5.5 (resolves DNS server and proxy domains, requires IP)"
+// DnsBootstrapHint says "Resolve DNS server domains, requires IP"
 // in the language the app shows.
 func DnsBootstrapHint() string { return In(i18n.Locale()).DnsBootstrapHint() }
 
-// DnsBootstrapHint says "Default: 223.5.5.5 (resolves DNS server and proxy domains, requires IP)"
+// DnsBootstrapHint says "Resolve DNS server domains, requires IP"
 // in the language of msgs.
 func (msgs Messages) DnsBootstrapHint() string {
 	return Catalog.Format(msgs.locale, "dnsBootstrapHint", nil)
