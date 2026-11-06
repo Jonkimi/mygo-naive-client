@@ -16,7 +16,7 @@ func (a *app) view(c *ui.Context) {
 
 	c.OnShortcut(0, ui.KeyEscape, func() {
 		if a.activeLogDrawerID != "" {
-			a.activeLogDrawerID = ""
+			a.closeLogDrawer()
 		}
 	})
 	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
@@ -344,10 +344,10 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					a.triggerServiceDownloadTest(svc)
 				}
 				if actionChip(c.Key("drawer-logs"), p, iconList, cat.ActionLogs(), false).Clicked() {
-					if a.activeLogDrawerID == svc.ID {
-						a.activeLogDrawerID = ""
+					if a.activeLogDrawerID == svc.ID && !a.logDrawerClosing {
+						a.closeLogDrawer()
 					} else {
-						a.activeLogDrawerID = svc.ID
+						a.openLogDrawer(svc.ID)
 					}
 				}
 			})

@@ -66,6 +66,12 @@ type app struct {
 
 	activeTab         TabID
 	activeLogDrawerID string
+	logDrawerProgress float32
+	logDrawerFrom     float32
+	logDrawerTo       float32
+	logDrawerStart    time.Time
+	logDrawerAnim     bool
+	logDrawerClosing  bool
 	searchQuery       string
 
 	batchTesting bool
@@ -88,6 +94,45 @@ func (a *app) catalog() locales.Messages {
 func (a *app) toggleSidebar() {
 	a.state.SidebarCollapsed = !a.state.SidebarCollapsed
 	a.saveState()
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+}
+
+func (a *app) openLogDrawer(id string) {
+	if a.activeLogDrawerID == id && !a.logDrawerClosing {
+		return
+	}
+	a.activeLogDrawerID = id
+	a.logDrawerClosing = false
+	if a.headless {
+		a.logDrawerProgress = 1
+		return
+	}
+	a.logDrawerFrom = a.logDrawerProgress
+	a.logDrawerTo = 1
+	a.logDrawerStart = time.Now()
+	a.logDrawerAnim = true
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+}
+
+func (a *app) closeLogDrawer() {
+	if a.activeLogDrawerID == "" && !a.logDrawerClosing {
+		return
+	}
+	if a.headless {
+		a.activeLogDrawerID = ""
+		a.logDrawerProgress = 0
+		a.logDrawerClosing = false
+		return
+	}
+	a.logDrawerClosing = true
+	a.logDrawerFrom = a.logDrawerProgress
+	a.logDrawerTo = 0
+	a.logDrawerStart = time.Now()
+	a.logDrawerAnim = true
 	if a.win != nil {
 		a.win.Invalidate()
 	}
