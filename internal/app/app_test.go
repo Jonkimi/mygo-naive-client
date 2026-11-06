@@ -1563,9 +1563,15 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	tt.Key(ui.Cmd, ui.Key2)
 	tt.Frame()
 
-	// Verify Update GeoData button is rendered
+	// Verify Update GeoData button and missing banner are rendered
 	if !tt.HasText(a.catalog().UpdateGeoData()) {
 		t.Fatalf("expected UpdateGeoData button in routing workbench")
+	}
+	if !tt.HasText(a.catalog().RoutingGeodataBanner()) {
+		t.Fatalf("expected RoutingGeodataBanner when database missing")
+	}
+	if !tt.HasText("geosite:category-ads-all (待规则库)") {
+		t.Fatalf("expected '待规则库' warning tag for presets without geodata, got texts: %v", tt.Texts())
 	}
 
 	// Create a rule with GeoSite and GeoIP using quick-pick suggestions

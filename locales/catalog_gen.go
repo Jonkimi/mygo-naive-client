@@ -404,6 +404,36 @@ func (msgs Messages) GeodataDownloading() string {
 	return Catalog.Format(msgs.locale, "geodataDownloading", nil)
 }
 
+// RoutingGeodataBanner says "GeoData database not installed. Rules using GeoSite or GeoIP are not fully active."
+// in the language the app shows.
+func RoutingGeodataBanner() string { return In(i18n.Locale()).RoutingGeodataBanner() }
+
+// RoutingGeodataBanner says "GeoData database not installed. Rules using GeoSite or GeoIP are not fully active."
+// in the language of msgs.
+func (msgs Messages) RoutingGeodataBanner() string {
+	return Catalog.Format(msgs.locale, "routingGeodataBanner", nil)
+}
+
+// RulePendingGeoData says "Inactive (Needs GeoData)"
+// in the language the app shows.
+func RulePendingGeoData() string { return In(i18n.Locale()).RulePendingGeoData() }
+
+// RulePendingGeoData says "Inactive (Needs GeoData)"
+// in the language of msgs.
+func (msgs Messages) RulePendingGeoData() string {
+	return Catalog.Format(msgs.locale, "rulePendingGeoData", nil)
+}
+
+// RulePartialGeoPending says "Geo Pending"
+// in the language the app shows.
+func RulePartialGeoPending() string { return In(i18n.Locale()).RulePartialGeoPending() }
+
+// RulePartialGeoPending says "Geo Pending"
+// in the language of msgs.
+func (msgs Messages) RulePartialGeoPending() string {
+	return Catalog.Format(msgs.locale, "rulePartialGeoPending", nil)
+}
+
 // ResetPresets says "Reset Defaults"
 // in the language the app shows.
 func ResetPresets() string { return In(i18n.Locale()).ResetPresets() }
