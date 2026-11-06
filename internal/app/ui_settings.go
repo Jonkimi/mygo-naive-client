@@ -303,6 +303,10 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.DohSectionDesc()).FontSize(11).TextColor(p.textDim)
 				})
 
+				if switchRow(c, p, "page-set-dns-prefer-ipv4", cat.DnsPreferIPv4Label(), &a.state.PreferIPv4) {
+					a.saveState()
+					a.initDNS()
+				}
 				if dnsSelectRow(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, dns.DefaultDomesticDoH[0], domesticDNSPresets, cat.DnsDomesticHint()) {
 					a.saveState()
 					a.initDNS()

@@ -874,6 +874,7 @@ func (a *app) initDNS() {
 			BootstrapDNS:     bootDNS,
 			DomesticDoH:      domDoH,
 			RemoteDoH:        remoteDoH,
+			PreferIPv4:       a.state.PreferIPv4,
 			IPCache:          a.ipCache,
 			Blocker:          a.blockerAsDNS(),
 			DialProxy: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -886,6 +887,7 @@ func (a *app) initDNS() {
 		a.resolver.SetRouter(a.router)
 		a.resolver.SetUpstreams(bootDNS, domDoH, remoteDoH)
 		a.resolver.SetBlocker(a.blockerAsDNS())
+		a.resolver.SetPreferIPv4(a.state.PreferIPv4)
 	}
 }
 
@@ -1084,7 +1086,18 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 
 	case routing.ActionDirect:
 		var d net.Dialer
-		conn, err := d.DialContext(ctx, "tcp", target)
+		network := "tcp"
+		if a.state.PreferIPv4 {
+			h, _, err := net.SplitHostPort(target)
+			if err != nil {
+				h = target
+			}
+			ip := net.ParseIP(h)
+			if ip == nil || ip.To4() != nil {
+				network = "tcp4"
+			}
+		}
+		conn, err := d.DialContext(ctx, network, target)
 		return conn, "direct", err
 
 	case routing.ActionProxyService:

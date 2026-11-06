@@ -2427,3 +2427,35 @@ func TestApp_DnsSelectDropdownUI(t *testing.T) {
 		t.Fatalf("expected BootstrapDNS to be 114.114.114.114, got %q", a.state.BootstrapDNS)
 	}
 }
+
+// Tests that toggling PreferIPv4 switch updates persisted state and the DNS resolver.
+func TestApp_PreferIPv4ToggleUI(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.initDNS()
+
+	if !a.state.PreferIPv4 {
+		t.Fatalf("expected PreferIPv4 to default to true")
+	}
+	if !a.resolver.PreferIPv4() {
+		t.Fatalf("expected resolver PreferIPv4 to be true")
+	}
+
+	tt := ui.NewTester(func(c *ui.Context) {
+		a.renderSettingsPage(c, darkPalette)
+	}, 800, 1600)
+
+	// Click Prefer IPv4 switch on the right side of the row to toggle it off
+	label, ok := tt.Find(a.catalog().DnsPreferIPv4Label())
+	if !ok {
+		t.Fatalf("no row %s", a.catalog().DnsPreferIPv4Label())
+	}
+	tt.ClickAt(750, label.Y+label.H/2)
+	tt.Frame()
+
+	if a.state.PreferIPv4 {
+		t.Fatalf("expected state PreferIPv4 to be toggled to false")
+	}
+	if a.resolver.PreferIPv4() {
+		t.Fatalf("expected resolver PreferIPv4 to be false after toggle")
+	}
+}
