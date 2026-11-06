@@ -7,11 +7,18 @@ import (
 	"strings"
 )
 
+// DomainMatcher matches built-in GeoSite domain rules without duplicating them into a separate trie.
+type DomainMatcher interface {
+	MatchDomain(tag string, domain string) bool
+	TagRuleCount(tag string) int
+}
+
 // ParsedRules holds parsed rules from a rule subscription stream.
 type ParsedRules struct {
 	BlockExact *ExactMap
 	BlockTrie  *SuffixTrie
 	ExemptTrie *SuffixTrie
+	GeoAds     DomainMatcher
 }
 
 func NewParsedRules() *ParsedRules {
@@ -30,6 +37,9 @@ func (r *ParsedRules) Merge(other *ParsedRules) {
 	r.BlockExact.Merge(other.BlockExact)
 	r.BlockTrie.Merge(other.BlockTrie)
 	r.ExemptTrie.Merge(other.ExemptTrie)
+	if other.GeoAds != nil {
+		r.GeoAds = other.GeoAds
+	}
 }
 
 // TotalRules returns the sum of exact and suffix rules.
@@ -37,7 +47,11 @@ func (r *ParsedRules) TotalRules() int {
 	if r == nil {
 		return 0
 	}
-	return r.BlockExact.Len() + r.BlockTrie.Count() + r.ExemptTrie.Count()
+	c := r.BlockExact.Len() + r.BlockTrie.Count() + r.ExemptTrie.Count()
+	if r.GeoAds != nil {
+		c += r.GeoAds.TagRuleCount("category-ads-all")
+	}
+	return c
 }
 
 // ParseRuleStream parses rules from an io.Reader stream supporting:

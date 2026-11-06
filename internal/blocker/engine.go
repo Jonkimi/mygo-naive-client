@@ -18,6 +18,7 @@ type CompiledRuleset struct {
 	BlockExact *ExactMap
 	BlockTrie  *SuffixTrie
 	ExemptTrie *SuffixTrie
+	GeoAds     DomainMatcher
 }
 
 func NewCompiledRuleset(parsed *ParsedRules) *CompiledRuleset {
@@ -28,6 +29,7 @@ func NewCompiledRuleset(parsed *ParsedRules) *CompiledRuleset {
 		BlockExact: parsed.BlockExact,
 		BlockTrie:  parsed.BlockTrie,
 		ExemptTrie: parsed.ExemptTrie,
+		GeoAds:     parsed.GeoAds,
 	}
 }
 
@@ -86,6 +88,9 @@ func (e *Engine) RuleCount() int {
 	}
 	if rs.BlockTrie != nil {
 		c += rs.BlockTrie.Count()
+	}
+	if rs.GeoAds != nil {
+		c += rs.GeoAds.TagRuleCount("category-ads-all")
 	}
 	return c
 }
@@ -277,6 +282,9 @@ func (e *Engine) Evaluate(domain string) (blocked bool, rule string, verdict Ver
 
 	// 5. External Subscriptions & Built-in Rules
 	if rs != nil {
+		if rs.GeoAds != nil && rs.GeoAds.MatchDomain("category-ads-all", d) {
+			return true, "category-ads-all", VerdictBlocked
+		}
 		if rs.BlockExact != nil {
 			if matched, r := rs.BlockExact.Match(d); matched {
 				return true, r, VerdictBlocked

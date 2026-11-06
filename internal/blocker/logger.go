@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+const maxTrackedDomains = 5000
+
+func pruneCounts(m map[string]int64, max int) {
+	if len(m) <= max {
+		return
+	}
+	items := sortTopItems(m, max/2)
+	for k := range m {
+		delete(m, k)
+	}
+	for _, it := range items {
+		m[it.Domain] = it.Count
+	}
+}
+
 // TopDomainItem represents domain frequency ranking entry.
 type TopDomainItem struct {
 	Domain string `json:"domain"`
@@ -92,8 +107,14 @@ func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdic
 		l.totalBlocked++
 		bucket.Blocked++
 		l.blockedCounts[domain]++
+		if len(l.blockedCounts) > maxTrackedDomains {
+			pruneCounts(l.blockedCounts, maxTrackedDomains)
+		}
 	} else {
 		l.allowedCounts[domain]++
+		if len(l.allowedCounts) > maxTrackedDomains {
+			pruneCounts(l.allowedCounts, maxTrackedDomains)
+		}
 	}
 
 	// Clean up hourly buckets older than 48 hours

@@ -1,6 +1,7 @@
 package geodata
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -9,7 +10,15 @@ import (
 )
 
 type GeoIPDB struct {
-	tags map[string][]*net.IPNet
+	tags    map[string][]*net.IPNet
+	allTags []string
+}
+
+func (db *GeoIPDB) AllTags() []string {
+	if db == nil {
+		return nil
+	}
+	return db.allTags
 }
 
 func (db *GeoIPDB) MatchIP(tag string, ip net.IP) bool {
@@ -28,13 +37,41 @@ func (db *GeoIPDB) MatchIP(tag string, ip net.IP) bool {
 	return false
 }
 
-type domainEntry struct {
-	typ   int // 0: plain/keyword, 1: regex, 2: domain suffix, 3: full
-	value string
+type siteTagIndex struct {
+	exact    map[string]struct{}
+	suffix   map[string]struct{}
+	keywords []string
 }
 
 type GeoSiteDB struct {
-	tags map[string][]domainEntry
+	indices map[string]*siteTagIndex
+	allTags []string
+}
+
+func (db *GeoSiteDB) AllTags() []string {
+	if db == nil {
+		return nil
+	}
+	return db.allTags
+}
+
+func (db *GeoSiteDB) HasTag(tag string) bool {
+	if db == nil {
+		return false
+	}
+	_, ok := db.indices[strings.ToUpper(strings.TrimSpace(tag))]
+	return ok
+}
+
+func (db *GeoSiteDB) TagRuleCount(tag string) int {
+	if db == nil {
+		return 0
+	}
+	idx, ok := db.indices[strings.ToUpper(strings.TrimSpace(tag))]
+	if !ok {
+		return 0
+	}
+	return len(idx.exact) + len(idx.suffix) + len(idx.keywords)
 }
 
 // DomainTagEntry represents a domain entry extracted from GeoSite database.
@@ -43,21 +80,44 @@ type DomainTagEntry struct {
 	IsFull bool
 }
 
+// ForEachTagEntry iterates over all domain entries for the specified tag/category without slice allocation.
+func (db *GeoSiteDB) ForEachTagEntry(tag string, fn func(val string, isFull bool)) {
+	if db == nil || fn == nil {
+		return
+	}
+	idx, ok := db.indices[strings.ToUpper(strings.TrimSpace(tag))]
+	if !ok {
+		return
+	}
+	for d := range idx.exact {
+		fn(d, true)
+	}
+	for d := range idx.suffix {
+		fn(d, false)
+	}
+	for _, kw := range idx.keywords {
+		fn(kw, false)
+	}
+}
+
 // TagEntries returns all domain entries for the specified tag/category.
 func (db *GeoSiteDB) TagEntries(tag string) []DomainTagEntry {
 	if db == nil {
 		return nil
 	}
-	entries, ok := db.tags[strings.ToUpper(strings.TrimSpace(tag))]
+	idx, ok := db.indices[strings.ToUpper(strings.TrimSpace(tag))]
 	if !ok {
 		return nil
 	}
-	res := make([]DomainTagEntry, len(entries))
-	for i, e := range entries {
-		res[i] = DomainTagEntry{
-			Value:  e.value,
-			IsFull: e.typ == 3,
-		}
+	res := make([]DomainTagEntry, 0, len(idx.exact)+len(idx.suffix)+len(idx.keywords))
+	for d := range idx.exact {
+		res = append(res, DomainTagEntry{Value: d, IsFull: true})
+	}
+	for d := range idx.suffix {
+		res = append(res, DomainTagEntry{Value: d, IsFull: false})
+	}
+	for _, kw := range idx.keywords {
+		res = append(res, DomainTagEntry{Value: kw, IsFull: false})
 	}
 	return res
 }
@@ -66,27 +126,38 @@ func (db *GeoSiteDB) MatchDomain(tag string, domain string) bool {
 	if db == nil || domain == "" {
 		return false
 	}
-	domain = strings.TrimSpace(strings.ToLower(domain))
-	entries, ok := db.tags[strings.ToUpper(strings.TrimSpace(tag))]
+	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	tagKey := strings.ToUpper(strings.TrimSpace(tag))
+	idx, ok := db.indices[tagKey]
 	if !ok {
 		return false
 	}
-	for _, d := range entries {
-		switch d.typ {
-		case 3: // Full
-			if domain == d.value {
-				return true
-			}
-		case 0: // Plain keyword
-			if strings.Contains(domain, d.value) {
-				return true
-			}
-		default: // 2 (Domain/Root domain)
-			if domain == d.value || strings.HasSuffix(domain, "."+d.value) {
+
+	// 1. Full / Exact match
+	if _, ok := idx.exact[domain]; ok {
+		return true
+	}
+
+	// 2. Suffix match (including root domain)
+	if _, ok := idx.suffix[domain]; ok {
+		return true
+	}
+	for i := len(domain) - 1; i >= 0; i-- {
+		if domain[i] == '.' {
+			sub := domain[i+1:]
+			if _, ok := idx.suffix[sub]; ok {
 				return true
 			}
 		}
 	}
+
+	// 3. Keyword match
+	for _, kw := range idx.keywords {
+		if strings.Contains(domain, kw) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -106,7 +177,7 @@ func readBytes(b []byte, offset *int) ([]byte, error) {
 		return nil, err
 	}
 	length := int(lenVal)
-	if *offset+length > len(b) {
+	if length < 0 || *offset+length > len(b) {
 		return nil, io.ErrUnexpectedEOF
 	}
 	data := b[*offset : *offset+length]
@@ -139,49 +210,100 @@ func skipField(b []byte, wireType int, offset *int) error {
 	}
 }
 
-// LoadGeoIP loads and unmarshals only the requested tags from a Loyalsoldier geoip.dat protobuf stream.
-func LoadGeoIP(r io.Reader, requestedTags []string) (*GeoIPDB, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-
-	tagFilter := make(map[string]bool)
-	for _, t := range requestedTags {
-		tagFilter[strings.ToUpper(strings.TrimSpace(t))] = true
-	}
-
-	db := &GeoIPDB{tags: make(map[string][]*net.IPNet)}
-
-	offset := 0
-	for offset < len(data) {
-		header, err := readVarint(data, &offset)
+func skipStreamField(br *bufio.Reader, wireType int) error {
+	switch wireType {
+	case 0: // Varint
+		_, err := binary.ReadUvarint(br)
+		return err
+	case 1: // 64-bit
+		_, err := io.CopyN(io.Discard, br, 8)
+		return err
+	case 2: // Length-delimited
+		lenVal, err := binary.ReadUvarint(br)
 		if err != nil {
-			break
+			return err
+		}
+		_, err = io.CopyN(io.Discard, br, int64(lenVal))
+		return err
+	case 5: // 32-bit
+		_, err := io.CopyN(io.Discard, br, 4)
+		return err
+	default:
+		return errors.New("unsupported wire type")
+	}
+}
+
+// streamTopLevelEntries streams length-delimited field 1 entries from r using a single reusable scratch buffer,
+// avoiding multi-megabyte io.ReadAll allocations.
+func streamTopLevelEntries(r io.Reader, fn func(entryBytes []byte)) error {
+	br := bufio.NewReaderSize(r, 32*1024)
+	var scratch []byte
+
+	for {
+		header, err := binary.ReadUvarint(br)
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return nil
 		}
 		fieldNum := int(header >> 3)
 		wireType := int(header & 0x07)
 
 		if fieldNum != 1 || wireType != 2 {
-			if err := skipField(data, wireType, &offset); err != nil {
-				return nil, err
+			if err := skipStreamField(br, wireType); err != nil {
+				return err
 			}
 			continue
 		}
 
-		entryBytes, err := readBytes(data, &offset)
+		lenVal, err := binary.ReadUvarint(br)
 		if err != nil {
-			return nil, err
+			return io.ErrUnexpectedEOF
 		}
+		length := int(lenVal)
+		if length < 0 {
+			return io.ErrUnexpectedEOF
+		}
+		if cap(scratch) < length {
+			scratch = make([]byte, length)
+		} else {
+			scratch = scratch[:length]
+		}
+		if _, err := io.ReadFull(br, scratch); err != nil {
+			return io.ErrUnexpectedEOF
+		}
+		fn(scratch)
+	}
+}
 
-		// Parse GeoIP entry message
-		parseGeoIPEntry(entryBytes, tagFilter, db)
+// LoadGeoIP loads and unmarshals only the requested tags from a Loyalsoldier geoip.dat protobuf stream.
+func LoadGeoIP(r io.Reader, requestedTags []string) (*GeoIPDB, error) {
+	tagFilter := make(map[string]bool, len(requestedTags))
+	for _, t := range requestedTags {
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean != "" {
+			tagFilter[clean] = true
+		}
+	}
+
+	db := &GeoIPDB{tags: make(map[string][]*net.IPNet)}
+	if len(tagFilter) == 0 {
+		return db, nil
+	}
+	seenTags := make(map[string]bool)
+
+	err := streamTopLevelEntries(r, func(entryBytes []byte) {
+		parseGeoIPEntry(entryBytes, tagFilter, seenTags, db)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return db, nil
 }
 
-func parseGeoIPEntry(b []byte, filter map[string]bool, db *GeoIPDB) {
+func parseGeoIPEntry(b []byte, filter map[string]bool, seenTags map[string]bool, db *GeoIPDB) {
 	var countryCode string
 	var cidrs []*net.IPNet
 
@@ -200,7 +322,13 @@ func parseGeoIPEntry(b []byte, filter map[string]bool, db *GeoIPDB) {
 			if err != nil {
 				return
 			}
-			countryCode = strings.ToUpper(strings.TrimSpace(string(codeBytes)))
+			rawTag := strings.TrimSpace(string(codeBytes))
+			lowerTag := strings.ToLower(rawTag)
+			if lowerTag != "" && !seenTags[lowerTag] {
+				seenTags[lowerTag] = true
+				db.allTags = append(db.allTags, lowerTag)
+			}
+			countryCode = strings.ToUpper(rawTag)
 			if len(filter) > 0 && !filter[countryCode] {
 				return // Skip parsing the rest of this unrequested entry
 			}
@@ -243,7 +371,7 @@ func parseCIDRMessage(b []byte) *net.IPNet {
 			if err != nil {
 				return nil
 			}
-			ip = net.IP(ipBytes)
+			ip = append(net.IP(nil), ipBytes...)
 		case 2: // prefix uint32
 			p, err := readVarint(b, &offset)
 			if err != nil {
@@ -272,35 +400,10 @@ func parseCIDRMessage(b []byte) *net.IPNet {
 // ListGeoTags scans a Loyalsoldier geoip.dat or geosite.dat protobuf stream and extracts
 // all tag and category names without parsing payload CIDRs or domain lists.
 func ListGeoTags(r io.Reader) ([]string, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-
 	var tags []string
 	seen := make(map[string]bool)
 
-	offset := 0
-	for offset < len(data) {
-		header, err := readVarint(data, &offset)
-		if err != nil {
-			break
-		}
-		fieldNum := int(header >> 3)
-		wireType := int(header & 0x07)
-
-		if fieldNum != 1 || wireType != 2 {
-			if err := skipField(data, wireType, &offset); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		entryBytes, err := readBytes(data, &offset)
-		if err != nil {
-			return nil, err
-		}
-
+	err := streamTopLevelEntries(r, func(entryBytes []byte) {
 		// Field 1 of entryBytes is string country_code (the tag/category name)
 		tagOffset := 0
 		if tagOffset < len(entryBytes) {
@@ -316,53 +419,44 @@ func ListGeoTags(r io.Reader) ([]string, error) {
 				}
 			}
 		}
-	}
-
-	return tags, nil
-}
-func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
-	data, err := io.ReadAll(r)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	tagFilter := make(map[string]bool)
+	return tags, nil
+}
+
+func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
+	tagFilter := make(map[string]bool, len(requestedTags))
 	for _, t := range requestedTags {
-		tagFilter[strings.ToUpper(strings.TrimSpace(t))] = true
+		clean := strings.ToUpper(strings.TrimSpace(t))
+		if clean != "" {
+			tagFilter[clean] = true
+		}
 	}
 
-	db := &GeoSiteDB{tags: make(map[string][]domainEntry)}
+	db := &GeoSiteDB{
+		indices: make(map[string]*siteTagIndex),
+	}
+	if len(tagFilter) == 0 {
+		return db, nil
+	}
+	seenTags := make(map[string]bool)
 
-	offset := 0
-	for offset < len(data) {
-		header, err := readVarint(data, &offset)
-		if err != nil {
-			break
-		}
-		fieldNum := int(header >> 3)
-		wireType := int(header & 0x07)
-
-		if fieldNum != 1 || wireType != 2 {
-			if err := skipField(data, wireType, &offset); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		entryBytes, err := readBytes(data, &offset)
-		if err != nil {
-			return nil, err
-		}
-
-		parseGeoSiteEntry(entryBytes, tagFilter, db)
+	err := streamTopLevelEntries(r, func(entryBytes []byte) {
+		parseGeoSiteEntry(entryBytes, tagFilter, seenTags, db)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return db, nil
 }
 
-func parseGeoSiteEntry(b []byte, filter map[string]bool, db *GeoSiteDB) {
+func parseGeoSiteEntry(b []byte, filter map[string]bool, seenTags map[string]bool, db *GeoSiteDB) {
 	var countryCode string
-	var domains []domainEntry
+	var idx *siteTagIndex
 
 	offset := 0
 	for offset < len(b) {
@@ -379,18 +473,36 @@ func parseGeoSiteEntry(b []byte, filter map[string]bool, db *GeoSiteDB) {
 			if err != nil {
 				return
 			}
-			countryCode = strings.ToUpper(strings.TrimSpace(string(codeBytes)))
+			rawTag := strings.TrimSpace(string(codeBytes))
+			lowerTag := strings.ToLower(rawTag)
+			if lowerTag != "" && !seenTags[lowerTag] {
+				seenTags[lowerTag] = true
+				db.allTags = append(db.allTags, lowerTag)
+			}
+			countryCode = strings.ToUpper(rawTag)
 			if len(filter) > 0 && !filter[countryCode] {
 				return // Skip parsing the rest of this unrequested entry
+			}
+			idx = db.indices[countryCode]
+			if idx == nil {
+				idx = &siteTagIndex{
+					exact:  make(map[string]struct{}),
+					suffix: make(map[string]struct{}),
+				}
+				db.indices[countryCode] = idx
 			}
 		case 2: // domain message
 			domBytes, err := readBytes(b, &offset)
 			if err != nil {
 				return
 			}
-			if entry := parseDomainMessage(domBytes); entry != nil {
-				domains = append(domains, *entry)
+			if idx == nil {
+				idx = &siteTagIndex{
+					exact:  make(map[string]struct{}),
+					suffix: make(map[string]struct{}),
+				}
 			}
+			parseDomainMessageInto(domBytes, idx)
 		default:
 			if err := skipField(b, wireType, &offset); err != nil {
 				return
@@ -398,12 +510,14 @@ func parseGeoSiteEntry(b []byte, filter map[string]bool, db *GeoSiteDB) {
 		}
 	}
 
-	if countryCode != "" && len(domains) > 0 {
-		db.tags[countryCode] = append(db.tags[countryCode], domains...)
+	if countryCode != "" && idx != nil && (len(idx.exact) > 0 || len(idx.suffix) > 0 || len(idx.keywords) > 0) {
+		db.indices[countryCode] = idx
+	} else if countryCode != "" {
+		delete(db.indices, countryCode)
 	}
 }
 
-func parseDomainMessage(b []byte) *domainEntry {
+func parseDomainMessageInto(b []byte, idx *siteTagIndex) {
 	typ := 2 // default domain suffix
 	var val string
 
@@ -420,24 +534,31 @@ func parseDomainMessage(b []byte) *domainEntry {
 		case 1: // type enum
 			t, err := readVarint(b, &offset)
 			if err != nil {
-				return nil
+				return
 			}
 			typ = int(t)
 		case 2: // value string
 			valBytes, err := readBytes(b, &offset)
 			if err != nil {
-				return nil
+				return
 			}
 			val = strings.ToLower(strings.TrimSpace(string(valBytes)))
 		default:
 			if err := skipField(b, wireType, &offset); err != nil {
-				return nil
+				return
 			}
 		}
 	}
 
 	if val == "" {
-		return nil
+		return
 	}
-	return &domainEntry{typ: typ, value: val}
+	switch typ {
+	case 3:
+		idx.exact[val] = struct{}{}
+	case 0:
+		idx.keywords = append(idx.keywords, val)
+	default:
+		idx.suffix[val] = struct{}{}
+	}
 }
