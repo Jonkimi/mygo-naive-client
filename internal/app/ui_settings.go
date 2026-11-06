@@ -116,7 +116,6 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 	curIconIdx := indexOfCode(appIconCodes, a.state.AppIcon)
 
 	ui.Scroll(c.Key("settings-page-scroll")).
-		TrackScroll(&a.settingsPageScroll).
 		Grow(1).Fill().
 		Padding(20, 24, 30, 24).Gap(14).
 		Children(func() {
@@ -160,12 +159,8 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					})
 				}
 
-				openAtLogin := false
-				if !a.headless {
-					openAtLogin = mygo.App.OpenAtLogin()
-				}
-				if switchRow(c, p, "page-set-open-login", cat.AutoStartLabel(), &openAtLogin) && !a.headless {
-					_ = mygo.App.SetOpenAtLogin(openAtLogin)
+				if switchRow(c, p, "page-set-open-login", cat.AutoStartLabel(), &a.openAtLogin) && !a.headless {
+					_ = mygo.App.SetOpenAtLogin(a.openAtLogin)
 				}
 			})
 
@@ -189,9 +184,11 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					}
 				}
 
-				portStr := fmt.Sprintf("%d", a.state.GatewayPort)
-				if labeledInput(c, p, "page-set-gateway-port", cat.GatewayPortLabel(), &portStr, cat.GatewayPortHint()).Changed() {
-					if parsed, err := strconv.Atoi(portStr); err == nil && parsed > 0 && parsed <= 65535 {
+				if a.gatewayPortInput == "" && a.state.GatewayPort > 0 {
+					a.gatewayPortInput = strconv.Itoa(a.state.GatewayPort)
+				}
+				if labeledInput(c, p, "page-set-gateway-port", cat.GatewayPortLabel(), &a.gatewayPortInput, cat.GatewayPortHint()).Changed() {
+					if parsed, err := strconv.Atoi(a.gatewayPortInput); err == nil && parsed > 0 && parsed <= 65535 {
 						a.state.GatewayPort = parsed
 						a.saveState()
 						if a.state.GatewayEnabled {

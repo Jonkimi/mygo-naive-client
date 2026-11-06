@@ -2,6 +2,7 @@ package blocker
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +25,12 @@ type QueryLogger struct {
 	hourlyMap     map[int64]*HourlyBucket // hour unix -> bucket
 	blockedCounts map[string]int64
 	allowedCounts map[string]int64
+	totalQueries  int64
+	totalBlocked  int64
+
+	dirtyTop        bool
+	topBlockedCache []TopDomainItem
+	topAllowedCache []TopDomainItem
 }
 
 // NewQueryLogger creates an in-memory query logger with the given ring buffer capacity.
@@ -78,8 +85,11 @@ func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdic
 		}
 		l.hourlyMap[hourKey] = bucket
 	}
+	l.totalQueries++
 	bucket.Total++
+	l.dirtyTop = true
 	if verdict == VerdictBlocked {
+		l.totalBlocked++
 		bucket.Blocked++
 		l.blockedCounts[domain]++
 	} else {
@@ -144,27 +154,78 @@ func (l *QueryLogger) Get24HourlyBuckets(now time.Time) [24]HourlyBucket {
 
 // GetTopBlocked returns top N blocked domains sorted descending.
 func (l *QueryLogger) GetTopBlocked(limit int) []TopDomainItem {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return sortTopItems(l.blockedCounts, limit)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.dirtyTop || l.topBlockedCache == nil {
+		l.topBlockedCache = sortTopItems(l.blockedCounts, 0)
+		l.topAllowedCache = sortTopItems(l.allowedCounts, 0)
+		l.dirtyTop = false
+	}
+	return sliceTopItems(l.topBlockedCache, limit)
 }
 
 // GetTopAllowed returns top N allowed domains sorted descending.
 func (l *QueryLogger) GetTopAllowed(limit int) []TopDomainItem {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return sortTopItems(l.allowedCounts, limit)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.dirtyTop || l.topAllowedCache == nil {
+		l.topBlockedCache = sortTopItems(l.blockedCounts, 0)
+		l.topAllowedCache = sortTopItems(l.allowedCounts, 0)
+		l.dirtyTop = false
+	}
+	return sliceTopItems(l.topAllowedCache, limit)
 }
 
-// GetStatsSummary returns total queries and total blocked queries.
+func sliceTopItems(src []TopDomainItem, limit int) []TopDomainItem {
+	n := len(src)
+	if limit > 0 && limit < n {
+		n = limit
+	}
+	res := make([]TopDomainItem, n)
+	copy(res, src[:n])
+	return res
+}
+
+// GetFilteredEntries scans newest-first and returns up to limit matching entries along with total recorded count.
+func (l *QueryLogger) GetFilteredEntries(verdictFilter string, domainQuery string, limit int) (entries []QueryLogEntry, totalRecorded int) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	totalRecorded = l.count
+	if limit <= 0 {
+		limit = 50
+	}
+
+	q := strings.ToLower(strings.TrimSpace(domainQuery))
+	res := make([]QueryLogEntry, 0, min(limit, l.count))
+
+	for i := 0; i < l.count; i++ {
+		idx := (l.start + l.count - 1 - i) % l.capacity
+		e := l.entries[idx]
+
+		if verdictFilter == "blocked" && e.Verdict != VerdictBlocked {
+			continue
+		}
+		if verdictFilter == "allowed" && e.Verdict != VerdictAllowed && e.Verdict != VerdictWhitelisted {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(e.Domain), q) {
+			continue
+		}
+
+		res = append(res, e)
+		if len(res) >= limit {
+			break
+		}
+	}
+	return res, totalRecorded
+}
+
+// GetStatsSummary returns total queries and total blocked queries in O(1) time.
 func (l *QueryLogger) GetStatsSummary() (total int64, blocked int64) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	for _, b := range l.hourlyMap {
-		total += b.Total
-		blocked += b.Blocked
-	}
-	return total, blocked
+	return l.totalQueries, l.totalBlocked
 }
 
 func sortTopItems(counts map[string]int64, limit int) []TopDomainItem {

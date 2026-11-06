@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 	cat := a.catalog()
 
-	ui.Column(c.Key("insights-page")).Grow(1).Children(func() {
+	ui.Column(c.Key("insights-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// Header row with title and controls
 		ui.Row(c.Key("insights-header")).
 			Padding(14, 18, 14, 18).
@@ -94,7 +95,7 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 			})
 
 		// Scrollable main content
-		ui.Scroll(c.Key("insights-scroll")).Grow(1).Children(func() {
+		ui.Scroll(c.Key("insights-scroll")).Grow(1).Fill().Children(func() {
 			ui.Column(c).Padding(16, 18, 20, 18).Gap(14).Children(func() {
 				// 1. KPI Cards
 				a.renderInsightsKPICards(c, p)
@@ -317,26 +318,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 		return
 	}
 
-	allEntries := a.blocker.Logger().GetEntries(2000)
-
-	// Filter entries
-	var filtered []blocker.QueryLogEntry
-	q := strings.ToLower(strings.TrimSpace(a.insightsSearch))
-	for _, e := range allEntries {
-		if a.insightsFilter == "blocked" && e.Verdict != blocker.VerdictBlocked {
-			continue
-		}
-		if a.insightsFilter == "allowed" && e.Verdict != blocker.VerdictAllowed && e.Verdict != blocker.VerdictWhitelisted {
-			continue
-		}
-		if q != "" && !strings.Contains(strings.ToLower(e.Domain), q) {
-			continue
-		}
-		filtered = append(filtered, e)
-		if len(filtered) >= 150 { // Limit view render count for performance
-			break
-		}
-	}
+	filtered, totalCount := a.blocker.Logger().GetFilteredEntries(a.insightsFilter, a.insightsSearch, 30)
 
 	ui.Column(c.Key("insights-query-log-card")).
 		Padding(12, 14, 12, 14).Radius(8).
@@ -345,7 +327,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, "实时查询日志").FontSize(12).FontWeight(600).TextColor(p.text)
-					tagPill(c, fmt.Sprintf("%d 条", len(allEntries)), p.textDim, p.surface)
+					tagPill(c, fmt.Sprintf("%d 条", totalCount), p.textDim, p.surface)
 				})
 
 				// Segment Filter Tabs
@@ -408,6 +390,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 				for _, entry := range filtered {
 					e := entry
 					dom := e.Domain
+					idStr := strconv.FormatInt(e.ID, 10)
 					timeStr := e.Timestamp.Format("15:04:05")
 
 					verdictBg := p.greenBg
@@ -420,7 +403,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 						verdictFg = p.accentText
 					}
 
-					ui.Row(c.Key(fmt.Sprintf("log-row-%d", e.ID))).
+					ui.Row(c.Key("log-row-" + idStr)).
 						AlignItems(ui.Center).Padding(4, 6, 4, 6).
 						BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle.Alpha(0.4)).
 						Children(func() {
@@ -438,8 +421,8 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 
 							// Quick action
 							if e.Verdict == blocker.VerdictBlocked {
-								btnW := ui.ButtonBase(c.Key(fmt.Sprintf("btn-log-whitelist-%d", e.ID))).
-									Label(fmt.Sprintf("btn-log-whitelist-%s", dom)).
+								btnW := ui.ButtonBase(c.Key("btn-log-whitelist-" + idStr)).
+									Label("btn-log-whitelist-" + dom).
 									Padding(2, 6, 2, 6).Radius(4).
 									Background(p.surface).Border(1, p.borderSubtle).
 									Children(func() {
@@ -449,8 +432,8 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 									a.addBlockerAllowlist(dom)
 								}
 							} else {
-								btnB := ui.ButtonBase(c.Key(fmt.Sprintf("btn-log-block-%d", e.ID))).
-									Label(fmt.Sprintf("btn-log-block-%s", dom)).
+								btnB := ui.ButtonBase(c.Key("btn-log-block-" + idStr)).
+									Label("btn-log-block-" + dom).
 									Padding(2, 6, 2, 6).Radius(4).
 									Background(p.surface).Border(1, p.borderSubtle).
 									Children(func() {

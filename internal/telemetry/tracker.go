@@ -172,13 +172,17 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 	}
 }
 
-func (t *Tracker) SelectBest(candidates []string, targetHost string) (string, bool) {
+// PeekBest predicts the best candidate node for targetHost without updating sticky affinity or taking a write lock.
+func (t *Tracker) PeekBest(candidates []string, targetHost string) (string, QualityScore, bool) {
 	if len(candidates) == 0 {
-		return "", false
+		return "", QualityScore{}, false
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.peekBestLocked(candidates, targetHost)
+}
 
+func (t *Tracker) peekBestLocked(candidates []string, targetHost string) (string, QualityScore, bool) {
 	root := ExtractRootDomain(targetHost)
 
 	// Filter out completely broken candidates if there is at least one non-broken candidate
@@ -223,31 +227,51 @@ func (t *Tracker) SelectBest(candidates []string, targetHost string) (string, bo
 	// Find the candidate with minimum score
 	var bestID string
 	var minScore float64 = -1
+	var bestScore QualityScore
 	for _, id := range pool {
 		sc := t.getScoreLocked(id)
 		if minScore < 0 || sc.Score < minScore {
 			minScore = sc.Score
 			bestID = id
+			bestScore = sc
 		}
+	}
+
+	if bestID == "" {
+		return "", QualityScore{}, false
 	}
 
 	// If we have an existing healthy affinity node, check sticky hysteresis
 	if currentAffinity != "" {
-		currScore := t.getScoreLocked(currentAffinity).Score
-		delta := currScore - minScore
+		currScore := t.getScoreLocked(currentAffinity)
+		delta := currScore.Score - minScore
 		deltaDur := time.Duration(delta) * time.Millisecond
-		ratio := delta / currScore
+		ratio := delta / currScore.Score
 
 		// Only switch if faster by > 30ms and > 20%
 		if deltaDur > hysteresisRTTDelta && ratio > hysteresisRatioDelta {
-			t.affinity[root] = bestID
-			return bestID, true
+			return bestID, bestScore, true
 		}
-		return currentAffinity, true
+		return currentAffinity, currScore, true
 	}
 
-	if root != "" && bestID != "" {
-		t.affinity[root] = bestID
+	return bestID, bestScore, true
+}
+
+func (t *Tracker) SelectBest(candidates []string, targetHost string) (string, bool) {
+	if len(candidates) == 0 {
+		return "", false
 	}
-	return bestID, true
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	chosenID, _, ok := t.peekBestLocked(candidates, targetHost)
+	if !ok {
+		return "", false
+	}
+	root := ExtractRootDomain(targetHost)
+	if root != "" && chosenID != "" {
+		t.affinity[root] = chosenID
+	}
+	return chosenID, true
 }

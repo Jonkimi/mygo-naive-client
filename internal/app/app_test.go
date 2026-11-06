@@ -506,6 +506,29 @@ func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
 	}
 }
 
+// Toggling auto start in settings updates application memory state without slow IPC on every frame.
+func TestSettingsPage_AutoStartToggle(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	tt.Key(ui.Cmd, ui.KeyComma)
+	tt.Frame()
+
+	if a.openAtLogin {
+		t.Fatalf("expected initial openAtLogin = false")
+	}
+
+	label, ok := tt.Find(a.catalog().AutoStartLabel())
+	if !ok {
+		t.Fatalf("no row %s", a.catalog().AutoStartLabel())
+	}
+	tt.ClickAt(850, label.Y+label.H/2)
+	tt.Frame()
+
+	if !a.openAtLogin {
+		t.Fatalf("expected openAtLogin = true after click")
+	}
+}
+
 func buildTestReleaseArchive(t *testing.T, assetName, entryName string, payload []byte) []byte {
 	t.Helper()
 	if strings.HasSuffix(assetName, ".zip") {
@@ -1429,6 +1452,20 @@ func TestRoutingWorkbench_NavigationAndToggle(t *testing.T) {
 	act, _ := a.router.Match("pagead2.doubleclick.net:443")
 	if act.Type == routing.ActionBlock {
 		t.Fatalf("expected doubleclick.net not blocked after disabling rule")
+	}
+
+	// Verify BlockerBlockAds is automatically synchronized
+	if a.state.BlockerBlockAds {
+		t.Fatalf("expected BlockerBlockAds synchronized to false after toggle click")
+	}
+
+	// Toggle back via toggleBlockerBlockAds to test bidirectional synchronization
+	a.toggleBlockerBlockAds()
+	if !a.state.BlockerBlockAds {
+		t.Fatalf("expected BlockerBlockAds to be true")
+	}
+	if !a.state.RoutingRules[0].Enabled {
+		t.Fatalf("expected RoutingRules[0] preset-block-ads synchronized to true")
 	}
 }
 

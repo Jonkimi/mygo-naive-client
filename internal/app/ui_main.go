@@ -67,14 +67,10 @@ func (a *app) view(c *ui.Context) {
 }
 
 func (a *app) activeRunningCount() int {
-	count := 0
-	for _, svc := range a.state.Services {
-		st := a.mgr.StatusOf(svc.ID).State
-		if st == runner.StateRunning || st == runner.StateStarting {
-			count++
-		}
+	if a.mgr == nil {
+		return 0
 	}
-	return count
+	return a.mgr.RunningOrStartingCount()
 }
 
 func (a *app) gatewayEndpointLabel() string {
@@ -388,7 +384,6 @@ func (a *app) renderServiceList(c *ui.Context, p palette) {
 	services := a.filteredServices()
 
 	ui.Scroll(c.Key("service-scroll")).
-		TrackScroll(&a.mainScroll).
 		Fill().
 		Padding(0, 20, 20, 20).
 		Gap(12).

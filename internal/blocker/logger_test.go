@@ -98,3 +98,42 @@ func TestQueryLogger_Concurrency(t *testing.T) {
 		t.Fatalf("expected 100 entries, got %d", len(entries))
 	}
 }
+
+// Tests GetFilteredEntries and Top items caching for smooth UI rendering.
+func TestQueryLogger_GetFilteredEntriesAndTopCaching(t *testing.T) {
+	ql := NewQueryLogger(500)
+	ql.Record("ad.special.com", SourceDNS, VerdictBlocked, "rule-ads")
+	ql.Record("api.normal.com", SourceGateway, VerdictAllowed, "")
+	ql.Record("tracker.special.net", SourceDNS, VerdictBlocked, "rule-tracker")
+	ql.Record("cdn.assets.org", SourceGateway, VerdictAllowed, "")
+
+	// 1. Filtered by blocked
+	blockedEntries, total := ql.GetFilteredEntries("blocked", "", 10)
+	if total != 4 {
+		t.Fatalf("expected total 4, got %d", total)
+	}
+	if len(blockedEntries) != 2 {
+		t.Fatalf("expected 2 blocked entries, got %d", len(blockedEntries))
+	}
+	for _, e := range blockedEntries {
+		if e.Verdict != VerdictBlocked {
+			t.Fatalf("expected VerdictBlocked, got %v", e.Verdict)
+		}
+	}
+
+	// 2. Filtered by search query "special"
+	searchEntries, _ := ql.GetFilteredEntries("", "special", 10)
+	if len(searchEntries) != 2 {
+		t.Fatalf("expected 2 entries matching 'special', got %d", len(searchEntries))
+	}
+
+	// 3. Cached top items check
+	top1 := ql.GetTopBlocked(2)
+	top2 := ql.GetTopBlocked(2)
+	if len(top1) != 2 || len(top2) != 2 {
+		t.Fatalf("expected 2 top blocked items")
+	}
+	if top1[0].Domain != top2[0].Domain {
+		t.Fatalf("expected consistent top items from cache")
+	}
+}

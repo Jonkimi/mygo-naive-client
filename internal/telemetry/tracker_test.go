@@ -73,3 +73,42 @@ func TestTracker_AffinityAndStickySelection(t *testing.T) {
 		t.Fatalf("expected failover to nodeA after nodeB domain failure, got %v", best3)
 	}
 }
+
+// Tests that PeekBest predicts the best candidate without altering affinity state.
+func TestTracker_PeekBestDoesNotMutateAffinity(t *testing.T) {
+	tr := NewTracker()
+	nodeA := "node-a"
+	nodeB := "node-b"
+
+	tr.RecordDial(nodeA, "github.com", 100*time.Millisecond, nil)
+	tr.RecordDial(nodeB, "github.com", 30*time.Millisecond, nil)
+
+	// PeekBest should recommend nodeB without establishing sticky affinity for nodeB
+	best, sc, ok := tr.PeekBest([]string{nodeA, nodeB}, "github.com")
+	if !ok || best != nodeB {
+		t.Fatalf("expected PeekBest to return nodeB, got %v (ok=%v)", best, ok)
+	}
+	if sc.EWMA != 30*time.Millisecond {
+		t.Fatalf("expected EWMA = 30ms, got %v", sc.EWMA)
+	}
+
+	// Internal affinity map should still be nodeA (from RecordDial), NOT overwritten by PeekBest
+	tr.mu.RLock()
+	aff := tr.affinity["github.com"]
+	tr.mu.RUnlock()
+	if aff != nodeA {
+		t.Fatalf("expected affinity to remain node-a after PeekBest, got %v", aff)
+	}
+
+	// In contrast, SelectBest should commit the new affinity to nodeB
+	bestSel, okSel := tr.SelectBest([]string{nodeA, nodeB}, "github.com")
+	if !okSel || bestSel != nodeB {
+		t.Fatalf("expected SelectBest to return nodeB, got %v", bestSel)
+	}
+	tr.mu.RLock()
+	affAfterSelect := tr.affinity["github.com"]
+	tr.mu.RUnlock()
+	if affAfterSelect != nodeB {
+		t.Fatalf("expected SelectBest to update affinity to node-b, got %v", affAfterSelect)
+	}
+}

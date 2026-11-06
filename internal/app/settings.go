@@ -200,6 +200,12 @@ func (a *app) loadState() {
 			cleanedRules = append(cleanedRules, routing.DefaultPresets()[4])
 		}
 		st.RoutingRules = cleanedRules
+		for _, r := range st.RoutingRules {
+			if r.ID == "preset-block-ads" {
+				st.BlockerBlockAds = r.Enabled
+				break
+			}
+		}
 	}
 	if st.RoutingFinal.Type == "" {
 		st.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}
@@ -219,6 +225,7 @@ func (a *app) loadState() {
 		}
 	}
 	a.state = st
+	a.gatewayPortInput = fmt.Sprintf("%d", st.GatewayPort)
 	a.syncRouter()
 	a.syncBlocker()
 }
