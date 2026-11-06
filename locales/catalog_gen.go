@@ -906,24 +906,84 @@ func (msgs Messages) GatewayPortHint() string {
 	return Catalog.Format(msgs.locale, "gatewayPortHint", nil)
 }
 
-// DohSectionTitle says "Split-DoH & Anti-Deadlock DNS"
+// DohSectionTitle says "Split DNS / DoH Resolution"
 // in the language the app shows.
 func DohSectionTitle() string { return In(i18n.Locale()).DohSectionTitle() }
 
-// DohSectionTitle says "Split-DoH & Anti-Deadlock DNS"
+// DohSectionTitle says "Split DNS / DoH Resolution"
 // in the language of msgs.
 func (msgs Messages) DohSectionTitle() string {
 	return Catalog.Format(msgs.locale, "dohSectionTitle", nil)
 }
 
-// DohSectionDesc says "Configure domestic direct & remote proxy DoH upstreams (comma-separated)"
+// DohSectionDesc says "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS (comma-separated)"
 // in the language the app shows.
 func DohSectionDesc() string { return In(i18n.Locale()).DohSectionDesc() }
 
-// DohSectionDesc says "Configure domestic direct & remote proxy DoH upstreams (comma-separated)"
+// DohSectionDesc says "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS (comma-separated)"
 // in the language of msgs.
 func (msgs Messages) DohSectionDesc() string {
 	return Catalog.Format(msgs.locale, "dohSectionDesc", nil)
+}
+
+// DnsDomesticLabel says "Domestic DNS"
+// in the language the app shows.
+func DnsDomesticLabel() string { return In(i18n.Locale()).DnsDomesticLabel() }
+
+// DnsDomesticLabel says "Domestic DNS"
+// in the language of msgs.
+func (msgs Messages) DnsDomesticLabel() string {
+	return Catalog.Format(msgs.locale, "dnsDomesticLabel", nil)
+}
+
+// DnsDomesticHint says "Default: https://dns.alidns.com/dns-query (invoked during routing for resolution)"
+// in the language the app shows.
+func DnsDomesticHint() string { return In(i18n.Locale()).DnsDomesticHint() }
+
+// DnsDomesticHint says "Default: https://dns.alidns.com/dns-query (invoked during routing for resolution)"
+// in the language of msgs.
+func (msgs Messages) DnsDomesticHint() string {
+	return Catalog.Format(msgs.locale, "dnsDomesticHint", nil)
+}
+
+// DnsRemoteLabel says "Remote DNS"
+// in the language the app shows.
+func DnsRemoteLabel() string { return In(i18n.Locale()).DnsRemoteLabel() }
+
+// DnsRemoteLabel says "Remote DNS"
+// in the language of msgs.
+func (msgs Messages) DnsRemoteLabel() string {
+	return Catalog.Format(msgs.locale, "dnsRemoteLabel", nil)
+}
+
+// DnsRemoteHint says "Default: https://1.1.1.1/dns-query (invoked during routing; ensure remote node can reach it)"
+// in the language the app shows.
+func DnsRemoteHint() string { return In(i18n.Locale()).DnsRemoteHint() }
+
+// DnsRemoteHint says "Default: https://1.1.1.1/dns-query (invoked during routing; ensure remote node can reach it)"
+// in the language of msgs.
+func (msgs Messages) DnsRemoteHint() string {
+	return Catalog.Format(msgs.locale, "dnsRemoteHint", nil)
+}
+
+// DnsBootstrapLabel says "Bootstrap DNS"
+// in the language the app shows.
+func DnsBootstrapLabel() string { return In(i18n.Locale()).DnsBootstrapLabel() }
+
+// DnsBootstrapLabel says "Bootstrap DNS"
+// in the language of msgs.
+func (msgs Messages) DnsBootstrapLabel() string {
+	return Catalog.Format(msgs.locale, "dnsBootstrapLabel", nil)
+}
+
+// DnsBootstrapHint says "Default: 223.5.5.5 (resolves DNS server and proxy domains, requires IP)"
+// in the language the app shows.
+func DnsBootstrapHint() string { return In(i18n.Locale()).DnsBootstrapHint() }
+
+// DnsBootstrapHint says "Default: 223.5.5.5 (resolves DNS server and proxy domains, requires IP)"
+// in the language of msgs.
+func (msgs Messages) DnsBootstrapHint() string {
+	return Catalog.Format(msgs.locale, "dnsBootstrapHint", nil)
 }
 
 // DohBootstrapLabel says "Domestic / Direct DoH Upstream"
@@ -936,11 +996,11 @@ func (msgs Messages) DohBootstrapLabel() string {
 	return Catalog.Format(msgs.locale, "dohBootstrapLabel", nil)
 }
 
-// DohBootstrapHint says "Leave empty for defaults: https://223.5.5.5/dns-query (Pure IP preferred)"
+// DohBootstrapHint says "Leave empty for defaults: https://dns.alidns.com/dns-query"
 // in the language the app shows.
 func DohBootstrapHint() string { return In(i18n.Locale()).DohBootstrapHint() }
 
-// DohBootstrapHint says "Leave empty for defaults: https://223.5.5.5/dns-query (Pure IP preferred)"
+// DohBootstrapHint says "Leave empty for defaults: https://dns.alidns.com/dns-query"
 // in the language of msgs.
 func (msgs Messages) DohBootstrapHint() string {
 	return Catalog.Format(msgs.locale, "dohBootstrapHint", nil)
@@ -956,11 +1016,11 @@ func (msgs Messages) DohRemoteLabel() string {
 	return Catalog.Format(msgs.locale, "dohRemoteLabel", nil)
 }
 
-// DohRemoteHint says "Leave empty for defaults: https://1.1.1.1/dns-query (Pure IP preferred)"
+// DohRemoteHint says "Leave empty for defaults: https://1.1.1.1/dns-query"
 // in the language the app shows.
 func DohRemoteHint() string { return In(i18n.Locale()).DohRemoteHint() }
 
-// DohRemoteHint says "Leave empty for defaults: https://1.1.1.1/dns-query (Pure IP preferred)"
+// DohRemoteHint says "Leave empty for defaults: https://1.1.1.1/dns-query"
 // in the language of msgs.
 func (msgs Messages) DohRemoteHint() string {
 	return Catalog.Format(msgs.locale, "dohRemoteHint", nil)

@@ -39,8 +39,11 @@ type PersistedState struct {
 	SidebarCollapsed        bool             `json:"sidebarCollapsed,omitempty"`
 	GatewayEnabled          bool             `json:"gatewayEnabled"`
 	GatewayPort             int              `json:"gatewayPort,omitempty"`
-	BootstrapDoH            string           `json:"bootstrapDoH,omitempty"`
-	RemoteDoH               string           `json:"remoteDoH,omitempty"`
+	DomesticDNS             string           `json:"domesticDns,omitempty"`
+	RemoteDNS               string           `json:"remoteDns,omitempty"`
+	BootstrapDNS            string           `json:"bootstrapDns,omitempty"`
+	BootstrapDoH            string           `json:"bootstrapDoH,omitempty"` // Deprecated alias
+	RemoteDoH               string           `json:"remoteDoH,omitempty"`    // Deprecated alias
 	TrafficMode             string           `json:"trafficMode,omitempty"`
 	SystemProxyBypass       []string         `json:"systemProxyBypass,omitempty"`
 	RoutingRules            []routing.Rule   `json:"routingRules,omitempty"`
