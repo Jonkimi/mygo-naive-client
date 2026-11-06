@@ -58,8 +58,10 @@ type ruleEditorForm struct {
 	domainsInput  string
 	cidrsInput    string
 	keywordsInput string
-	geositeInput  string
-	geoipInput    string
+	geosites      []string
+	geoips        []string
+	geositeQuery  string
+	geoipQuery    string
 	tab           int // 0: Domains/IPs, 1: GeoData
 	errText       string
 }

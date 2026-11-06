@@ -118,8 +118,8 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 		domainsInput:  strings.Join(rule.DomainSuffix, "\n"),
 		cidrsInput:    strings.Join(rule.IPCidr, "\n"),
 		keywordsInput: strings.Join(rule.DomainKeyword, ", "),
-		geositeInput:  strings.Join(rule.GeoSite, ", "),
-		geoipInput:    strings.Join(rule.GeoIP, ", "),
+		geosites:      append([]string(nil), rule.GeoSite...),
+		geoips:        append([]string(nil), rule.GeoIP...),
 		tab:           initTab,
 	}
 	if a.win != nil {
@@ -192,43 +192,35 @@ func parseCommaOrLines(text string) []string {
 	return out
 }
 
-func appendTagToInput(input *string, tag string) {
+func addTag(tags *[]string, tag string) {
 	tag = strings.TrimSpace(strings.ToLower(tag))
+	tag = strings.TrimPrefix(tag, "#")
 	if tag == "" {
 		return
 	}
-	existing := parseCommaOrLines(*input)
-	for _, e := range existing {
-		if strings.EqualFold(e, tag) {
+	for _, t := range *tags {
+		if strings.EqualFold(t, tag) {
 			return
 		}
 	}
-	existing = append(existing, tag)
-	*input = strings.Join(existing, ", ")
+	*tags = append(*tags, tag)
 }
 
-func filterSuggestedTags(allTags []string, currentInput string, maxSuggestions int) []string {
-	parts := strings.Split(currentInput, ",")
-	lastTerm := ""
-	if len(parts) > 0 {
-		lastTerm = strings.TrimSpace(strings.ToLower(parts[len(parts)-1]))
-	}
-
+func filterSuggestedTags(allTags []string, currentTags []string, query string, maxSuggestions int) []string {
 	existingMap := make(map[string]bool)
-	for _, p := range parts {
-		norm := strings.TrimSpace(strings.ToLower(p))
-		if norm != "" {
-			existingMap[norm] = true
-		}
+	for _, t := range currentTags {
+		existingMap[strings.ToLower(strings.TrimSpace(t))] = true
 	}
 
+	query = strings.ToLower(strings.TrimSpace(query))
 	var matches []string
-	if lastTerm != "" {
+
+	if query != "" {
 		for _, t := range allTags {
 			if existingMap[t] {
 				continue
 			}
-			if strings.HasPrefix(t, lastTerm) || strings.Contains(t, lastTerm) {
+			if strings.HasPrefix(t, query) || strings.Contains(t, query) {
 				matches = append(matches, t)
 				if len(matches) >= maxSuggestions {
 					break
@@ -236,6 +228,7 @@ func filterSuggestedTags(allTags []string, currentInput string, maxSuggestions i
 			}
 		}
 	}
+
 	if len(matches) < maxSuggestions {
 		for _, t := range allTags {
 			if existingMap[t] {
@@ -256,7 +249,102 @@ func filterSuggestedTags(allTags []string, currentInput string, maxSuggestions i
 			}
 		}
 	}
+
 	return matches
+}
+
+func chipsTagInput(
+	c *ui.Context,
+	p palette,
+	key string,
+	label string,
+	tags *[]string,
+	query *string,
+	placeholder string,
+	allKnownTags []string,
+) {
+	ui.Column(c).Gap(6).Children(func() {
+		// Label row with count
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.text)
+			if len(*tags) > 0 {
+				tagPill(c, fmt.Sprintf("%d", len(*tags)), p.accentText, p.accentBg)
+			}
+		})
+
+		// Container box mimicking a chip-input field
+		ui.Row(c.Key(key+"-container")).
+			AlignItems(ui.Center).Gap(6).Wrap().
+			Padding(6, 8, 6, 8).Radius(6).
+			Background(p.surface).Border(1, p.borderSubtle).
+			Children(func() {
+				// Render existing tags as chips
+				for idx, t := range *tags {
+					tagIdx := idx
+					tagVal := t
+					ui.Row(c.Key(fmt.Sprintf("%s-pill-%s", key, tagVal))).
+						AlignItems(ui.Center).Gap(4).
+						PaddingX(6).PaddingY(2).Radius(4).
+						Background(p.elevated).Border(1, p.borderSubtle).
+						Children(func() {
+							ui.Text(c, tagVal).FontSize(11).FontWeight(500).TextColor(p.text)
+							closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-del-%s", key, tagVal))).
+								Label("del-tag-" + tagVal).
+								Radius(999).PaddingX(2).
+								Background(ui.Transparent).
+								Children(func() {
+									ui.Text(c, "×").FontSize(11).FontWeight(700).TextColor(p.textDim)
+								})
+							if closeBtn.Clicked() {
+								var newTags []string
+								for i, elem := range *tags {
+									if i != tagIdx {
+										newTags = append(newTags, elem)
+									}
+								}
+								*tags = newTags
+							}
+						})
+				}
+
+				// Inline text input to type and add new tag
+				ui.TextInput(c.Key(key+"-input"), query).
+					Label(label).
+					Placeholder(placeholder).
+					Height(24).Radius(4).
+					FontSize(11).
+					Background(ui.Transparent).Border(0, ui.Transparent)
+
+				q := *query
+				if strings.Contains(q, ",") || strings.Contains(q, "\n") {
+					parts := parseCommaOrLines(q)
+					for _, pt := range parts {
+						addTag(tags, pt)
+					}
+					*query = ""
+				}
+			})
+
+		// Suggestion chips row
+		suggestions := filterSuggestedTags(allKnownTags, *tags, *query, 7)
+		if len(suggestions) > 0 {
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+				for _, sug := range suggestions {
+					sugTag := sug
+					btn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-sug-%s", key, sugTag))).
+						Radius(4).PaddingX(6).PaddingY(2).
+						Background(p.elevated).
+						Children(func() {
+							ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
+						})
+					if btn.Clicked() {
+						addTag(tags, sugTag)
+						*query = ""
+					}
+				}
+			})
+		}
+	})
 }
 
 func (a *app) saveRuleEditor() {
@@ -269,8 +357,20 @@ func (a *app) saveRuleEditor() {
 	domains := parseLines(a.ruleEditor.domainsInput)
 	cidrs := parseLines(a.ruleEditor.cidrsInput)
 	keywords := parseCommaOrLines(a.ruleEditor.keywordsInput)
-	geosites := parseCommaOrLines(a.ruleEditor.geositeInput)
-	geoips := parseCommaOrLines(a.ruleEditor.geoipInput)
+
+	geosites := append([]string(nil), a.ruleEditor.geosites...)
+	if q := strings.TrimSpace(a.ruleEditor.geositeQuery); q != "" {
+		for _, pt := range parseCommaOrLines(q) {
+			addTag(&geosites, pt)
+		}
+	}
+
+	geoips := append([]string(nil), a.ruleEditor.geoips...)
+	if q := strings.TrimSpace(a.ruleEditor.geoipQuery); q != "" {
+		for _, pt := range parseCommaOrLines(q) {
+			addTag(&geoips, pt)
+		}
+	}
 
 	if len(domains) == 0 && len(cidrs) == 0 && len(keywords) == 0 && len(geosites) == 0 && len(geoips) == 0 {
 		a.ruleEditor.errText = "请至少填写一个匹配条件（域名后缀、IP-CIDR、关键字、GeoSite 或 GeoIP）"
@@ -531,41 +631,11 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 					// Keywords
 					labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
 				} else {
-					// GeoSite tags
-					labeledInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geositeInput, cat.RuleGeoSiteHint())
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-						suggestions := filterSuggestedTags(a.availableGeoSiteTags(), a.ruleEditor.geositeInput, 8)
-						for _, sug := range suggestions {
-							sugTag := sug
-							btn := ui.ButtonBase(c.Key("chip-geosite-sug-" + sugTag)).
-								Radius(4).PaddingX(6).PaddingY(2).
-								Background(p.elevated).
-								Children(func() {
-									ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
-								})
-							if btn.Clicked() {
-								appendTagToInput(&a.ruleEditor.geositeInput, sugTag)
-							}
-						}
-					})
+					// GeoSite tags chip-input
+					chipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags())
 
-					// GeoIP tags
-					labeledInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoipInput, cat.RuleGeoIPHint())
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-						suggestions := filterSuggestedTags(a.availableGeoIPTags(), a.ruleEditor.geoipInput, 8)
-						for _, sug := range suggestions {
-							sugTag := sug
-							btn := ui.ButtonBase(c.Key("chip-geoip-sug-" + sugTag)).
-								Radius(4).PaddingX(6).PaddingY(2).
-								Background(p.elevated).
-								Children(func() {
-									ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
-								})
-							if btn.Clicked() {
-								appendTagToInput(&a.ruleEditor.geoipInput, sugTag)
-							}
-						}
-					})
+					// GeoIP tags chip-input
+					chipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags())
 				}
 
 				// Error display
