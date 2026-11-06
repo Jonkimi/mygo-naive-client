@@ -863,6 +863,26 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 		t.Fatalf("expected activeTab TabNodes, got %v", a.activeTab)
 	}
 
+	// Click Routing sidebar item to verify it is enabled and navigable
+	if err := tt.Click(a.catalog().NavRouting()); err != nil {
+		t.Fatalf("click %s failed: %v", a.catalog().NavRouting(), err)
+	}
+	tt.Frame()
+	if a.activeTab != TabRouting {
+		t.Fatalf("expected activeTab TabRouting, got %v", a.activeTab)
+	}
+
+	// Verify shortcut '⌘2' is rendered for Routing in the enabled sidebar
+	if !tt.HasText("⌘2") {
+		t.Fatalf("expected shortcut '⌘2' for enabled routing nav item")
+	}
+
+	// Switch back to Nodes
+	if err := tt.Click(a.catalog().NavNodes()); err != nil {
+		t.Fatalf("click %s failed: %v", a.catalog().NavNodes(), err)
+	}
+	tt.Frame()
+
 	// 3. Open Log Drawer
 	if err := tt.Click("日志"); err != nil {
 		t.Fatalf("click 日志 failed: %v", err)
