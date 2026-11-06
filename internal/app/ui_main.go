@@ -39,7 +39,7 @@ func (a *app) view(c *ui.Context) {
 			case TabSettings:
 				a.renderSettingsPage(c, p)
 			case TabRouting:
-				a.renderPlaceholderPage(c, p, a.catalog().NavRouting(), "分流规则引擎将在阶段二就绪")
+				a.renderRoutingPage(c, p)
 			case TabInsights:
 				a.renderPlaceholderPage(c, p, a.catalog().NavInsights(), "洞察与拦截看板将在阶段三就绪")
 			case TabTailnet:

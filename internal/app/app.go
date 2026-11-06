@@ -15,6 +15,7 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/gateway"
+	"naive-client/internal/routing"
 	"naive-client/internal/runner"
 	"naive-client/internal/sysproxy"
 	"naive-client/internal/telemetry"
@@ -58,6 +59,7 @@ type app struct {
 	tracker  *telemetry.Tracker
 	gateway  *gateway.Gateway
 	sysproxy *sysproxy.Sysproxy
+	router   *routing.Router
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -70,6 +72,7 @@ type app struct {
 
 	mainScroll         ui.ScrollState
 	settingsPageScroll ui.ScrollState
+	routingPageScroll  ui.ScrollState
 	expandedLogs       map[string]bool
 
 	activeTab         TabID
@@ -191,12 +194,14 @@ func Run() error {
 
 func newApp(dataDir string) *app {
 	recPath := filepath.Join(dataDir, "network-recovery.json")
+	st := defaultPersistedState()
 	return &app{
 		dataDir:      dataDir,
-		state:        defaultPersistedState(),
+		state:        st,
 		expandedLogs: make(map[string]bool),
 		tracker:      telemetry.NewTracker(),
 		sysproxy:     sysproxy.New(recPath),
+		router:       routing.NewRouter(st.RoutingRules, st.RoutingFinal),
 		quitCh:       make(chan struct{}),
 	}
 }
@@ -733,12 +738,85 @@ func (a *app) setTrafficMode(mode string) error {
 	}
 }
 
+func (a *app) syncRouter() {
+	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
+}
+
 func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, string, error) {
 	host, _, err := net.SplitHostPort(target)
 	if err != nil {
 		host = target
 	}
 
+	// 1. Evaluate routing rules
+	var action routing.RouteAction
+	if a.router != nil {
+		act, _ := a.router.Match(target)
+		action = act
+	} else {
+		action = routing.RouteAction{Type: routing.ActionProxyPool}
+	}
+
+	// 2. Dispatch according to RouteAction
+	switch action.Type {
+	case routing.ActionBlock:
+		return nil, "", fmt.Errorf("connection to %s blocked by routing rules", target)
+
+	case routing.ActionDirect:
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", target)
+		return conn, "direct", err
+
+	case routing.ActionProxyService:
+		if a.mgr != nil && action.ServiceID != "" {
+			for _, svc := range a.state.Services {
+				if svc.ID == action.ServiceID && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+					ep, err := svc.OutboundEndpoint()
+					if err == nil {
+						conn, err := runner.DialEndpoint(ctx, ep, target)
+						return conn, svc.ID, err
+					}
+				}
+			}
+		}
+
+	case routing.ActionProxyTag:
+		if a.mgr != nil && action.Tag != "" {
+			var tagSvcs []config.Service
+			var tagIDs []string
+			for _, svc := range a.state.Services {
+				if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+					for _, t := range svc.Tags {
+						if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(action.Tag)) {
+							tagSvcs = append(tagSvcs, svc)
+							tagIDs = append(tagIDs, svc.ID)
+							break
+						}
+					}
+				}
+			}
+			if len(tagSvcs) > 0 {
+				bestID := tagIDs[0]
+				if a.tracker != nil {
+					if sel, ok := a.tracker.SelectBest(tagIDs, host); ok {
+						bestID = sel
+					}
+				}
+				for _, svc := range tagSvcs {
+					if svc.ID == bestID {
+						ep, err := svc.OutboundEndpoint()
+						if err != nil {
+							return nil, svc.ID, err
+						}
+						conn, err := runner.DialEndpoint(ctx, ep, target)
+						return conn, svc.ID, err
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Fallback: Global active ProxyPool
 	var runningSvcs []config.Service
 	var runningIDs []string
 	if a.mgr != nil {
