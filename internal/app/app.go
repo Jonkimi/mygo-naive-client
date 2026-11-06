@@ -79,44 +79,15 @@ type app struct {
 	pendingToast string
 	clipboardMem string // fallback clipboard used in headless tests
 	quitCh       chan struct{}
-
-	// Sidebar transition animation (self-driven, immune to OS ReduceMotion preference)
-	sidebarAnimActive bool
-	sidebarAnimFrom   float32
-	sidebarAnimTo     float32
-	sidebarAnimWidth  float32
-	sidebarAnimStart  time.Time
 }
 
 func (a *app) catalog() locales.Messages {
 	return locales.In(locales.ResolveLocale(a.state.Language))
 }
 
-func (a *app) currentSidebarTargetWidth() float32 {
-	if a.state.SidebarCollapsed {
-		return 62
-	}
-	return 190
-}
-
 func (a *app) toggleSidebar() {
 	a.state.SidebarCollapsed = !a.state.SidebarCollapsed
 	a.saveState()
-
-	from := float32(190)
-	to := float32(62)
-	if !a.state.SidebarCollapsed {
-		from = 62
-		to = 190
-	}
-	if a.sidebarAnimWidth > 0 {
-		from = a.sidebarAnimWidth
-	}
-	a.sidebarAnimFrom = from
-	a.sidebarAnimTo = to
-	a.sidebarAnimActive = true
-	a.sidebarAnimStart = time.Now()
-
 	if a.win != nil {
 		a.win.Invalidate()
 	}
