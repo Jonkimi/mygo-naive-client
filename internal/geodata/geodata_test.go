@@ -110,3 +110,40 @@ func TestGeoSite_DecodeAndMatch(t *testing.T) {
 		t.Fatalf("expected google.com not to match OPENAI")
 	}
 }
+
+// Tests that ListGeoTags extracts all category tags from protobuf streams without parsing payloads.
+func TestListGeoTags(t *testing.T) {
+	var payload []byte
+
+	// Entry 1: tag "CN" with large payload
+	var entry1 []byte
+	entry1 = append(entry1, encodeBytesField(1, []byte("CN"))...)
+	entry1 = append(entry1, encodeBytesField(2, []byte("dummy-large-payload-1"))...)
+	payload = append(payload, encodeBytesField(1, entry1)...)
+
+	// Entry 2: tag "apple"
+	var entry2 []byte
+	entry2 = append(entry2, encodeBytesField(1, []byte("apple"))...)
+	entry2 = append(entry2, encodeBytesField(2, []byte("dummy-large-payload-2"))...)
+	payload = append(payload, encodeBytesField(1, entry2)...)
+
+	// Entry 3: tag "CATEGORY-ADS-ALL"
+	var entry3 []byte
+	entry3 = append(entry3, encodeBytesField(1, []byte("CATEGORY-ADS-ALL"))...)
+	payload = append(payload, encodeBytesField(1, entry3)...)
+
+	tags, err := ListGeoTags(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("ListGeoTags: %v", err)
+	}
+
+	expected := []string{"cn", "apple", "category-ads-all"}
+	if len(tags) != len(expected) {
+		t.Fatalf("expected %d tags, got %v", len(expected), tags)
+	}
+	for i, exp := range expected {
+		if tags[i] != exp {
+			t.Errorf("tag[%d]: expected %q, got %q", i, exp, tags[i])
+		}
+	}
+}

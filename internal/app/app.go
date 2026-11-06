@@ -60,6 +60,7 @@ type ruleEditorForm struct {
 	keywordsInput string
 	geositeInput  string
 	geoipInput    string
+	tab           int // 0: Domains/IPs, 1: GeoData
 	errText       string
 }
 
@@ -84,6 +85,8 @@ type app struct {
 	checkingUpdate  bool
 	updatingCore    bool
 	updatingGeoData bool
+	geoSiteTags     []string
+	geoIPTags       []string
 	updateStageText string
 	updatePercent   float64
 	updateError     string
@@ -761,7 +764,47 @@ func (a *app) geodataDir() string {
 	return filepath.Join(a.userDataDir(), "geodata")
 }
 
+var defaultGeoSitePresets = []string{
+	"cn", "apple", "google", "telegram", "category-ads-all", "openai", "github",
+	"netflix", "spotify", "microsoft", "bilibili", "geolocation-!cn",
+}
+
+var defaultGeoIPPresets = []string{
+	"cn", "private", "telegram", "hk", "jp", "us", "sg",
+}
+
+func (a *app) loadGeoTagsIfPresent() {
+	dir := a.geodataDir()
+	if f, err := os.Open(filepath.Join(dir, "geosite.dat")); err == nil {
+		defer f.Close()
+		if tags, err := geodata.ListGeoTags(f); err == nil && len(tags) > 0 {
+			a.geoSiteTags = tags
+		}
+	}
+	if f, err := os.Open(filepath.Join(dir, "geoip.dat")); err == nil {
+		defer f.Close()
+		if tags, err := geodata.ListGeoTags(f); err == nil && len(tags) > 0 {
+			a.geoIPTags = tags
+		}
+	}
+}
+
+func (a *app) availableGeoSiteTags() []string {
+	if len(a.geoSiteTags) > 0 {
+		return a.geoSiteTags
+	}
+	return defaultGeoSitePresets
+}
+
+func (a *app) availableGeoIPTags() []string {
+	if len(a.geoIPTags) > 0 {
+		return a.geoIPTags
+	}
+	return defaultGeoIPPresets
+}
+
 func (a *app) loadGeoDataIfPresent() {
+	a.loadGeoTagsIfPresent()
 	if a.router == nil {
 		return
 	}

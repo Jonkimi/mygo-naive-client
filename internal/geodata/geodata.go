@@ -244,7 +244,57 @@ func parseCIDRMessage(b []byte) *net.IPNet {
 	return &net.IPNet{IP: ip, Mask: mask}
 }
 
-// LoadGeoSite loads and unmarshals only the requested tags from a Loyalsoldier geosite.dat protobuf stream.
+// ListGeoTags scans a Loyalsoldier geoip.dat or geosite.dat protobuf stream and extracts
+// all tag and category names without parsing payload CIDRs or domain lists.
+func ListGeoTags(r io.Reader) ([]string, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var tags []string
+	seen := make(map[string]bool)
+
+	offset := 0
+	for offset < len(data) {
+		header, err := readVarint(data, &offset)
+		if err != nil {
+			break
+		}
+		fieldNum := int(header >> 3)
+		wireType := int(header & 0x07)
+
+		if fieldNum != 1 || wireType != 2 {
+			if err := skipField(data, wireType, &offset); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		entryBytes, err := readBytes(data, &offset)
+		if err != nil {
+			return nil, err
+		}
+
+		// Field 1 of entryBytes is string country_code (the tag/category name)
+		tagOffset := 0
+		if tagOffset < len(entryBytes) {
+			tagHeader, err := readVarint(entryBytes, &tagOffset)
+			if err == nil && (tagHeader>>3) == 1 && (tagHeader&0x07) == 2 {
+				tagBytes, err := readBytes(entryBytes, &tagOffset)
+				if err == nil {
+					tag := strings.ToLower(strings.TrimSpace(string(tagBytes)))
+					if tag != "" && !seen[tag] {
+						seen[tag] = true
+						tags = append(tags, tag)
+					}
+				}
+			}
+		}
+	}
+
+	return tags, nil
+}
 func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {

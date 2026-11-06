@@ -102,6 +102,11 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 		actionIdx = 3
 	}
 
+	initTab := 0
+	if (len(rule.GeoSite) > 0 || len(rule.GeoIP) > 0) && len(rule.DomainSuffix) == 0 && len(rule.IPCidr) == 0 {
+		initTab = 1
+	}
+
 	a.ruleEditor = ruleEditorForm{
 		open:          true,
 		isNew:         false,
@@ -115,6 +120,7 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 		keywordsInput: strings.Join(rule.DomainKeyword, ", "),
 		geositeInput:  strings.Join(rule.GeoSite, ", "),
 		geoipInput:    strings.Join(rule.GeoIP, ", "),
+		tab:           initTab,
 	}
 	if a.win != nil {
 		a.win.Invalidate()
@@ -184,6 +190,73 @@ func parseCommaOrLines(text string) []string {
 		}
 	}
 	return out
+}
+
+func appendTagToInput(input *string, tag string) {
+	tag = strings.TrimSpace(strings.ToLower(tag))
+	if tag == "" {
+		return
+	}
+	existing := parseCommaOrLines(*input)
+	for _, e := range existing {
+		if strings.EqualFold(e, tag) {
+			return
+		}
+	}
+	existing = append(existing, tag)
+	*input = strings.Join(existing, ", ")
+}
+
+func filterSuggestedTags(allTags []string, currentInput string, maxSuggestions int) []string {
+	parts := strings.Split(currentInput, ",")
+	lastTerm := ""
+	if len(parts) > 0 {
+		lastTerm = strings.TrimSpace(strings.ToLower(parts[len(parts)-1]))
+	}
+
+	existingMap := make(map[string]bool)
+	for _, p := range parts {
+		norm := strings.TrimSpace(strings.ToLower(p))
+		if norm != "" {
+			existingMap[norm] = true
+		}
+	}
+
+	var matches []string
+	if lastTerm != "" {
+		for _, t := range allTags {
+			if existingMap[t] {
+				continue
+			}
+			if strings.HasPrefix(t, lastTerm) || strings.Contains(t, lastTerm) {
+				matches = append(matches, t)
+				if len(matches) >= maxSuggestions {
+					break
+				}
+			}
+		}
+	}
+	if len(matches) < maxSuggestions {
+		for _, t := range allTags {
+			if existingMap[t] {
+				continue
+			}
+			found := false
+			for _, m := range matches {
+				if m == t {
+					found = true
+					break
+				}
+			}
+			if !found {
+				matches = append(matches, t)
+				if len(matches) >= maxSuggestions {
+					break
+				}
+			}
+		}
+	}
+	return matches
 }
 
 func (a *app) saveRuleEditor() {
@@ -418,38 +491,82 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 					}
 				})
 
-				// Action selector
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					actions := []string{cat.RoutingTagPool(), cat.RoutingProxyPool(), cat.RoutingDirect(), cat.RoutingBlock()}
-					segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
+				// Action selector & Tag
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Column(c).Grow(1).Gap(4).Children(func() {
+						ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+						actions := []string{cat.RoutingTagPool(), cat.RoutingProxyPool(), cat.RoutingDirect(), cat.RoutingBlock()}
+						segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
+					})
+					if a.ruleEditor.actionIndex == 0 {
+						ui.Column(c).Width(140).Children(func() {
+							labeledInput(c, p, "rule-set-tag", cat.RuleTagLabel(), &a.ruleEditor.tag, cat.RuleTagHint())
+						})
+					}
 				})
 
-				// Tag input (if PROXY_TAG)
-				if a.ruleEditor.actionIndex == 0 {
-					labeledInput(c, p, "rule-set-tag", cat.RuleTagLabel(), &a.ruleEditor.tag, cat.RuleTagHint())
+				// Name & Description row
+				ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+					ui.Column(c).Grow(1).Children(func() {
+						labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
+					})
+					ui.Column(c).Grow(1).Children(func() {
+						labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
+					})
+				})
+
+				// Criteria Tabs (Domains & IPs vs GeoData)
+				segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
+					cat.RuleTabCriteria(),
+					cat.RuleTabGeoData(),
+				})
+
+				if a.ruleEditor.tab == 0 {
+					// Domain suffixes
+					labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
+
+					// IP-CIDRs
+					labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
+
+					// Keywords
+					labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
+				} else {
+					// GeoSite tags
+					labeledInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geositeInput, cat.RuleGeoSiteHint())
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+						suggestions := filterSuggestedTags(a.availableGeoSiteTags(), a.ruleEditor.geositeInput, 8)
+						for _, sug := range suggestions {
+							sugTag := sug
+							btn := ui.ButtonBase(c.Key("chip-geosite-sug-" + sugTag)).
+								Radius(4).PaddingX(6).PaddingY(2).
+								Background(p.elevated).
+								Children(func() {
+									ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
+								})
+							if btn.Clicked() {
+								appendTagToInput(&a.ruleEditor.geositeInput, sugTag)
+							}
+						}
+					})
+
+					// GeoIP tags
+					labeledInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoipInput, cat.RuleGeoIPHint())
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+						suggestions := filterSuggestedTags(a.availableGeoIPTags(), a.ruleEditor.geoipInput, 8)
+						for _, sug := range suggestions {
+							sugTag := sug
+							btn := ui.ButtonBase(c.Key("chip-geoip-sug-" + sugTag)).
+								Radius(4).PaddingX(6).PaddingY(2).
+								Background(p.elevated).
+								Children(func() {
+									ui.Text(c, "+ "+sugTag).FontSize(11).TextColor(p.accentText)
+								})
+							if btn.Clicked() {
+								appendTagToInput(&a.ruleEditor.geoipInput, sugTag)
+							}
+						}
+					})
 				}
-
-				// Name input
-				labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
-
-				// Description input
-				labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
-
-				// Domain suffixes
-				labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 3, 6)
-
-				// IP-CIDRs
-				labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 4)
-
-				// Keywords
-				labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
-
-				// GeoSite tags
-				labeledInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geositeInput, cat.RuleGeoSiteHint())
-
-				// GeoIP tags
-				labeledInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoipInput, cat.RuleGeoIPHint())
 
 				// Error display
 				if a.ruleEditor.errText != "" {

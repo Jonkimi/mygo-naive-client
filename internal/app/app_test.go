@@ -1568,11 +1568,29 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 		t.Fatalf("expected UpdateGeoData button in routing workbench")
 	}
 
-	// Create a rule with GeoSite and GeoIP
+	// Create a rule with GeoSite and GeoIP using quick-pick suggestions
 	a.openCreateRuleDialog()
 	tt.Frame()
+
+	// Switch to GeoData tab in rule editor
+	if err := tt.Click(a.catalog().RuleTabGeoData()); err != nil {
+		t.Fatalf("click RuleTabGeoData: %v", err)
+	}
+	tt.Frame()
+
+	// Verify suggestion chips are displayed
+	if !tt.HasText("+ apple") || !tt.HasText("+ cn") {
+		t.Fatalf("expected '+ apple' and '+ cn' suggestion chips, got texts: %v", tt.Texts())
+	}
+	if err := tt.Click("+ cn"); err != nil {
+		t.Fatalf("click '+ cn': %v", err)
+	}
+	tt.Frame()
+	if a.ruleEditor.geositeInput != "cn" {
+		t.Fatalf("expected geositeInput 'cn', got %q", a.ruleEditor.geositeInput)
+	}
+
 	a.ruleEditor.name = "China Traffic"
-	a.ruleEditor.geositeInput = "cn"
 	a.ruleEditor.geoipInput = "cn"
 	a.ruleEditor.actionIndex = 2 // DIRECT
 	a.saveRuleEditor()
