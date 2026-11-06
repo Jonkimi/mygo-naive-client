@@ -45,7 +45,7 @@ func (a *app) view(c *ui.Context) {
 			case TabRouting:
 				a.renderRoutingPage(c, p)
 			case TabInsights:
-				a.renderPlaceholderPage(c, p, a.catalog().NavInsights(), "洞察与拦截看板将在阶段三就绪")
+				a.renderInsightsPage(c, p)
 			case TabTailnet:
 				a.renderPlaceholderPage(c, p, a.catalog().NavTailnet(), "Tailnet 组网将在阶段五就绪")
 			}
@@ -364,7 +364,7 @@ func (a *app) renderTagFilterBar(c *ui.Context, p palette) {
 					chipFg = p.accentText
 					chipBorder = p.accent.Alpha(0.3)
 				}
-				tagBtn := ui.ButtonBase(c.Key("filter-tag-" + strings.ToLower(tag))).
+				tagBtn := ui.ButtonBase(c.Key("filter-tag-"+strings.ToLower(tag))).
 					PaddingX(10).PaddingY(4).Radius(999).
 					Background(chipBg).Border(1, chipBorder)
 				tagBtn.Children(func() {

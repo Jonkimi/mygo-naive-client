@@ -32,33 +32,38 @@ const (
 
 // PersistedState holds the client settings and configured NaiveProxy services.
 type PersistedState struct {
-	Services                []config.Service `json:"services"`
-	Language                string           `json:"language,omitempty"`
-	Appearance              string           `json:"appearance,omitempty"`
-	AppIcon                 string           `json:"appIcon,omitempty"`
-	SidebarCollapsed        bool             `json:"sidebarCollapsed,omitempty"`
-	GatewayEnabled          bool             `json:"gatewayEnabled"`
-	GatewayPort             int              `json:"gatewayPort,omitempty"`
-	DomesticDNS             string           `json:"domesticDns,omitempty"`
-	RemoteDNS               string           `json:"remoteDns,omitempty"`
-	BootstrapDNS            string           `json:"bootstrapDns,omitempty"`
-	BootstrapDoH            string           `json:"bootstrapDoH,omitempty"` // Deprecated alias
-	RemoteDoH               string           `json:"remoteDoH,omitempty"`    // Deprecated alias
-	TrafficMode             string           `json:"trafficMode,omitempty"`
-	SystemProxyBypass       []string         `json:"systemProxyBypass,omitempty"`
-	RoutingRules            []routing.Rule   `json:"routingRules,omitempty"`
+	Services                []config.Service    `json:"services"`
+	Language                string              `json:"language,omitempty"`
+	Appearance              string              `json:"appearance,omitempty"`
+	AppIcon                 string              `json:"appIcon,omitempty"`
+	SidebarCollapsed        bool                `json:"sidebarCollapsed,omitempty"`
+	GatewayEnabled          bool                `json:"gatewayEnabled"`
+	GatewayPort             int                 `json:"gatewayPort,omitempty"`
+	DomesticDNS             string              `json:"domesticDns,omitempty"`
+	RemoteDNS               string              `json:"remoteDns,omitempty"`
+	BootstrapDNS            string              `json:"bootstrapDns,omitempty"`
+	BootstrapDoH            string              `json:"bootstrapDoH,omitempty"` // Deprecated alias
+	RemoteDoH               string              `json:"remoteDoH,omitempty"`    // Deprecated alias
+	TrafficMode             string              `json:"trafficMode,omitempty"`
+	SystemProxyBypass       []string            `json:"systemProxyBypass,omitempty"`
+	RoutingRules            []routing.Rule      `json:"routingRules,omitempty"`
 	RoutingFinal            routing.RouteAction `json:"routingFinal,omitempty"`
-	AutoCheckUpdate         bool             `json:"autoCheckUpdate"`
-	AutoUpdateCore          bool             `json:"autoUpdateCore"`
-	UseRunningServiceForUpd bool             `json:"useRunningServiceForUpdate"`
-	GitHubMirror            string           `json:"githubMirror,omitempty"`
-	UpdateProxy             string           `json:"updateProxy,omitempty"`
-	ProbeURL                string           `json:"probeUrl,omitempty"`
-	DownloadTestURL         string           `json:"downloadTestUrl,omitempty"`
-	CustomNaiveBinaryPath   string           `json:"customNaiveBinaryPath,omitempty"`
-	LastKnownRemoteTag      string           `json:"lastKnownRemoteTag,omitempty"`
-	InstalledNaiveTag       string           `json:"installedNaiveTag,omitempty"`
-	InstalledNaiveSHA256    string           `json:"installedNaiveSha256,omitempty"`
+	AutoCheckUpdate         bool                `json:"autoCheckUpdate"`
+	AutoUpdateCore          bool                `json:"autoUpdateCore"`
+	UseRunningServiceForUpd bool                `json:"useRunningServiceForUpdate"`
+	GitHubMirror            string              `json:"githubMirror,omitempty"`
+	UpdateProxy             string              `json:"updateProxy,omitempty"`
+	ProbeURL                string              `json:"probeUrl,omitempty"`
+	DownloadTestURL         string              `json:"downloadTestUrl,omitempty"`
+	CustomNaiveBinaryPath   string              `json:"customNaiveBinaryPath,omitempty"`
+	LastKnownRemoteTag      string              `json:"lastKnownRemoteTag,omitempty"`
+	InstalledNaiveTag       string              `json:"installedNaiveTag,omitempty"`
+	InstalledNaiveSHA256    string              `json:"installedNaiveSha256,omitempty"`
+	BlockerEnabled          bool                `json:"blockerEnabled"`
+	BlockerBlockAds         bool                `json:"blockerBlockAds"`
+	BlockerSubscriptions    []string            `json:"blockerSubscriptions,omitempty"`
+	BlockerAllowlist        []string            `json:"blockerAllowlist,omitempty"`
+	BlockerDenylist         []string            `json:"blockerDenylist,omitempty"`
 }
 
 func defaultPersistedState() PersistedState {
@@ -77,6 +82,11 @@ func defaultPersistedState() PersistedState {
 		UseRunningServiceForUpd: true,
 		ProbeURL:                defaultProbeURL,
 		DownloadTestURL:         defaultDownloadURL,
+		BlockerEnabled:          true,
+		BlockerBlockAds:         true,
+		BlockerSubscriptions:    []string{},
+		BlockerAllowlist:        []string{},
+		BlockerDenylist:         []string{},
 	}
 }
 
@@ -210,6 +220,7 @@ func (a *app) loadState() {
 	}
 	a.state = st
 	a.syncRouter()
+	a.syncBlocker()
 }
 
 func (a *app) saveState() {

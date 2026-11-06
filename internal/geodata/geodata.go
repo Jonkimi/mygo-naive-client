@@ -37,6 +37,31 @@ type GeoSiteDB struct {
 	tags map[string][]domainEntry
 }
 
+// DomainTagEntry represents a domain entry extracted from GeoSite database.
+type DomainTagEntry struct {
+	Value  string
+	IsFull bool
+}
+
+// TagEntries returns all domain entries for the specified tag/category.
+func (db *GeoSiteDB) TagEntries(tag string) []DomainTagEntry {
+	if db == nil {
+		return nil
+	}
+	entries, ok := db.tags[strings.ToUpper(strings.TrimSpace(tag))]
+	if !ok {
+		return nil
+	}
+	res := make([]DomainTagEntry, len(entries))
+	for i, e := range entries {
+		res[i] = DomainTagEntry{
+			Value:  e.value,
+			IsFull: e.typ == 3,
+		}
+	}
+	return res
+}
+
 func (db *GeoSiteDB) MatchDomain(tag string, domain string) bool {
 	if db == nil || domain == "" {
 		return false

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/blocker"
 	"naive-client/internal/config"
 	"naive-client/internal/dns"
 	"naive-client/internal/dns/ipcache"
@@ -82,13 +84,14 @@ type app struct {
 	state PersistedState
 	mgr   *runner.Manager
 
-	tracker  *telemetry.Tracker
-	gateway  *gateway.Gateway
-	sysproxy *sysproxy.Sysproxy
-	router   *routing.Router
-	ipCache  *ipcache.Cache
-	resolver *dns.Resolver
+	tracker   *telemetry.Tracker
+	gateway   *gateway.Gateway
+	sysproxy  *sysproxy.Sysproxy
+	router    *routing.Router
+	ipCache   *ipcache.Cache
+	resolver  *dns.Resolver
 	dnsServer *dns.Server
+	blocker   *blocker.Engine
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -105,6 +108,7 @@ type app struct {
 	mainScroll         ui.ScrollState
 	settingsPageScroll ui.ScrollState
 	routingPageScroll  ui.ScrollState
+	insightsPageScroll ui.ScrollState
 	expandedLogs       map[string]bool
 
 	activeTab          TabID
@@ -112,6 +116,13 @@ type app struct {
 	activeRuleDrawerID string
 	activeTagFilter    string
 	searchQuery        string
+
+	insightsFilter           string
+	insightsSearch           string
+	insightsShowManageRules  bool
+	blockerAllowlistInput    string
+	blockerDenylistInput     string
+	blockerSubscriptionInput string
 
 	batchTesting bool
 	batchStage   string
@@ -267,6 +278,11 @@ func newApp(dataDir string) *app {
 	recPath := filepath.Join(dataDir, "network-recovery.json")
 	st := defaultPersistedState()
 	cache := ipcache.New(10000)
+	blk := blocker.NewEngine(blocker.Options{
+		Allowlist: st.BlockerAllowlist,
+		Denylist:  st.BlockerDenylist,
+		Disabled:  !st.BlockerEnabled,
+	})
 	return &app{
 		dataDir:      dataDir,
 		state:        st,
@@ -275,6 +291,7 @@ func newApp(dataDir string) *app {
 		sysproxy:     sysproxy.New(recPath),
 		router:       routing.NewRouter(st.RoutingRules, st.RoutingFinal),
 		ipCache:      cache,
+		blocker:      blk,
 		quitCh:       make(chan struct{}),
 	}
 }
@@ -752,6 +769,7 @@ func (a *app) startGateway() error {
 		BindAddr: fmt.Sprintf("127.0.0.1:%d", port),
 		Tracker:  a.tracker,
 		IPCache:  a.ipCache,
+		Blocker:  a.blockerAsGateway(),
 		DialTarget: func(ctx context.Context, target string) (net.Conn, string, error) {
 			return a.dialThroughPool(ctx, target)
 		},
@@ -853,6 +871,7 @@ func (a *app) initDNS() {
 			DomesticDoH:      domDoH,
 			RemoteDoH:        remoteDoH,
 			IPCache:          a.ipCache,
+			Blocker:          a.blockerAsDNS(),
 			DialProxy: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				conn, _, err := a.dialThroughPool(ctx, addr)
 				return conn, err
@@ -862,6 +881,7 @@ func (a *app) initDNS() {
 		a.resolver.SetBootstrapDomains(bootDomains)
 		a.resolver.SetRouter(a.router)
 		a.resolver.SetUpstreams(bootDNS, domDoH, remoteDoH)
+		a.resolver.SetBlocker(a.blockerAsDNS())
 	}
 }
 
@@ -1186,4 +1206,247 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 
 	conn, err := runner.DialEndpoint(ctx, ep, target)
 	return conn, bestSvc.ID, err
+}
+
+func (a *app) blockerAsDNS() blocker.Blocker {
+	if a.blocker != nil {
+		return a.blocker.AsDNS()
+	}
+	return nil
+}
+
+func (a *app) blockerAsGateway() blocker.Blocker {
+	if a.blocker != nil {
+		return a.blocker.AsGateway()
+	}
+	return nil
+}
+
+func (a *app) blockerMatchesAllowlist(domain string) bool {
+	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	for _, d := range a.state.BlockerAllowlist {
+		if strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".") == domain {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) blockerMatchesDenylist(domain string) bool {
+	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	for _, d := range a.state.BlockerDenylist {
+		if strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".") == domain {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) syncBlocker() {
+	if a.blocker == nil {
+		a.blocker = blocker.NewEngine(blocker.Options{
+			Allowlist: a.state.BlockerAllowlist,
+			Denylist:  a.state.BlockerDenylist,
+			Disabled:  !a.state.BlockerEnabled,
+		})
+	} else {
+		a.blocker.SetEnabled(a.state.BlockerEnabled)
+	}
+	a.syncBlockerRules()
+}
+
+func (a *app) syncBlockerRules() {
+	if a.blocker == nil {
+		return
+	}
+	merged := blocker.NewParsedRules()
+
+	// 1. Built-in geosite category-ads-all
+	if a.state.BlockerBlockAds {
+		dir := a.geodataDir()
+		sitePath := filepath.Join(dir, "geosite.dat")
+		if f, err := os.Open(sitePath); err == nil {
+			if adsDB, err := geodata.LoadGeoSite(f, []string{"category-ads-all"}); err == nil && adsDB != nil {
+				for _, entry := range adsDB.TagEntries("category-ads-all") {
+					if entry.IsFull {
+						merged.BlockExact.Set(entry.Value, "category-ads-all")
+					} else {
+						merged.BlockTrie.Insert(entry.Value, "category-ads-all")
+					}
+				}
+			}
+			_ = f.Close()
+		}
+	}
+
+	// 2. External Subscriptions cached on disk
+	subDir := filepath.Join(a.userDataDir(), "blocker_cache")
+	_ = os.MkdirAll(subDir, 0o755)
+	for _, subURL := range a.state.BlockerSubscriptions {
+		subURL = strings.TrimSpace(subURL)
+		if subURL == "" {
+			continue
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(subURL)))
+		cachePath := filepath.Join(subDir, hash+".txt")
+		if f, err := os.Open(cachePath); err == nil {
+			if parsed, err := blocker.ParseRuleStream(f, subURL); err == nil {
+				merged.Merge(parsed)
+			}
+			_ = f.Close()
+		}
+	}
+
+	a.blocker.SwapRuleset(merged)
+}
+
+func (a *app) addBlockerAllowlist(domain string) {
+	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	if d == "" {
+		return
+	}
+	if a.blocker != nil {
+		a.blocker.AddAllowlist(d)
+		a.blocker.RemoveDenylist(d)
+	}
+	found := false
+	for _, x := range a.state.BlockerAllowlist {
+		if x == d {
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.state.BlockerAllowlist = append(a.state.BlockerAllowlist, d)
+	}
+	var newDeny []string
+	for _, x := range a.state.BlockerDenylist {
+		if x != d {
+			newDeny = append(newDeny, x)
+		}
+	}
+	a.state.BlockerDenylist = newDeny
+	a.saveState()
+	a.toast("已加入白名单")
+}
+
+func (a *app) removeBlockerAllowlist(domain string) {
+	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	if d == "" {
+		return
+	}
+	if a.blocker != nil {
+		a.blocker.RemoveAllowlist(d)
+	}
+	var newAllow []string
+	for _, x := range a.state.BlockerAllowlist {
+		if x != d {
+			newAllow = append(newAllow, x)
+		}
+	}
+	a.state.BlockerAllowlist = newAllow
+	a.saveState()
+	a.toast("已移除白名单")
+}
+
+func (a *app) addBlockerDenylist(domain string) {
+	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	if d == "" {
+		return
+	}
+	if a.blocker != nil {
+		a.blocker.AddDenylist(d)
+		a.blocker.RemoveAllowlist(d)
+	}
+	found := false
+	for _, x := range a.state.BlockerDenylist {
+		if x == d {
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.state.BlockerDenylist = append(a.state.BlockerDenylist, d)
+	}
+	var newAllow []string
+	for _, x := range a.state.BlockerAllowlist {
+		if x != d {
+			newAllow = append(newAllow, x)
+		}
+	}
+	a.state.BlockerAllowlist = newAllow
+	a.saveState()
+	a.toast("已加入拦截黑名单")
+}
+
+func (a *app) removeBlockerDenylist(domain string) {
+	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	if d == "" {
+		return
+	}
+	if a.blocker != nil {
+		a.blocker.RemoveDenylist(d)
+	}
+	var newDeny []string
+	for _, x := range a.state.BlockerDenylist {
+		if x != d {
+			newDeny = append(newDeny, x)
+		}
+	}
+	a.state.BlockerDenylist = newDeny
+	a.saveState()
+	a.toast("已移除拦截黑名单")
+}
+
+func (a *app) toggleBlockerEnabled() {
+	a.state.BlockerEnabled = !a.state.BlockerEnabled
+	if a.blocker != nil {
+		a.blocker.SetEnabled(a.state.BlockerEnabled)
+	}
+	a.saveState()
+	if a.state.BlockerEnabled {
+		a.toast("广告与域名防护已开启")
+	} else {
+		a.toast("广告与域名防护已暂停")
+	}
+}
+
+func (a *app) toggleBlockerBlockAds() {
+	a.state.BlockerBlockAds = !a.state.BlockerBlockAds
+	a.syncBlockerRules()
+	a.saveState()
+	if a.state.BlockerBlockAds {
+		a.toast("已启用内置广告拦截")
+	} else {
+		a.toast("已关闭内置广告拦截")
+	}
+}
+
+func (a *app) addBlockerSubscription(rawURL string) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return
+	}
+	for _, s := range a.state.BlockerSubscriptions {
+		if s == rawURL {
+			return
+		}
+	}
+	a.state.BlockerSubscriptions = append(a.state.BlockerSubscriptions, rawURL)
+	a.saveState()
+	a.toast("已添加规则订阅")
+}
+
+func (a *app) removeBlockerSubscription(rawURL string) {
+	rawURL = strings.TrimSpace(rawURL)
+	var newSubs []string
+	for _, s := range a.state.BlockerSubscriptions {
+		if s != rawURL {
+			newSubs = append(newSubs, s)
+		}
+	}
+	a.state.BlockerSubscriptions = newSubs
+	a.syncBlockerRules()
+	a.saveState()
+	a.toast("已删除规则订阅")
 }
