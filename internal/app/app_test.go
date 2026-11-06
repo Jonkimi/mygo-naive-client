@@ -1586,12 +1586,27 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 		t.Fatalf("click '+ cn': %v", err)
 	}
 	tt.Frame()
-	if a.ruleEditor.geositeInput != "cn" {
-		t.Fatalf("expected geositeInput 'cn', got %q", a.ruleEditor.geositeInput)
+	if len(a.ruleEditor.geosites) != 1 || a.ruleEditor.geosites[0] != "cn" {
+		t.Fatalf("expected geosites ['cn'], got %v", a.ruleEditor.geosites)
 	}
 
+	// Click '×' button on 'cn' pill to verify tag removal
+	if err := tt.Click("del-tag-cn"); err != nil {
+		t.Fatalf("click 'del-tag-cn': %v", err)
+	}
+	tt.Frame()
+	if len(a.ruleEditor.geosites) != 0 {
+		t.Fatalf("expected geosites to be empty after clicking '×', got %v", a.ruleEditor.geosites)
+	}
+
+	// Re-add 'cn' via quick-pick chip
+	if err := tt.Click("+ cn"); err != nil {
+		t.Fatalf("re-click '+ cn': %v", err)
+	}
+	tt.Frame()
+
 	a.ruleEditor.name = "China Traffic"
-	a.ruleEditor.geoipInput = "cn"
+	addTag(&a.ruleEditor.geoips, "cn")
 	a.ruleEditor.actionIndex = 2 // DIRECT
 	a.saveRuleEditor()
 	tt.Frame()
