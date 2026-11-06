@@ -1589,6 +1589,23 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 		t.Fatalf("expected GeodataDownloadGuide when database missing, got texts: %v", tt.Texts())
 	}
 
+	// Verify tag input cannot be modified when geodata is missing
+	a.ruleEditor.geosites = []string{"cn"}
+	a.ruleEditor.geositeQuery = "apple,"
+	tt.Frame()
+	// Should not have parsed "apple," into tags because input is disabled
+	if len(a.ruleEditor.geosites) != 1 || a.ruleEditor.geosites[0] != "cn" {
+		t.Fatalf("expected tags unmodified while disabled, got %v", a.ruleEditor.geosites)
+	}
+	// Delete button must NOT be present when disabled
+	if _, ok := tt.Find("del-tag-cn"); ok {
+		t.Fatalf("expected delete button not to exist when tag input is disabled")
+	}
+	// Reset ruleEditor state before proceeding
+	a.ruleEditor.geosites = nil
+	a.ruleEditor.geositeQuery = ""
+	tt.Frame()
+
 	// Now simulate ruleset loaded with real parsed tags from files
 	a.geoSiteTags = []string{"category-ai-!cn", "cn", "apple", "openai"}
 	a.geoIPTags = []string{"cn", "private"}
