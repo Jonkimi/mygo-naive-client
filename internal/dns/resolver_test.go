@@ -402,3 +402,71 @@ func TestResolver_SetUpstreams(t *testing.T) {
 		t.Fatalf("expected reverted default remote DoH, got %v", revertRemote)
 	}
 }
+
+// Tests that when PreferIPv4 is true, AAAA queries return empty NODATA while A queries resolve normally.
+func TestResolver_PreferIPv4(t *testing.T) {
+	dohServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		req := new(dns.Msg)
+		_ = req.Unpack(body)
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.RecursionAvailable = true
+		for _, q := range req.Question {
+			if q.Qtype == dns.TypeA {
+				rr, _ := dns.NewRR(q.Name + " 300 IN A 93.184.216.34")
+				resp.Answer = append(resp.Answer, rr)
+			} else if q.Qtype == dns.TypeAAAA {
+				rr, _ := dns.NewRR(q.Name + " 300 IN AAAA 2606:2800:220:1:248:1893:25c8:1946")
+				resp.Answer = append(resp.Answer, rr)
+			}
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		out, _ := resp.Pack()
+		_, _ = w.Write(out)
+	}))
+	defer dohServer.Close()
+
+	res := internaldns.NewResolver(internaldns.ResolverOptions{
+		DomesticDoH: []string{dohServer.URL},
+		RemoteDoH:   []string{dohServer.URL},
+		PreferIPv4:  true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// 1. With PreferIPv4 enabled: AAAA query should return NOERROR with 0 answer (NODATA)
+	respAAAA, err := res.Resolve(ctx, "example.com", dns.TypeAAAA)
+	if err != nil {
+		t.Fatalf("unexpected error resolving AAAA: %v", err)
+	}
+	if respAAAA.Rcode != dns.RcodeSuccess {
+		t.Fatalf("expected RcodeSuccess, got %d", respAAAA.Rcode)
+	}
+	if len(respAAAA.Answer) != 0 {
+		t.Fatalf("expected 0 AAAA answers with PreferIPv4 enabled, got %d", len(respAAAA.Answer))
+	}
+
+	// 2. Type A should still resolve normally with IPv4
+	respA, err := res.Resolve(ctx, "example.com", dns.TypeA)
+	if err != nil {
+		t.Fatalf("unexpected error resolving A: %v", err)
+	}
+	if len(respA.Answer) != 1 || respA.Answer[0].(*dns.A).A.String() != "93.184.216.34" {
+		t.Fatalf("expected IPv4 address 93.184.216.34, got %+v", respA.Answer)
+	}
+
+	// 3. When PreferIPv4 is toggled to false, AAAA should resolve through upstream DoH
+	res.SetPreferIPv4(false)
+	if res.PreferIPv4() {
+		t.Fatalf("expected PreferIPv4 to be false")
+	}
+	respAAAA2, err := res.Resolve(ctx, "example.com", dns.TypeAAAA)
+	if err != nil {
+		t.Fatalf("unexpected error resolving AAAA with PreferIPv4=false: %v", err)
+	}
+	if len(respAAAA2.Answer) != 1 || respAAAA2.Answer[0].(*dns.AAAA).AAAA.String() != "2606:2800:220:1:248:1893:25c8:1946" {
+		t.Fatalf("expected IPv6 address, got %+v", respAAAA2.Answer)
+	}
+}

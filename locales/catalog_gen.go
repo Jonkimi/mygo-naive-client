@@ -926,6 +926,16 @@ func (msgs Messages) DohSectionDesc() string {
 	return Catalog.Format(msgs.locale, "dohSectionDesc", nil)
 }
 
+// DnsPreferIPv4Label says "Prefer IPv4 (Disable IPv6 AAAA Resolution)"
+// in the language the app shows.
+func DnsPreferIPv4Label() string { return In(i18n.Locale()).DnsPreferIPv4Label() }
+
+// DnsPreferIPv4Label says "Prefer IPv4 (Disable IPv6 AAAA Resolution)"
+// in the language of msgs.
+func (msgs Messages) DnsPreferIPv4Label() string {
+	return Catalog.Format(msgs.locale, "dnsPreferIPv4Label", nil)
+}
+
 // DnsDomesticLabel says "Domestic DNS"
 // in the language the app shows.
 func DnsDomesticLabel() string { return In(i18n.Locale()).DnsDomesticLabel() }

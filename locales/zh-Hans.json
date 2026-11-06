@@ -89,6 +89,7 @@
   "gatewayPortHint": "默认 10809 (支持 HTTP 与 SOCKS5 混合入站)",
   "dohSectionTitle": "分流 DNS / DoH 解析",
   "dohSectionDesc": "分别配置国内直连 DNS、境外代理 DNS 与纯 IP 引导 DNS（提供常用预设选项）",
+  "dnsPreferIPv4Label": "IPv4 优先 (停用 IPv6 解析)",
   "dnsDomesticLabel": "国内 DNS (Domestic DNS)",
   "dnsDomesticHint": "路由解析时默认调用",
   "dnsRemoteLabel": "境外 DNS (Remote DNS)",

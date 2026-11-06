@@ -89,6 +89,7 @@
   "gatewayPortHint": "Default 10809 (Mixed HTTP & SOCKS5)",
   "dohSectionTitle": "Split DNS / DoH Resolution",
   "dohSectionDesc": "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS",
+  "dnsPreferIPv4Label": "Prefer IPv4 (Disable IPv6 AAAA Resolution)",
   "dnsDomesticLabel": "Domestic DNS",
   "dnsDomesticHint": "By default, invoked only during routing for resolution",
   "dnsRemoteLabel": "Remote DNS",

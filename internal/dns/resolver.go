@@ -55,6 +55,7 @@ type ResolverOptions struct {
 	DialDirect       func(ctx context.Context, network, addr string) (net.Conn, error)
 	DialProxy        func(ctx context.Context, network, addr string) (net.Conn, error)
 	IPCache          *ipcache.Cache
+	PreferIPv4       bool
 }
 
 type cacheEntry struct {
@@ -75,6 +76,7 @@ type Resolver struct {
 	directHTTPClient *http.Client
 	proxyHTTPClient  *http.Client
 	dnsClient        *dns.Client
+	preferIPv4       atomic.Bool
 }
 
 func NewResolver(opts ResolverOptions) *Resolver {
@@ -134,7 +136,7 @@ func NewResolver(opts ResolverOptions) *Resolver {
 		Timeout: 8 * time.Second,
 	}
 
-	return &Resolver{
+	res := &Resolver{
 		opts:             opts,
 		bootstrapSet:     bootSet,
 		cache:            make(map[string]*cacheEntry),
@@ -142,6 +144,8 @@ func NewResolver(opts ResolverOptions) *Resolver {
 		proxyHTTPClient:  proxyClient,
 		dnsClient:        &dns.Client{Timeout: 4 * time.Second},
 	}
+	res.preferIPv4.Store(opts.PreferIPv4)
+	return res
 }
 
 func (r *Resolver) SetBootstrapDomains(domains []string) {
@@ -206,6 +210,14 @@ func (r *Resolver) SetBlocker(blocker Blocker) {
 	r.opts.Blocker = blocker
 }
 
+func (r *Resolver) SetPreferIPv4(prefer bool) {
+	r.preferIPv4.Store(prefer)
+}
+
+func (r *Resolver) PreferIPv4() bool {
+	return r.preferIPv4.Load()
+}
+
 func (r *Resolver) IPCache() *ipcache.Cache {
 	return r.opts.IPCache
 }
@@ -241,7 +253,16 @@ func (r *Resolver) ResolveMsg(ctx context.Context, req *dns.Msg) (*dns.Msg, erro
 		}
 	}
 
-	// 2. Stage 2: Blocker
+	// 2. Prefer IPv4: intercept AAAA queries and return empty NODATA response
+	// so dual-stack clients immediately use IPv4 without attempting IPv6.
+	if r.preferIPv4.Load() && qtype == dns.TypeAAAA {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.RecursionAvailable = true
+		return resp, nil
+	}
+
+	// 3. Stage 2: Blocker
 	if r.opts.Blocker != nil {
 		if blocked, _ := r.opts.Blocker.Match(domain); blocked {
 			resp := new(dns.Msg)

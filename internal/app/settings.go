@@ -44,6 +44,7 @@ type PersistedState struct {
 	BootstrapDNS            string              `json:"bootstrapDns,omitempty"`
 	BootstrapDoH            string              `json:"bootstrapDoH,omitempty"` // Deprecated alias
 	RemoteDoH               string              `json:"remoteDoH,omitempty"`    // Deprecated alias
+	PreferIPv4              bool                `json:"preferIpv4"`
 	TrafficMode             string              `json:"trafficMode,omitempty"`
 	SystemProxyBypass       []string            `json:"systemProxyBypass,omitempty"`
 	RoutingRules            []routing.Rule      `json:"routingRules,omitempty"`
@@ -74,6 +75,7 @@ func defaultPersistedState() PersistedState {
 		AppIcon:                 appIconBoth,
 		GatewayEnabled:          true,
 		GatewayPort:             10809,
+		PreferIPv4:              true,
 		TrafficMode:             "port",
 		RoutingRules:            routing.DefaultPresets(),
 		RoutingFinal:            routing.RouteAction{Type: routing.ActionProxyPool},
