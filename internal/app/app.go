@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,10 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/config"
+	"naive-client/internal/gateway"
 	"naive-client/internal/runner"
+	"naive-client/internal/sysproxy"
+	"naive-client/internal/telemetry"
 	"naive-client/internal/updater"
 	"naive-client/locales"
 )
@@ -50,6 +54,10 @@ type app struct {
 
 	state PersistedState
 	mgr   *runner.Manager
+
+	tracker  *telemetry.Tracker
+	gateway  *gateway.Gateway
+	sysproxy *sysproxy.Sysproxy
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -143,6 +151,7 @@ func Run() error {
 		if a.batchCancel != nil {
 			a.batchCancel()
 		}
+		a.stopGateway()
 		if a.mgr != nil {
 			_ = a.mgr.StopAll()
 		}
@@ -181,10 +190,13 @@ func Run() error {
 }
 
 func newApp(dataDir string) *app {
+	recPath := filepath.Join(dataDir, "network-recovery.json")
 	return &app{
 		dataDir:      dataDir,
 		state:        defaultPersistedState(),
 		expandedLogs: make(map[string]bool),
+		tracker:      telemetry.NewTracker(),
+		sysproxy:     sysproxy.New(recPath),
 		quitCh:       make(chan struct{}),
 	}
 }
@@ -226,6 +238,13 @@ func (a *app) syncBinaryPathAndVersion() {
 }
 
 func (a *app) boot() {
+	if a.sysproxy != nil {
+		_ = a.sysproxy.RecoverIfDirty()
+	}
+	if a.state.GatewayEnabled {
+		_ = a.startGateway()
+	}
+
 	if a.localVersion != "" {
 		for _, svc := range a.state.Services {
 			if svc.AutoStart {
@@ -635,4 +654,132 @@ func (a *app) readClipboard() string {
 		return a.clipboardMem
 	}
 	return os.Getenv("NAIVE_CLIENT_TEST_CLIPBOARD")
+}
+
+func (a *app) startGateway() error {
+	if a.gateway != nil {
+		_ = a.gateway.Stop()
+		a.gateway = nil
+	}
+	if !a.state.GatewayEnabled {
+		return nil
+	}
+	port := a.state.GatewayPort
+	if port <= 0 {
+		port = 10808
+	}
+	gw, err := gateway.New(gateway.Options{
+		BindAddr: fmt.Sprintf("127.0.0.1:%d", port),
+		Tracker:  a.tracker,
+		DialTarget: func(ctx context.Context, target string) (net.Conn, string, error) {
+			return a.dialThroughPool(ctx, target)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if err := gw.Start(); err != nil {
+		return err
+	}
+	a.gateway = gw
+
+	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
+		_ = a.sysproxy.Set(gw.Addr(), a.state.SystemProxyBypass)
+	}
+	return nil
+}
+
+func (a *app) stopGateway() {
+	if a.sysproxy != nil {
+		_ = a.sysproxy.Unset()
+	}
+	if a.gateway != nil {
+		_ = a.gateway.Stop()
+		a.gateway = nil
+	}
+}
+
+func (a *app) setTrafficMode(mode string) error {
+	switch mode {
+	case "port":
+		a.state.TrafficMode = "port"
+		if a.sysproxy != nil {
+			_ = a.sysproxy.Unset()
+		}
+		a.saveState()
+		if a.win != nil {
+			a.win.Invalidate()
+		}
+		return nil
+	case "sysproxy":
+		a.state.TrafficMode = "sysproxy"
+		if a.gateway == nil {
+			if err := a.startGateway(); err != nil {
+				return err
+			}
+		}
+		if a.sysproxy != nil && a.gateway != nil {
+			if err := a.sysproxy.Set(a.gateway.Addr(), a.state.SystemProxyBypass); err != nil {
+				return err
+			}
+		}
+		a.saveState()
+		if a.win != nil {
+			a.win.Invalidate()
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported traffic mode: %s", mode)
+	}
+}
+
+func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, string, error) {
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		host = target
+	}
+
+	var runningSvcs []config.Service
+	var runningIDs []string
+	if a.mgr != nil {
+		for _, svc := range a.state.Services {
+			st := a.mgr.StatusOf(svc.ID)
+			if st.State == runner.StateRunning {
+				runningSvcs = append(runningSvcs, svc)
+				runningIDs = append(runningIDs, svc.ID)
+			}
+		}
+	}
+
+	if len(runningSvcs) == 0 {
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", target)
+		return conn, "direct", err
+	}
+
+	bestID := runningIDs[0]
+	if a.tracker != nil {
+		if sel, ok := a.tracker.SelectBest(runningIDs, host); ok {
+			bestID = sel
+		}
+	}
+
+	var bestSvc *config.Service
+	for i := range runningSvcs {
+		if runningSvcs[i].ID == bestID {
+			bestSvc = &runningSvcs[i]
+			break
+		}
+	}
+	if bestSvc == nil {
+		bestSvc = &runningSvcs[0]
+	}
+
+	ep, err := bestSvc.OutboundEndpoint()
+	if err != nil {
+		return nil, bestSvc.ID, err
+	}
+
+	conn, err := runner.DialEndpoint(ctx, ep, target)
+	return conn, bestSvc.ID, err
 }

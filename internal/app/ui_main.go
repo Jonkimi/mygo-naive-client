@@ -73,33 +73,21 @@ func (a *app) activeRunningCount() int {
 
 func (a *app) primaryGatewayPortLabel() string {
 	cat := a.catalog()
-	for _, svc := range a.state.Services {
-		st := a.mgr.StatusOf(svc.ID).State
-		if st == runner.StateRunning || st == runner.StateStarting {
-			if ep, err := svc.OutboundEndpoint(); err == nil && ep.Port > 0 {
-				if cat.Code() == "en" {
-					return fmt.Sprintf("Port :%d", ep.Port)
-				}
-				return fmt.Sprintf("仅端口 :%d", ep.Port)
-			}
-		}
+	port := a.state.GatewayPort
+	if port <= 0 {
+		port = 10808
 	}
-	if len(a.state.Services) > 0 {
-		if ep, err := a.state.Services[0].OutboundEndpoint(); err == nil && ep.Port > 0 {
-			if cat.Code() == "en" {
-				return fmt.Sprintf("Port :%d", ep.Port)
-			}
-			return fmt.Sprintf("仅端口 :%d", ep.Port)
-		}
+	if cat.Code() == "en" {
+		return fmt.Sprintf("Port :%d", port)
 	}
-	return cat.ModePortOnly()
+	return fmt.Sprintf("仅端口 :%d", port)
 }
 
 func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	runningCount := a.activeRunningCount()
 	dotColor := p.textDim
-	if runningCount > 0 {
+	if (a.gateway != nil && a.state.GatewayEnabled) || runningCount > 0 {
 		dotColor = p.green
 	}
 
@@ -115,21 +103,47 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 				ui.Text(c, cat.MasterGateway()).FontSize(13).FontWeight(600).TextColor(p.text)
 			})
 
-			// Center: Active mode & upcoming modes with clear tooltip feedback
+			// Center: Active mode & upcoming modes with clear interactive feedback
 			ui.Row(c).AlignItems(ui.Center).Gap(4).Padding(2).Radius(6).Background(p.elevated).Children(func() {
-				tagPill(c, a.primaryGatewayPortLabel(), p.accentText, p.accentBg)
-
-				sysBtn := ui.ButtonBase(c.Key("mode-sysproxy")).
+				// 1. Port only mode
+				portActive := a.state.TrafficMode == "port" || a.state.TrafficMode == ""
+				portBtn := ui.ButtonBase(c.Key("mode-port")).
 					PaddingX(8).PaddingY(3).Radius(6).
-					Background(ui.Transparent).
-					Tooltip(cat.ModeComingSoonTip()).
-					Children(func() {
-						ui.Text(c, cat.ModeSysProxy()).FontSize(11).FontWeight(500).TextColor(p.textDim)
-					})
-				if sysBtn.Clicked() {
-					a.toast(cat.ModeComingSoonTip())
+					Background(ui.Transparent)
+				if portActive {
+					portBtn.Background(p.accentBg)
+				}
+				portBtn.Children(func() {
+					fg := p.textMuted
+					if portActive {
+						fg = p.accentText
+					}
+					ui.Text(c, a.primaryGatewayPortLabel()).FontSize(11).FontWeight(500).TextColor(fg)
+				})
+				if portBtn.Clicked() {
+					_ = a.setTrafficMode("port")
 				}
 
+				// 2. System Proxy mode
+				sysActive := a.state.TrafficMode == "sysproxy"
+				sysBtn := ui.ButtonBase(c.Key("mode-sysproxy")).
+					PaddingX(8).PaddingY(3).Radius(6).
+					Background(ui.Transparent)
+				if sysActive {
+					sysBtn.Background(p.accentBg)
+				}
+				sysBtn.Children(func() {
+					fg := p.textMuted
+					if sysActive {
+						fg = p.accentText
+					}
+					ui.Text(c, cat.ModeSysProxy()).FontSize(11).FontWeight(500).TextColor(fg)
+				})
+				if sysBtn.Clicked() {
+					_ = a.setTrafficMode("sysproxy")
+				}
+
+				// 3. TUN mode (coming soon in Phase 4)
 				tunBtn := ui.ButtonBase(c.Key("mode-tun")).
 					PaddingX(8).PaddingY(3).Radius(6).
 					Background(ui.Transparent).

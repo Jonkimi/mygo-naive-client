@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -967,13 +969,13 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 		t.Fatalf("expected compact remote endpoint 'https://codex.sfchenlab.com:443' on card, got: %v", tt.Texts())
 	}
 
-	// 4. Clicking an upcoming mode pill shows a feedback toast
-	if err := tt.Click(a.catalog().ModeSysProxy()); err != nil {
-		t.Fatalf("click ModeSysProxy: %v", err)
+	// 4. Clicking an upcoming mode pill (TUN) shows a feedback toast
+	if err := tt.Click(a.catalog().ModeTun()); err != nil {
+		t.Fatalf("click ModeTun: %v", err)
 	}
 	tt.Frame()
 	if !tt.HasText(a.catalog().ModeComingSoonTip()) {
-		t.Fatalf("expected coming soon toast after clicking ModeSysProxy, got: %v", tt.Texts())
+		t.Fatalf("expected coming soon toast after clicking ModeTun, got: %v", tt.Texts())
 	}
 
 	// 5. Clicking the top bar core version badge navigates directly to Settings
@@ -1010,5 +1012,214 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 	}
 	if a.mgr.StatusOf("svc-single").Probing {
 		t.Fatalf("expected no probe started on stopped service")
+	}
+}
+
+// Tests that the top control bar allows switching traffic takeover modes between PortOnly and SystemProxy.
+func TestTopBar_TrafficModeSwitching(t *testing.T) {
+	port := freeLocalPort(t)
+	svc := config.Service{
+		ID:        "svc-1",
+		Name:      "Node 1",
+		Kind:      config.KindManagedNaive,
+		Listens:   []string{fmt.Sprintf("socks://127.0.0.1:%d", port)},
+		Proxies:   []string{"https://user:pass@example.com"},
+		EnableLog: true,
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	gwPort := freeLocalPort(t)
+	a.state.GatewayPort = gwPort
+	a.state.GatewayEnabled = true
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	tt.Frame()
+
+	// Initial mode should be "port"
+	if a.state.TrafficMode != "port" {
+		t.Fatalf("expected initial traffic mode 'port', got %q", a.state.TrafficMode)
+	}
+
+	// Click "系统代理" mode pill
+	if err := tt.Click(a.catalog().ModeSysProxy()); err != nil {
+		t.Fatalf("click ModeSysProxy: %v", err)
+	}
+	tt.Frame()
+
+	if a.state.TrafficMode != "sysproxy" {
+		t.Fatalf("expected trafficMode 'sysproxy' after click, got %q", a.state.TrafficMode)
+	}
+	if a.sysproxy == nil || !a.sysproxy.IsActive() {
+		t.Fatalf("expected sysproxy active after clicking ModeSysProxy")
+	}
+
+	// Click port mode pill to switch back
+	portLabel := a.primaryGatewayPortLabel()
+	if err := tt.Click(portLabel); err != nil {
+		t.Fatalf("click port label %q: %v", portLabel, err)
+	}
+	tt.Frame()
+
+	if a.state.TrafficMode != "port" {
+		t.Fatalf("expected trafficMode 'port' after click, got %q", a.state.TrafficMode)
+	}
+	if a.sysproxy != nil && a.sysproxy.IsActive() {
+		t.Fatalf("expected sysproxy deactivated after clicking port pill")
+	}
+}
+
+// Tests that requests entering the Unified Gateway are dispatched through the running node pool
+// and recorded by the passive quality telemetry engine.
+func TestGateway_EndToEndProxyAndTelemetry(t *testing.T) {
+	// 1. Mock remote destination echo server
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo server listen: %v", err)
+	}
+	defer echoLn.Close()
+
+	go func() {
+		for {
+			conn, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				io.Copy(c, c)
+			}(conn)
+		}
+	}()
+
+	echoAddr := echoLn.Addr().String()
+
+	// 2. Mock upstream proxy server that accepts SOCKS5 CONNECT
+	mockProxyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("mock proxy listen: %v", err)
+	}
+	defer mockProxyLn.Close()
+
+	go func() {
+		for {
+			conn, err := mockProxyLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				// SOCKS5 handshake greeting
+				buf := make([]byte, 256)
+				if _, err := io.ReadAtLeast(c, buf, 3); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{0x05, 0x00}) // NO_AUTH
+
+				// SOCKS5 request
+				reqBuf := make([]byte, 256)
+				n, err := io.ReadAtLeast(c, reqBuf, 7)
+				if err != nil || n < 7 {
+					return
+				}
+				// Dial actual echo server
+				targetConn, err := net.Dial("tcp", echoAddr)
+				if err != nil {
+					_, _ = c.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				defer targetConn.Close()
+				_, _ = c.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+
+				// Bidirectional copy
+				done := make(chan struct{}, 2)
+				go func() {
+					io.Copy(targetConn, c)
+					done <- struct{}{}
+				}()
+				go func() {
+					io.Copy(c, targetConn)
+					done <- struct{}{}
+				}()
+				<-done
+			}(conn)
+		}
+	}()
+
+	mockProxyHost, mockProxyPortStr, _ := net.SplitHostPort(mockProxyLn.Addr().String())
+	mockProxyPort, _ := strconv.Atoi(mockProxyPortStr)
+
+	// 3. Configure ExternalProxy node pointing to mockProxyLn
+	svc := config.Service{
+		ID:          "svc-ext",
+		Name:        "Fast Node",
+		Kind:        config.KindExternalProxy,
+		ExternalURI: fmt.Sprintf("socks5://%s:%d", mockProxyHost, mockProxyPort),
+		Tags:        []string{"US", "AI"},
+	}
+
+	a, _, _ := newTestApp(t, []config.Service{svc})
+	gwPort := freeLocalPort(t)
+	a.state.GatewayPort = gwPort
+	a.state.GatewayEnabled = true
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	// Start the service in the manager so it is StateRunning
+	if err := a.mgr.Start(svc); err != nil {
+		t.Fatalf("start service: %v", err)
+	}
+
+	// 4. Client connects to Gateway using SOCKS5 to reach "openai.com:443"
+	clientConn, err := net.DialTimeout("tcp", a.gateway.Addr(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer clientConn.Close()
+
+	// SOCKS5 greeting
+	if _, err := clientConn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		t.Fatalf("client write greeting: %v", err)
+	}
+	resp := make([]byte, 2)
+	if _, err := io.ReadFull(clientConn, resp); err != nil || resp[0] != 0x05 || resp[1] != 0x00 {
+		t.Fatalf("client read greeting resp: %v, err: %v", resp, err)
+	}
+
+	// SOCKS5 connect to domain "openai.com:443"
+	domain := "openai.com"
+	req := []byte{0x05, 0x01, 0x00, 0x03, byte(len(domain))}
+	req = append(req, []byte(domain)...)
+	req = append(req, 0x01, 0xbb) // port 443
+	if _, err := clientConn.Write(req); err != nil {
+		t.Fatalf("client write connect req: %v", err)
+	}
+	connResp := make([]byte, 10)
+	if _, err := io.ReadFull(clientConn, connResp); err != nil || connResp[0] != 0x05 || connResp[1] != 0x00 {
+		t.Fatalf("client connect resp failed: %v, err: %v", connResp, err)
+	}
+
+	// Echo payload check
+	msg := []byte("ping-gateway-telemetry")
+	if _, err := clientConn.Write(msg); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	echoBuf := make([]byte, len(msg))
+	if _, err := io.ReadFull(clientConn, echoBuf); err != nil || string(echoBuf) != string(msg) {
+		t.Fatalf("echo mismatch: got %q, expected %q (err=%v)", echoBuf, msg, err)
+	}
+
+	// 5. Verify telemetry recorded dial through "svc-ext" with domain affinity
+	sc := a.tracker.GetScore("svc-ext")
+	if sc.EWMA == 0 {
+		t.Fatalf("expected telemetry EWMA recorded for svc-ext, got 0")
+	}
+	best, ok := a.tracker.SelectBest([]string{"svc-ext"}, "api.openai.com")
+	if !ok || best != "svc-ext" {
+		t.Fatalf("expected affinity locked to svc-ext, got %v (ok=%v)", best, ok)
 	}
 }

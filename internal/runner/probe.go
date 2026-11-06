@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -325,4 +326,43 @@ func dialSOCKS5(ctx context.Context, proxyAddr, user, pass, targetAddr string) (
 	// Suppress unused import warning if base64 isn't needed elsewhere
 	_ = base64.StdEncoding
 	return conn, nil
+}
+
+// DialEndpoint dials targetAddr through the given outbound endpoint (supports socks5 and http).
+func DialEndpoint(ctx context.Context, ep config.ListenEndpoint, targetAddr string) (net.Conn, error) {
+	localAddr := ep.DialAddr()
+	switch ep.Proto {
+	case "socks", "socks5", "socks5h":
+		return dialSOCKS5(ctx, localAddr, ep.User, ep.Pass, targetAddr)
+	case "http", "https":
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", localAddr)
+		if err != nil {
+			return nil, err
+		}
+		connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, targetAddr)
+		if ep.User != "" {
+			auth := base64.StdEncoding.EncodeToString([]byte(ep.User + ":" + ep.Pass))
+			connectReq += fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", auth)
+		}
+		connectReq += "\r\n"
+		if _, err := conn.Write([]byte(connectReq)); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		br := bufio.NewReader(conn)
+		resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = conn.Close()
+			return nil, fmt.Errorf("HTTP CONNECT failed: %s", resp.Status)
+		}
+		return conn, nil
+	default:
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", targetAddr)
+	}
 }

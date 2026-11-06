@@ -36,6 +36,10 @@ type PersistedState struct {
 	Appearance              string           `json:"appearance,omitempty"`
 	AppIcon                 string           `json:"appIcon,omitempty"`
 	SidebarCollapsed        bool             `json:"sidebarCollapsed,omitempty"`
+	GatewayEnabled          bool             `json:"gatewayEnabled"`
+	GatewayPort             int              `json:"gatewayPort,omitempty"`
+	TrafficMode             string           `json:"trafficMode,omitempty"`
+	SystemProxyBypass       []string         `json:"systemProxyBypass,omitempty"`
 	AutoCheckUpdate         bool             `json:"autoCheckUpdate"`
 	AutoUpdateCore          bool             `json:"autoUpdateCore"`
 	UseRunningServiceForUpd bool             `json:"useRunningServiceForUpdate"`
@@ -55,6 +59,9 @@ func defaultPersistedState() PersistedState {
 		Language:                locales.LangSystem,
 		Appearance:              appearanceSystem,
 		AppIcon:                 appIconBoth,
+		GatewayEnabled:          true,
+		GatewayPort:             10808,
+		TrafficMode:             "port",
 		AutoCheckUpdate:         true,
 		AutoUpdateCore:          true,
 		UseRunningServiceForUpd: true,
@@ -98,6 +105,12 @@ func (a *app) loadState() {
 	}
 	if st.Appearance == "" {
 		st.Appearance = appearanceSystem
+	}
+	if st.GatewayPort <= 0 {
+		st.GatewayPort = 10808
+	}
+	if st.TrafficMode == "" {
+		st.TrafficMode = "port"
 	}
 	if st.AppIcon == "" {
 		st.AppIcon = appIconBoth
