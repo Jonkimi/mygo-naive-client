@@ -2337,3 +2337,56 @@ func TestApp_CustomDoHConfiguration(t *testing.T) {
 		t.Fatalf("expected custom-dns.mycorp.internal in bootstrap domains, got %v", domains)
 	}
 }
+
+// Tests that selecting DNS options in the settings UI dropdowns updates state and the resolver.
+func TestApp_DnsSelectDropdownUI(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.initDNS()
+
+	tt := ui.NewTester(func(c *ui.Context) {
+		a.renderSettingsPage(c, darkPalette)
+	}, 800, 1600)
+
+	// 1. Select Domestic DNS from preset
+	if err := tt.Click("https://223.5.5.5/dns-query"); err != nil {
+		t.Fatalf("click domestic DNS trigger: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("https://dns.alidns.com/dns-query"); err != nil {
+		t.Fatalf("select domestic option: %v", err)
+	}
+	tt.Frame()
+	if a.state.DomesticDNS != "https://dns.alidns.com/dns-query" {
+		t.Fatalf("expected DomesticDNS to be https://dns.alidns.com/dns-query, got %q", a.state.DomesticDNS)
+	}
+	_, dom, _ := a.resolver.Upstreams()
+	if len(dom) == 0 || dom[0] != "https://dns.alidns.com/dns-query" {
+		t.Fatalf("expected resolver domestic upstream to update, got %v", dom)
+	}
+
+	// 2. Select Remote DNS from preset
+	if err := tt.Click("https://1.1.1.1/dns-query"); err != nil {
+		t.Fatalf("click remote DNS trigger: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("https://dns.google/dns-query"); err != nil {
+		t.Fatalf("select remote option: %v", err)
+	}
+	tt.Frame()
+	if a.state.RemoteDNS != "https://dns.google/dns-query" {
+		t.Fatalf("expected RemoteDNS to be https://dns.google/dns-query, got %q", a.state.RemoteDNS)
+	}
+
+	// 3. Select Bootstrap DNS from preset
+	if err := tt.Click("223.5.5.5"); err != nil {
+		t.Fatalf("click bootstrap DNS trigger: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("114.114.114.114"); err != nil {
+		t.Fatalf("select bootstrap option: %v", err)
+	}
+	tt.Frame()
+	if a.state.BootstrapDNS != "114.114.114.114" {
+		t.Fatalf("expected BootstrapDNS to be 114.114.114.114, got %q", a.state.BootstrapDNS)
+	}
+}
