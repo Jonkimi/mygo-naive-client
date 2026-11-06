@@ -1,5 +1,7 @@
 # AGENTS.md
 
+For general MyGo UI engineering, lifetime management, animations, and i18n guidelines, refer to the `mygo-maintenance` skill (`/mygo-maintenance`).
+
 ## Tests
 
 Only write a test for behaviour that can actually break. If the code under test could change without the test noticing, or the test would fail on a harmless rewording, don't write it.
