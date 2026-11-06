@@ -355,6 +355,12 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						} else if rt.Latency > 0 {
 							tagPill(c, fmt.Sprintf("%d ms", max(1, rt.Latency.Milliseconds())), p.green, p.greenBg)
 						}
+						if a.tracker != nil && rt.State == runner.StateRunning {
+							sc := a.tracker.GetScore(svc.ID)
+							if sc.EWMA > 0 {
+								tagPill(c, fmt.Sprintf("真实 %dms", max(1, sc.EWMA.Milliseconds())), p.accentText, p.accentBg)
+							}
+						}
 						if rt.SpeedTesting {
 							if rt.DownloadSpeed > 0 {
 								tagPill(c, cat.DownloadTesting()+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)

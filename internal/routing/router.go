@@ -3,6 +3,8 @@ package routing
 import (
 	"net"
 	"strings"
+
+	"naive-client/internal/geodata"
 )
 
 type ActionType string
@@ -30,6 +32,8 @@ type Rule struct {
 	DomainKeyword []string    `json:"domainKeyword,omitempty"`
 	DomainFull    []string    `json:"domainFull,omitempty"`
 	IPCidr        []string    `json:"ipCidr,omitempty"`
+	GeoSite       []string    `json:"geoSite,omitempty"`
+	GeoIP         []string    `json:"geoIP,omitempty"`
 	Action        RouteAction `json:"action"`
 }
 
@@ -42,6 +46,13 @@ type Router struct {
 	rules       []Rule
 	finalAction RouteAction
 	parsedNets  []parsedCIDRRule
+	geoIP       *geodata.GeoIPDB
+	geoSite     *geodata.GeoSiteDB
+}
+
+func (r *Router) SetGeoData(ipDB *geodata.GeoIPDB, siteDB *geodata.GeoSiteDB) {
+	r.geoIP = ipDB
+	r.geoSite = siteDB
 }
 
 func NewRouter(rules []Rule, finalAction RouteAction) *Router {
@@ -101,6 +112,19 @@ func (r *Router) Match(target string) (RouteAction, string) {
 				return item.rule.Action, item.rule.Name
 			}
 		}
+		if r.geoIP != nil {
+			for i := range r.rules {
+				rule := &r.rules[i]
+				if !rule.Enabled {
+					continue
+				}
+				for _, tag := range rule.GeoIP {
+					if r.geoIP.MatchIP(tag, ip) {
+						return rule.Action, rule.Name
+					}
+				}
+			}
+		}
 		return r.finalAction, "Final"
 	}
 
@@ -136,6 +160,15 @@ func (r *Router) Match(target string) (RouteAction, string) {
 				return rule.Action, rule.Name
 			}
 		}
+
+		// 4. GeoSite match
+		if r.geoSite != nil {
+			for _, tag := range rule.GeoSite {
+				if r.geoSite.MatchDomain(tag, host) {
+					return rule.Action, rule.Name
+				}
+			}
+		}
 	}
 
 	return r.finalAction, "Final"
@@ -155,7 +188,8 @@ func DefaultPresets() []Rule {
 				"pagead2.googlesyndication.com",
 				"unityads.unity3d.com",
 			},
-			Action: RouteAction{Type: ActionBlock},
+			GeoSite: []string{"category-ads-all"},
+			Action:  RouteAction{Type: ActionBlock},
 		},
 		{
 			ID:          "preset-ai-services",
@@ -174,7 +208,8 @@ func DefaultPresets() []Rule {
 				"perplex.ai",
 				"perplexity.ai",
 			},
-			Action: RouteAction{Type: ActionProxyTag, Tag: "AI"},
+			GeoSite: []string{"openai"},
+			Action:  RouteAction{Type: ActionProxyTag, Tag: "AI"},
 		},
 		{
 			ID:          "preset-streaming",
@@ -191,7 +226,8 @@ func DefaultPresets() []Rule {
 				"scdn.co",
 				"disneyplus.com",
 			},
-			Action: RouteAction{Type: ActionProxyTag, Tag: "Media"},
+			GeoSite: []string{"netflix", "youtube", "spotify"},
+			Action:  RouteAction{Type: ActionProxyTag, Tag: "Media"},
 		},
 		{
 			ID:          "preset-telegram",
@@ -204,7 +240,8 @@ func DefaultPresets() []Rule {
 				"telegra.ph",
 				"tdesktop.com",
 			},
-			Action: RouteAction{Type: ActionProxyTag, Tag: "TG"},
+			GeoSite: []string{"telegram"},
+			Action:  RouteAction{Type: ActionProxyTag, Tag: "TG"},
 		},
 		{
 			ID:          "preset-lan-direct",
@@ -227,7 +264,9 @@ func DefaultPresets() []Rule {
 				"internal",
 				"lan",
 			},
-			Action: RouteAction{Type: ActionDirect},
+			GeoSite: []string{"cn"},
+			GeoIP:   []string{"cn", "private"},
+			Action:  RouteAction{Type: ActionDirect},
 		},
 	}
 }

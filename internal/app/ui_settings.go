@@ -200,6 +200,27 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				}
 			})
 
+			// Section 2.5: Routing GeoData Database
+			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, cat.GeodataSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+					if actionChip(c.Key("page-btn-update-geodata"), p, iconDownload, cat.UpdateGeoData(), a.updatingGeoData).Clicked() {
+						a.triggerUpdateGeoData()
+					}
+				})
+
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(10).Radius(8).
+					Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						if a.hasGeoData() {
+							statusBadge(c, cat.GeodataStatusReady(), p.green, p.greenBg)
+						} else {
+							statusBadge(c, cat.GeodataStatusMissing(), p.amber, p.amberBg)
+						}
+					})
+				})
+			})
+
 			// Section 3: Telemetry & Network Testing
 			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 				ui.Text(c, cat.TelemetrySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)

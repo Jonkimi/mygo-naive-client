@@ -15,6 +15,7 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/gateway"
+	"naive-client/internal/geodata"
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
 	"naive-client/internal/sysproxy"
@@ -57,6 +58,8 @@ type ruleEditorForm struct {
 	domainsInput  string
 	cidrsInput    string
 	keywordsInput string
+	geositeInput  string
+	geoipInput    string
 	errText       string
 }
 
@@ -80,6 +83,7 @@ type app struct {
 	hasUpdate       bool
 	checkingUpdate  bool
 	updatingCore    bool
+	updatingGeoData bool
 	updateStageText string
 	updatePercent   float64
 	updateError     string
@@ -753,8 +757,93 @@ func (a *app) setTrafficMode(mode string) error {
 	}
 }
 
+func (a *app) geodataDir() string {
+	return filepath.Join(a.userDataDir(), "geodata")
+}
+
+func (a *app) loadGeoDataIfPresent() {
+	if a.router == nil {
+		return
+	}
+	dir := a.geodataDir()
+	ipPath := filepath.Join(dir, "geoip.dat")
+	sitePath := filepath.Join(dir, "geosite.dat")
+
+	var ipDB *geodata.GeoIPDB
+	var siteDB *geodata.GeoSiteDB
+
+	var reqIPTags []string
+	var reqSiteTags []string
+	for _, r := range a.state.RoutingRules {
+		if r.Enabled {
+			reqIPTags = append(reqIPTags, r.GeoIP...)
+			reqSiteTags = append(reqSiteTags, r.GeoSite...)
+		}
+	}
+
+	if f, err := os.Open(ipPath); err == nil {
+		defer f.Close()
+		ipDB, _ = geodata.LoadGeoIP(f, reqIPTags)
+	}
+	if f, err := os.Open(sitePath); err == nil {
+		defer f.Close()
+		siteDB, _ = geodata.LoadGeoSite(f, reqSiteTags)
+	}
+
+	if ipDB != nil || siteDB != nil {
+		a.router.SetGeoData(ipDB, siteDB)
+	}
+}
+
+func (a *app) hasGeoData() bool {
+	dir := a.geodataDir()
+	ipPath := filepath.Join(dir, "geoip.dat")
+	sitePath := filepath.Join(dir, "geosite.dat")
+	st1, err1 := os.Stat(ipPath)
+	st2, err2 := os.Stat(sitePath)
+	return err1 == nil && err2 == nil && st1.Size() > 0 && st2.Size() > 0
+}
+
+func (a *app) triggerUpdateGeoData() {
+	if a.updatingGeoData {
+		return
+	}
+	a.updatingGeoData = true
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+	a.toast("正在下载与校验最新规则库 (Loyalsoldier)...")
+	go func() {
+		var ep *config.ListenEndpoint
+		if a.state.UseRunningServiceForUpd && a.mgr != nil {
+			if e, ok := a.mgr.FirstRunningEndpoint(); ok {
+				ep = &e
+			}
+		}
+		opts := geodata.UpdateOptions{
+			DestDir:      a.geodataDir(),
+			GitHubMirror: a.state.GitHubMirror,
+			ProxyEP:      ep,
+		}
+		err := geodata.Update(context.Background(), opts, nil)
+		a.dispatchUI(func() {
+			a.updatingGeoData = false
+			if err != nil {
+				a.toast("规则库更新失败: " + err.Error())
+			} else {
+				a.syncRouter()
+				a.toast("规则库已更新并重新加载")
+			}
+			if a.win != nil {
+				a.win.Invalidate()
+			}
+		})
+	}()
+}
+
 func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
+	a.loadGeoDataIfPresent()
 }
 
 func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, string, error) {
@@ -799,17 +888,41 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 		if a.mgr != nil && action.Tag != "" {
 			var tagSvcs []config.Service
 			var tagIDs []string
+			var stoppedTagSvcs []config.Service
+
 			for _, svc := range a.state.Services {
-				if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-					for _, t := range svc.Tags {
-						if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(action.Tag)) {
-							tagSvcs = append(tagSvcs, svc)
-							tagIDs = append(tagIDs, svc.ID)
-							break
-						}
+				hasTag := false
+				for _, t := range svc.Tags {
+					if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(action.Tag)) {
+						hasTag = true
+						break
+					}
+				}
+				if hasTag {
+					if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+						tagSvcs = append(tagSvcs, svc)
+						tagIDs = append(tagIDs, svc.ID)
+					} else {
+						stoppedTagSvcs = append(stoppedTagSvcs, svc)
 					}
 				}
 			}
+
+			// Decision 5 in ADR-0002: If no node under this tag is running, automatically launch on-demand
+			if len(tagSvcs) == 0 && len(stoppedTagSvcs) > 0 {
+				launchSvc := stoppedTagSvcs[0]
+				if err := a.mgr.Start(launchSvc); err == nil {
+					for retry := 0; retry < 20; retry++ {
+						if a.mgr.StatusOf(launchSvc.ID).State == runner.StateRunning {
+							tagSvcs = append(tagSvcs, launchSvc)
+							tagIDs = append(tagIDs, launchSvc.ID)
+							break
+						}
+						time.Sleep(50 * time.Millisecond)
+					}
+				}
+			}
+
 			if len(tagSvcs) > 0 {
 				bestID := tagIDs[0]
 				if a.tracker != nil {

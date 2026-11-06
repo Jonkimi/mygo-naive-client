@@ -28,6 +28,53 @@ func (a *app) activeNodesForTag(tag string) int {
 	return count
 }
 
+func (a *app) preferredNodeForRule(rule routing.Rule) string {
+	if a.tracker == nil || a.mgr == nil {
+		return ""
+	}
+	var candidates []string
+	switch rule.Action.Type {
+	case routing.ActionProxyTag:
+		for _, s := range a.state.Services {
+			if a.mgr.StatusOf(s.ID).State == runner.StateRunning {
+				for _, t := range s.Tags {
+					if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(rule.Action.Tag)) {
+						candidates = append(candidates, s.ID)
+						break
+					}
+				}
+			}
+		}
+	case routing.ActionProxyPool:
+		for _, s := range a.state.Services {
+			if a.mgr.StatusOf(s.ID).State == runner.StateRunning {
+				candidates = append(candidates, s.ID)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	targetHost := "example.com"
+	if len(rule.DomainSuffix) > 0 {
+		targetHost = rule.DomainSuffix[0]
+	}
+	bestID, ok := a.tracker.SelectBest(candidates, targetHost)
+	if !ok {
+		return ""
+	}
+	for _, s := range a.state.Services {
+		if s.ID == bestID {
+			sc := a.tracker.GetScore(bestID)
+			if sc.EWMA > 0 {
+				return fmt.Sprintf("驻留: %s (%dms)", s.Name, max(1, sc.EWMA.Milliseconds()))
+			}
+			return fmt.Sprintf("驻留: %s", s.Name)
+		}
+	}
+	return ""
+}
+
 func (a *app) openCreateRuleDialog() {
 	a.ruleEditor = ruleEditorForm{
 		open:        true,
@@ -66,6 +113,8 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 		domainsInput:  strings.Join(rule.DomainSuffix, "\n"),
 		cidrsInput:    strings.Join(rule.IPCidr, "\n"),
 		keywordsInput: strings.Join(rule.DomainKeyword, ", "),
+		geositeInput:  strings.Join(rule.GeoSite, ", "),
+		geoipInput:    strings.Join(rule.GeoIP, ", "),
 	}
 	if a.win != nil {
 		a.win.Invalidate()
@@ -147,9 +196,11 @@ func (a *app) saveRuleEditor() {
 	domains := parseLines(a.ruleEditor.domainsInput)
 	cidrs := parseLines(a.ruleEditor.cidrsInput)
 	keywords := parseCommaOrLines(a.ruleEditor.keywordsInput)
+	geosites := parseCommaOrLines(a.ruleEditor.geositeInput)
+	geoips := parseCommaOrLines(a.ruleEditor.geoipInput)
 
-	if len(domains) == 0 && len(cidrs) == 0 && len(keywords) == 0 {
-		a.ruleEditor.errText = "请至少填写一个匹配域名后缀、IP-CIDR 或域名关键字"
+	if len(domains) == 0 && len(cidrs) == 0 && len(keywords) == 0 && len(geosites) == 0 && len(geoips) == 0 {
+		a.ruleEditor.errText = "请至少填写一个匹配条件（域名后缀、IP-CIDR、关键字、GeoSite 或 GeoIP）"
 		return
 	}
 
@@ -178,6 +229,8 @@ func (a *app) saveRuleEditor() {
 			DomainSuffix:  domains,
 			IPCidr:        cidrs,
 			DomainKeyword: keywords,
+			GeoSite:       geosites,
+			GeoIP:         geoips,
 			Action:        act,
 		}
 		a.state.RoutingRules = append(a.state.RoutingRules, newRule)
@@ -189,6 +242,8 @@ func (a *app) saveRuleEditor() {
 				a.state.RoutingRules[i].DomainSuffix = domains
 				a.state.RoutingRules[i].IPCidr = cidrs
 				a.state.RoutingRules[i].DomainKeyword = keywords
+				a.state.RoutingRules[i].GeoSite = geosites
+				a.state.RoutingRules[i].GeoIP = geoips
 				a.state.RoutingRules[i].Action = act
 				break
 			}
@@ -218,6 +273,9 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.RoutingTitle()).FontSize(18).FontWeight(700).TextColor(p.text)
 
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						if actionChip(c.Key("btn-update-geodata"), p, iconDownload, cat.UpdateGeoData(), a.updatingGeoData).Clicked() {
+							a.triggerUpdateGeoData()
+						}
 						if actionChip(c.Key("btn-reset-presets"), p, iconRefresh, cat.ResetPresets(), false).Clicked() {
 							a.resetRoutingPresets()
 						}
@@ -286,6 +344,10 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 								default:
 									statusBadge(c, cat.RoutingProxyPool(), p.green, p.greenBg)
 								}
+
+								if pref := a.preferredNodeForRule(rule); pref != "" {
+									tagPill(c, pref, p.accentText, p.accentBg)
+								}
 							})
 
 							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -312,6 +374,12 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 
 						// Domain suffixes / criteria pills
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+							for _, gs := range rule.GeoSite {
+								tagPill(c, "geosite:"+gs, p.accentText, p.accentBg)
+							}
+							for _, gi := range rule.GeoIP {
+								tagPill(c, "geoip:"+gi, p.accentText, p.accentBg)
+							}
 							for _, d := range rule.DomainSuffix {
 								tagPill(c, d, p.textMuted, p.surface)
 							}
@@ -376,6 +444,12 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 
 				// Keywords
 				labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
+
+				// GeoSite tags
+				labeledInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geositeInput, cat.RuleGeoSiteHint())
+
+				// GeoIP tags
+				labeledInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoipInput, cat.RuleGeoIPHint())
 
 				// Error display
 				if a.ruleEditor.errText != "" {
