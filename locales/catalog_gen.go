@@ -936,11 +936,11 @@ func (msgs Messages) DohBootstrapLabel() string {
 	return Catalog.Format(msgs.locale, "dohBootstrapLabel", nil)
 }
 
-// DohBootstrapHint says "Leave empty for defaults: AliDNS and DNSPub"
+// DohBootstrapHint says "Leave empty for defaults: https://223.5.5.5/dns-query (Pure IP preferred)"
 // in the language the app shows.
 func DohBootstrapHint() string { return In(i18n.Locale()).DohBootstrapHint() }
 
-// DohBootstrapHint says "Leave empty for defaults: AliDNS and DNSPub"
+// DohBootstrapHint says "Leave empty for defaults: https://223.5.5.5/dns-query (Pure IP preferred)"
 // in the language of msgs.
 func (msgs Messages) DohBootstrapHint() string {
 	return Catalog.Format(msgs.locale, "dohBootstrapHint", nil)
@@ -956,11 +956,11 @@ func (msgs Messages) DohRemoteLabel() string {
 	return Catalog.Format(msgs.locale, "dohRemoteLabel", nil)
 }
 
-// DohRemoteHint says "Leave empty for defaults: Cloudflare and Google DNS"
+// DohRemoteHint says "Leave empty for defaults: https://1.1.1.1/dns-query (Pure IP preferred)"
 // in the language the app shows.
 func DohRemoteHint() string { return In(i18n.Locale()).DohRemoteHint() }
 
-// DohRemoteHint says "Leave empty for defaults: Cloudflare and Google DNS"
+// DohRemoteHint says "Leave empty for defaults: https://1.1.1.1/dns-query (Pure IP preferred)"
 // in the language of msgs.
 func (msgs Messages) DohRemoteHint() string {
 	return Catalog.Format(msgs.locale, "dohRemoteHint", nil)
