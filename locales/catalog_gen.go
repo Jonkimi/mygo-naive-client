@@ -84,6 +84,26 @@ func (msgs Messages) RoutingSubtitle() string {
 	return Catalog.Format(msgs.locale, "routingSubtitle", nil)
 }
 
+// RoutingCustomSection says "Custom Rules"
+// in the language the app shows.
+func RoutingCustomSection() string { return In(i18n.Locale()).RoutingCustomSection() }
+
+// RoutingCustomSection says "Custom Rules"
+// in the language of msgs.
+func (msgs Messages) RoutingCustomSection() string {
+	return Catalog.Format(msgs.locale, "routingCustomSection", nil)
+}
+
+// RoutingCustomEmpty says "No custom rules. Click 'New Rule' to add rules that take priority over presets."
+// in the language the app shows.
+func RoutingCustomEmpty() string { return In(i18n.Locale()).RoutingCustomEmpty() }
+
+// RoutingCustomEmpty says "No custom rules. Click 'New Rule' to add rules that take priority over presets."
+// in the language of msgs.
+func (msgs Messages) RoutingCustomEmpty() string {
+	return Catalog.Format(msgs.locale, "routingCustomEmpty", nil)
+}
+
 // RoutingPresetsSection says "Preset Rule Groups"
 // in the language the app shows.
 func RoutingPresetsSection() string { return In(i18n.Locale()).RoutingPresetsSection() }
@@ -102,6 +122,26 @@ func RoutingFinalFallback() string { return In(i18n.Locale()).RoutingFinalFallba
 // in the language of msgs.
 func (msgs Messages) RoutingFinalFallback() string {
 	return Catalog.Format(msgs.locale, "routingFinalFallback", nil)
+}
+
+// RoutingFinalDesc says "Fallback outbound action when none of the routing rules match"
+// in the language the app shows.
+func RoutingFinalDesc() string { return In(i18n.Locale()).RoutingFinalDesc() }
+
+// RoutingFinalDesc says "Fallback outbound action when none of the routing rules match"
+// in the language of msgs.
+func (msgs Messages) RoutingFinalDesc() string {
+	return Catalog.Format(msgs.locale, "routingFinalDesc", nil)
+}
+
+// RoutingFinalAlwaysActive says "Always Active"
+// in the language the app shows.
+func RoutingFinalAlwaysActive() string { return In(i18n.Locale()).RoutingFinalAlwaysActive() }
+
+// RoutingFinalAlwaysActive says "Always Active"
+// in the language of msgs.
+func (msgs Messages) RoutingFinalAlwaysActive() string {
+	return Catalog.Format(msgs.locale, "routingFinalAlwaysActive", nil)
 }
 
 // RoutingTagPool says "Tag Pool"
@@ -162,6 +202,16 @@ func EditRule() string { return In(i18n.Locale()).EditRule() }
 // in the language of msgs.
 func (msgs Messages) EditRule() string {
 	return Catalog.Format(msgs.locale, "editRule", nil)
+}
+
+// EditFinalRule says "Edit Fallback Policy"
+// in the language the app shows.
+func EditFinalRule() string { return In(i18n.Locale()).EditFinalRule() }
+
+// EditFinalRule says "Edit Fallback Policy"
+// in the language of msgs.
+func (msgs Messages) EditFinalRule() string {
+	return Catalog.Format(msgs.locale, "editFinalRule", nil)
 }
 
 // DeleteRule says "Delete Rule"
@@ -342,6 +392,318 @@ func RuleGeoIPHint() string { return In(i18n.Locale()).RuleGeoIPHint() }
 // in the language of msgs.
 func (msgs Messages) RuleGeoIPHint() string {
 	return Catalog.Format(msgs.locale, "ruleGeoIPHint", nil)
+}
+
+// RuleDrawerTitle says "Routing Rule Details"
+// in the language the app shows.
+func RuleDrawerTitle() string { return In(i18n.Locale()).RuleDrawerTitle() }
+
+// RuleDrawerTitle says "Routing Rule Details"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerTitle", nil)
+}
+
+// RuleDrawerBasic says "Basic Info"
+// in the language the app shows.
+func RuleDrawerBasic() string { return In(i18n.Locale()).RuleDrawerBasic() }
+
+// RuleDrawerBasic says "Basic Info"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerBasic() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerBasic", nil)
+}
+
+// RuleDrawerAction says "Outbound Action"
+// in the language the app shows.
+func RuleDrawerAction() string { return In(i18n.Locale()).RuleDrawerAction() }
+
+// RuleDrawerAction says "Outbound Action"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerAction() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerAction", nil)
+}
+
+// RuleDrawerCriteria says "Matching Criteria"
+// in the language the app shows.
+func RuleDrawerCriteria() string { return In(i18n.Locale()).RuleDrawerCriteria() }
+
+// RuleDrawerCriteria says "Matching Criteria"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerCriteria() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerCriteria", nil)
+}
+
+// RuleDrawerActionTags says "Target Tags"
+// in the language the app shows.
+func RuleDrawerActionTags() string { return In(i18n.Locale()).RuleDrawerActionTags() }
+
+// RuleDrawerActionTags says "Target Tags"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerActionTags() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerActionTags", nil)
+}
+
+// RuleDrawerNodesOnline says "{count} matched nodes online"
+// in the language the app shows.
+func RuleDrawerNodesOnline(count string) string {
+	return In(i18n.Locale()).RuleDrawerNodesOnline(count)
+}
+
+// RuleDrawerNodesOnline says "{count} matched nodes online"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerNodesOnline(count string) string {
+	return Catalog.Format(msgs.locale, "ruleDrawerNodesOnline", map[string]any{"count": count})
+}
+
+// RuleDrawerNoNodesOnline says "0 matched nodes online (no available dedicated nodes)"
+// in the language the app shows.
+func RuleDrawerNoNodesOnline() string { return In(i18n.Locale()).RuleDrawerNoNodesOnline() }
+
+// RuleDrawerNoNodesOnline says "0 matched nodes online (no available dedicated nodes)"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerNoNodesOnline() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerNoNodesOnline", nil)
+}
+
+// RuleDrawerEdit says "Edit Rule"
+// in the language the app shows.
+func RuleDrawerEdit() string { return In(i18n.Locale()).RuleDrawerEdit() }
+
+// RuleDrawerEdit says "Edit Rule"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerEdit() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerEdit", nil)
+}
+
+// RuleDrawerClose says "Close"
+// in the language the app shows.
+func RuleDrawerClose() string { return In(i18n.Locale()).RuleDrawerClose() }
+
+// RuleDrawerClose says "Close"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerClose() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerClose", nil)
+}
+
+// RuleDrawerNoCriteria says "No specific criteria (matches all unrouted traffic)"
+// in the language the app shows.
+func RuleDrawerNoCriteria() string { return In(i18n.Locale()).RuleDrawerNoCriteria() }
+
+// RuleDrawerNoCriteria says "No specific criteria (matches all unrouted traffic)"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerNoCriteria() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerNoCriteria", nil)
+}
+
+// RuleDrawerRuleID says "Rule ID"
+// in the language the app shows.
+func RuleDrawerRuleID() string { return In(i18n.Locale()).RuleDrawerRuleID() }
+
+// RuleDrawerRuleID says "Rule ID"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerRuleID() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerRuleID", nil)
+}
+
+// RuleDrawerActiveNodes says "Active Nodes"
+// in the language the app shows.
+func RuleDrawerActiveNodes() string { return In(i18n.Locale()).RuleDrawerActiveNodes() }
+
+// RuleDrawerActiveNodes says "Active Nodes"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerActiveNodes() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerActiveNodes", nil)
+}
+
+// RuleDrawerDescBlock says "Traffic matching this rule will be blocked to prevent ads and tracking."
+// in the language the app shows.
+func RuleDrawerDescBlock() string { return In(i18n.Locale()).RuleDrawerDescBlock() }
+
+// RuleDrawerDescBlock says "Traffic matching this rule will be blocked to prevent ads and tracking."
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDescBlock() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDescBlock", nil)
+}
+
+// RuleDrawerDescDirect says "Traffic matching this rule bypasses proxy and connects directly via local network."
+// in the language the app shows.
+func RuleDrawerDescDirect() string { return In(i18n.Locale()).RuleDrawerDescDirect() }
+
+// RuleDrawerDescDirect says "Traffic matching this rule bypasses proxy and connects directly via local network."
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDescDirect() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDescDirect", nil)
+}
+
+// RuleDrawerDescProxyPool says "Traffic will be dispatched across all active nodes in the global proxy pool."
+// in the language the app shows.
+func RuleDrawerDescProxyPool() string { return In(i18n.Locale()).RuleDrawerDescProxyPool() }
+
+// RuleDrawerDescProxyPool says "Traffic will be dispatched across all active nodes in the global proxy pool."
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDescProxyPool() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDescProxyPool", nil)
+}
+
+// RuleDrawerDescProxyPoolEmpty says "No active nodes available in the global proxy pool (0 online)."
+// in the language the app shows.
+func RuleDrawerDescProxyPoolEmpty() string { return In(i18n.Locale()).RuleDrawerDescProxyPoolEmpty() }
+
+// RuleDrawerDescProxyPoolEmpty says "No active nodes available in the global proxy pool (0 online)."
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDescProxyPoolEmpty() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDescProxyPoolEmpty", nil)
+}
+
+// RuleDrawerGeoSiteTitle says "GeoSite Domains"
+// in the language the app shows.
+func RuleDrawerGeoSiteTitle() string { return In(i18n.Locale()).RuleDrawerGeoSiteTitle() }
+
+// RuleDrawerGeoSiteTitle says "GeoSite Domains"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerGeoSiteTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerGeoSiteTitle", nil)
+}
+
+// RuleDrawerGeoIPTitle says "GeoIP Subnets"
+// in the language the app shows.
+func RuleDrawerGeoIPTitle() string { return In(i18n.Locale()).RuleDrawerGeoIPTitle() }
+
+// RuleDrawerGeoIPTitle says "GeoIP Subnets"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerGeoIPTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerGeoIPTitle", nil)
+}
+
+// RuleDrawerDomainSuffixTitle says "Domain Suffixes"
+// in the language the app shows.
+func RuleDrawerDomainSuffixTitle() string { return In(i18n.Locale()).RuleDrawerDomainSuffixTitle() }
+
+// RuleDrawerDomainSuffixTitle says "Domain Suffixes"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDomainSuffixTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDomainSuffixTitle", nil)
+}
+
+// RuleDrawerIPCidrTitle says "IP CIDR Subnets"
+// in the language the app shows.
+func RuleDrawerIPCidrTitle() string { return In(i18n.Locale()).RuleDrawerIPCidrTitle() }
+
+// RuleDrawerIPCidrTitle says "IP CIDR Subnets"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerIPCidrTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerIPCidrTitle", nil)
+}
+
+// RuleDrawerKeywordTitle says "Domain Keywords"
+// in the language the app shows.
+func RuleDrawerKeywordTitle() string { return In(i18n.Locale()).RuleDrawerKeywordTitle() }
+
+// RuleDrawerKeywordTitle says "Domain Keywords"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerKeywordTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerKeywordTitle", nil)
+}
+
+// PresetRuleBlockAds says "Block Ads"
+// in the language the app shows.
+func PresetRuleBlockAds() string { return In(i18n.Locale()).PresetRuleBlockAds() }
+
+// PresetRuleBlockAds says "Block Ads"
+// in the language of msgs.
+func (msgs Messages) PresetRuleBlockAds() string {
+	return Catalog.Format(msgs.locale, "presetRuleBlockAds", nil)
+}
+
+// PresetRuleBlockAdsDesc says "Block common advertising, analytics, and telemetry domains"
+// in the language the app shows.
+func PresetRuleBlockAdsDesc() string { return In(i18n.Locale()).PresetRuleBlockAdsDesc() }
+
+// PresetRuleBlockAdsDesc says "Block common advertising, analytics, and telemetry domains"
+// in the language of msgs.
+func (msgs Messages) PresetRuleBlockAdsDesc() string {
+	return Catalog.Format(msgs.locale, "presetRuleBlockAdsDesc", nil)
+}
+
+// PresetRuleAIServices says "AI Services"
+// in the language the app shows.
+func PresetRuleAIServices() string { return In(i18n.Locale()).PresetRuleAIServices() }
+
+// PresetRuleAIServices says "AI Services"
+// in the language of msgs.
+func (msgs Messages) PresetRuleAIServices() string {
+	return Catalog.Format(msgs.locale, "presetRuleAIServices", nil)
+}
+
+// PresetRuleAIServicesDesc says "Route OpenAI, Claude, Copilot, and other AI traffic to high-speed AI proxy pool"
+// in the language the app shows.
+func PresetRuleAIServicesDesc() string { return In(i18n.Locale()).PresetRuleAIServicesDesc() }
+
+// PresetRuleAIServicesDesc says "Route OpenAI, Claude, Copilot, and other AI traffic to high-speed AI proxy pool"
+// in the language of msgs.
+func (msgs Messages) PresetRuleAIServicesDesc() string {
+	return Catalog.Format(msgs.locale, "presetRuleAIServicesDesc", nil)
+}
+
+// PresetRuleStreaming says "Streaming Services"
+// in the language the app shows.
+func PresetRuleStreaming() string { return In(i18n.Locale()).PresetRuleStreaming() }
+
+// PresetRuleStreaming says "Streaming Services"
+// in the language of msgs.
+func (msgs Messages) PresetRuleStreaming() string {
+	return Catalog.Format(msgs.locale, "presetRuleStreaming", nil)
+}
+
+// PresetRuleStreamingDesc says "Route YouTube, Netflix, Spotify, Disney+ to media proxy pool"
+// in the language the app shows.
+func PresetRuleStreamingDesc() string { return In(i18n.Locale()).PresetRuleStreamingDesc() }
+
+// PresetRuleStreamingDesc says "Route YouTube, Netflix, Spotify, Disney+ to media proxy pool"
+// in the language of msgs.
+func (msgs Messages) PresetRuleStreamingDesc() string {
+	return Catalog.Format(msgs.locale, "presetRuleStreamingDesc", nil)
+}
+
+// PresetRuleGFW says "GFW Proxy"
+// in the language the app shows.
+func PresetRuleGFW() string { return In(i18n.Locale()).PresetRuleGFW() }
+
+// PresetRuleGFW says "GFW Proxy"
+// in the language of msgs.
+func (msgs Messages) PresetRuleGFW() string {
+	return Catalog.Format(msgs.locale, "presetRuleGFW", nil)
+}
+
+// PresetRuleGFWDesc says "Accelerate foreign websites and services blocked by the GFW"
+// in the language the app shows.
+func PresetRuleGFWDesc() string { return In(i18n.Locale()).PresetRuleGFWDesc() }
+
+// PresetRuleGFWDesc says "Accelerate foreign websites and services blocked by the GFW"
+// in the language of msgs.
+func (msgs Messages) PresetRuleGFWDesc() string {
+	return Catalog.Format(msgs.locale, "presetRuleGFWDesc", nil)
+}
+
+// PresetRuleBypassLan says "Bypass Mainland & LAN"
+// in the language the app shows.
+func PresetRuleBypassLan() string { return In(i18n.Locale()).PresetRuleBypassLan() }
+
+// PresetRuleBypassLan says "Bypass Mainland & LAN"
+// in the language of msgs.
+func (msgs Messages) PresetRuleBypassLan() string {
+	return Catalog.Format(msgs.locale, "presetRuleBypassLan", nil)
+}
+
+// PresetRuleBypassLanDesc says "Direct connection for mainland China domains and private LAN subnets"
+// in the language the app shows.
+func PresetRuleBypassLanDesc() string { return In(i18n.Locale()).PresetRuleBypassLanDesc() }
+
+// PresetRuleBypassLanDesc says "Direct connection for mainland China domains and private LAN subnets"
+// in the language of msgs.
+func (msgs Messages) PresetRuleBypassLanDesc() string {
+	return Catalog.Format(msgs.locale, "presetRuleBypassLanDesc", nil)
 }
 
 // UpdateGeoData says "Update GeoData"
@@ -534,21 +896,31 @@ func (msgs Messages) GatewayPortLabel() string {
 	return Catalog.Format(msgs.locale, "gatewayPortLabel", nil)
 }
 
-// GatewayPortHint says "Default 10808 (Mixed HTTP & SOCKS5)"
+// GatewayPortHint says "Default 10809 (Mixed HTTP & SOCKS5)"
 // in the language the app shows.
 func GatewayPortHint() string { return In(i18n.Locale()).GatewayPortHint() }
 
-// GatewayPortHint says "Default 10808 (Mixed HTTP & SOCKS5)"
+// GatewayPortHint says "Default 10809 (Mixed HTTP & SOCKS5)"
 // in the language of msgs.
 func (msgs Messages) GatewayPortHint() string {
 	return Catalog.Format(msgs.locale, "gatewayPortHint", nil)
 }
 
-// ModePortOnly says "Port :10808"
+// TrafficModeLabel says "Mode"
+// in the language the app shows.
+func TrafficModeLabel() string { return In(i18n.Locale()).TrafficModeLabel() }
+
+// TrafficModeLabel says "Mode"
+// in the language of msgs.
+func (msgs Messages) TrafficModeLabel() string {
+	return Catalog.Format(msgs.locale, "trafficModeLabel", nil)
+}
+
+// ModePortOnly says "Port Only"
 // in the language the app shows.
 func ModePortOnly() string { return In(i18n.Locale()).ModePortOnly() }
 
-// ModePortOnly says "Port :10808"
+// ModePortOnly says "Port Only"
 // in the language of msgs.
 func (msgs Messages) ModePortOnly() string {
 	return Catalog.Format(msgs.locale, "modePortOnly", nil)
@@ -564,11 +936,11 @@ func (msgs Messages) ModeSysProxy() string {
 	return Catalog.Format(msgs.locale, "modeSysProxy", nil)
 }
 
-// ModeTun says "TUN Mode"
+// ModeTun says "TUN"
 // in the language the app shows.
 func ModeTun() string { return In(i18n.Locale()).ModeTun() }
 
-// ModeTun says "TUN Mode"
+// ModeTun says "TUN"
 // in the language of msgs.
 func (msgs Messages) ModeTun() string {
 	return Catalog.Format(msgs.locale, "modeTun", nil)

@@ -50,11 +50,14 @@ type deleteDialogState struct {
 type ruleEditorForm struct {
 	open          bool
 	isNew         bool
+	isFinal       bool
 	ruleID        string
 	name          string
 	desc          string
 	actionIndex   int // 0: PROXY_TAG, 1: PROXY_POOL, 2: DIRECT, 3: BLOCK
 	tag           string
+	tags          []string
+	tagQuery      string
 	domainsInput  string
 	cidrsInput    string
 	keywordsInput string
@@ -98,9 +101,11 @@ type app struct {
 	routingPageScroll  ui.ScrollState
 	expandedLogs       map[string]bool
 
-	activeTab         TabID
-	activeLogDrawerID string
-	searchQuery       string
+	activeTab          TabID
+	activeLogDrawerID  string
+	activeRuleDrawerID string
+	activeTagFilter    string
+	searchQuery        string
 
 	batchTesting bool
 	batchStage   string
@@ -118,6 +123,42 @@ type app struct {
 
 func (a *app) catalog() locales.Messages {
 	return locales.In(locales.ResolveLocale(a.state.Language))
+}
+
+func (a *app) localizedRuleName(rule routing.Rule) string {
+	cat := a.catalog()
+	switch rule.ID {
+	case "preset-block-ads":
+		return cat.PresetRuleBlockAds()
+	case "preset-ai-services":
+		return cat.PresetRuleAIServices()
+	case "preset-streaming":
+		return cat.PresetRuleStreaming()
+	case "preset-gfw":
+		return cat.PresetRuleGFW()
+	case "preset-lan-direct":
+		return cat.PresetRuleBypassLan()
+	default:
+		return rule.Name
+	}
+}
+
+func (a *app) localizedRuleDescription(rule routing.Rule) string {
+	cat := a.catalog()
+	switch rule.ID {
+	case "preset-block-ads":
+		return cat.PresetRuleBlockAdsDesc()
+	case "preset-ai-services":
+		return cat.PresetRuleAIServicesDesc()
+	case "preset-streaming":
+		return cat.PresetRuleStreamingDesc()
+	case "preset-gfw":
+		return cat.PresetRuleGFWDesc()
+	case "preset-lan-direct":
+		return cat.PresetRuleBypassLanDesc()
+	default:
+		return rule.Description
+	}
 }
 
 func (a *app) toggleSidebar() {
@@ -695,7 +736,7 @@ func (a *app) startGateway() error {
 	}
 	port := a.state.GatewayPort
 	if port <= 0 {
-		port = 10808
+		port = 10809
 	}
 	gw, err := gateway.New(gateway.Options{
 		BindAddr: fmt.Sprintf("127.0.0.1:%d", port),
@@ -916,7 +957,8 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 		}
 
 	case routing.ActionProxyTag:
-		if a.mgr != nil && action.Tag != "" {
+		tags := action.GetTags()
+		if a.mgr != nil && len(tags) > 0 {
 			var tagSvcs []config.Service
 			var tagIDs []string
 			var stoppedTagSvcs []config.Service
@@ -924,8 +966,13 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 			for _, svc := range a.state.Services {
 				hasTag := false
 				for _, t := range svc.Tags {
-					if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(action.Tag)) {
-						hasTag = true
+					for _, targetTag := range tags {
+						if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(targetTag)) {
+							hasTag = true
+							break
+						}
+					}
+					if hasTag {
 						break
 					}
 				}

@@ -33,7 +33,7 @@ type Gateway struct {
 
 func New(opts Options) (*Gateway, error) {
 	if opts.BindAddr == "" {
-		opts.BindAddr = "127.0.0.1:10808"
+		opts.BindAddr = "127.0.0.1:10809"
 	}
 	return &Gateway{
 		opts: opts,

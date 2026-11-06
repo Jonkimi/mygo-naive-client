@@ -20,7 +20,18 @@ const (
 type RouteAction struct {
 	Type      ActionType `json:"type"`
 	Tag       string     `json:"tag,omitempty"`
+	Tags      []string   `json:"tags,omitempty"`
 	ServiceID string     `json:"serviceId,omitempty"`
+}
+
+func (a RouteAction) GetTags() []string {
+	if len(a.Tags) > 0 {
+		return a.Tags
+	}
+	if a.Tag != "" {
+		return []string{a.Tag}
+	}
+	return nil
 }
 
 type Rule struct {
@@ -59,8 +70,20 @@ func NewRouter(rules []Rule, finalAction RouteAction) *Router {
 	if finalAction.Type == "" {
 		finalAction = RouteAction{Type: ActionProxyPool}
 	}
+	// Custom rules evaluate with higher priority before preset rules
+	var ordered []Rule
+	for _, r := range rules {
+		if !strings.HasPrefix(r.ID, "preset-") {
+			ordered = append(ordered, r)
+		}
+	}
+	for _, r := range rules {
+		if strings.HasPrefix(r.ID, "preset-") {
+			ordered = append(ordered, r)
+		}
+	}
 	r := &Router{
-		rules:       rules,
+		rules:       ordered,
 		finalAction: finalAction,
 	}
 	r.compile()
@@ -178,76 +201,43 @@ func DefaultPresets() []Rule {
 	return []Rule{
 		{
 			ID:          "preset-block-ads",
-			Name:        "广告拦截 (Ad Blocker)",
+			Name:        "广告拦截",
 			Description: "拦截常见广告、追踪统计与恶意分析域名",
 			Enabled:     true,
-			DomainSuffix: []string{
-				"doubleclick.net",
-				"googleadservices.com",
-				"adservice.google.com",
-				"pagead2.googlesyndication.com",
-				"unityads.unity3d.com",
-			},
-			GeoSite: []string{"category-ads-all"},
-			Action:  RouteAction{Type: ActionBlock},
+			GeoSite:     []string{"category-ads-all"},
+			Action:      RouteAction{Type: ActionBlock},
 		},
 		{
 			ID:          "preset-ai-services",
-			Name:        "AI 与大模型服务",
+			Name:        "AI 服务",
 			Description: "将 OpenAI、Claude、Copilot 等 AI 流量调度至高速 AI 节点池",
 			Enabled:     true,
-			DomainSuffix: []string{
-				"openai.com",
-				"chatgpt.com",
-				"oaistatic.com",
-				"oaiusercontent.com",
-				"anthropic.com",
-				"claude.ai",
-				"meta.ai",
-				"copilot.microsoft.com",
-				"perplex.ai",
-				"perplexity.ai",
-			},
-			GeoSite: []string{"openai"},
-			Action:  RouteAction{Type: ActionProxyTag, Tag: "AI"},
+			GeoSite:     []string{"category-ai-!cn", "openai"},
+			Action:      RouteAction{Type: ActionProxyTag, Tag: "AI", Tags: []string{"AI"}},
 		},
 		{
 			ID:          "preset-streaming",
-			Name:        "流媒体加速",
+			Name:        "流媒体服务",
 			Description: "将 YouTube、Netflix、Spotify、Disney+ 调度至流媒体节点池",
 			Enabled:     true,
-			DomainSuffix: []string{
-				"netflix.com",
-				"nflxvideo.net",
-				"youtube.com",
-				"googlevideo.com",
-				"ytimg.com",
-				"spotify.com",
-				"scdn.co",
-				"disneyplus.com",
-			},
-			GeoSite: []string{"netflix", "youtube", "spotify"},
-			Action:  RouteAction{Type: ActionProxyTag, Tag: "Media"},
+			GeoSite:     []string{"netflix", "youtube", "spotify"},
+			Action:      RouteAction{Type: ActionProxyTag, Tag: "Media", Tags: []string{"Media"}},
 		},
 		{
-			ID:          "preset-telegram",
-			Name:        "Telegram 专线",
-			Description: "加速 Telegram 消息与媒体收发",
+			ID:          "preset-gfw",
+			Name:        "GFW 专线",
+			Description: "加速受 GFW 阻断的境外网站与服务",
 			Enabled:     true,
-			DomainSuffix: []string{
-				"telegram.org",
-				"t.me",
-				"telegra.ph",
-				"tdesktop.com",
-			},
-			GeoSite: []string{"telegram"},
-			Action:  RouteAction{Type: ActionProxyTag, Tag: "TG"},
+			GeoSite:     []string{"gfw"},
+			Action:      RouteAction{Type: ActionProxyTag, Tag: "GFW", Tags: []string{"GFW"}},
 		},
 		{
 			ID:          "preset-lan-direct",
-			Name:        "绕过局域网与私有地址",
-			Description: "本地与私有网段直连，不走代理",
+			Name:        "绕过大陆及局域网",
+			Description: "中国大陆网站与局域网私有网段直连，不走代理",
 			Enabled:     true,
+			GeoSite:     []string{"cn"},
+			GeoIP:       []string{"cn", "private"},
 			IPCidr: []string{
 				"127.0.0.0/8",
 				"10.0.0.0/8",
@@ -264,9 +254,7 @@ func DefaultPresets() []Rule {
 				"internal",
 				"lan",
 			},
-			GeoSite: []string{"cn"},
-			GeoIP:   []string{"cn", "private"},
-			Action:  RouteAction{Type: ActionDirect},
+			Action:      RouteAction{Type: ActionDirect},
 		},
 	}
 }

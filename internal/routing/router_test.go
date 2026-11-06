@@ -90,10 +90,30 @@ func TestRouter_MatchRulesAndFinalAction(t *testing.T) {
 	}
 }
 
-// Tests that DefaultPresets returns the standard set of preset rule groups.
+// Tests that DefaultPresets returns the standard set of 5 preset rule groups (merged LAN and CN direct) and direct LAN matches.
 func TestRouter_DefaultPresets(t *testing.T) {
 	presets := DefaultPresets()
-	if len(presets) < 4 {
-		t.Fatalf("expected at least 4 default preset rules, got %d", len(presets))
+	if len(presets) != 5 {
+		t.Fatalf("expected 5 default preset rules, got %d", len(presets))
+	}
+
+	r := NewRouter(presets, RouteAction{Type: ActionProxyPool})
+
+	// Private and loopback IPs should directly match preset-lan-direct without geodata
+	testTargets := []string{
+		"192.168.1.1:80",
+		"10.0.0.2:443",
+		"127.0.0.1:8080",
+		"172.16.10.5:22",
+		"169.254.1.1:80",
+		"::1",
+		"nas.local:5000",
+		"server.lan:80",
+	}
+	for _, target := range testTargets {
+		act, ruleName := r.Match(target)
+		if act.Type != ActionDirect || ruleName != "绕过大陆及局域网" {
+			t.Fatalf("target %s should match '绕过大陆及局域网' ActionDirect, got %+v from rule %s", target, act, ruleName)
+		}
 	}
 }
