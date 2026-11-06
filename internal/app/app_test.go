@@ -462,6 +462,20 @@ func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
 		t.Fatalf("expected activeTab = TabSettings, got %v", a.activeTab)
 	}
 
+	// Switch back to Nodes via Cmd+1
+	tt.Key(ui.Cmd, ui.Key1)
+	tt.Frame()
+	if a.activeTab != TabNodes {
+		t.Fatalf("expected activeTab = TabNodes, got %v", a.activeTab)
+	}
+
+	// Test industry-standard Cmd+, shortcut to navigate to Settings
+	tt.Key(ui.Cmd, ui.KeyComma)
+	tt.Frame()
+	if a.activeTab != TabSettings {
+		t.Fatalf("expected activeTab = TabSettings after Cmd+Comma, got %v", a.activeTab)
+	}
+
 	// Switch to English on settings workbench page
 	if err := tt.Click("English"); err != nil {
 		t.Fatalf("click English: %v", err)
