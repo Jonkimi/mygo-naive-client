@@ -1384,3 +1384,72 @@ func TestRoutingWorkbench_NavigationAndToggle(t *testing.T) {
 		t.Fatalf("expected doubleclick.net not blocked after disabling rule")
 	}
 }
+
+// Tests full CRUD configuration of routing rules: creating, editing, deleting, and resetting presets.
+func TestRoutingWorkbench_RuleConfigurationCRUD(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// Switch to Routing tab
+	tt.Key(ui.Cmd, ui.Key2)
+	tt.Frame()
+
+	initialCount := len(a.state.RoutingRules)
+
+	// 1. Create a new custom rule
+	if err := tt.Click(a.catalog().NewRule()); err != nil {
+		t.Fatalf("click NewRule button: %v", err)
+	}
+	tt.Frame()
+
+	if !a.ruleEditor.open {
+		t.Fatalf("expected ruleEditor to be open")
+	}
+
+	a.ruleEditor.name = "My Custom Work Rule"
+	a.ruleEditor.domainsInput = "custom-corp.net\ngit.custom-corp.net"
+	a.ruleEditor.actionIndex = 2 // DIRECT
+	a.saveRuleEditor()
+	tt.Frame()
+
+	if a.ruleEditor.open {
+		t.Fatalf("expected ruleEditor closed after save")
+	}
+	if len(a.state.RoutingRules) != initialCount+1 {
+		t.Fatalf("expected rules count %d, got %d", initialCount+1, len(a.state.RoutingRules))
+	}
+
+	// Verify custom rule matches DIRECT
+	act1, ruleName1 := a.router.Match("api.custom-corp.net:443")
+	if act1.Type != routing.ActionDirect || ruleName1 != "My Custom Work Rule" {
+		t.Fatalf("expected ActionDirect from 'My Custom Work Rule', got %+v (%s)", act1, ruleName1)
+	}
+
+	// 2. Edit the custom rule
+	lastRule := a.state.RoutingRules[len(a.state.RoutingRules)-1]
+	a.openEditRuleDialog(lastRule)
+	tt.Frame()
+
+	a.ruleEditor.domainsInput = "new-corp.com"
+	a.saveRuleEditor()
+	tt.Frame()
+
+	act2, ruleName2 := a.router.Match("service.new-corp.com:80")
+	if act2.Type != routing.ActionDirect || ruleName2 != "My Custom Work Rule" {
+		t.Fatalf("expected ActionDirect for new-corp.com, got %+v (%s)", act2, ruleName2)
+	}
+
+	// 3. Delete the custom rule
+	a.deleteRule(lastRule.ID)
+	tt.Frame()
+
+	if len(a.state.RoutingRules) != initialCount {
+		t.Fatalf("expected rules count back to %d, got %d", initialCount, len(a.state.RoutingRules))
+	}
+
+	// 4. Reset presets
+	a.resetRoutingPresets()
+	tt.Frame()
+	if len(a.state.RoutingRules) != len(routing.DefaultPresets()) {
+		t.Fatalf("expected default presets count %d, got %d", len(routing.DefaultPresets()), len(a.state.RoutingRules))
+	}
+}

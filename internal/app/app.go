@@ -46,6 +46,20 @@ type deleteDialogState struct {
 	svcName string
 }
 
+type ruleEditorForm struct {
+	open          bool
+	isNew         bool
+	ruleID        string
+	name          string
+	desc          string
+	actionIndex   int // 0: PROXY_TAG, 1: PROXY_POOL, 2: DIRECT, 3: BLOCK
+	tag           string
+	domainsInput  string
+	cidrsInput    string
+	keywordsInput string
+	errText       string
+}
+
 type app struct {
 	win      *mygo.Window
 	tray     *mygo.Tray
@@ -83,9 +97,10 @@ type app struct {
 	batchStage   string
 	batchCancel  context.CancelFunc
 
-	editor    editorForm
-	importDlg importDialogState
-	deleteDlg deleteDialogState
+	editor     editorForm
+	importDlg  importDialogState
+	deleteDlg  deleteDialogState
+	ruleEditor ruleEditorForm
 
 	pendingToast string
 	clipboardMem string // fallback clipboard used in headless tests
