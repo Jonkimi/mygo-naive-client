@@ -1453,3 +1453,140 @@ func TestRoutingWorkbench_RuleConfigurationCRUD(t *testing.T) {
 		t.Fatalf("expected default presets count %d, got %d", len(routing.DefaultPresets()), len(a.state.RoutingRules))
 	}
 }
+
+// Tests that when a PROXY_TAG rule is hit and its nodes are stopped, the gateway automatically
+// launches the matching service on-demand (decision 5 in ADR-0002).
+func TestGateway_OnDemandTagPoolAutoStart(t *testing.T) {
+	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("proxyLn listen: %v", err)
+	}
+	defer proxyLn.Close()
+
+	go func() {
+		for {
+			conn, err := proxyLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 256)
+				if _, err := io.ReadAtLeast(c, buf, 3); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{0x05, 0x00}) // NO_AUTH
+				reqBuf := make([]byte, 256)
+				if _, err := io.ReadAtLeast(c, reqBuf, 7); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+				io.Copy(c, c)
+			}(conn)
+		}
+	}()
+
+	proxyHost, proxyPortStr, _ := net.SplitHostPort(proxyLn.Addr().String())
+	proxyPort, _ := strconv.Atoi(proxyPortStr)
+
+	// Node with "AI" tag, intentionally NOT started
+	svcA := config.Service{
+		ID:          "dormant-ai-node",
+		Name:        "Dormant AI Node",
+		Kind:        config.KindExternalProxy,
+		ExternalURI: fmt.Sprintf("socks5://%s:%d", proxyHost, proxyPort),
+		Tags:        []string{"AI"},
+	}
+
+	a, _, _ := newTestApp(t, []config.Service{svcA})
+	gwPort := freeLocalPort(t)
+	a.state.GatewayPort = gwPort
+	a.state.GatewayEnabled = true
+	// Notice: svcA is NOT started!
+	if a.mgr.StatusOf("dormant-ai-node").State == runner.StateRunning {
+		t.Fatalf("dormant node should not be running initially")
+	}
+
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	// Dial "chatgpt.com:443" through gateway, which matches AI preset -> PROXY_TAG("AI")
+	conn, err := net.DialTimeout("tcp", a.gateway.Addr(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer conn.Close()
+
+	_, _ = conn.Write([]byte{0x05, 0x01, 0x00})
+	rBuf := make([]byte, 2)
+	_, _ = io.ReadFull(conn, rBuf)
+
+	targetDomain := "chatgpt.com"
+	req := []byte{0x05, 0x01, 0x00, 0x03, byte(len(targetDomain))}
+	req = append(req, []byte(targetDomain)...)
+	req = append(req, 0x01, 0xbb)
+	_, _ = conn.Write(req)
+
+	resp := make([]byte, 10)
+	_, err = io.ReadFull(conn, resp)
+	if err != nil || resp[1] != 0x00 {
+		t.Fatalf("expected connect success through on-demand started node, got %v (err=%v)", resp, err)
+	}
+
+	// Verify that the dormant service was automatically started by the gateway!
+	if a.mgr.StatusOf("dormant-ai-node").State != runner.StateRunning {
+		t.Fatalf("expected dormant-ai-node to be automatically started into StateRunning, got %v", a.mgr.StatusOf("dormant-ai-node").State)
+	}
+}
+
+// Tests GeoData status badge and update trigger in Settings and Routing tab.
+func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// Check initial geodata state (missing)
+	if a.hasGeoData() {
+		t.Fatalf("expected geodata not present initially")
+	}
+
+	// Navigate to settings and check status badge
+	if err := tt.Click(a.catalog().NavSettings()); err != nil {
+		t.Fatalf("click settings: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText(a.catalog().GeodataStatusMissing()) {
+		t.Fatalf("expected missing geodata badge in settings")
+	}
+
+	// Navigate to Routing
+	tt.Key(ui.Cmd, ui.Key2)
+	tt.Frame()
+
+	// Verify Update GeoData button is rendered
+	if !tt.HasText(a.catalog().UpdateGeoData()) {
+		t.Fatalf("expected UpdateGeoData button in routing workbench")
+	}
+
+	// Create a rule with GeoSite and GeoIP
+	a.openCreateRuleDialog()
+	tt.Frame()
+	a.ruleEditor.name = "China Traffic"
+	a.ruleEditor.geositeInput = "cn"
+	a.ruleEditor.geoipInput = "cn"
+	a.ruleEditor.actionIndex = 2 // DIRECT
+	a.saveRuleEditor()
+	tt.Frame()
+
+	// Verify rule was added with geosite/geoip
+	createdRule := a.state.RoutingRules[len(a.state.RoutingRules)-1]
+	if len(createdRule.GeoSite) != 1 || createdRule.GeoSite[0] != "cn" {
+		t.Fatalf("expected geosite:cn in created rule, got %v", createdRule.GeoSite)
+	}
+	if len(createdRule.GeoIP) != 1 || createdRule.GeoIP[0] != "cn" {
+		t.Fatalf("expected geoip:cn in created rule, got %v", createdRule.GeoIP)
+	}
+	if !tt.HasText("geosite:cn") || !tt.HasText("geoip:cn") {
+		t.Fatalf("expected geosite:cn and geoip:cn pills on the workbench")
+	}
+}

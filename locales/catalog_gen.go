@@ -284,6 +284,86 @@ func (msgs Messages) RuleKeywordsHint() string {
 	return Catalog.Format(msgs.locale, "ruleKeywordsHint", nil)
 }
 
+// RuleGeoSiteLabel says "GeoSite Tags"
+// in the language the app shows.
+func RuleGeoSiteLabel() string { return In(i18n.Locale()).RuleGeoSiteLabel() }
+
+// RuleGeoSiteLabel says "GeoSite Tags"
+// in the language of msgs.
+func (msgs Messages) RuleGeoSiteLabel() string {
+	return Catalog.Format(msgs.locale, "ruleGeoSiteLabel", nil)
+}
+
+// RuleGeoSiteHint says "e.g. cn, apple, google, category-ads-all"
+// in the language the app shows.
+func RuleGeoSiteHint() string { return In(i18n.Locale()).RuleGeoSiteHint() }
+
+// RuleGeoSiteHint says "e.g. cn, apple, google, category-ads-all"
+// in the language of msgs.
+func (msgs Messages) RuleGeoSiteHint() string {
+	return Catalog.Format(msgs.locale, "ruleGeoSiteHint", nil)
+}
+
+// RuleGeoIPLabel says "GeoIP Tags"
+// in the language the app shows.
+func RuleGeoIPLabel() string { return In(i18n.Locale()).RuleGeoIPLabel() }
+
+// RuleGeoIPLabel says "GeoIP Tags"
+// in the language of msgs.
+func (msgs Messages) RuleGeoIPLabel() string {
+	return Catalog.Format(msgs.locale, "ruleGeoIPLabel", nil)
+}
+
+// RuleGeoIPHint says "e.g. cn, private"
+// in the language the app shows.
+func RuleGeoIPHint() string { return In(i18n.Locale()).RuleGeoIPHint() }
+
+// RuleGeoIPHint says "e.g. cn, private"
+// in the language of msgs.
+func (msgs Messages) RuleGeoIPHint() string {
+	return Catalog.Format(msgs.locale, "ruleGeoIPHint", nil)
+}
+
+// UpdateGeoData says "Update GeoData"
+// in the language the app shows.
+func UpdateGeoData() string { return In(i18n.Locale()).UpdateGeoData() }
+
+// UpdateGeoData says "Update GeoData"
+// in the language of msgs.
+func (msgs Messages) UpdateGeoData() string {
+	return Catalog.Format(msgs.locale, "updateGeoData", nil)
+}
+
+// GeodataSectionTitle says "Routing GeoData Database"
+// in the language the app shows.
+func GeodataSectionTitle() string { return In(i18n.Locale()).GeodataSectionTitle() }
+
+// GeodataSectionTitle says "Routing GeoData Database"
+// in the language of msgs.
+func (msgs Messages) GeodataSectionTitle() string {
+	return Catalog.Format(msgs.locale, "geodataSectionTitle", nil)
+}
+
+// GeodataStatusReady says "GeoData Ready"
+// in the language the app shows.
+func GeodataStatusReady() string { return In(i18n.Locale()).GeodataStatusReady() }
+
+// GeodataStatusReady says "GeoData Ready"
+// in the language of msgs.
+func (msgs Messages) GeodataStatusReady() string {
+	return Catalog.Format(msgs.locale, "geodataStatusReady", nil)
+}
+
+// GeodataStatusMissing says "GeoData Missing (click to download)"
+// in the language the app shows.
+func GeodataStatusMissing() string { return In(i18n.Locale()).GeodataStatusMissing() }
+
+// GeodataStatusMissing says "GeoData Missing (click to download)"
+// in the language of msgs.
+func (msgs Messages) GeodataStatusMissing() string {
+	return Catalog.Format(msgs.locale, "geodataStatusMissing", nil)
+}
+
 // ResetPresets says "Reset Defaults"
 // in the language the app shows.
 func ResetPresets() string { return In(i18n.Locale()).ResetPresets() }
