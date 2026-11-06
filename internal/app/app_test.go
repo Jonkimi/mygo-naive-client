@@ -1595,6 +1595,109 @@ func TestGateway_OnDemandTagPoolAutoStart(t *testing.T) {
 	}
 }
 
+// Tests that when PROXY_POOL has 0 active nodes online, traffic does not silently fallback to direct (preventing IP leaks).
+func TestGateway_ProxyPoolEmptyRejectsWithoutSilentDirect(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	gwPort := freeLocalPort(t)
+	a.state.GatewayPort = gwPort
+	a.state.GatewayEnabled = true
+	a.syncRouter()
+
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	c, err := net.DialTimeout("tcp", a.gateway.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer c.Close()
+
+	// SOCKS5 greeting
+	_, _ = c.Write([]byte{0x05, 0x01, 0x00})
+	rBuf := make([]byte, 2)
+	if _, err := io.ReadFull(c, rBuf); err != nil {
+		t.Fatalf("read greeting response: %v", err)
+	}
+
+	// SOCKS5 CONNECT request to a domain requiring proxy (hits finalAction PROXY_POOL)
+	targetDomain := "blocked-external-site.com"
+	req := []byte{0x05, 0x01, 0x00, 0x03, byte(len(targetDomain))}
+	req = append(req, []byte(targetDomain)...)
+	req = append(req, 0x01, 0xbb)
+	_, _ = c.Write(req)
+
+	resp := make([]byte, 10)
+	_, err = io.ReadFull(c, resp)
+	// Must not succeed (0x00) with silent direct dial; must return error or SOCKS5 failure status
+	if err == nil && resp[1] == 0x00 {
+		t.Fatalf("expected failure when proxy pool is empty, but got SOCKS5 success (silent direct fallback leak)")
+	}
+}
+
+// Tests that when a PROXY_TAG rule is hit but has 0 active nodes, traffic does not fall back to other proxies or direct.
+func TestGateway_ProxyTagEmptyRejectsWithoutFallback(t *testing.T) {
+	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("proxyLn listen: %v", err)
+	}
+	defer proxyLn.Close()
+
+	proxyHost, proxyPortStr, _ := net.SplitHostPort(proxyLn.Addr().String())
+	proxyPort, _ := strconv.Atoi(proxyPortStr)
+
+	svcHK := config.Service{
+		ID:          "node-hk",
+		Name:        "HK Node",
+		Kind:        config.KindExternalProxy,
+		ExternalURI: fmt.Sprintf("socks5://%s:%d", proxyHost, proxyPort),
+		Tags:        []string{"HK"},
+	}
+
+	a, _, _ := newTestApp(t, []config.Service{svcHK})
+	gwPort := freeLocalPort(t)
+	a.state.GatewayPort = gwPort
+	a.state.GatewayEnabled = true
+	for i := range a.state.RoutingRules {
+		if a.state.RoutingRules[i].ID == "preset-ai-services" {
+			a.state.RoutingRules[i].DomainSuffix = []string{"chatgpt.com"}
+		}
+	}
+	a.syncRouter()
+	_ = a.mgr.Start(svcHK)
+
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	c, err := net.DialTimeout("tcp", a.gateway.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer c.Close()
+
+	_, _ = c.Write([]byte{0x05, 0x01, 0x00})
+	rBuf := make([]byte, 2)
+	if _, err := io.ReadFull(c, rBuf); err != nil {
+		t.Fatalf("read greeting response: %v", err)
+	}
+
+	// Request chatgpt.com which matches PROXY_TAG "AI", where 0 AI nodes exist
+	targetDomain := "chatgpt.com"
+	req := []byte{0x05, 0x01, 0x00, 0x03, byte(len(targetDomain))}
+	req = append(req, []byte(targetDomain)...)
+	req = append(req, 0x01, 0xbb)
+	_, _ = c.Write(req)
+
+	resp := make([]byte, 10)
+	_, err = io.ReadFull(c, resp)
+	if err == nil && resp[1] == 0x00 {
+		t.Fatalf("expected failure when tag has 0 online nodes, but got success (unexpected fallback)")
+	}
+}
+
 // Tests GeoData status badge and update trigger in Settings and Routing tab.
 func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)

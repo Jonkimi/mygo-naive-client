@@ -946,15 +946,21 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 	case routing.ActionProxyService:
 		if a.mgr != nil && action.ServiceID != "" {
 			for _, svc := range a.state.Services {
-				if svc.ID == action.ServiceID && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-					ep, err := svc.OutboundEndpoint()
-					if err == nil {
+				if svc.ID == action.ServiceID {
+					if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+						ep, err := svc.OutboundEndpoint()
+						if err != nil {
+							return nil, svc.ID, err
+						}
 						conn, err := runner.DialEndpoint(ctx, ep, target)
 						return conn, svc.ID, err
 					}
+					return nil, "", fmt.Errorf("proxy service %s is not running for %s", action.ServiceID, target)
 				}
 			}
+			return nil, "", fmt.Errorf("proxy service %s not found for %s", action.ServiceID, target)
 		}
+		return nil, "", fmt.Errorf("no proxy service specified for %s", target)
 
 	case routing.ActionProxyTag:
 		tags := action.GetTags()
@@ -1019,7 +1025,9 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 					}
 				}
 			}
+			return nil, "", fmt.Errorf("no active proxy available for tag(s) %s for %s", strings.Join(tags, ","), target)
 		}
+		return nil, "", fmt.Errorf("no tag specified for proxy tag route for %s", target)
 	}
 
 	// 3. Fallback: Global active ProxyPool
@@ -1036,9 +1044,7 @@ func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, str
 	}
 
 	if len(runningSvcs) == 0 {
-		var d net.Dialer
-		conn, err := d.DialContext(ctx, "tcp", target)
-		return conn, "direct", err
+		return nil, "", fmt.Errorf("no active proxy available in pool for %s", target)
 	}
 
 	bestID := runningIDs[0]
