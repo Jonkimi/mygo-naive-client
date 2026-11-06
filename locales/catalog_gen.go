@@ -936,11 +936,11 @@ func (msgs Messages) DnsDomesticLabel() string {
 	return Catalog.Format(msgs.locale, "dnsDomesticLabel", nil)
 }
 
-// DnsDomesticHint says "Default: https://dns.alidns.com/dns-query (invoked during routing for resolution)"
+// DnsDomesticHint says "Default: https://223.5.5.5/dns-query (invoked during routing for resolution)"
 // in the language the app shows.
 func DnsDomesticHint() string { return In(i18n.Locale()).DnsDomesticHint() }
 
-// DnsDomesticHint says "Default: https://dns.alidns.com/dns-query (invoked during routing for resolution)"
+// DnsDomesticHint says "Default: https://223.5.5.5/dns-query (invoked during routing for resolution)"
 // in the language of msgs.
 func (msgs Messages) DnsDomesticHint() string {
 	return Catalog.Format(msgs.locale, "dnsDomesticHint", nil)
@@ -996,11 +996,11 @@ func (msgs Messages) DohBootstrapLabel() string {
 	return Catalog.Format(msgs.locale, "dohBootstrapLabel", nil)
 }
 
-// DohBootstrapHint says "Leave empty for defaults: https://dns.alidns.com/dns-query"
+// DohBootstrapHint says "Leave empty for defaults: https://223.5.5.5/dns-query"
 // in the language the app shows.
 func DohBootstrapHint() string { return In(i18n.Locale()).DohBootstrapHint() }
 
-// DohBootstrapHint says "Leave empty for defaults: https://dns.alidns.com/dns-query"
+// DohBootstrapHint says "Leave empty for defaults: https://223.5.5.5/dns-query"
 // in the language of msgs.
 func (msgs Messages) DohBootstrapHint() string {
 	return Catalog.Format(msgs.locale, "dohBootstrapHint", nil)
