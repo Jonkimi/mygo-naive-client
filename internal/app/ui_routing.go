@@ -454,6 +454,7 @@ func (a *app) saveRuleEditor() {
 
 func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 	cat := a.catalog()
+	hasGeo := a.hasGeoData()
 
 	ui.Scroll(c.Key("routing-page-scroll")).
 		TrackScroll(&a.routingPageScroll).
@@ -466,8 +467,18 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.RoutingTitle()).FontSize(18).FontWeight(700).TextColor(p.text)
 
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if actionChip(c.Key("btn-update-geodata"), p, iconDownload, cat.UpdateGeoData(), a.updatingGeoData).Clicked() {
-							a.triggerUpdateGeoData()
+						if !hasGeo {
+							btnText := cat.UpdateGeoData()
+							if a.updatingGeoData {
+								btnText = cat.Updating()
+							}
+							if primaryPillButton(c.Key("btn-update-geodata"), p, iconDownload, btnText, p.amber, a.updatingGeoData).Clicked() {
+								a.triggerUpdateGeoData()
+							}
+						} else {
+							if actionChip(c.Key("btn-update-geodata"), p, iconDownload, cat.UpdateGeoData(), a.updatingGeoData).Clicked() {
+								a.triggerUpdateGeoData()
+							}
 						}
 						if actionChip(c.Key("btn-reset-presets"), p, iconRefresh, cat.ResetPresets(), false).Clicked() {
 							a.resetRoutingPresets()
@@ -500,6 +511,27 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 				})
 			})
 
+			// Missing GeoData Callout Banner
+			if !hasGeo {
+				ui.Row(c.Key("banner-geodata-missing")).
+					AlignItems(ui.Center).Justify(ui.SpaceBetween).
+					Padding(10, 14, 10, 14).Radius(8).
+					Background(p.amberBg).Border(1, p.amber.Alpha(0.3)).
+					Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+							ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amber)
+							ui.Text(c, cat.RoutingGeodataBanner()).FontSize(12).FontWeight(500).TextColor(p.amber)
+						})
+						btnText := cat.UpdateGeoData()
+						if a.updatingGeoData {
+							btnText = cat.Updating()
+						}
+						if primaryPillButton(c.Key("btn-banner-download-geodata"), p, iconDownload, btnText, p.amber, a.updatingGeoData).Clicked() {
+							a.triggerUpdateGeoData()
+						}
+					})
+			}
+
 			// Presets Section Header
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 				ui.Text(c, cat.RoutingPresetsSection()).FontSize(14).FontWeight(600).TextColor(p.text)
@@ -510,11 +542,19 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 			for idx := range a.state.RoutingRules {
 				ruleIndex := idx
 				rule := a.state.RoutingRules[ruleIndex]
+				hasGeoCriteria := len(rule.GeoSite) > 0 || len(rule.GeoIP) > 0
+				hasOtherCriteria := len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0
+
+				cardBorder := p.borderSubtle
+				cardBg := p.card
+				if rule.Enabled && hasGeoCriteria && !hasGeo && !hasOtherCriteria {
+					cardBorder = p.amber.Alpha(0.3)
+				}
 
 				ui.Column(c.Key(fmt.Sprintf("rule-card-%s", rule.ID))).
 					Padding(14).Radius(8).Gap(10).
-					Background(p.card).
-					Border(1, p.borderSubtle).
+					Background(cardBg).
+					Border(1, cardBorder).
 					Children(func() {
 						// Header row: Name + Action Badge + Edit/Delete + Switch
 						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
@@ -536,6 +576,15 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 									}
 								default:
 									statusBadge(c, cat.RoutingProxyPool(), p.green, p.greenBg)
+								}
+
+								// If GeoData is missing and rule has Geo criteria, show status badge
+								if rule.Enabled && hasGeoCriteria && !hasGeo {
+									if !hasOtherCriteria {
+										statusBadge(c, cat.RulePendingGeoData(), p.amber, p.amberBg)
+									} else {
+										tagPill(c, cat.RulePartialGeoPending(), p.amber, p.amberBg)
+									}
 								}
 
 								if pref := a.preferredNodeForRule(rule); pref != "" {
@@ -568,10 +617,18 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 						// Domain suffixes / criteria pills
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
 							for _, gs := range rule.GeoSite {
-								tagPill(c, "geosite:"+gs, p.accentText, p.accentBg)
+								if hasGeo {
+									tagPill(c, "geosite:"+gs, p.accentText, p.accentBg)
+								} else {
+									tagPill(c, "geosite:"+gs+" (待规则库)", p.amber, p.amberBg)
+								}
 							}
 							for _, gi := range rule.GeoIP {
-								tagPill(c, "geoip:"+gi, p.accentText, p.accentBg)
+								if hasGeo {
+									tagPill(c, "geoip:"+gi, p.accentText, p.accentBg)
+								} else {
+									tagPill(c, "geoip:"+gi+" (待规则库)", p.amber, p.amberBg)
+								}
 							}
 							for _, d := range rule.DomainSuffix {
 								tagPill(c, d, p.textMuted, p.surface)
