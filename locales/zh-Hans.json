@@ -334,5 +334,121 @@
   "engineStatusPillTitle": "多引擎状态",
   "tagSingBox": "SING-BOX",
   "tagSidecar": "SIDECAR",
-  "tagLoopback": "回环"
+  "tagLoopback": "回环",
+  "tagBuiltin": "内置",
+  "engineMissingSidecar": "缺少 Sidecar 核心",
+  "sidecarsRunning": "{count} 个 Sidecar 运行中",
+  "@sidecarsRunning": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "sidecarsReady": "Sidecars 就绪",
+  "updateAvailableBadge": "↑ 可更新",
+  "engineStatusPillHint": "点击打开「设置 -> 核心管理」",
+  "coreNewVersion": "新版本 {version}",
+  "@coreNewVersion": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "coreUpdateTo": "更新至 {version}",
+  "@coreUpdateTo": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "coreSeamlessUpdateTo": "无感更新至 {version}",
+  "@coreSeamlessUpdateTo": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "tagFilterAll": "全部",
+  "emptyNodesWithTag": "暂无带有 #{tag} 标签的节点",
+  "@emptyNodesWithTag": {
+    "placeholders": {
+      "tag": { "type": "String" }
+    }
+  },
+  "viewAllNodes": "查看全部节点",
+  "concurrencyPill": "{count}x 并发",
+  "@concurrencyPill": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "restartsPill": "已重试 {count} 次",
+  "@restartsPill": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "latencyPill": "真实 {ms}ms",
+  "@latencyPill": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "defaultNodeName": "节点 {index}",
+  "@defaultNodeName": {
+    "placeholders": {
+      "index": { "type": "int" }
+    }
+  },
+  "previewLocalLink": "本地回环接入链接",
+  "previewNaiveShareLink": "NaiveProxy 节点分享链接",
+  "previewNaiveJSON": "生成的 NaiveProxy config.json",
+  "previewXrayJSON": "生成的 Xray-core config.json",
+  "previewSingBoxJSON": "生成的 sing-box 原生 Outbound 配置",
+  "btnCopy": "复制",
+  "btnCopyJSON": "复制 JSON",
+  "copiedLocalLink": "已复制本地链接",
+  "copiedNaiveShareLink": "已复制 Naive 分享链接",
+  "copiedConfigJSON": "已复制 config.json",
+  "copiedXrayJSON": "已复制 Xray 配置",
+  "copiedSingBoxJSON": "已复制 sing-box 配置",
+  "copiedServiceLogs": "已复制服务运行日志",
+  "toastServiceCreated": "已创建服务: {name}",
+  "@toastServiceCreated": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceUpdatedRestarted": "已保存并重启服务: {name}",
+  "@toastServiceUpdatedRestarted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceUpdated": "已保存服务配置: {name}",
+  "@toastServiceUpdated": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceDeleted": "已删除服务: {name}",
+  "@toastServiceDeleted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastImportSingle": "成功导入服务: {name}",
+  "@toastImportSingle": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastImportMultiple": "成功批量导入 {count} 个服务",
+  "@toastImportMultiple": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "configValidationFailed": "配置校验未通过: {err}",
+  "@configValidationFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  }
 }

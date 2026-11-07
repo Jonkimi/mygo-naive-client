@@ -498,8 +498,8 @@ func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 	if _, ok := tt.Find("外观与系统集成"); !ok {
 		t.Fatalf("expected section '外观与系统集成'")
 	}
-	if _, ok := tt.Find("NaiveProxy 核心与无感更新"); !ok {
-		t.Fatalf("expected section 'NaiveProxy 核心与无感更新'")
+	if _, ok := tt.Find(a.catalog().TriCoreSectionTitle()); !ok {
+		t.Fatalf("expected section %q", a.catalog().TriCoreSectionTitle())
 	}
 	if _, ok := tt.Find(a.catalog().DownloadChannelTitle()); !ok {
 		t.Fatalf("expected section %q", a.catalog().DownloadChannelTitle())

@@ -212,6 +212,11 @@ func (a *app) applyLanguagePolicy() {
 		tag = a.state.Language
 	}
 	mygo.App.SetLocale(tag)
+	a.rebuildTrayMenu()
+	a.installAppMenu()
+	if a.win != nil {
+		a.win.Invalidate()
+	}
 }
 
 func (a *app) findService(id string) (config.Service, bool) {

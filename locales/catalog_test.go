@@ -37,6 +37,15 @@ func TestCatalogLanguages(t *testing.T) {
 	if en.PresetRuleBypassLan() != "Bypass Mainland & LAN" {
 		t.Fatalf("expected 'Bypass Mainland & LAN', got %q", en.PresetRuleBypassLan())
 	}
+	if en.TagBuiltin() != "Built-in" {
+		t.Fatalf("expected 'Built-in', got %q", en.TagBuiltin())
+	}
+	if en.SidecarsRunning(2) != "2 Sidecars Running" {
+		t.Fatalf("expected '2 Sidecars Running', got %q", en.SidecarsRunning(2))
+	}
+	if en.CoreNewVersion("v1.8.24") != "New Version v1.8.24" {
+		t.Fatalf("expected 'New Version v1.8.24', got %q", en.CoreNewVersion("v1.8.24"))
+	}
 
 	// Simplified Chinese
 	zh := In("zh-Hans")
@@ -66,5 +75,14 @@ func TestCatalogLanguages(t *testing.T) {
 	}
 	if zh.PresetRuleBypassLan() != "绕过大陆及局域网" {
 		t.Fatalf("expected '绕过大陆及局域网', got %q", zh.PresetRuleBypassLan())
+	}
+	if zh.TagBuiltin() != "内置" {
+		t.Fatalf("expected '内置', got %q", zh.TagBuiltin())
+	}
+	if zh.SidecarsRunning(2) != "2 个 Sidecar 运行中" {
+		t.Fatalf("expected '2 个 Sidecar 运行中', got %q", zh.SidecarsRunning(2))
+	}
+	if zh.CoreNewVersion("v1.8.24") != "新版本 v1.8.24" {
+		t.Fatalf("expected '新版本 v1.8.24', got %q", zh.CoreNewVersion("v1.8.24"))
 	}
 }

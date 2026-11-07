@@ -223,7 +223,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	}
 
 	if collapsed {
-		tip := fmt.Sprintf("sing-box %s (内置)\nNaive: %s\nXray: %s", sbVer, a.naiveStatusText(), a.xrayStatusText())
+		tip := fmt.Sprintf("sing-box %s (%s)\nNaive: %s\nXray: %s", sbVer, cat.TagBuiltin(), a.naiveStatusText(), a.xrayStatusText())
 		btn := ui.ButtonBase(c.Key("sidebar-engine-pill")).
 			Label(cat.EngineStatusPillTitle()).
 			Size(collapsedTileSize, collapsedTileSize).Radius(8).
@@ -246,7 +246,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		Label(cat.EngineStatusPillTitle()).
 		Padding(8, 10, 8, 10).Gap(4).Radius(8).
 		Background(p.elevated).Border(1, p.borderSubtle).
-		Tooltip("点击打开「设置 -> 核心管理」").
+		Tooltip(cat.EngineStatusPillHint()).
 		Children(func() {
 			// Line 1: sing-box core status
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
@@ -254,7 +254,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					ui.Box(c).Size(6, 6).Radius(999).Background(p.green)
 					ui.Text(c, "sing-box "+sbVer).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
 				})
-				tagPill(c, "内置", p.green, p.greenBg)
+				tagPill(c, cat.TagBuiltin(), p.green, p.greenBg)
 			})
 
 			// Line 2: Sidecars / Tailnet summary
@@ -262,16 +262,16 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				if missingCore {
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 						ui.Box(c).Size(5, 5).Radius(999).Background(p.amber)
-						ui.Text(c, "缺少 Sidecar 核心").FontSize(10).FontWeight(500).TextColor(p.amber).NoWrap()
+						ui.Text(c, cat.EngineMissingSidecar()).FontSize(10).FontWeight(500).TextColor(p.amber).NoWrap()
 					})
 				} else if runningSidecars > 0 {
-					ui.Text(c, fmt.Sprintf("%d 个 Sidecar 运行中", runningSidecars)).FontSize(10).TextColor(p.textMuted).NoWrap()
+					ui.Text(c, cat.SidecarsRunning(runningSidecars)).FontSize(10).TextColor(p.textMuted).NoWrap()
 				} else {
-					ui.Text(c, "Sidecars 就绪").FontSize(10).TextColor(p.textDim).NoWrap()
+					ui.Text(c, cat.SidecarsReady()).FontSize(10).TextColor(p.textDim).NoWrap()
 				}
 
 				if hasAnyUpdate {
-					ui.Text(c, "↑ 可更新").FontSize(10).FontWeight(600).TextColor(p.amber).NoWrap()
+					ui.Text(c, cat.UpdateAvailableBadge()).FontSize(10).FontWeight(600).TextColor(p.amber).NoWrap()
 				}
 			})
 		})
@@ -287,12 +287,12 @@ func (a *app) naiveStatusText() string {
 	if a.localVersion != "" {
 		return a.localVersion
 	}
-	return "未安装"
+	return a.catalog().CoreNotInstalled()
 }
 
 func (a *app) xrayStatusText() string {
 	if a.localXrayVersion != "" {
 		return a.localXrayVersion
 	}
-	return "未安装"
+	return a.catalog().XrayNotInstalled()
 }

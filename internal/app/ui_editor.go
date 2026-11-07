@@ -101,7 +101,7 @@ type editorForm struct {
 func (a *app) openCreateServiceDialog() {
 	port := a.nextAvailableListenPort()
 	svc := config.DefaultService(a.generateServiceID(), port)
-	svc.Name = fmt.Sprintf("节点 %d", len(a.state.Services)+1)
+	svc.Name = a.catalog().DefaultNodeName(len(a.state.Services) + 1)
 	a.populateEditorForm(svc, true)
 }
 
@@ -798,10 +798,11 @@ func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
 }
 
 func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
+	cat := a.catalog()
 	svc, err := a.buildServiceFromEditor()
 	if err != nil {
 		ui.Row(c).PaddingX(12).PaddingY(10).Radius(8).Background(p.redBg).Children(func() {
-			ui.Text(c, "配置校验未通过: "+err.Error()).FontSize(12).TextColor(p.red)
+			ui.Text(c, cat.ConfigValidationFailed(err.Error())).FontSize(12).TextColor(p.red)
 		})
 		return
 	}
@@ -814,9 +815,9 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 
 			ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "本地回环接入链接").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-local"), p, iconCopy, "复制", false).Clicked() {
-						a.writeClipboard(v2rayURI, "已复制本地链接")
+					ui.Text(c, cat.PreviewLocalLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-local"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+						a.writeClipboard(v2rayURI, cat.CopiedLocalLink())
 					}
 				})
 				ui.Text(c, v2rayURI).FontSize(12).FontWeight(500).TextColor(p.accent)
@@ -825,9 +826,9 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 			if naiveURI != "" {
 				ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "NaiveProxy 节点分享链接").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-						if actionChip(c.Key("preview-copy-naive"), p, iconCopy, "复制", false).Clicked() {
-							a.writeClipboard(naiveURI, "已复制 Naive 分享链接")
+						ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+						if actionChip(c.Key("preview-copy-naive"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+							a.writeClipboard(naiveURI, cat.CopiedNaiveShareLink())
 						}
 					})
 					ui.Text(c, naiveURI).FontSize(12).TextColor(p.text)
@@ -836,9 +837,9 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 
 			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "生成的 NaiveProxy config.json").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-json"), p, iconCopy, "复制 JSON", false).Clicked() {
-						a.writeClipboard(string(rawJSON), "已复制 config.json")
+					ui.Text(c, cat.PreviewNaiveJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+						a.writeClipboard(string(rawJSON), cat.CopiedConfigJSON())
 					}
 				})
 				ui.Text(c, string(rawJSON)).FontSize(11).TextColor(p.text)
@@ -847,9 +848,9 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 			cfgBytes, _ := runner.GenerateXrayConfig(svc, 1080)
 			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "生成的 Xray-core config.json").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-xray-json"), p, iconCopy, "复制 JSON", false).Clicked() {
-						a.writeClipboard(string(cfgBytes), "已复制 Xray 配置")
+					ui.Text(c, cat.PreviewXrayJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-xray-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+						a.writeClipboard(string(cfgBytes), cat.CopiedXrayJSON())
 					}
 				})
 				ui.Text(c, string(cfgBytes)).FontSize(11).TextColor(p.text)
@@ -859,9 +860,9 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 			obJSON, _ := json.MarshalIndent(obMap, "", "  ")
 			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "生成的 sing-box 原生 Outbound 配置").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-sb-json"), p, iconCopy, "复制 JSON", false).Clicked() {
-						a.writeClipboard(string(obJSON), "已复制 sing-box 配置")
+					ui.Text(c, cat.PreviewSingBoxJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-sb-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+						a.writeClipboard(string(obJSON), cat.CopiedSingBoxJSON())
 					}
 				})
 				ui.Text(c, string(obJSON)).FontSize(11).TextColor(p.text)
@@ -878,7 +879,7 @@ func (a *app) saveEditorService() {
 	}
 	if a.editor.isNew {
 		a.state.Services = append(a.state.Services, svc)
-		a.toast("已创建服务: " + svc.Name)
+		a.toast(a.catalog().ToastServiceCreated(svc.Name))
 	} else {
 		for i := range a.state.Services {
 			if a.state.Services[i].ID == svc.ID {
@@ -889,9 +890,9 @@ func (a *app) saveEditorService() {
 		st := a.mgr.StatusOf(svc.ID).State
 		if st == runner.StateRunning || st == runner.StateStarting {
 			_ = a.mgr.Start(svc)
-			a.toast("已保存并重启服务: " + svc.Name)
+			a.toast(a.catalog().ToastServiceUpdatedRestarted(svc.Name))
 		} else {
-			a.toast("已保存服务配置: " + svc.Name)
+			a.toast(a.catalog().ToastServiceUpdated(svc.Name))
 		}
 	}
 	a.saveState()
@@ -983,7 +984,7 @@ func (a *app) confirmImportDialog() {
 	}
 	for i := range svcs {
 		if err := svcs[i].Validate(); err != nil {
-			a.importDlg.errText = fmt.Sprintf("服务 %q 配置不完整: %v", svcs[i].Name, err)
+			a.importDlg.errText = a.catalog().ConfigValidationFailed(fmt.Sprintf("%s: %v", svcs[i].Name, err))
 			return
 		}
 	}
@@ -999,9 +1000,9 @@ func (a *app) confirmImportDialog() {
 	a.rebuildTrayMenu()
 
 	if len(svcs) == 1 {
-		a.toast("成功导入服务: " + svcs[0].Name)
+		a.toast(a.catalog().ToastImportSingle(svcs[0].Name))
 	} else {
-		a.toast(fmt.Sprintf("成功批量导入 %d 个服务", len(svcs)))
+		a.toast(a.catalog().ToastImportMultiple(len(svcs)))
 	}
 }
 
@@ -1059,5 +1060,5 @@ func (a *app) confirmDeleteService() {
 	delete(a.expandedLogs, id)
 	a.saveState()
 	a.rebuildTrayMenu()
-	a.toast("已删除服务: " + name)
+	a.toast(a.catalog().ToastServiceDeleted(name))
 }

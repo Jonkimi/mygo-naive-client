@@ -350,5 +350,121 @@
   "engineStatusPillTitle": "Engine Status",
   "tagSingBox": "SING-BOX",
   "tagSidecar": "SIDECAR",
-  "tagLoopback": "Loopback"
+  "tagLoopback": "Loopback",
+  "tagBuiltin": "Built-in",
+  "engineMissingSidecar": "Missing Sidecar Core",
+  "sidecarsRunning": "{count} Sidecars Running",
+  "@sidecarsRunning": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "sidecarsReady": "Sidecars Ready",
+  "updateAvailableBadge": "↑ Update",
+  "engineStatusPillHint": "Click to open Settings -> Core Engines & Geodata Manager",
+  "coreNewVersion": "New Version {version}",
+  "@coreNewVersion": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "coreUpdateTo": "Update to {version}",
+  "@coreUpdateTo": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "coreSeamlessUpdateTo": "Seamless update to {version}",
+  "@coreSeamlessUpdateTo": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "tagFilterAll": "All",
+  "emptyNodesWithTag": "No nodes tagged with #{tag}",
+  "@emptyNodesWithTag": {
+    "placeholders": {
+      "tag": { "type": "String" }
+    }
+  },
+  "viewAllNodes": "View All Nodes",
+  "concurrencyPill": "{count}x Concurrency",
+  "@concurrencyPill": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "restartsPill": "Retried {count} times",
+  "@restartsPill": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "latencyPill": "Real {ms}ms",
+  "@latencyPill": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "defaultNodeName": "Node {index}",
+  "@defaultNodeName": {
+    "placeholders": {
+      "index": { "type": "int" }
+    }
+  },
+  "previewLocalLink": "Local Loopback SOCKS5 Link",
+  "previewNaiveShareLink": "NaiveProxy Share Link",
+  "previewNaiveJSON": "Generated NaiveProxy config.json",
+  "previewXrayJSON": "Generated Xray-core config.json",
+  "previewSingBoxJSON": "Generated Embedded sing-box Outbound",
+  "btnCopy": "Copy",
+  "btnCopyJSON": "Copy JSON",
+  "copiedLocalLink": "Copied local loopback link",
+  "copiedNaiveShareLink": "Copied Naive share link",
+  "copiedConfigJSON": "Copied config.json",
+  "copiedXrayJSON": "Copied Xray config",
+  "copiedSingBoxJSON": "Copied sing-box outbound config",
+  "copiedServiceLogs": "Copied service logs to clipboard",
+  "toastServiceCreated": "Created service: {name}",
+  "@toastServiceCreated": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceUpdatedRestarted": "Saved and restarted service: {name}",
+  "@toastServiceUpdatedRestarted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceUpdated": "Saved service: {name}",
+  "@toastServiceUpdated": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceDeleted": "Deleted service: {name}",
+  "@toastServiceDeleted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastImportSingle": "Imported service: {name}",
+  "@toastImportSingle": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastImportMultiple": "Batch imported {count} services",
+  "@toastImportMultiple": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "configValidationFailed": "Configuration validation failed: {err}",
+  "@configValidationFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  }
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/egoist/mygo/ui"
+
 	"naive-client/internal/config"
 )
 
@@ -208,5 +210,66 @@ func TestServiceCard_ProtocolAndEngineCapsule(t *testing.T) {
 	}
 	if _, ok := tt.Find("Auto Loopback (:0)"); !ok {
 		t.Fatalf("expected service card to show 'Auto Loopback (:0)' for unstarted auto loopback sidecar")
+	}
+}
+
+// Tests seamless language hot switching without app restart.
+func TestSettings_LanguageHotSwitch(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// Switch to English
+	a.state.Language = "en"
+	a.saveState()
+	a.applyLanguagePolicy()
+	a.activeTab = TabSettings
+	tt.Frame()
+
+	if _, ok := tt.Find("Core Engines & Geodata Manager"); !ok {
+		t.Fatalf("expected English title 'Core Engines & Geodata Manager' after switching to en")
+	}
+
+	// Switch to Simplified Chinese
+	a.state.Language = "zh-Hans"
+	a.saveState()
+	a.applyLanguagePolicy()
+	tt.Frame()
+
+	if _, ok := tt.Find("核心引擎与规则库管理"); !ok {
+		t.Fatalf("expected Chinese title '核心引擎与规则库管理' after switching to zh-Hans")
+	}
+}
+
+// Tests opening and closing the slide-out log drawer.
+func TestLogDrawer_OpenClose(t *testing.T) {
+	svc := config.Service{
+		ID:       "log-svc-01",
+		Name:     "HK-Node",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSidecar,
+	}
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	a.activeTab = TabNodes
+	tt.Frame()
+
+	// Open log drawer for HK-Node
+	a.activeLogDrawerID = "log-svc-01"
+	tt.Frame()
+
+	if a.activeLogDrawerID != "log-svc-01" {
+		t.Fatalf("expected activeLogDrawerID to be log-svc-01")
+	}
+
+	// Verify log drawer title is present
+	cat := a.catalog()
+	if !tt.HasText(cat.LogDrawerTitle()) {
+		t.Fatalf("expected log drawer title %q to be visible", cat.LogDrawerTitle())
+	}
+
+	// Press Esc to close log drawer
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+
+	if a.activeLogDrawerID != "" {
+		t.Fatalf("expected log drawer to close after Esc, got activeLogDrawerID=%q", a.activeLogDrawerID)
 	}
 }

@@ -306,6 +306,7 @@ func (a *app) renderTagFilterBar(c *ui.Context, p palette) {
 	if len(tags) == 0 {
 		return
 	}
+	cat := a.catalog()
 
 	ui.Row(c.Key("tag-filter-bar")).
 		AlignItems(ui.Center).Gap(6).Wrap().
@@ -326,7 +327,7 @@ func (a *app) renderTagFilterBar(c *ui.Context, p palette) {
 				Background(allBg).Border(1, allBorder)
 			allBtn.Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
-					ui.Text(c, "全部").FontSize(11).FontWeight(600).TextColor(allFg)
+					ui.Text(c, cat.TagFilterAll()).FontSize(11).FontWeight(600).TextColor(allFg)
 					ui.Text(c, fmt.Sprint(len(a.state.Services))).FontSize(10).TextColor(allFg.Alpha(0.7))
 				})
 			})
@@ -378,6 +379,7 @@ func (a *app) renderTagFilterBar(c *ui.Context, p palette) {
 
 func (a *app) renderServiceList(c *ui.Context, p palette) {
 	services := a.filteredServices()
+	cat := a.catalog()
 
 	ui.Scroll(c.Key("service-scroll")).
 		Fill().
@@ -394,9 +396,9 @@ func (a *app) renderServiceList(c *ui.Context, p palette) {
 					Padding(32).Gap(12).
 					Radius(12).Background(p.card).Border(1, p.borderSubtle).
 					Children(func() {
-						ui.Text(c, fmt.Sprintf("暂无带有 #%s 标签的节点", a.activeTagFilter)).
+						ui.Text(c, cat.EmptyNodesWithTag(a.activeTagFilter)).
 							FontSize(13).FontWeight(600).TextColor(p.textMuted)
-						if subtleActionChip(c.Key("btn-clear-tag-filter"), p, nil, "查看全部节点", false).Clicked() {
+						if subtleActionChip(c.Key("btn-clear-tag-filter"), p, nil, cat.ViewAllNodes(), false).Clicked() {
 							a.activeTagFilter = ""
 						}
 					})
@@ -469,7 +471,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 							tagPill(c, cat.TagAutoStart(), p.accentText, p.accentBg)
 						}
 						if svc.InsecureConcurrency > 1 {
-							tagPill(c, fmt.Sprintf("%dx 并发", svc.InsecureConcurrency), p.textMuted, p.elevated)
+							tagPill(c, cat.ConcurrencyPill(svc.InsecureConcurrency), p.textMuted, p.elevated)
 						}
 						if svc.NoPostQuantum {
 							tagPill(c, "No-PQ", p.textMuted, p.elevated)
@@ -478,7 +480,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 							tagPill(c, fmt.Sprintf("PID %d", rt.PID), p.green, p.greenBg)
 						}
 						if rt.Restarts > 0 {
-							tagPill(c, fmt.Sprintf("已重试 %d 次", rt.Restarts), p.amber, p.amberBg)
+							tagPill(c, cat.RestartsPill(rt.Restarts), p.amber, p.amberBg)
 						}
 						if rt.Probing {
 							tagPill(c, cat.LatencyTesting(), p.amber, p.amberBg)
@@ -490,7 +492,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						if a.tracker != nil && rt.State == runner.StateRunning {
 							sc := a.tracker.GetScore(svc.ID)
 							if sc.EWMA > 0 {
-								tagPill(c, fmt.Sprintf("真实 %dms", max(1, sc.EWMA.Milliseconds())), p.accentText, p.accentBg)
+								tagPill(c, cat.LatencyPill(int(max(1, sc.EWMA.Milliseconds()))), p.accentText, p.accentBg)
 							}
 						}
 						if rt.SpeedTesting {

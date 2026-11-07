@@ -207,7 +207,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 
 			ui.Column(c).Gap(10).Padding(14).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.CoreSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+					ui.Text(c, cat.TriCoreSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 					if actionChip(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), a.checkingUpdate || a.checkingXrayUpdate || a.updatingCore || a.updatingXrayCore).Clicked() {
 						a.triggerCheckUpdate(true)
 					}
@@ -238,7 +238,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 									statusBadge(c, cat.CoreLocal()+a.localVersion, p.green, p.greenBg)
 								}
 								if a.hasUpdate && a.latestRelease != nil {
-									tagPill(c, "新版本 "+a.latestRelease.TagName, p.amber, p.amberBg)
+									tagPill(c, cat.CoreNewVersion(a.latestRelease.TagName), p.amber, p.amberBg)
 								}
 							})
 							ui.Text(c, cat.CoreNaiveDesc()).FontSize(11).TextColor(p.textMuted)
@@ -249,7 +249,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 							if a.updatingCore {
 								updLabel = cat.Updating()
 							} else if a.latestRelease != nil && a.hasUpdate {
-								updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
+								updLabel = cat.CoreSeamlessUpdateTo(a.latestRelease.TagName)
 							}
 							if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Clicked() {
 								a.triggerSeamlessUpdate()
@@ -275,7 +275,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 									statusBadge(c, cat.XrayLocal()+a.localXrayVersion, p.green, p.greenBg)
 								}
 								if a.hasXrayUpdate && a.latestXrayRelease != nil {
-									tagPill(c, "新版本 "+a.latestXrayRelease.TagName, p.amber, p.amberBg)
+									tagPill(c, cat.CoreNewVersion(a.latestXrayRelease.TagName), p.amber, p.amberBg)
 								}
 							})
 							ui.Text(c, cat.CoreXrayDesc()).FontSize(11).TextColor(p.textMuted)
@@ -286,7 +286,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 							if a.updatingXrayCore {
 								updLabel = cat.Updating()
 							} else if a.latestXrayRelease != nil && a.hasXrayUpdate {
-								updLabel = fmt.Sprintf("更新至 %s", a.latestXrayRelease.TagName)
+								updLabel = cat.CoreUpdateTo(a.latestXrayRelease.TagName)
 							}
 							if primaryPillButton(c.Key("btn-update-xray"), p, iconDownload, updLabel, p.accent, a.updatingXrayCore).Clicked() {
 								a.triggerSeamlessXrayUpdate()

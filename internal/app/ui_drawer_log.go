@@ -54,7 +54,7 @@ func (a *app) renderLogDrawer(c *ui.Context, p palette) {
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					if actionChip(c.Key("btn-drawer-copy"), p, iconCopy, cat.LogCopy(), len(lines) == 0).Clicked() {
-						a.writeClipboard(strings.Join(lines, "\n"), "已复制服务运行日志")
+						a.writeClipboard(strings.Join(lines, "\n"), cat.CopiedServiceLogs())
 					}
 					if actionChip(c.Key("btn-drawer-clear"), p, iconTrash, cat.LogClear(), len(lines) == 0).Clicked() {
 						logs.Clear()

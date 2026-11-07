@@ -3387,3 +3387,367 @@ func TagLoopback() string { return In(i18n.Locale()).TagLoopback() }
 func (msgs Messages) TagLoopback() string {
 	return Catalog.Format(msgs.locale, "tagLoopback", nil)
 }
+
+// TagBuiltin says "Built-in"
+// in the language the app shows.
+func TagBuiltin() string { return In(i18n.Locale()).TagBuiltin() }
+
+// TagBuiltin says "Built-in"
+// in the language of msgs.
+func (msgs Messages) TagBuiltin() string {
+	return Catalog.Format(msgs.locale, "tagBuiltin", nil)
+}
+
+// EngineMissingSidecar says "Missing Sidecar Core"
+// in the language the app shows.
+func EngineMissingSidecar() string { return In(i18n.Locale()).EngineMissingSidecar() }
+
+// EngineMissingSidecar says "Missing Sidecar Core"
+// in the language of msgs.
+func (msgs Messages) EngineMissingSidecar() string {
+	return Catalog.Format(msgs.locale, "engineMissingSidecar", nil)
+}
+
+// SidecarsRunning says "{count} Sidecars Running"
+// in the language the app shows.
+func SidecarsRunning(count int) string { return In(i18n.Locale()).SidecarsRunning(count) }
+
+// SidecarsRunning says "{count} Sidecars Running"
+// in the language of msgs.
+func (msgs Messages) SidecarsRunning(count int) string {
+	return Catalog.Format(msgs.locale, "sidecarsRunning", map[string]any{"count": count})
+}
+
+// SidecarsReady says "Sidecars Ready"
+// in the language the app shows.
+func SidecarsReady() string { return In(i18n.Locale()).SidecarsReady() }
+
+// SidecarsReady says "Sidecars Ready"
+// in the language of msgs.
+func (msgs Messages) SidecarsReady() string {
+	return Catalog.Format(msgs.locale, "sidecarsReady", nil)
+}
+
+// UpdateAvailableBadge says "↑ Update"
+// in the language the app shows.
+func UpdateAvailableBadge() string { return In(i18n.Locale()).UpdateAvailableBadge() }
+
+// UpdateAvailableBadge says "↑ Update"
+// in the language of msgs.
+func (msgs Messages) UpdateAvailableBadge() string {
+	return Catalog.Format(msgs.locale, "updateAvailableBadge", nil)
+}
+
+// EngineStatusPillHint says "Click to open Settings -> Core Engines & Geodata Manager"
+// in the language the app shows.
+func EngineStatusPillHint() string { return In(i18n.Locale()).EngineStatusPillHint() }
+
+// EngineStatusPillHint says "Click to open Settings -> Core Engines & Geodata Manager"
+// in the language of msgs.
+func (msgs Messages) EngineStatusPillHint() string {
+	return Catalog.Format(msgs.locale, "engineStatusPillHint", nil)
+}
+
+// CoreNewVersion says "New Version {version}"
+// in the language the app shows.
+func CoreNewVersion(version string) string { return In(i18n.Locale()).CoreNewVersion(version) }
+
+// CoreNewVersion says "New Version {version}"
+// in the language of msgs.
+func (msgs Messages) CoreNewVersion(version string) string {
+	return Catalog.Format(msgs.locale, "coreNewVersion", map[string]any{"version": version})
+}
+
+// CoreUpdateTo says "Update to {version}"
+// in the language the app shows.
+func CoreUpdateTo(version string) string { return In(i18n.Locale()).CoreUpdateTo(version) }
+
+// CoreUpdateTo says "Update to {version}"
+// in the language of msgs.
+func (msgs Messages) CoreUpdateTo(version string) string {
+	return Catalog.Format(msgs.locale, "coreUpdateTo", map[string]any{"version": version})
+}
+
+// CoreSeamlessUpdateTo says "Seamless update to {version}"
+// in the language the app shows.
+func CoreSeamlessUpdateTo(version string) string {
+	return In(i18n.Locale()).CoreSeamlessUpdateTo(version)
+}
+
+// CoreSeamlessUpdateTo says "Seamless update to {version}"
+// in the language of msgs.
+func (msgs Messages) CoreSeamlessUpdateTo(version string) string {
+	return Catalog.Format(msgs.locale, "coreSeamlessUpdateTo", map[string]any{"version": version})
+}
+
+// TagFilterAll says "All"
+// in the language the app shows.
+func TagFilterAll() string { return In(i18n.Locale()).TagFilterAll() }
+
+// TagFilterAll says "All"
+// in the language of msgs.
+func (msgs Messages) TagFilterAll() string {
+	return Catalog.Format(msgs.locale, "tagFilterAll", nil)
+}
+
+// EmptyNodesWithTag says "No nodes tagged with #{tag}"
+// in the language the app shows.
+func EmptyNodesWithTag(tag string) string { return In(i18n.Locale()).EmptyNodesWithTag(tag) }
+
+// EmptyNodesWithTag says "No nodes tagged with #{tag}"
+// in the language of msgs.
+func (msgs Messages) EmptyNodesWithTag(tag string) string {
+	return Catalog.Format(msgs.locale, "emptyNodesWithTag", map[string]any{"tag": tag})
+}
+
+// ViewAllNodes says "View All Nodes"
+// in the language the app shows.
+func ViewAllNodes() string { return In(i18n.Locale()).ViewAllNodes() }
+
+// ViewAllNodes says "View All Nodes"
+// in the language of msgs.
+func (msgs Messages) ViewAllNodes() string {
+	return Catalog.Format(msgs.locale, "viewAllNodes", nil)
+}
+
+// ConcurrencyPill says "{count}x Concurrency"
+// in the language the app shows.
+func ConcurrencyPill(count int) string { return In(i18n.Locale()).ConcurrencyPill(count) }
+
+// ConcurrencyPill says "{count}x Concurrency"
+// in the language of msgs.
+func (msgs Messages) ConcurrencyPill(count int) string {
+	return Catalog.Format(msgs.locale, "concurrencyPill", map[string]any{"count": count})
+}
+
+// RestartsPill says "Retried {count} times"
+// in the language the app shows.
+func RestartsPill(count int) string { return In(i18n.Locale()).RestartsPill(count) }
+
+// RestartsPill says "Retried {count} times"
+// in the language of msgs.
+func (msgs Messages) RestartsPill(count int) string {
+	return Catalog.Format(msgs.locale, "restartsPill", map[string]any{"count": count})
+}
+
+// LatencyPill says "Real {ms}ms"
+// in the language the app shows.
+func LatencyPill(ms int) string { return In(i18n.Locale()).LatencyPill(ms) }
+
+// LatencyPill says "Real {ms}ms"
+// in the language of msgs.
+func (msgs Messages) LatencyPill(ms int) string {
+	return Catalog.Format(msgs.locale, "latencyPill", map[string]any{"ms": ms})
+}
+
+// DefaultNodeName says "Node {index}"
+// in the language the app shows.
+func DefaultNodeName(index int) string { return In(i18n.Locale()).DefaultNodeName(index) }
+
+// DefaultNodeName says "Node {index}"
+// in the language of msgs.
+func (msgs Messages) DefaultNodeName(index int) string {
+	return Catalog.Format(msgs.locale, "defaultNodeName", map[string]any{"index": index})
+}
+
+// PreviewLocalLink says "Local Loopback SOCKS5 Link"
+// in the language the app shows.
+func PreviewLocalLink() string { return In(i18n.Locale()).PreviewLocalLink() }
+
+// PreviewLocalLink says "Local Loopback SOCKS5 Link"
+// in the language of msgs.
+func (msgs Messages) PreviewLocalLink() string {
+	return Catalog.Format(msgs.locale, "previewLocalLink", nil)
+}
+
+// PreviewNaiveShareLink says "NaiveProxy Share Link"
+// in the language the app shows.
+func PreviewNaiveShareLink() string { return In(i18n.Locale()).PreviewNaiveShareLink() }
+
+// PreviewNaiveShareLink says "NaiveProxy Share Link"
+// in the language of msgs.
+func (msgs Messages) PreviewNaiveShareLink() string {
+	return Catalog.Format(msgs.locale, "previewNaiveShareLink", nil)
+}
+
+// PreviewNaiveJSON says "Generated NaiveProxy config.json"
+// in the language the app shows.
+func PreviewNaiveJSON() string { return In(i18n.Locale()).PreviewNaiveJSON() }
+
+// PreviewNaiveJSON says "Generated NaiveProxy config.json"
+// in the language of msgs.
+func (msgs Messages) PreviewNaiveJSON() string {
+	return Catalog.Format(msgs.locale, "previewNaiveJSON", nil)
+}
+
+// PreviewXrayJSON says "Generated Xray-core config.json"
+// in the language the app shows.
+func PreviewXrayJSON() string { return In(i18n.Locale()).PreviewXrayJSON() }
+
+// PreviewXrayJSON says "Generated Xray-core config.json"
+// in the language of msgs.
+func (msgs Messages) PreviewXrayJSON() string {
+	return Catalog.Format(msgs.locale, "previewXrayJSON", nil)
+}
+
+// PreviewSingBoxJSON says "Generated Embedded sing-box Outbound"
+// in the language the app shows.
+func PreviewSingBoxJSON() string { return In(i18n.Locale()).PreviewSingBoxJSON() }
+
+// PreviewSingBoxJSON says "Generated Embedded sing-box Outbound"
+// in the language of msgs.
+func (msgs Messages) PreviewSingBoxJSON() string {
+	return Catalog.Format(msgs.locale, "previewSingBoxJSON", nil)
+}
+
+// BtnCopy says "Copy"
+// in the language the app shows.
+func BtnCopy() string { return In(i18n.Locale()).BtnCopy() }
+
+// BtnCopy says "Copy"
+// in the language of msgs.
+func (msgs Messages) BtnCopy() string {
+	return Catalog.Format(msgs.locale, "btnCopy", nil)
+}
+
+// BtnCopyJSON says "Copy JSON"
+// in the language the app shows.
+func BtnCopyJSON() string { return In(i18n.Locale()).BtnCopyJSON() }
+
+// BtnCopyJSON says "Copy JSON"
+// in the language of msgs.
+func (msgs Messages) BtnCopyJSON() string {
+	return Catalog.Format(msgs.locale, "btnCopyJSON", nil)
+}
+
+// CopiedLocalLink says "Copied local loopback link"
+// in the language the app shows.
+func CopiedLocalLink() string { return In(i18n.Locale()).CopiedLocalLink() }
+
+// CopiedLocalLink says "Copied local loopback link"
+// in the language of msgs.
+func (msgs Messages) CopiedLocalLink() string {
+	return Catalog.Format(msgs.locale, "copiedLocalLink", nil)
+}
+
+// CopiedNaiveShareLink says "Copied Naive share link"
+// in the language the app shows.
+func CopiedNaiveShareLink() string { return In(i18n.Locale()).CopiedNaiveShareLink() }
+
+// CopiedNaiveShareLink says "Copied Naive share link"
+// in the language of msgs.
+func (msgs Messages) CopiedNaiveShareLink() string {
+	return Catalog.Format(msgs.locale, "copiedNaiveShareLink", nil)
+}
+
+// CopiedConfigJSON says "Copied config.json"
+// in the language the app shows.
+func CopiedConfigJSON() string { return In(i18n.Locale()).CopiedConfigJSON() }
+
+// CopiedConfigJSON says "Copied config.json"
+// in the language of msgs.
+func (msgs Messages) CopiedConfigJSON() string {
+	return Catalog.Format(msgs.locale, "copiedConfigJSON", nil)
+}
+
+// CopiedXrayJSON says "Copied Xray config"
+// in the language the app shows.
+func CopiedXrayJSON() string { return In(i18n.Locale()).CopiedXrayJSON() }
+
+// CopiedXrayJSON says "Copied Xray config"
+// in the language of msgs.
+func (msgs Messages) CopiedXrayJSON() string {
+	return Catalog.Format(msgs.locale, "copiedXrayJSON", nil)
+}
+
+// CopiedSingBoxJSON says "Copied sing-box outbound config"
+// in the language the app shows.
+func CopiedSingBoxJSON() string { return In(i18n.Locale()).CopiedSingBoxJSON() }
+
+// CopiedSingBoxJSON says "Copied sing-box outbound config"
+// in the language of msgs.
+func (msgs Messages) CopiedSingBoxJSON() string {
+	return Catalog.Format(msgs.locale, "copiedSingBoxJSON", nil)
+}
+
+// CopiedServiceLogs says "Copied service logs to clipboard"
+// in the language the app shows.
+func CopiedServiceLogs() string { return In(i18n.Locale()).CopiedServiceLogs() }
+
+// CopiedServiceLogs says "Copied service logs to clipboard"
+// in the language of msgs.
+func (msgs Messages) CopiedServiceLogs() string {
+	return Catalog.Format(msgs.locale, "copiedServiceLogs", nil)
+}
+
+// ToastServiceCreated says "Created service: {name}"
+// in the language the app shows.
+func ToastServiceCreated(name string) string { return In(i18n.Locale()).ToastServiceCreated(name) }
+
+// ToastServiceCreated says "Created service: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastServiceCreated(name string) string {
+	return Catalog.Format(msgs.locale, "toastServiceCreated", map[string]any{"name": name})
+}
+
+// ToastServiceUpdatedRestarted says "Saved and restarted service: {name}"
+// in the language the app shows.
+func ToastServiceUpdatedRestarted(name string) string {
+	return In(i18n.Locale()).ToastServiceUpdatedRestarted(name)
+}
+
+// ToastServiceUpdatedRestarted says "Saved and restarted service: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastServiceUpdatedRestarted(name string) string {
+	return Catalog.Format(msgs.locale, "toastServiceUpdatedRestarted", map[string]any{"name": name})
+}
+
+// ToastServiceUpdated says "Saved service: {name}"
+// in the language the app shows.
+func ToastServiceUpdated(name string) string { return In(i18n.Locale()).ToastServiceUpdated(name) }
+
+// ToastServiceUpdated says "Saved service: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastServiceUpdated(name string) string {
+	return Catalog.Format(msgs.locale, "toastServiceUpdated", map[string]any{"name": name})
+}
+
+// ToastServiceDeleted says "Deleted service: {name}"
+// in the language the app shows.
+func ToastServiceDeleted(name string) string { return In(i18n.Locale()).ToastServiceDeleted(name) }
+
+// ToastServiceDeleted says "Deleted service: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastServiceDeleted(name string) string {
+	return Catalog.Format(msgs.locale, "toastServiceDeleted", map[string]any{"name": name})
+}
+
+// ToastImportSingle says "Imported service: {name}"
+// in the language the app shows.
+func ToastImportSingle(name string) string { return In(i18n.Locale()).ToastImportSingle(name) }
+
+// ToastImportSingle says "Imported service: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastImportSingle(name string) string {
+	return Catalog.Format(msgs.locale, "toastImportSingle", map[string]any{"name": name})
+}
+
+// ToastImportMultiple says "Batch imported {count} services"
+// in the language the app shows.
+func ToastImportMultiple(count int) string { return In(i18n.Locale()).ToastImportMultiple(count) }
+
+// ToastImportMultiple says "Batch imported {count} services"
+// in the language of msgs.
+func (msgs Messages) ToastImportMultiple(count int) string {
+	return Catalog.Format(msgs.locale, "toastImportMultiple", map[string]any{"count": count})
+}
+
+// ConfigValidationFailed says "Configuration validation failed: {err}"
+// in the language the app shows.
+func ConfigValidationFailed(err string) string { return In(i18n.Locale()).ConfigValidationFailed(err) }
+
+// ConfigValidationFailed says "Configuration validation failed: {err}"
+// in the language of msgs.
+func (msgs Messages) ConfigValidationFailed(err string) string {
+	return Catalog.Format(msgs.locale, "configValidationFailed", map[string]any{"err": err})
+}
