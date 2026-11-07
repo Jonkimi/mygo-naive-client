@@ -267,14 +267,14 @@ func TestTracker_HighPacketLossAndSevereRTOStallCircuitBreaker(t *testing.T) {
 
 	// 1. 1 timeout failure -> ConsecutiveFailures = 1
 	tr.RecordDial(node, "site1.com", 0, errors.New("timeout"))
-	// 2. 1 severe RTO stall (4200ms >= 3000ms) -> updates EWMA, counts as degraded (0/2), does NOT reset ConsecutiveFailures
+	// 2. 1 severe RTO stall (4200ms >= 3000ms) -> updates EWMA, counts as degraded (0/2), increments ConsecutiveFailures to 2
 	tr.RecordDial(node, "site2.com", 4200*time.Millisecond, nil)
 	sc1 := tr.GetScore(node)
 	if sc1.EWMA != 4200*time.Millisecond {
 		t.Fatalf("expected EWMA = 4200ms from stalled packet, got %v", sc1.EWMA)
 	}
-	if sc1.SuccessfulDials != 0 || sc1.TotalDials != 2 || sc1.ConsecutiveFailures != 1 {
-		t.Fatalf("expected stalled packet not to increment SuccessfulDials or reset ConsecutiveFailures, got %+v", sc1)
+	if sc1.SuccessfulDials != 0 || sc1.TotalDials != 2 || sc1.ConsecutiveFailures != 2 {
+		t.Fatalf("expected stalled packet not to increment SuccessfulDials and to increment ConsecutiveFailures=2, got %+v", sc1)
 	}
 
 	// 3. One lucky fast packet (120ms) slips through -> resets ConsecutiveFailures to 0, window is now 1/3
@@ -289,6 +289,19 @@ func TestTracker_HighPacketLossAndSevereRTOStallCircuitBreaker(t *testing.T) {
 	}
 	if !sc2.IsBroken || sc2.CircuitPenalty != 10000.0 {
 		t.Fatalf("expected high packet-loss circuit breaker tripped at 20%% success rate even with ConsecutiveFailures=%d, got %+v", sc2.ConsecutiveFailures, sc2)
+	}
+
+	// 5. A single lucky passive packet while SR is still < 60% (2/6 = 33.3%) must NOT prematurely clear the high-loss breaker
+	tr.RecordDial(node, "site6.com", 100*time.Millisecond, nil)
+	if !tr.IsBroken(node) {
+		t.Fatalf("expected single lucky packet not to clear high-loss circuit breaker while SR=33.3%%")
+	}
+
+	// 6. Three consecutive healthy packets (ConsecutiveSuccesses >= 3) prove the link has recovered and clear the breaker
+	tr.RecordDial(node, "site7.com", 100*time.Millisecond, nil)
+	tr.RecordDial(node, "site8.com", 100*time.Millisecond, nil)
+	if tr.IsBroken(node) {
+		t.Fatalf("expected 3 consecutive healthy responses to recover from high-loss circuit breaker")
 	}
 }
 

@@ -8,13 +8,14 @@ import (
 )
 
 const (
-	ewmaAlpha               = 0.2
-	circuitFailureThreshold = 3
-	circuitCooldownDuration = 60 * time.Second
-	hysteresisRTTDelta      = 30 * time.Millisecond
-	hysteresisRatioDelta    = 0.20
-	defaultInitialRTT       = 150 * time.Millisecond
-	maxTrackerDomains       = 2000
+	ewmaAlpha                    = 0.2
+	circuitFailureThreshold      = 3
+	circuitRecoverySuccessTarget = 3
+	circuitCooldownDuration      = 60 * time.Second
+	hysteresisRTTDelta           = 30 * time.Millisecond
+	hysteresisRatioDelta         = 0.20
+	defaultInitialRTT            = 150 * time.Millisecond
+	maxTrackerDomains            = 2000
 
 	recentWindowSize    = 50
 	severePacketLossRTT = 3000 * time.Millisecond
@@ -23,12 +24,13 @@ const (
 )
 
 type NodeStats struct {
-	EWMA                time.Duration
-	ConsecutiveFailures int
-	TotalDials          int
-	SuccessfulDials     int
-	LastFailure         time.Time
-	circuitTrippedAt    time.Time
+	EWMA                 time.Duration
+	ConsecutiveFailures  int
+	ConsecutiveSuccesses int
+	TotalDials           int
+	SuccessfulDials      int
+	LastFailure          time.Time
+	circuitTrippedAt     time.Time
 
 	window    [recentWindowSize]bool
 	winCursor int
@@ -136,24 +138,9 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	if err != nil {
 		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
+		st.ConsecutiveSuccesses = 0
 		st.checkAndTripCircuit()
-		if root != "" {
-			if len(t.domainErrors) >= maxTrackerDomains && t.domainErrors[root] == nil {
-				for k := range t.domainErrors {
-					delete(t.domainErrors, k)
-					if len(t.domainErrors) < maxTrackerDomains/2 {
-						break
-					}
-				}
-			}
-			if t.domainErrors[root] == nil {
-				t.domainErrors[root] = make(map[string]int)
-			}
-			t.domainErrors[root][nodeID]++
-			if t.affinity[root] == nodeID {
-				delete(t.affinity, root)
-			}
-		}
+		t.recordDomainFailureLocked(root, nodeID)
 		return
 	}
 
@@ -166,21 +153,30 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	}
 
 	// Connections that took >= severePacketLossRTT (3000ms) suffered multi-RTO packet loss stalls.
-	// Record them as degraded in the sliding window and do not let them clear ConsecutiveFailures.
+	// Treat them as degraded attempts: increment ConsecutiveFailures, evict sticky affinity, and check circuit breaker.
 	if rtt >= severePacketLossRTT {
 		st.recordWindowSample(false)
+		st.ConsecutiveFailures++
+		st.ConsecutiveSuccesses = 0
 		st.checkAndTripCircuit()
+		t.recordDomainFailureLocked(root, nodeID)
 		return
 	}
 
 	// Healthy success
 	st.recordWindowSample(true)
 	st.ConsecutiveFailures = 0
-	if st.TotalDials < highLossMinSamples || float64(st.SuccessfulDials)/float64(st.TotalDials) >= highLossSuccessRate {
+	st.ConsecutiveSuccesses++
+	if st.ConsecutiveSuccesses >= circuitRecoverySuccessTarget ||
+		st.TotalDials < highLossMinSamples ||
+		float64(st.SuccessfulDials)/float64(st.TotalDials) >= highLossSuccessRate {
 		st.circuitTrippedAt = time.Time{}
 	}
 
 	if root != "" {
+		if t.domainErrors[root] != nil {
+			delete(t.domainErrors[root], nodeID)
+		}
 		if _, ok := t.affinity[root]; !ok {
 			if len(t.affinity) >= maxTrackerDomains {
 				for k := range t.affinity {
@@ -191,6 +187,36 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 				}
 			}
 			t.affinity[root] = nodeID
+		}
+	}
+}
+
+func (t *Tracker) recordDomainFailureLocked(root string, nodeID string) {
+	if root == "" {
+		return
+	}
+	if len(t.domainErrors) >= maxTrackerDomains && t.domainErrors[root] == nil {
+		for k := range t.domainErrors {
+			delete(t.domainErrors, k)
+			if len(t.domainErrors) < maxTrackerDomains/2 {
+				break
+			}
+		}
+	}
+	if t.domainErrors[root] == nil {
+		t.domainErrors[root] = make(map[string]int)
+	}
+	t.domainErrors[root][nodeID]++
+	if t.affinity[root] == nodeID {
+		delete(t.affinity, root)
+	}
+}
+
+func (t *Tracker) clearNodeDomainErrorsLocked(nodeID string) {
+	for root, m := range t.domainErrors {
+		delete(m, nodeID)
+		if len(m) == 0 {
+			delete(t.domainErrors, root)
 		}
 	}
 }
@@ -217,12 +243,16 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 	}
 	if rtt >= severePacketLossRTT {
 		st.recordWindowSample(false)
+		st.ConsecutiveFailures++
+		st.ConsecutiveSuccesses = 0
 		st.checkAndTripCircuit()
 		return
 	}
 	st.recordWindowSample(true)
 	st.ConsecutiveFailures = 0
+	st.ConsecutiveSuccesses++
 	st.circuitTrippedAt = time.Time{}
+	t.clearNodeDomainErrorsLocked(nodeID)
 }
 
 // RecordProbeFailure records an active probe failure (e.g. timeout or connection reset)
@@ -238,6 +268,7 @@ func (t *Tracker) RecordProbeFailure(nodeID string) {
 	}
 	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
+	st.ConsecutiveSuccesses = 0
 	st.checkAndTripCircuit()
 }
 

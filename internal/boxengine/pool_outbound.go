@@ -185,9 +185,21 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			// Local loopback TCP acceptance does not mean the remote proxy tunnel succeeded.
 			// Defer both dial success/failure and real internet TTFB RTT recording to wrapFirstRTTConn
 			// so remote timeouts, resets, and blackholes accurately update SuccessRate and CircuitBreaker.
+			destPort := destination.Port
+			poolTag := p.tag
+			singleCandidate := len(ordered) == 1
 			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, firstErr error) {
 				if p.tracker != nil {
 					p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
+				}
+				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
+					p.failureMonitor.Record(telemetry.FailureEvent{
+						Category:       telemetry.FailureProxy,
+						Target:         targetHost,
+						Port:           destPort,
+						OriginalAction: poolTag,
+						Error:          firstErr,
+					})
 				}
 				if p.onTelemetryUpdate != nil {
 					p.onTelemetryUpdate()
