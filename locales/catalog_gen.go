@@ -876,6 +876,86 @@ func (msgs Messages) NodeDrawerDownloadSpeed() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerDownloadSpeed", nil)
 }
 
+// NodeDrawerSuccessRate says "Connection Success Rate"
+// in the language the app shows.
+func NodeDrawerSuccessRate() string { return In(i18n.Locale()).NodeDrawerSuccessRate() }
+
+// NodeDrawerSuccessRate says "Connection Success Rate"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerSuccessRate() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerSuccessRate", nil)
+}
+
+// NodeDrawerSuccessRateDesc says "Calculated from successful vs total proxy connections"
+// in the language the app shows.
+func NodeDrawerSuccessRateDesc() string { return In(i18n.Locale()).NodeDrawerSuccessRateDesc() }
+
+// NodeDrawerSuccessRateDesc says "Calculated from successful vs total proxy connections"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerSuccessRateDesc() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerSuccessRateDesc", nil)
+}
+
+// NodeDrawerCircuit says "Circuit Breaker Status"
+// in the language the app shows.
+func NodeDrawerCircuit() string { return In(i18n.Locale()).NodeDrawerCircuit() }
+
+// NodeDrawerCircuit says "Circuit Breaker Status"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuit() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuit", nil)
+}
+
+// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 30s"
+// in the language the app shows.
+func NodeDrawerCircuitDesc() string { return In(i18n.Locale()).NodeDrawerCircuitDesc() }
+
+// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 30s"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuitDesc() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuitDesc", nil)
+}
+
+// NodeDrawerCircuitNormal says "Healthy"
+// in the language the app shows.
+func NodeDrawerCircuitNormal() string { return In(i18n.Locale()).NodeDrawerCircuitNormal() }
+
+// NodeDrawerCircuitNormal says "Healthy"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuitNormal() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuitNormal", nil)
+}
+
+// NodeDrawerCircuitTripped says "Tripped (+10000ms Penalty)"
+// in the language the app shows.
+func NodeDrawerCircuitTripped() string { return In(i18n.Locale()).NodeDrawerCircuitTripped() }
+
+// NodeDrawerCircuitTripped says "Tripped (+10000ms Penalty)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuitTripped() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuitTripped", nil)
+}
+
+// NodeDrawerFinalScore says "Adaptive Quality Score"
+// in the language the app shows.
+func NodeDrawerFinalScore() string { return In(i18n.Locale()).NodeDrawerFinalScore() }
+
+// NodeDrawerFinalScore says "Adaptive Quality Score"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerFinalScore() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerFinalScore", nil)
+}
+
+// NodeDrawerFinalScoreDesc says "Calculated as EWMA / SuccessRate² + Penalty. Lower score gets higher routing priority."
+// in the language the app shows.
+func NodeDrawerFinalScoreDesc() string { return In(i18n.Locale()).NodeDrawerFinalScoreDesc() }
+
+// NodeDrawerFinalScoreDesc says "Calculated as EWMA / SuccessRate² + Penalty. Lower score gets higher routing priority."
+// in the language of msgs.
+func (msgs Messages) NodeDrawerFinalScoreDesc() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerFinalScoreDesc", nil)
+}
+
 // NodeDrawerLocalListen says "Local Inbound"
 // in the language the app shows.
 func NodeDrawerLocalListen() string { return In(i18n.Locale()).NodeDrawerLocalListen() }

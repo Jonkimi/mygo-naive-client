@@ -50,9 +50,10 @@ type EngineOptions struct {
 	BootstrapDNS   []string
 	DomesticDoH    []string
 	RemoteDoH      []string
-	PreferIPv4     bool
-	ActiveIDs      map[string]bool
-	OnDemandStart  func(poolTag string)
+	PreferIPv4        bool
+	ActiveIDs         map[string]bool
+	OnDemandStart     func(poolTag string)
+	OnTelemetryUpdate func()
 
 	// Tailnet integration (ADR-0007)
 	TailnetConfig         *tailnet.Config
@@ -64,20 +65,21 @@ type EngineOptions struct {
 
 // Engine manages the embedded sing-box instance (*box.Box) with dynamic node pools and telemetry.
 type Engine struct {
-	mu             sync.RWMutex
-	box            *box.Box
-	port           int
-	addr           string
-	services       []config.Service
-	allocatedPorts map[string]int
-	activeIDs      map[string]bool
-	tracker        *telemetry.Tracker
-	failureMonitor *telemetry.FailureMonitor
-	blocker        *blocker.Engine
-	connTracker    *BlockerConnectionTracker
-	onDemandStart  func(poolTag string)
-	boxCtx         context.Context
-	cancel         context.CancelFunc
+	mu                sync.RWMutex
+	box               *box.Box
+	port              int
+	addr              string
+	services          []config.Service
+	allocatedPorts    map[string]int
+	activeIDs         map[string]bool
+	tracker           *telemetry.Tracker
+	failureMonitor    *telemetry.FailureMonitor
+	blocker           *blocker.Engine
+	connTracker       *BlockerConnectionTracker
+	onDemandStart     func(poolTag string)
+	onTelemetryUpdate func()
+	boxCtx            context.Context
+	cancel            context.CancelFunc
 }
 
 // New constructs a new Engine instance.
@@ -117,8 +119,9 @@ func New(opts EngineOptions) (*Engine, error) {
 		activeIDs:      opts.ActiveIDs,
 		tracker:        opts.Tracker,
 		failureMonitor: opts.FailureMonitor,
-		blocker:        opts.Blocker,
-		onDemandStart:  opts.OnDemandStart,
+		blocker:           opts.Blocker,
+		onDemandStart:     opts.OnDemandStart,
+		onTelemetryUpdate: opts.OnTelemetryUpdate,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -176,10 +179,12 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 		var fm *telemetry.FailureMonitor
 		var np NodeProvider
 		var onDialSuccess func(targetHost string, nodeID string)
+		var telemetryUpdate func()
 		if eng != nil {
 			tracker = eng.tracker
 			fm = eng.failureMonitor
 			np = eng
+			telemetryUpdate = eng.onTelemetryUpdate
 			onDialSuccess = func(targetHost string, nodeID string) {
 				nodeName := eng.GetNodeName(nodeID)
 				if nodeName != "" {
@@ -193,12 +198,13 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			}
 		}
 		return NewPoolOutbound(PoolOutboundOptions{
-			Tag:            tag,
-			PoolTag:        pOpts.PoolTag,
-			Tracker:        tracker,
-			FailureMonitor: fm,
-			NodeProvider:   np,
-			OnDialSuccess:  onDialSuccess,
+			Tag:               tag,
+			PoolTag:           pOpts.PoolTag,
+			Tracker:           tracker,
+			FailureMonitor:    fm,
+			NodeProvider:      np,
+			OnDialSuccess:     onDialSuccess,
+			OnTelemetryUpdate: telemetryUpdate,
 		}), nil
 	})
 

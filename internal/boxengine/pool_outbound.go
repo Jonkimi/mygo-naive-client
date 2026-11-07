@@ -24,34 +24,37 @@ type NodeProvider interface {
 
 // PoolOutboundOptions defines configuration for a PoolOutbound instance.
 type PoolOutboundOptions struct {
-	Tag            string
-	PoolTag        string
-	Tracker        *telemetry.Tracker
-	FailureMonitor *telemetry.FailureMonitor
-	NodeProvider   NodeProvider
-	OnDialSuccess  func(targetHost string, nodeID string)
+	Tag               string
+	PoolTag           string
+	Tracker           *telemetry.Tracker
+	FailureMonitor    *telemetry.FailureMonitor
+	NodeProvider      NodeProvider
+	OnDialSuccess     func(targetHost string, nodeID string)
+	OnTelemetryUpdate func()
 }
 
 // PoolOutbound implements sing-box adapter.Outbound to dynamically route traffic across node pools.
 type PoolOutbound struct {
-	tag            string
-	poolTag        string
-	tracker        *telemetry.Tracker
-	failureMonitor *telemetry.FailureMonitor
-	provider       NodeProvider
-	onDialSuccess  func(targetHost string, nodeID string)
-	mu             sync.RWMutex
+	tag               string
+	poolTag           string
+	tracker           *telemetry.Tracker
+	failureMonitor    *telemetry.FailureMonitor
+	provider          NodeProvider
+	onDialSuccess     func(targetHost string, nodeID string)
+	onTelemetryUpdate func()
+	mu                sync.RWMutex
 }
 
 // NewPoolOutbound creates a new adaptive proxy pool outbound.
 func NewPoolOutbound(opts PoolOutboundOptions) *PoolOutbound {
 	return &PoolOutbound{
-		tag:            opts.Tag,
-		poolTag:        opts.PoolTag,
-		tracker:        opts.Tracker,
-		failureMonitor: opts.FailureMonitor,
-		provider:       opts.NodeProvider,
-		onDialSuccess:  opts.OnDialSuccess,
+		tag:               opts.Tag,
+		poolTag:           opts.PoolTag,
+		tracker:           opts.Tracker,
+		failureMonitor:    opts.FailureMonitor,
+		provider:          opts.NodeProvider,
+		onDialSuccess:     opts.OnDialSuccess,
+		onTelemetryUpdate: opts.OnTelemetryUpdate,
 	}
 }
 
@@ -163,9 +166,8 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			}
 			if isSidecar {
 				// Sidecar outbounds connect to localhost (127.0.0.1:allocPort).
-				// Measuring ob.DialContext only measures loopback TCP connect (<0.5ms).
-				// Pass rtt=0 so Tracker records success/failure and domain affinity
-				// without polluting EWMA with fake 1ms localhost latency.
+				// We record success/failure without polluting EWMA with loopback connect time (<0.5ms).
+				// Real internet RTT will be tracked on first packet round-trip via wrapFirstRTTConn.
 				p.tracker.RecordDial(candID, targetHost, 0, err)
 			} else {
 				p.tracker.RecordDial(candID, targetHost, rtt, err)
@@ -175,6 +177,24 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		if err == nil {
 			if p.onDialSuccess != nil {
 				p.onDialSuccess(targetHost, candID)
+			}
+			isSidecar := false
+			if p.provider != nil {
+				isSidecar = p.provider.IsSidecar(candID)
+			}
+			if isSidecar && network == "tcp" {
+				conn = wrapFirstRTTConn(conn, func(realRTT time.Duration) {
+					if p.tracker != nil {
+						p.tracker.RecordDial(candID, targetHost, realRTT, nil)
+					}
+					if p.onTelemetryUpdate != nil {
+						p.onTelemetryUpdate()
+					}
+				})
+			} else {
+				if p.onTelemetryUpdate != nil {
+					p.onTelemetryUpdate()
+				}
 			}
 			return conn, nil
 		}
@@ -238,4 +258,60 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 		lastErr = errors.New("all candidates skipped for UDP")
 	}
 	return nil, fmt.Errorf("all candidates failed UDP in %s: %w", p.tag, lastErr)
+}
+
+type firstRTTConn struct {
+	net.Conn
+	onRTT      func(rtt time.Duration)
+	writeTime  time.Time
+	hasWritten bool
+	done       bool
+	mu         sync.Mutex
+}
+
+func wrapFirstRTTConn(conn net.Conn, onRTT func(rtt time.Duration)) net.Conn {
+	if conn == nil {
+		return nil
+	}
+	return &firstRTTConn{
+		Conn:  conn,
+		onRTT: onRTT,
+	}
+}
+
+func (c *firstRTTConn) Write(b []byte) (int, error) {
+	if len(b) > 0 {
+		c.mu.Lock()
+		if !c.hasWritten {
+			c.hasWritten = true
+			c.writeTime = time.Now()
+		}
+		c.mu.Unlock()
+	}
+	return c.Conn.Write(b)
+}
+
+func (c *firstRTTConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.mu.Lock()
+		if !c.done && c.hasWritten && !c.writeTime.IsZero() {
+			c.done = true
+			rtt := time.Since(c.writeTime)
+			c.mu.Unlock()
+			if c.onRTT != nil && rtt >= 2*time.Millisecond && rtt <= 10*time.Second {
+				c.onRTT(rtt)
+			}
+		} else {
+			c.mu.Unlock()
+		}
+	}
+	return n, err
+}
+
+func (c *firstRTTConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
 }

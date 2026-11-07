@@ -133,6 +133,9 @@ type app struct {
 	gatewayPortInput       string
 	autoProbeIntervalInput string
 	expandedLogs           map[string]bool
+	telemetryUIMu          sync.Mutex
+	lastTelemetryUI        time.Time
+	telemetryPending       bool
 
 	activeTab          TabID
 	activeLogDrawerID  string
@@ -521,6 +524,32 @@ func (a *app) probeAllRunningServicesSilent() {
 		}
 		wg.Wait()
 	}()
+}
+
+// notifyTelemetryUI triggers a rate-limited UI re-render when business traffic records real RTT samples.
+func (a *app) notifyTelemetryUI() {
+	a.telemetryUIMu.Lock()
+	now := time.Now()
+	elapsed := now.Sub(a.lastTelemetryUI)
+	if elapsed >= 800*time.Millisecond {
+		a.lastTelemetryUI = now
+		a.telemetryPending = false
+		a.telemetryUIMu.Unlock()
+		a.dispatchUI(nil)
+		return
+	}
+	if !a.telemetryPending {
+		a.telemetryPending = true
+		remaining := 800*time.Millisecond - elapsed
+		time.AfterFunc(remaining, func() {
+			a.telemetryUIMu.Lock()
+			a.lastTelemetryUI = time.Now()
+			a.telemetryPending = false
+			a.telemetryUIMu.Unlock()
+			a.dispatchUI(nil)
+		})
+	}
+	a.telemetryUIMu.Unlock()
 }
 
 func (a *app) dispatchUI(fn func()) {
@@ -1186,6 +1215,9 @@ func (a *app) startGateway() error {
 		StateDir:              a.userDataDir(),
 		OnDemandStart: func(tag string) {
 			a.startDormantServiceForTag(tag)
+		},
+		OnTelemetryUpdate: func() {
+			a.notifyTelemetryUI()
 		},
 	})
 	if err != nil {

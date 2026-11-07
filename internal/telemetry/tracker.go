@@ -26,10 +26,14 @@ type NodeStats struct {
 }
 
 type QualityScore struct {
-	EWMA        time.Duration
-	SuccessRate float64
-	Score       float64
-	IsBroken    bool
+	EWMA                time.Duration
+	SuccessRate         float64
+	Score               float64
+	IsBroken            bool
+	TotalDials          int
+	SuccessfulDials     int
+	ConsecutiveFailures int
+	CircuitPenalty      float64
 }
 
 type Tracker struct {
@@ -177,10 +181,14 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 	st, ok := t.nodes[nodeID]
 	if !ok || (st.TotalDials == 0 && st.EWMA == 0) {
 		return QualityScore{
-			EWMA:        0,
-			SuccessRate: 1.0,
-			Score:       float64(defaultInitialRTT.Milliseconds()),
-			IsBroken:    false,
+			EWMA:                0,
+			SuccessRate:         1.0,
+			Score:               float64(defaultInitialRTT.Milliseconds()),
+			IsBroken:            false,
+			TotalDials:          0,
+			SuccessfulDials:     0,
+			ConsecutiveFailures: 0,
+			CircuitPenalty:      0,
 		}
 	}
 
@@ -208,10 +216,14 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 	score := (rttMs / (sr * sr)) + circuitPenalty
 
 	return QualityScore{
-		EWMA:        st.EWMA,
-		SuccessRate: sr,
-		Score:       score,
-		IsBroken:    isBroken,
+		EWMA:                st.EWMA,
+		SuccessRate:         sr,
+		Score:               score,
+		IsBroken:            isBroken,
+		TotalDials:          st.TotalDials,
+		SuccessfulDials:     st.SuccessfulDials,
+		ConsecutiveFailures: st.ConsecutiveFailures,
+		CircuitPenalty:      circuitPenalty,
 	}
 }
 

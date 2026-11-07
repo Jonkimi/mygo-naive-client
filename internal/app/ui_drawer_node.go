@@ -186,6 +186,66 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 									}
 								})
 							})
+
+							// D: Success Rate (连接成功率)
+							ui.Column(c).Gap(3).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, cat.NodeDrawerSuccessRate()).FontSize(12).FontWeight(600).TextColor(p.text)
+									if a.tracker != nil && rt.State == runner.StateRunning {
+										sc := a.tracker.GetScore(svc.ID)
+										if sc.TotalDials > 0 {
+											pct := sc.SuccessRate * 100
+											txt := fmt.Sprintf("%.1f%% (%d/%d)", pct, sc.SuccessfulDials, sc.TotalDials)
+											if pct >= 95 {
+												tagPill(c, txt, p.green, p.greenBg)
+											} else if pct >= 75 {
+												tagPill(c, txt, p.amber, p.amberBg)
+											} else {
+												tagPill(c, txt, p.red, p.redBg)
+											}
+										} else {
+											ui.Text(c, cat.NodeDrawerAwaitingSample()).FontSize(12).TextColor(p.textDim)
+										}
+									} else {
+										ui.Text(c, cat.NodeDrawerPIDNone()).FontSize(12).TextColor(p.textDim)
+									}
+								})
+								ui.Text(c, cat.NodeDrawerSuccessRateDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
+							})
+
+							// E: Circuit Breaker Status (熔断与健康状态)
+							ui.Column(c).Gap(3).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, cat.NodeDrawerCircuit()).FontSize(12).FontWeight(600).TextColor(p.text)
+									if a.tracker != nil && rt.State == runner.StateRunning {
+										sc := a.tracker.GetScore(svc.ID)
+										if sc.IsBroken {
+											tagPill(c, cat.NodeDrawerCircuitTripped(), p.red, p.redBg)
+										} else if sc.ConsecutiveFailures > 0 {
+											tagPill(c, fmt.Sprintf("%d 连续失败", sc.ConsecutiveFailures), p.amber, p.amberBg)
+										} else {
+											tagPill(c, cat.NodeDrawerCircuitNormal(), p.green, p.greenBg)
+										}
+									} else {
+										ui.Text(c, cat.NodeDrawerPIDNone()).FontSize(12).TextColor(p.textDim)
+									}
+								})
+								ui.Text(c, cat.NodeDrawerCircuitDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
+							})
+
+							// F: Final Quality Score (自适应调度评分)
+							ui.Column(c).Gap(3).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, cat.NodeDrawerFinalScore()).FontSize(12).FontWeight(600).TextColor(p.text)
+									if a.tracker != nil && rt.State == runner.StateRunning {
+										sc := a.tracker.GetScore(svc.ID)
+										tagPill(c, fmt.Sprintf("%.1f 分", sc.Score), p.accentText, p.accentBg)
+									} else {
+										ui.Text(c, cat.NodeDrawerPIDNone()).FontSize(12).TextColor(p.textDim)
+									}
+								})
+								ui.Text(c, cat.NodeDrawerFinalScoreDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
+							})
 						})
 
 					// 3. Basic & Protocol Information

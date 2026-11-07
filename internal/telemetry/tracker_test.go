@@ -145,3 +145,44 @@ func TestTracker_SidecarZeroRTTAndProbeRecording(t *testing.T) {
 		t.Fatalf("expected domain affinity recorded for chatgpt.com, got %v", aff)
 	}
 }
+
+// Tests that QualityScore exports detailed telemetry metrics: SuccessRate, Dials, ConsecutiveFailures, and Penalty.
+func TestTracker_QualityScoreDetailedMetrics(t *testing.T) {
+	tr := NewTracker()
+	node := "test-node-telemetry"
+
+	// 1. Unsampled node
+	sc0 := tr.GetScore(node)
+	if sc0.TotalDials != 0 || sc0.SuccessfulDials != 0 || sc0.ConsecutiveFailures != 0 || sc0.CircuitPenalty != 0 {
+		t.Fatalf("expected zeroed initial telemetry stats, got %+v", sc0)
+	}
+
+	// 2. 1 success + 1 failure
+	tr.RecordDial(node, "site1.com", 50*time.Millisecond, nil)
+	tr.RecordDial(node, "site2.com", 0, errors.New("timeout"))
+	sc1 := tr.GetScore(node)
+	if sc1.TotalDials != 2 || sc1.SuccessfulDials != 1 {
+		t.Fatalf("expected 2 total dials and 1 success, got %d and %d", sc1.TotalDials, sc1.SuccessfulDials)
+	}
+	if sc1.SuccessRate != 0.5 {
+		t.Fatalf("expected 0.5 success rate, got %v", sc1.SuccessRate)
+	}
+	if sc1.ConsecutiveFailures != 1 {
+		t.Fatalf("expected 1 consecutive failure, got %d", sc1.ConsecutiveFailures)
+	}
+
+	// 3. 2 more failures to trip circuit breaker (threshold = 3)
+	tr.RecordDial(node, "site3.com", 0, errors.New("timeout"))
+	tr.RecordDial(node, "site4.com", 0, errors.New("timeout"))
+	sc2 := tr.GetScore(node)
+	if !sc2.IsBroken {
+		t.Fatalf("expected node to be broken after 3 consecutive failures")
+	}
+	if sc2.CircuitPenalty != 10000.0 {
+		t.Fatalf("expected 10000.0 penalty, got %v", sc2.CircuitPenalty)
+	}
+	if sc2.Score < 10000.0 {
+		t.Fatalf("expected score > 10000 with circuit penalty, got %v", sc2.Score)
+	}
+}
+
