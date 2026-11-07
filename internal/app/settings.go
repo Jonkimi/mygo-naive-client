@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -172,11 +173,65 @@ func (a *app) resolveXrayBinaryPath() string {
 	return a.defaultXrayBinaryPath()
 }
 
+const secretTailnetAuthKey = "tailnet-auth-key"
+
+func (a *app) tailnetKeyFile() string {
+	return filepath.Join(a.userDataDir(), ".tailnet-key")
+}
+
+func (a *app) readTailnetAuthKey() string {
+	if !mygo.IsDev() && !a.headless {
+		val, err := mygo.Secrets.Get(secretTailnetAuthKey)
+		if err == nil && len(val) > 0 {
+			return string(val)
+		}
+		if errors.Is(err, mygo.ErrSecretNotFound) {
+			return ""
+		}
+	}
+	raw, err := os.ReadFile(a.tailnetKeyFile())
+	if err == nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return ""
+}
+
+func (a *app) writeTailnetAuthKey(key string) {
+	key = strings.TrimSpace(key)
+	if !mygo.IsDev() && !a.headless {
+		if key == "" {
+			_ = mygo.Secrets.Delete(secretTailnetAuthKey)
+		} else {
+			err := mygo.Secrets.Set(secretTailnetAuthKey, []byte(key))
+			if err == nil {
+				_ = os.Remove(a.tailnetKeyFile())
+				return
+			}
+		}
+	}
+	path := a.tailnetKeyFile()
+	if key == "" {
+		_ = os.Remove(path)
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, []byte(key), 0o600)
+}
+
 func (a *app) loadState() {
 	st := defaultPersistedState()
 	raw, err := os.ReadFile(a.stateFilePath())
+	var needsResave bool
 	if err == nil && len(raw) > 0 {
 		_ = json.Unmarshal(raw, &st)
+	}
+	authKey := a.readTailnetAuthKey()
+	if authKey != "" {
+		st.TailnetAuthKey = authKey
+	} else if st.TailnetAuthKey != "" {
+		// Migration: persist plaintext key from older state.json into secure store
+		a.writeTailnetAuthKey(st.TailnetAuthKey)
+		needsResave = true
 	}
 	if st.Appearance == "" {
 		st.Appearance = appearanceSystem
@@ -286,6 +341,9 @@ func (a *app) loadState() {
 	if a.tailnetMgr != nil {
 		a.tailnetMgr.UpdateConfig(st.tailnetConfig())
 	}
+	if needsResave {
+		a.saveState()
+	}
 }
 
 func (a *app) saveState() {
@@ -293,9 +351,14 @@ func (a *app) saveState() {
 	if a.tailnetMgr != nil {
 		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
 	}
+	a.writeTailnetAuthKey(a.state.TailnetAuthKey)
+
+	persistedState := a.state
+	persistedState.TailnetAuthKey = "" // never store plaintext auth key in state.json
+
 	dir := a.userDataDir()
 	_ = os.MkdirAll(dir, 0o755)
-	raw, err := json.MarshalIndent(a.state, "", "  ")
+	raw, err := json.MarshalIndent(persistedState, "", "  ")
 	if err != nil {
 		return
 	}

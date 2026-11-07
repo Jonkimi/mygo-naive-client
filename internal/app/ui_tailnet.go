@@ -116,8 +116,10 @@ func (a *app) renderTailnetPage(c *ui.Context, p palette) {
 					// Discovered Peers
 					a.renderTailnetPeersCard(c, p, st)
 
-					// Advanced Embedded Settings
-					a.renderTailnetAdvancedCard(c, p)
+					// Advanced Embedded Settings (Only shown in Embedded mode or when Auto falls back to Embedded)
+					if a.state.TailnetMode == string(tailnet.ModeEmbedded) || st.ActiveMode == tailnet.ModeEmbedded {
+						a.renderTailnetAdvancedCard(c, p)
+					}
 				})
 		})
 	})

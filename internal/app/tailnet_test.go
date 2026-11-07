@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
+	"os"
+	"strings"
 	"testing"
 
 	"naive-client/internal/config"
@@ -189,5 +192,70 @@ func TestTailnetUI_EmbeddedAuthAndError(t *testing.T) {
 
 	if !tt.HasText("内嵌 Tailscale 节点需要添加编译标签") {
 		t.Error("expected error banner text on screen")
+	}
+}
+
+// Tests Tailnet AuthKey secure persistence without plaintext leak into state.json.
+func TestTailnet_AuthKeySecureStorage(t *testing.T) {
+	a, _, dir := newTestApp(t, nil)
+
+	a.state.TailnetAuthKey = "tskey-auth-secret-xyz"
+	a.saveState()
+
+	// 1. Verify state.json on disk does NOT leak the plaintext key
+	raw, err := os.ReadFile(a.stateFilePath())
+	if err != nil {
+		t.Fatalf("read stateFilePath: %v", err)
+	}
+	if strings.Contains(string(raw), "tskey-auth-secret-xyz") {
+		t.Errorf("expected state.json to not contain plaintext auth key, got: %s", string(raw))
+	}
+
+	// 2. Clear in-memory state and reload; verify AuthKey is recovered securely
+	a.state.TailnetAuthKey = ""
+	a.loadState()
+	if a.state.TailnetAuthKey != "tskey-auth-secret-xyz" {
+		t.Errorf("expected loaded AuthKey to be recovered, got %q", a.state.TailnetAuthKey)
+	}
+
+	// 3. Test migration: write an unmigrated state.json with plaintext key
+	_ = os.Remove(a.tailnetKeyFile())
+	unmigrated := fmt.Sprintf(`{"tailnetAuthKey": "tskey-auth-legacy-migrated", "tailnetMode": "embedded"}`)
+	if err := os.WriteFile(a.stateFilePath(), []byte(unmigrated), 0o600); err != nil {
+		t.Fatalf("write unmigrated state: %v", err)
+	}
+	a.state.TailnetAuthKey = ""
+	a.loadState()
+	if a.state.TailnetAuthKey != "tskey-auth-legacy-migrated" {
+		t.Errorf("expected migrated key to be loaded, got %q", a.state.TailnetAuthKey)
+	}
+
+	// Verify state.json on disk had its plaintext key erased after migration resave
+	rawMigrated, _ := os.ReadFile(a.stateFilePath())
+	if strings.Contains(string(rawMigrated), "tskey-auth-legacy-migrated") {
+		t.Errorf("expected migrated state.json to clear plaintext key, got: %s", string(rawMigrated))
+	}
+	_ = dir
+}
+
+// Tests advanced embedded settings card is visible only when embedded mode is selected or active.
+func TestTailnetUI_AdvancedCardVisibility(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabTailnet
+	a.state.TailnetEnabled = true
+	a.state.TailnetMode = string(tailnet.ModeHost)
+	tt.Frame()
+
+	// 1. Host mode: advanced card should be hidden
+	if tt.HasText(a.catalog().TailnetAdvancedTitle()) {
+		t.Error("expected TailnetAdvancedTitle to be hidden in Host mode")
+	}
+
+	// 2. Switch to Embedded mode: advanced card should be visible
+	a.state.TailnetMode = string(tailnet.ModeEmbedded)
+	tt.Frame()
+
+	if !tt.HasText(a.catalog().TailnetAdvancedTitle()) {
+		t.Error("expected TailnetAdvancedTitle to be visible in Embedded mode")
 	}
 }
