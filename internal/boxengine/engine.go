@@ -144,6 +144,9 @@ func New(opts EngineOptions) (*Engine, error) {
 	})
 	if err != nil {
 		cancel()
+		if strings.Contains(err.Error(), "with_tailscale") {
+			return nil, fmt.Errorf("内嵌 Tailscale 节点需要添加编译标签 (-tags with_tailscale,with_gvisor): %w", err)
+		}
 		return nil, fmt.Errorf("create sing-box core: %w", err)
 	}
 

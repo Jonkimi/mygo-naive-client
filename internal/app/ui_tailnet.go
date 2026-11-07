@@ -184,9 +184,14 @@ func (a *app) renderTailnetNodeCard(c *ui.Context, p palette, st tailnet.Status)
 					ui.Text(c, cat.TailnetNodeInfo()).FontSize(14).FontWeight(600).TextColor(p.text)
 				})
 
-				if st.BackendState == "Running" {
+				switch st.BackendState {
+				case "Running":
 					tagPill(c, cat.TailnetStatusConnected(), p.green, p.greenBg)
-				} else {
+				case "NeedsLogin":
+					tagPill(c, cat.TailnetStatusNeedsLogin(), p.accent, p.accentBg)
+				case "Starting":
+					tagPill(c, "启动中...", p.textDim, p.surface)
+				default:
 					tagPill(c, cat.TailnetStatusOffline(), p.textDim, p.surface)
 				}
 			})
@@ -351,18 +356,60 @@ func (a *app) renderTailnetAdvancedCard(c *ui.Context, p palette) {
 		Padding(16).Radius(10).
 		Background(p.card).Border(1, p.borderSubtle).Gap(12).
 		Children(func() {
-			ui.Text(c, cat.TailnetAdvancedTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+				ui.Text(c, cat.TailnetAdvancedTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 
-			labeledInput(c, p, "inp-tailnet-control-url", cat.TailnetControlURL(), &a.state.TailnetControlURL, "https://controlplane.tailscale.com")
-			labeledInput(c, p, "inp-tailnet-auth-key", cat.TailnetAuthKey(), &a.state.TailnetAuthKey, "tskey-auth-...")
-			labeledInput(c, p, "inp-tailnet-hostname", cat.TailnetCustomHostname(), &a.state.TailnetHostname, "NaiveClient")
+				if a.state.TailnetMode == string(tailnet.ModeEmbedded) {
+					btnApply := ui.ButtonBase(c.Key("btn-tailnet-apply-reconnect")).
+						Label("btn-tailnet-apply-reconnect").
+						Padding(4, 10, 4, 10).Radius(6).
+						Background(p.accentBg).Border(1, p.accent.Alpha(0.3)).
+						Children(func() {
+							ui.Text(c, "应用并重新连接").FontSize(11).FontWeight(600).TextColor(p.accent)
+						})
+					if btnApply.Clicked() {
+						a.saveState()
+						if a.tailnetMgr != nil {
+							a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+						}
+						a.restartGatewayIfRunning()
+						c.Toast("已应用并重启内嵌节点")
+					}
+				}
+			})
+
+			if labeledInput(c, p, "inp-tailnet-control-url", cat.TailnetControlURL(), &a.state.TailnetControlURL, "https://controlplane.tailscale.com").Changed() {
+				a.saveState()
+				if a.tailnetMgr != nil {
+					a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+				}
+			}
+			if labeledInput(c, p, "inp-tailnet-auth-key", cat.TailnetAuthKey(), &a.state.TailnetAuthKey, "tskey-auth-...").Changed() {
+				a.saveState()
+				if a.tailnetMgr != nil {
+					a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+				}
+			}
+			if labeledInput(c, p, "inp-tailnet-hostname", cat.TailnetCustomHostname(), &a.state.TailnetHostname, "NaiveClient").Changed() {
+				a.saveState()
+				if a.tailnetMgr != nil {
+					a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+				}
+			}
 		})
 }
 
 func (a *app) restartGatewayIfRunning() {
-	if a.gateway != nil && a.state.GatewayEnabled {
+	if a.state.GatewayEnabled || a.state.TailnetMode == string(tailnet.ModeEmbedded) {
+		a.state.GatewayEnabled = true
 		a.stopGateway()
-		_ = a.startGateway()
+		if err := a.startGateway(); err != nil {
+			if a.tailnetMgr != nil {
+				a.tailnetMgr.SetError(err.Error())
+			}
+		} else if a.tailnetMgr != nil {
+			a.tailnetMgr.SetError("")
+		}
 	}
 }
 

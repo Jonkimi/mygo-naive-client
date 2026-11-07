@@ -93,4 +93,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          GOFLAGS: "-tags=with_tailscale,with_gvisor"
         run: go tool mygo build -platform "${{ matrix.platform }}" -upload
