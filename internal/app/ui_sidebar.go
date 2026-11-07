@@ -609,11 +609,12 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
 						ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
 					})
 
 					if gwBadgeText != "" {
 						tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
+					} else {
+						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
 					}
 				})
 			if row1.Hovered() {
@@ -637,11 +638,10 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
 						ui.Text(c, cat.NavTailnet()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-						if tsIP != "" {
-							ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
-						}
 					})
-					if tsBadgeText != "" {
+					if tsIP != "" {
+						ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
+					} else if tsBadgeText != "" {
 						tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
 					}
 				})
