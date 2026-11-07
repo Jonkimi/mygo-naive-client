@@ -379,10 +379,10 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 				Background(p.surface).Border(1, p.borderSubtle)
 
 			// Table header
-			ui.Row(c).Padding(4, 6, 4, 6).Background(p.surface).Radius(4).Children(func() {
+			ui.Row(c).Padding(4, 6, 4, 6).Background(p.surface).Radius(4).AlignItems(ui.Center).Gap(8).Children(func() {
 				ui.Text(c, cat.InsightsColTime()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
-				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(60)
-				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(85)
+				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
+				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(96)
 				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(180)
 				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
 				ui.Text(c, cat.InsightsColAction()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
@@ -410,13 +410,25 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 					ui.Row(c.Key("log-row-" + idStr)).
 						AlignItems(ui.Center).Padding(4, 6, 4, 6).
 						BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle.Alpha(0.4)).
+						Gap(8).
 						Children(func() {
+							// Col 1: Time
 							ui.Text(c, timeStr).FontSize(10).TextColor(p.textDim).Width(65)
-							tagPill(c, string(e.Source), p.textDim, p.surface)
-							ui.Box(c).Width(8)
-							tagPill(c, string(e.Verdict), verdictFg, verdictBg)
-							ui.Box(c).Width(12)
+
+							// Col 2: Source
+							ui.Row(c).Width(65).AlignItems(ui.Center).Children(func() {
+								tagPill(c, string(e.Source), p.textDim, p.surface)
+							})
+
+							// Col 3: Verdict
+							ui.Row(c).Width(96).AlignItems(ui.Center).Children(func() {
+								tagPill(c, string(e.Verdict), verdictFg, verdictBg)
+							})
+
+							// Col 4: Domain
 							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(180).NoWrap()
+
+							// Col 5: Chain
 							chainText := e.Chain
 							if chainText == "" {
 								chainText = e.Rule
@@ -426,30 +438,32 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							}
 							ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).NoWrap()
 
-							// Quick action
-							if e.Verdict == blocker.VerdictBlocked {
-								btnW := ui.ButtonBase(c.Key("btn-log-whitelist-" + idStr)).
-									Label("btn-log-whitelist-" + dom).
-									Padding(2, 6, 2, 6).Radius(4).
-									Background(p.surface).Border(1, p.borderSubtle).
-									Children(func() {
-										ui.Text(c, cat.InsightsActionWhitelist()).FontSize(10).TextColor(p.accentText)
-									})
-								if btnW.Clicked() {
-									a.addBlockerAllowlist(dom)
+							// Col 6: Action
+							ui.Row(c).Width(65).AlignItems(ui.Center).Children(func() {
+								if e.Verdict == blocker.VerdictBlocked {
+									btnW := ui.ButtonBase(c.Key("btn-log-whitelist-" + idStr)).
+										Label("btn-log-whitelist-" + dom).
+										Padding(2, 6, 2, 6).Radius(4).
+										Background(p.surface).Border(1, p.borderSubtle).
+										Children(func() {
+											ui.Text(c, cat.InsightsActionWhitelist()).FontSize(10).TextColor(p.accentText)
+										})
+									if btnW.Clicked() {
+										a.addBlockerAllowlist(dom)
+									}
+								} else {
+									btnB := ui.ButtonBase(c.Key("btn-log-block-" + idStr)).
+										Label("btn-log-block-" + dom).
+										Padding(2, 6, 2, 6).Radius(4).
+										Background(p.surface).Border(1, p.borderSubtle).
+										Children(func() {
+											ui.Text(c, cat.InsightsActionDenylist()).FontSize(10).TextColor(p.red)
+										})
+									if btnB.Clicked() {
+										a.addBlockerDenylist(dom)
+									}
 								}
-							} else {
-								btnB := ui.ButtonBase(c.Key("btn-log-block-" + idStr)).
-									Label("btn-log-block-" + dom).
-									Padding(2, 6, 2, 6).Radius(4).
-									Background(p.surface).Border(1, p.borderSubtle).
-									Children(func() {
-										ui.Text(c, cat.InsightsActionDenylist()).FontSize(10).TextColor(p.red)
-									})
-								if btnB.Clicked() {
-									a.addBlockerDenylist(dom)
-								}
-							}
+							})
 						})
 				}
 			}
