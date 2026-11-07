@@ -2,6 +2,7 @@ package boxengine
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -730,6 +731,102 @@ func TestEngine_DynamicDenylistAndClearDNSCache(t *testing.T) {
 	matchBlocked2, _ := bl.AsGateway().Match("dynamic-ads.org")
 	if matchBlocked2 {
 		t.Fatalf("expected dynamic-ads.org to be allowed after AddAllowlist")
+	}
+}
+
+// Tests that connections sent via SOCKS5 IP format (curl -x socks5:// IP) are sniffed for TLS SNI
+// and properly logged to Blocker / Insights as SourceGateway.
+func TestEngine_SOCKS5_IP_SNI_Sniffing(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+
+	opts := EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		Blocker:     bl,
+		FinalAction: "direct",
+	}
+
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New Engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("eng.Start failed: %v", err)
+	}
+	defer func() {
+		_ = eng.Close()
+	}()
+
+	// Mock target server listening on TCP
+	targetLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen target failed: %v", err)
+	}
+	defer targetLn.Close()
+	targetPort := targetLn.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := targetLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var buf [1024]byte
+				_, _ = c.Read(buf[:])
+			}(conn)
+		}
+	}()
+
+	// 1. Connect to SOCKS5 proxy at eng.Port()
+	proxyConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", eng.Port()))
+	if err != nil {
+		t.Fatalf("dial proxy failed: %v", err)
+	}
+	defer proxyConn.Close()
+
+	// SOCKS5 greeting: [VER=5, NMETHODS=1, METHOD=0 (NO_AUTH)]
+	if _, err := proxyConn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		t.Fatalf("write greeting failed: %v", err)
+	}
+	var greetingResp [2]byte
+	if _, err := io.ReadFull(proxyConn, greetingResp[:]); err != nil || greetingResp[0] != 0x05 || greetingResp[1] != 0x00 {
+		t.Fatalf("unexpected greeting resp: %v, err: %v", greetingResp, err)
+	}
+
+	// SOCKS5 connect to IPv4 (127.0.0.1:targetPort)
+	req := []byte{0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, byte(targetPort >> 8), byte(targetPort & 0xff)}
+	if _, err := proxyConn.Write(req); err != nil {
+		t.Fatalf("write connect request failed: %v", err)
+	}
+	var connResp [10]byte
+	if _, err := io.ReadFull(proxyConn, connResp[:]); err != nil || connResp[1] != 0x00 {
+		t.Fatalf("connect failed, resp: %v, err: %v", connResp, err)
+	}
+
+	// Now initiate TLS ClientHello with SNI = "ipinfo.io" over the SOCKS5 connection
+	tlsClient := tls.Client(proxyConn, &tls.Config{
+		ServerName:         "ipinfo.io",
+		InsecureSkipVerify: true,
+	})
+	_ = tlsClient.Handshake() // Handshake may fail on target dummy server, but ClientHello is sent and sniffed!
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify that Blocker QueryLogger recorded "ipinfo.io" as SourceGateway
+	entries := bl.Logger().GetEntries(10)
+	foundSNI := false
+	for _, e := range entries {
+		if e.Domain == "ipinfo.io" && e.Source == blocker.SourceGateway && e.Verdict == blocker.VerdictAllowed {
+			foundSNI = true
+			if !strings.Contains(e.Chain, "direct") {
+				t.Errorf("expected chain to route to direct, got %q", e.Chain)
+			}
+			break
+		}
+	}
+	if !foundSNI {
+		t.Fatalf("expected ipinfo.io to be logged as SourceGateway from sniffed TLS ClientHello, got entries: %+v", entries)
 	}
 }
 

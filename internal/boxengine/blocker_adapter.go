@@ -1,19 +1,23 @@
 package boxengine
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 
 	"naive-client/internal/blocker"
 
 	mDNS "github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/sniff"
 	boxDNS "github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-tun"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 type blockerTransportRegistry struct {
@@ -125,18 +129,97 @@ func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule a
 	return blocked
 }
 
+type sniffingConn struct {
+	net.Conn
+	tracker       *BlockerConnectionTracker
+	matchedRule   adapter.Rule
+	matchOutbound adapter.Outbound
+	fallbackAddr  string
+	once          sync.Once
+}
+
+func (c *sniffingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.once.Do(func() {
+			var meta adapter.InboundContext
+			// 1. Try sniffing TLS ClientHello for SNI domain
+			if sErr := sniff.TLSClientHello(context.Background(), &meta, bytes.NewReader(p[:n])); sErr == nil && meta.Domain != "" {
+				target := strings.Trim(strings.ToLower(meta.Domain), ".")
+				if c.tracker.recordConnection(target, c.matchedRule, c.matchOutbound) {
+					_ = c.Conn.Close()
+				}
+				return
+			}
+			// 2. Try sniffing HTTP Host
+			if sErr := sniff.HTTPHost(context.Background(), &meta, bytes.NewReader(p[:n])); sErr == nil && meta.Domain != "" {
+				target := strings.Trim(strings.ToLower(meta.Domain), ".")
+				if c.tracker.recordConnection(target, c.matchedRule, c.matchOutbound) {
+					_ = c.Conn.Close()
+				}
+				return
+			}
+			// 3. Fallback to destination IP address
+			if c.fallbackAddr != "" {
+				if c.tracker.recordConnection(c.fallbackAddr, c.matchedRule, c.matchOutbound) {
+					_ = c.Conn.Close()
+				}
+			}
+		})
+	}
+	return n, err
+}
+
+func (c *sniffingConn) Close() error {
+	c.once.Do(func() {
+		if c.fallbackAddr != "" {
+			c.tracker.recordConnection(c.fallbackAddr, c.matchedRule, c.matchOutbound)
+		}
+	})
+	return c.Conn.Close()
+}
+
 func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
 	if t.blocker == nil {
 		return conn
 	}
+	// 1. If domain is already present in metadata (e.g. SOCKS5 domain, HTTP CONNECT domain)
 	target := extractDomainFromMetadata(metadata)
-	if target == "" {
+	if target != "" {
+		if t.recordConnection(target, matchedRule, matchOutbound) {
+			_ = conn.Close()
+		}
 		return conn
 	}
-	if t.recordConnection(target, matchedRule, matchOutbound) {
-		_ = conn.Close()
+
+	// 2. Check if DNS reverse mapping has the domain for this destination IP
+	if metadata.Destination.Addr.IsValid() {
+		if dnsRouter := service.FromContext[adapter.DNSRouter](ctx); dnsRouter != nil {
+			if rev, ok := dnsRouter.LookupReverseMapping(metadata.Destination.Addr); ok && rev != "" {
+				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
+				if t.recordConnection(target, matchedRule, matchOutbound) {
+					_ = conn.Close()
+				}
+				return conn
+			}
+		}
 	}
-	return conn
+
+	// 3. Neither metadata nor reverse mapping has the domain (e.g. curl -x socks5:// IP):
+	// Wrap conn to sniff TLS SNI / HTTP Host upon the first read, falling back to destination IP
+	var fallback string
+	if metadata.Destination.Addr.IsValid() {
+		fallback = metadata.Destination.Addr.String()
+	} else if metadata.Destination.Fqdn != "" {
+		fallback = metadata.Destination.Fqdn
+	}
+	return &sniffingConn{
+		Conn:          conn,
+		tracker:       t,
+		matchedRule:   matchedRule,
+		matchOutbound: matchOutbound,
+		fallbackAddr:  fallback,
+	}
 }
 
 func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) N.PacketConn {
@@ -144,6 +227,16 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 		return conn
 	}
 	target := extractDomainFromMetadata(metadata)
+	if target == "" && metadata.Destination.Addr.IsValid() {
+		if dnsRouter := service.FromContext[adapter.DNSRouter](ctx); dnsRouter != nil {
+			if rev, ok := dnsRouter.LookupReverseMapping(metadata.Destination.Addr); ok && rev != "" {
+				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
+			}
+		}
+		if target == "" {
+			target = metadata.Destination.Addr.String()
+		}
+	}
 	if target == "" {
 		return conn
 	}

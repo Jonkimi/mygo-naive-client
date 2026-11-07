@@ -383,8 +383,8 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 				ui.Text(c, cat.InsightsColTime()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
 				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(60)
 				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(85)
-				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
-				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(220)
+				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(180)
+				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
 				ui.Text(c, cat.InsightsColAction()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
 			})
 
@@ -416,7 +416,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							ui.Box(c).Width(8)
 							tagPill(c, string(e.Verdict), verdictFg, verdictBg)
 							ui.Box(c).Width(12)
-							ui.Text(c, dom).FontSize(11).TextColor(p.text).Grow(1).NoWrap()
+							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(180).NoWrap()
 							chainText := e.Chain
 							if chainText == "" {
 								chainText = e.Rule
@@ -424,7 +424,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							if chainText == "" {
 								chainText = "-"
 							}
-							ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Width(220).NoWrap()
+							ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).NoWrap()
 
 							// Quick action
 							if e.Verdict == blocker.VerdictBlocked {
