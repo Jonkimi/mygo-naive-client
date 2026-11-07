@@ -761,22 +761,82 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 				})
 			})
 
-			// DNS & Routing Alignment Callout Banner
-			ui.Column(c.Key("banner-routing-dns-alignment")).
-				Padding(12, 14, 12, 14).Radius(8).
-				Background(p.surface).Border(1, p.borderSubtle).
-				Gap(6).
-				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Icon(c, iconNavRouting).Size(16, 16).TextColor(p.accent)
-						ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+			// Row: DNS Resolution Strategy & Smart Proxy Pool (Side-by-Side in 2 columns)
+			ui.Grid(c.Key("routing-strategy-banners")).Columns(2).Gap(12).Children(func() {
+				// Card 1: DNS Resolution Strategy
+				ui.Column(c.Key("banner-routing-dns-alignment")).
+					Padding(12, 14, 12, 14).Radius(8).
+					Background(p.surface).Border(1, p.borderSubtle).
+					Gap(6).
+					Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Icon(c, iconNavRouting).Size(15, 15).TextColor(p.accent)
+								ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+							})
+							dnsInfoBtn := subtleActionChip(c.Key("btn-routing-dns-info"), p, iconInfo, "", false).
+								Label("DNS " + cat.ActionDetails()).
+								Tooltip(cat.ActionDetails())
+							if dnsInfoBtn.Clicked() {
+								a.showRoutingDnsDetail = !a.showRoutingDnsDetail
+							}
+							ui.Popover(c, dnsInfoBtn, &a.showRoutingDnsDetail, func() {
+								ui.Column(c).Width(340).Padding(12, 14, 12, 14).Radius(8).
+									Background(p.card).Border(1, p.borderSubtle).
+									Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.25)).
+									Gap(8).Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+											ui.Icon(c, iconInfo).Size(14, 14).TextColor(p.accent)
+											ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+										})
+										ui.Column(c).Gap(6).Children(func() {
+											ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+											ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+											ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+										})
+									})
+							})
+						})
+						ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
 					})
-					ui.Column(c).Gap(4).Padding(0, 0, 0, 24).Children(func() {
-						ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textMuted)
-						ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textMuted)
-						ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textMuted)
+
+				// Card 2: Smart Adaptive Routing
+				ui.Column(c.Key("banner-routing-smart-pool")).
+					Padding(12, 14, 12, 14).Radius(8).
+					Background(p.surface).Border(1, p.borderSubtle).
+					Gap(6).
+					Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Icon(c, iconBolt).Size(15, 15).TextColor(p.accent)
+								ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+							})
+							poolInfoBtn := subtleActionChip(c.Key("btn-routing-pool-info"), p, iconInfo, "", false).
+								Label("Pool " + cat.ActionDetails()).
+								Tooltip(cat.ActionDetails())
+							if poolInfoBtn.Clicked() {
+								a.showRoutingPoolDetail = !a.showRoutingPoolDetail
+							}
+							ui.Popover(c, poolInfoBtn, &a.showRoutingPoolDetail, func() {
+								ui.Column(c).Width(360).Padding(12, 14, 12, 14).Radius(8).
+									Background(p.card).Border(1, p.borderSubtle).
+									Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.25)).
+									Gap(8).Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+											ui.Icon(c, iconBolt).Size(14, 14).TextColor(p.accent)
+											ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+										})
+										ui.Column(c).Gap(6).Children(func() {
+											ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+											ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+											ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+										})
+									})
+							})
+						})
+						ui.Text(c, cat.RoutingSmartPoolDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
 					})
-				})
+			})
 
 			// Missing GeoData Callout Banner
 			if !hasGeo {

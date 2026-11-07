@@ -144,6 +144,9 @@ type app struct {
 	activeTagFilter    string
 	searchQuery        string
 
+	showRoutingDnsDetail  bool
+	showRoutingPoolDetail bool
+
 	insightsFilter           string
 	insightsSearch           string
 	insightsShowManageRules  bool

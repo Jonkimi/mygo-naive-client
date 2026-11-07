@@ -2902,4 +2902,51 @@ func TestPeriodicAutoProbeSettingsAndSilentProbe(t *testing.T) {
 	}
 }
 
+// Tests that DNS strategy and Smart Proxy Pool strategy are rendered side-by-side with one-line descriptions and popover details.
+func TestRouting_DnsAndSmartPoolCardsWithPopover(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.state.Language = locales.LangZhHans
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// 1. Both titles and one-line summaries are rendered
+	if !tt.HasText(a.catalog().RoutingDnsAlignmentTitle()) {
+		t.Fatalf("expected DNS title %q", a.catalog().RoutingDnsAlignmentTitle())
+	}
+	if !tt.HasText(a.catalog().RoutingSmartPoolTitle()) {
+		t.Fatalf("expected Smart Pool title %q", a.catalog().RoutingSmartPoolTitle())
+	}
+	if !tt.HasText(a.catalog().RoutingDnsAlignmentDesc()) {
+		t.Fatalf("expected DNS summary %q", a.catalog().RoutingDnsAlignmentDesc())
+	}
+	if !tt.HasText(a.catalog().RoutingSmartPoolDesc()) {
+		t.Fatalf("expected Smart Pool summary %q", a.catalog().RoutingSmartPoolDesc())
+	}
+
+	// 2. Click DNS info button -> popover shows detailed direct, proxy port, tun info
+	if err := tt.Click("DNS " + a.catalog().ActionDetails()); err != nil {
+		t.Fatalf("click dns info button: %v", err)
+	}
+	tt.Frame()
+	if !a.showRoutingDnsDetail {
+		t.Fatalf("expected showRoutingDnsDetail to be true after click")
+	}
+	if !tt.HasText(a.catalog().RoutingDnsDescDirect()) {
+		t.Fatalf("expected DNS detail %q in popover", a.catalog().RoutingDnsDescDirect())
+	}
+
+	// 3. Click Smart Pool info button -> popover shows detailed EWMA, circuit, affinity info
+	if err := tt.Click("Pool " + a.catalog().ActionDetails()); err != nil {
+		t.Fatalf("click pool info button: %v", err)
+	}
+	tt.Frame()
+	if !a.showRoutingPoolDetail {
+		t.Fatalf("expected showRoutingPoolDetail to be true after click")
+	}
+	if !tt.HasText(a.catalog().RoutingSmartPoolDetailEWMA()) {
+		t.Fatalf("expected Smart Pool detail %q in popover", a.catalog().RoutingSmartPoolDetailEWMA())
+	}
+}
+
+
 

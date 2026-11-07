@@ -84,11 +84,11 @@ func (msgs Messages) RoutingSubtitle() string {
 	return Catalog.Format(msgs.locale, "routingSubtitle", nil)
 }
 
-// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Strategy Alignment"
+// RoutingDnsAlignmentTitle says "DNS Resolution Strategy"
 // in the language the app shows.
 func RoutingDnsAlignmentTitle() string { return In(i18n.Locale()).RoutingDnsAlignmentTitle() }
 
-// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Strategy Alignment"
+// RoutingDnsAlignmentTitle says "DNS Resolution Strategy"
 // in the language of msgs.
 func (msgs Messages) RoutingDnsAlignmentTitle() string {
 	return Catalog.Format(msgs.locale, "routingDnsAlignmentTitle", nil)
@@ -102,6 +102,58 @@ func RoutingDnsAlignmentDesc() string { return In(i18n.Locale()).RoutingDnsAlign
 // in the language of msgs.
 func (msgs Messages) RoutingDnsAlignmentDesc() string {
 	return Catalog.Format(msgs.locale, "routingDnsAlignmentDesc", nil)
+}
+
+// RoutingSmartPoolTitle says "Smart Proxy Pool & Adaptive Routing"
+// in the language the app shows.
+func RoutingSmartPoolTitle() string { return In(i18n.Locale()).RoutingSmartPoolTitle() }
+
+// RoutingSmartPoolTitle says "Smart Proxy Pool & Adaptive Routing"
+// in the language of msgs.
+func (msgs Messages) RoutingSmartPoolTitle() string {
+	return Catalog.Format(msgs.locale, "routingSmartPoolTitle", nil)
+}
+
+// RoutingSmartPoolDesc says "Dynamically selects the healthiest node based on real EWMA latency, success rate, and sticky affinity."
+// in the language the app shows.
+func RoutingSmartPoolDesc() string { return In(i18n.Locale()).RoutingSmartPoolDesc() }
+
+// RoutingSmartPoolDesc says "Dynamically selects the healthiest node based on real EWMA latency, success rate, and sticky affinity."
+// in the language of msgs.
+func (msgs Messages) RoutingSmartPoolDesc() string {
+	return Catalog.Format(msgs.locale, "routingSmartPoolDesc", nil)
+}
+
+// RoutingSmartPoolDetailEWMA says "Real Latency Priority: Tracks true business first-packet RTT (EWMA) in real time to reflect actual internet health."
+// in the language the app shows.
+func RoutingSmartPoolDetailEWMA() string { return In(i18n.Locale()).RoutingSmartPoolDetailEWMA() }
+
+// RoutingSmartPoolDetailEWMA says "Real Latency Priority: Tracks true business first-packet RTT (EWMA) in real time to reflect actual internet health."
+// in the language of msgs.
+func (msgs Messages) RoutingSmartPoolDetailEWMA() string {
+	return Catalog.Format(msgs.locale, "routingSmartPoolDetailEWMA", nil)
+}
+
+// RoutingSmartPoolDetailCircuit says "Success Rate & Circuit Breaker: Evaluates EWMA / SuccessRate²; 3 consecutive failures trip a 30s circuit breaker pen…"
+// in the language the app shows.
+func RoutingSmartPoolDetailCircuit() string { return In(i18n.Locale()).RoutingSmartPoolDetailCircuit() }
+
+// RoutingSmartPoolDetailCircuit says "Success Rate & Circuit Breaker: Evaluates EWMA / SuccessRate²; 3 consecutive failures trip a 30s circuit breaker pen…"
+// in the language of msgs.
+func (msgs Messages) RoutingSmartPoolDetailCircuit() string {
+	return Catalog.Format(msgs.locale, "routingSmartPoolDetailCircuit", nil)
+}
+
+// RoutingSmartPoolDetailAffinity says "Sticky Affinity: Locks each domain to its active node, switching only when a candidate is >30ms and >20% faster."
+// in the language the app shows.
+func RoutingSmartPoolDetailAffinity() string {
+	return In(i18n.Locale()).RoutingSmartPoolDetailAffinity()
+}
+
+// RoutingSmartPoolDetailAffinity says "Sticky Affinity: Locks each domain to its active node, switching only when a candidate is >30ms and >20% faster."
+// in the language of msgs.
+func (msgs Messages) RoutingSmartPoolDetailAffinity() string {
+	return Catalog.Format(msgs.locale, "routingSmartPoolDetailAffinity", nil)
 }
 
 // RoutingDnsDescDirect says "Direct Traffic: Resolved locally via Domestic DoH (optimal CDN routing and LAN accessibility), then connects to desti…"
