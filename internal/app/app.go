@@ -1095,6 +1095,7 @@ func (a *app) startGateway() error {
 	} else if a.state.TrafficMode == "tun" && a.sysproxy != nil {
 		_ = a.sysproxy.MarkDirtyTun(tunName)
 	}
+	a.releaseUnusedMemory()
 	return nil
 }
 

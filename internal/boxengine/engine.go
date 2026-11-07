@@ -609,6 +609,9 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	// 4. Routing configuration
 	var siteTags, ipTags []string
 	for _, r := range opts.Rules {
+		if !r.Enabled {
+			continue
+		}
 		siteTags = append(siteTags, r.GeoSite...)
 		ipTags = append(ipTags, r.GeoIP...)
 	}
