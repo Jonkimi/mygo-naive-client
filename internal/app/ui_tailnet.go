@@ -157,19 +157,37 @@ func (a *app) renderTailnetAuthBanner(c *ui.Context, p palette, authURL string) 
 					ui.Icon(c, iconCopy).Size(14, 14).TextColor(p.textDim)
 				})
 			if btnCopy.Clicked() {
-				a.writeClipboard(authURL, "已复制登录授权链接")
+				a.writeClipboard(authURL, cat.TailnetCopiedAuthURL())
 			}
 		})
 }
 
 func (a *app) renderTailnetErrorBanner(c *ui.Context, p palette, errText string) {
+	cat := a.catalog()
 	ui.Row(c.Key("tailnet-error-banner")).
 		Padding(10, 14, 10, 14).Radius(8).
 		Background(p.redBg).Border(1, p.red.Alpha(0.2)).
-		AlignItems(ui.Center).Gap(10).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).
 		Children(func() {
-			ui.Icon(c, iconAlert).Size(16, 16).TextColor(p.red)
-			ui.Text(c, errText).FontSize(12).TextColor(p.red)
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).Children(func() {
+				ui.Icon(c, iconAlert).Size(16, 16).TextColor(p.red)
+				ui.Text(c, errText).FontSize(12).TextColor(p.red).Grow(1)
+			})
+
+			btnCopy := ui.ButtonBase(c.Key("btn-copy-tailnet-error")).
+				Label("btn-copy-tailnet-error").
+				Padding(3, 8, 3, 8).Radius(5).
+				Background(p.card).Border(1, p.borderSubtle).
+				Tooltip(cat.ActionCopyError()).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+						ui.Icon(c, iconCopy).Size(11, 11).TextColor(p.textDim)
+						ui.Text(c, cat.BtnCopy()).FontSize(11).TextColor(p.textDim)
+					})
+				})
+			if btnCopy.Clicked() {
+				a.writeClipboard(errText, cat.ToastErrorCopied())
+			}
 		})
 }
 
@@ -192,7 +210,7 @@ func (a *app) renderTailnetNodeCard(c *ui.Context, p palette, st tailnet.Status)
 				case "NeedsLogin":
 					tagPill(c, cat.TailnetStatusNeedsLogin(), p.accent, p.accentBg)
 				case "Starting":
-					tagPill(c, "启动中...", p.textDim, p.surface)
+					tagPill(c, cat.TailnetStarting(), p.textDim, p.surface)
 				default:
 					tagPill(c, cat.TailnetStatusOffline(), p.textDim, p.surface)
 				}
@@ -275,7 +293,7 @@ func (a *app) renderTailnetPeersCard(c *ui.Context, p palette, st tailnet.Status
 					Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
 							ui.Icon(c, iconRefresh).Size(12, 12).TextColor(p.textDim)
-							ui.Text(c, "刷新").FontSize(11).TextColor(p.textDim)
+							ui.Text(c, cat.BtnRefresh()).FontSize(11).TextColor(p.textDim)
 						})
 					})
 				if btnRefresh.Clicked() && a.tailnetMgr != nil {
@@ -330,7 +348,7 @@ func (a *app) renderTailnetPeersCard(c *ui.Context, p palette, st tailnet.Status
 								})
 							if btnExit.Clicked() && a.tailnetMgr != nil {
 								_ = a.tailnetMgr.SetExitNode(context.Background(), "")
-								c.Toast("已断开出口节点")
+								c.Toast(cat.TailnetExitNodeDisconnected())
 							}
 						} else if peer.ExitNodeOption {
 							btnUse := ui.ButtonBase(c.Key("btn-exit-use-"+peer.ID)).
@@ -343,7 +361,7 @@ func (a *app) renderTailnetPeersCard(c *ui.Context, p palette, st tailnet.Status
 								})
 							if btnUse.Clicked() && a.tailnetMgr != nil {
 								_ = a.tailnetMgr.SetExitNode(context.Background(), peer.ID)
-								c.Toast(fmt.Sprintf("已切换至出口节点 %s", peer.Hostname))
+								c.Toast(cat.TailnetExitNodeSwitched(peer.Hostname))
 							}
 						}
 					})
@@ -367,7 +385,7 @@ func (a *app) renderTailnetAdvancedCard(c *ui.Context, p palette) {
 						Padding(4, 10, 4, 10).Radius(6).
 						Background(p.accentBg).Border(1, p.accent.Alpha(0.3)).
 						Children(func() {
-							ui.Text(c, "应用并重新连接").FontSize(11).FontWeight(600).TextColor(p.accent)
+							ui.Text(c, cat.TailnetApplyReconnect()).FontSize(11).FontWeight(600).TextColor(p.accent)
 						})
 					if btnApply.Clicked() {
 						a.saveState()
@@ -375,7 +393,7 @@ func (a *app) renderTailnetAdvancedCard(c *ui.Context, p palette) {
 							a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
 						}
 						a.restartGatewayIfRunning()
-						c.Toast("已应用并重启内嵌节点")
+						c.Toast(cat.TailnetAppliedRestarted())
 					}
 				}
 			})

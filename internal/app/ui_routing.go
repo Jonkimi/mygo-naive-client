@@ -524,7 +524,7 @@ func (a *app) saveRuleEditor() {
 
 	name := strings.TrimSpace(a.ruleEditor.name)
 	if name == "" {
-		a.ruleEditor.errText = "规则名称不能为空"
+		a.ruleEditor.errText = a.catalog().RuleNameRequired()
 		return
 	}
 
@@ -547,7 +547,7 @@ func (a *app) saveRuleEditor() {
 	}
 
 	if len(domains) == 0 && len(cidrs) == 0 && len(keywords) == 0 && len(geosites) == 0 && len(geoips) == 0 {
-		a.ruleEditor.errText = "请至少填写一个匹配条件（域名后缀、IP-CIDR、关键字、GeoSite 或 GeoIP）"
+		a.ruleEditor.errText = a.catalog().RuleCriteriaRequired()
 		return
 	}
 
@@ -984,7 +984,24 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 
 				// Error display
 				if a.ruleEditor.errText != "" {
-					ui.Text(c, a.ruleEditor.errText).FontSize(12).TextColor(p.red)
+					ui.Row(c.Key("rule-editor-error-row")).
+						AlignItems(ui.Center).Justify(ui.SpaceBetween).
+						Padding(6, 10, 6, 10).Radius(6).
+						Background(p.redBg).
+						Children(func() {
+							ui.Text(c, a.ruleEditor.errText).FontSize(12).TextColor(p.red).Grow(1)
+							btnCopy := ui.ButtonBase(c.Key("btn-copy-rule-error")).
+								Label("btn-copy-rule-error").
+								Padding(2, 6, 2, 6).Radius(4).
+								Background(p.card).Border(1, p.borderSubtle).
+								Tooltip(cat.ActionCopyError()).
+								Children(func() {
+									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
+								})
+							if btnCopy.Clicked() {
+								a.writeClipboard(a.ruleEditor.errText, cat.ToastErrorCopied())
+							}
+						})
 				}
 
 				// Action buttons

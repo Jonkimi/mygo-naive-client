@@ -553,9 +553,103 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 			// Error Banner if process failed or crashed
 			if rt.LastError != "" {
-				ui.Row(c).AlignItems(ui.Center).PaddingX(10).PaddingY(7).Radius(7).Background(p.redBg).Children(func() {
-					ui.Text(c, "Error: "+rt.LastError).FontSize(12).FontWeight(500).TextColor(p.red)
-				})
+				isMissingCore, isXray := isMissingCoreError(rt.LastError)
+				if !isMissingCore {
+					if svc.EffectiveProtocol() == config.ProtoNaive && (a.localVersion == "" || !a.mgr.BinaryExists()) {
+						isMissingCore = true
+						isXray = false
+					} else if svc.EffectiveProtocol() != config.ProtoNaive && (a.localXrayVersion == "" || !a.mgr.XrayBinaryExists()) {
+						isMissingCore = true
+						isXray = true
+					}
+				}
+
+				displayErr := rt.LastError
+				if isMissingCore {
+					if isXray {
+						displayErr = cat.CoreMissingXrayError()
+					} else {
+						displayErr = cat.CoreMissingNaiveError()
+					}
+				} else if !strings.HasPrefix(rt.LastError, cat.ErrorPrefix()) && !strings.HasPrefix(rt.LastError, "Error:") && !strings.HasPrefix(rt.LastError, "错误:") {
+					displayErr = cat.ErrorPrefix() + rt.LastError
+				}
+
+				ui.Row(c.Key("error-banner-" + svc.ID)).
+					AlignItems(ui.Center).Justify(ui.SpaceBetween).
+					Padding(8, 10, 8, 10).Radius(7).
+					Background(p.redBg).Border(1, p.red.Alpha(0.2)).
+					Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
+							ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.red)
+							ui.Text(c, displayErr).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
+						})
+
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+							if isMissingCore {
+								isUpdating := a.updatingCore
+								if isXray {
+									isUpdating = a.updatingXrayCore
+								}
+								btnLabel := cat.ActionInstallCoreShort()
+								if isUpdating {
+									btnLabel = cat.CoreDownloading()
+								}
+								btnInstall := ui.ButtonBase(c.Key("btn-install-core-" + svc.ID)).
+									Label("btn-install-core-" + svc.ID).
+									Padding(3, 8, 3, 8).Radius(5).
+									Background(p.accent).
+									Tooltip(cat.EngineStatusPillHint()).
+									Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+											ui.Icon(c, iconDownload).Size(11, 11).TextColor(ui.RGB(255, 255, 255))
+											ui.Text(c, btnLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(255, 255, 255))
+										})
+									})
+								if !isUpdating && btnInstall.Clicked() {
+									if isXray {
+										a.triggerSeamlessXrayUpdate()
+									} else {
+										a.triggerSeamlessUpdate()
+									}
+								}
+
+								btnSettings := ui.ButtonBase(c.Key("btn-goto-settings-" + svc.ID)).
+									Label("btn-goto-settings-" + svc.ID).
+									Padding(3, 8, 3, 8).Radius(5).
+									Background(p.card).Border(1, p.borderSubtle).
+									Tooltip(cat.ActionGoToSettings()).
+									Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+											ui.Icon(c, iconSettings).Size(11, 11).TextColor(p.text)
+											ui.Text(c, cat.ActionGoToSettings()).FontSize(11).TextColor(p.text)
+										})
+									})
+								if btnSettings.Clicked() {
+									a.activeTab = TabSettings
+								}
+							}
+
+							btnCopy := ui.ButtonBase(c.Key("btn-copy-error-" + svc.ID)).
+								Label("btn-copy-error-" + svc.ID).
+								Padding(3, 8, 3, 8).Radius(5).
+								Background(p.card).Border(1, p.borderSubtle).
+								Tooltip(cat.ActionCopyError()).
+								Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+										ui.Icon(c, iconCopy).Size(11, 11).TextColor(p.textDim)
+										ui.Text(c, cat.BtnCopy()).FontSize(11).TextColor(p.textDim)
+									})
+								})
+							if btnCopy.Clicked() {
+								copyText := rt.LastError
+								if isMissingCore && displayErr != "" {
+									copyText = displayErr
+								}
+								a.writeClipboard(copyText, cat.ToastErrorCopied())
+							}
+						})
+					})
 			}
 
 			// Lower section: Card Action Footer (Left: Diagnostics & Share | Right: Edit & Delete)
@@ -640,4 +734,18 @@ func (a *app) cardBorderColor(p palette, st runner.State) ui.Color {
 	default:
 		return p.border
 	}
+}
+
+func isMissingCoreError(errText string) (missing bool, isXray bool) {
+	if errText == "" {
+		return false, false
+	}
+	lower := strings.ToLower(errText)
+	if strings.Contains(errText, "xray 核心") || strings.Contains(lower, "xray core") || (strings.Contains(lower, "xray") && (strings.Contains(errText, "不存在") || strings.Contains(errText, "未找到") || strings.Contains(lower, "not found"))) {
+		return true, true
+	}
+	if strings.Contains(errText, "naive 核心") || strings.Contains(lower, "naive core") || (strings.Contains(lower, "naive") && (strings.Contains(errText, "不存在") || strings.Contains(errText, "未找到") || strings.Contains(lower, "not found"))) {
+		return true, false
+	}
+	return false, false
 }

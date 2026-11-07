@@ -456,9 +456,22 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 				})
 
 				if a.editor.errText != "" {
-					ui.Row(c).PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
-						ui.Text(c, a.editor.errText).FontSize(12).FontWeight(500).TextColor(p.red)
-					})
+					ui.Row(c.Key("editor-error-row")).
+						AlignItems(ui.Center).Justify(ui.SpaceBetween).
+						PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
+							ui.Text(c, a.editor.errText).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
+							btnCopy := ui.ButtonBase(c.Key("btn-copy-editor-error")).
+								Label("btn-copy-editor-error").
+								Padding(2, 6, 2, 6).Radius(4).
+								Background(p.card).Border(1, p.borderSubtle).
+								Tooltip(cat.ActionCopyError()).
+								Children(func() {
+									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
+								})
+							if btnCopy.Clicked() {
+								a.writeClipboard(a.editor.errText, cat.ToastErrorCopied())
+							}
+						})
 				}
 
 				ui.Scroll(c.Key("editor-scroll")).
@@ -925,9 +938,22 @@ func (a *app) renderImportDialog(c *ui.Context, p palette) {
 				ui.Text(c, cat.ImportDesc()).FontSize(12).TextColor(p.textMuted)
 
 				if a.importDlg.errText != "" {
-					ui.Row(c).PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
-						ui.Text(c, a.importDlg.errText).FontSize(12).TextColor(p.red)
-					})
+					ui.Row(c.Key("import-error-row")).
+						AlignItems(ui.Center).Justify(ui.SpaceBetween).
+						PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
+							ui.Text(c, a.importDlg.errText).FontSize(12).TextColor(p.red).Grow(1)
+							btnCopy := ui.ButtonBase(c.Key("btn-copy-import-error")).
+								Label("btn-copy-import-error").
+								Padding(2, 6, 2, 6).Radius(4).
+								Background(p.card).Border(1, p.borderSubtle).
+								Tooltip(cat.ActionCopyError()).
+								Children(func() {
+									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
+								})
+							if btnCopy.Clicked() {
+								a.writeClipboard(a.importDlg.errText, cat.ToastErrorCopied())
+							}
+						})
 				}
 
 				labeledTextArea(

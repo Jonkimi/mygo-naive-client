@@ -3751,3 +3751,823 @@ func ConfigValidationFailed(err string) string { return In(i18n.Locale()).Config
 func (msgs Messages) ConfigValidationFailed(err string) string {
 	return Catalog.Format(msgs.locale, "configValidationFailed", map[string]any{"err": err})
 }
+
+// InsightsSubtitle says "Pi-hole style dual-layer DNS & gateway protection with zero-allocation in-memory analytics"
+// in the language the app shows.
+func InsightsSubtitle() string { return In(i18n.Locale()).InsightsSubtitle() }
+
+// InsightsSubtitle says "Pi-hole style dual-layer DNS & gateway protection with zero-allocation in-memory analytics"
+// in the language of msgs.
+func (msgs Messages) InsightsSubtitle() string {
+	return Catalog.Format(msgs.locale, "insightsSubtitle", nil)
+}
+
+// InsightsProtectionActive says "Protection Active"
+// in the language the app shows.
+func InsightsProtectionActive() string { return In(i18n.Locale()).InsightsProtectionActive() }
+
+// InsightsProtectionActive says "Protection Active"
+// in the language of msgs.
+func (msgs Messages) InsightsProtectionActive() string {
+	return Catalog.Format(msgs.locale, "insightsProtectionActive", nil)
+}
+
+// InsightsProtectionPaused says "Protection Paused"
+// in the language the app shows.
+func InsightsProtectionPaused() string { return In(i18n.Locale()).InsightsProtectionPaused() }
+
+// InsightsProtectionPaused says "Protection Paused"
+// in the language of msgs.
+func (msgs Messages) InsightsProtectionPaused() string {
+	return Catalog.Format(msgs.locale, "insightsProtectionPaused", nil)
+}
+
+// InsightsStatusActive says "Active"
+// in the language the app shows.
+func InsightsStatusActive() string { return In(i18n.Locale()).InsightsStatusActive() }
+
+// InsightsStatusActive says "Active"
+// in the language of msgs.
+func (msgs Messages) InsightsStatusActive() string {
+	return Catalog.Format(msgs.locale, "insightsStatusActive", nil)
+}
+
+// InsightsStatusPaused says "Paused"
+// in the language the app shows.
+func InsightsStatusPaused() string { return In(i18n.Locale()).InsightsStatusPaused() }
+
+// InsightsStatusPaused says "Paused"
+// in the language of msgs.
+func (msgs Messages) InsightsStatusPaused() string {
+	return Catalog.Format(msgs.locale, "insightsStatusPaused", nil)
+}
+
+// InsightsToggleProtectionTooltip says "Toggle domain & ad protection"
+// in the language the app shows.
+func InsightsToggleProtectionTooltip() string {
+	return In(i18n.Locale()).InsightsToggleProtectionTooltip()
+}
+
+// InsightsToggleProtectionTooltip says "Toggle domain & ad protection"
+// in the language of msgs.
+func (msgs Messages) InsightsToggleProtectionTooltip() string {
+	return Catalog.Format(msgs.locale, "insightsToggleProtectionTooltip", nil)
+}
+
+// InsightsBuiltinAdsOn says "Built-in AdBlock: ON"
+// in the language the app shows.
+func InsightsBuiltinAdsOn() string { return In(i18n.Locale()).InsightsBuiltinAdsOn() }
+
+// InsightsBuiltinAdsOn says "Built-in AdBlock: ON"
+// in the language of msgs.
+func (msgs Messages) InsightsBuiltinAdsOn() string {
+	return Catalog.Format(msgs.locale, "insightsBuiltinAdsOn", nil)
+}
+
+// InsightsBuiltinAdsOff says "Built-in AdBlock: OFF"
+// in the language the app shows.
+func InsightsBuiltinAdsOff() string { return In(i18n.Locale()).InsightsBuiltinAdsOff() }
+
+// InsightsBuiltinAdsOff says "Built-in AdBlock: OFF"
+// in the language of msgs.
+func (msgs Messages) InsightsBuiltinAdsOff() string {
+	return Catalog.Format(msgs.locale, "insightsBuiltinAdsOff", nil)
+}
+
+// InsightsToggleAdsTooltip says "Toggle built-in geosite:category-ads-all rule"
+// in the language the app shows.
+func InsightsToggleAdsTooltip() string { return In(i18n.Locale()).InsightsToggleAdsTooltip() }
+
+// InsightsToggleAdsTooltip says "Toggle built-in geosite:category-ads-all rule"
+// in the language of msgs.
+func (msgs Messages) InsightsToggleAdsTooltip() string {
+	return Catalog.Format(msgs.locale, "insightsToggleAdsTooltip", nil)
+}
+
+// InsightsRulesAndSubscriptions says "Rules & Subscriptions"
+// in the language the app shows.
+func InsightsRulesAndSubscriptions() string { return In(i18n.Locale()).InsightsRulesAndSubscriptions() }
+
+// InsightsRulesAndSubscriptions says "Rules & Subscriptions"
+// in the language of msgs.
+func (msgs Messages) InsightsRulesAndSubscriptions() string {
+	return Catalog.Format(msgs.locale, "insightsRulesAndSubscriptions", nil)
+}
+
+// InsightsManageRulesTooltip says "Manage custom allow/deny lists and external rule subscriptions"
+// in the language the app shows.
+func InsightsManageRulesTooltip() string { return In(i18n.Locale()).InsightsManageRulesTooltip() }
+
+// InsightsManageRulesTooltip says "Manage custom allow/deny lists and external rule subscriptions"
+// in the language of msgs.
+func (msgs Messages) InsightsManageRulesTooltip() string {
+	return Catalog.Format(msgs.locale, "insightsManageRulesTooltip", nil)
+}
+
+// InsightsKpi24hQueries says "24h Total Queries"
+// in the language the app shows.
+func InsightsKpi24hQueries() string { return In(i18n.Locale()).InsightsKpi24hQueries() }
+
+// InsightsKpi24hQueries says "24h Total Queries"
+// in the language of msgs.
+func (msgs Messages) InsightsKpi24hQueries() string {
+	return Catalog.Format(msgs.locale, "insightsKpi24hQueries", nil)
+}
+
+// InsightsKpiBlocked says "Blocked Threats & Ads"
+// in the language the app shows.
+func InsightsKpiBlocked() string { return In(i18n.Locale()).InsightsKpiBlocked() }
+
+// InsightsKpiBlocked says "Blocked Threats & Ads"
+// in the language of msgs.
+func (msgs Messages) InsightsKpiBlocked() string {
+	return Catalog.Format(msgs.locale, "insightsKpiBlocked", nil)
+}
+
+// InsightsKpiBlockRate says "Block Rate"
+// in the language the app shows.
+func InsightsKpiBlockRate() string { return In(i18n.Locale()).InsightsKpiBlockRate() }
+
+// InsightsKpiBlockRate says "Block Rate"
+// in the language of msgs.
+func (msgs Messages) InsightsKpiBlockRate() string {
+	return Catalog.Format(msgs.locale, "insightsKpiBlockRate", nil)
+}
+
+// InsightsKpiActiveRules says "Active Rules"
+// in the language the app shows.
+func InsightsKpiActiveRules() string { return In(i18n.Locale()).InsightsKpiActiveRules() }
+
+// InsightsKpiActiveRules says "Active Rules"
+// in the language of msgs.
+func (msgs Messages) InsightsKpiActiveRules() string {
+	return Catalog.Format(msgs.locale, "insightsKpiActiveRules", nil)
+}
+
+// InsightsTrendTitle says "24-Hour Activity Trend"
+// in the language the app shows.
+func InsightsTrendTitle() string { return In(i18n.Locale()).InsightsTrendTitle() }
+
+// InsightsTrendTitle says "24-Hour Activity Trend"
+// in the language of msgs.
+func (msgs Messages) InsightsTrendTitle() string {
+	return Catalog.Format(msgs.locale, "insightsTrendTitle", nil)
+}
+
+// InsightsTrendTotal says "Total Queries"
+// in the language the app shows.
+func InsightsTrendTotal() string { return In(i18n.Locale()).InsightsTrendTotal() }
+
+// InsightsTrendTotal says "Total Queries"
+// in the language of msgs.
+func (msgs Messages) InsightsTrendTotal() string {
+	return Catalog.Format(msgs.locale, "insightsTrendTotal", nil)
+}
+
+// InsightsTrendBlocked says "Blocked"
+// in the language the app shows.
+func InsightsTrendBlocked() string { return In(i18n.Locale()).InsightsTrendBlocked() }
+
+// InsightsTrendBlocked says "Blocked"
+// in the language of msgs.
+func (msgs Messages) InsightsTrendBlocked() string {
+	return Catalog.Format(msgs.locale, "insightsTrendBlocked", nil)
+}
+
+// InsightsTrendTooltip says "{hour} | Total: {total}, Blocked: {blocked}"
+// in the language the app shows.
+func InsightsTrendTooltip(hour string, total int, blocked int) string {
+	return In(i18n.Locale()).InsightsTrendTooltip(hour, total, blocked)
+}
+
+// InsightsTrendTooltip says "{hour} | Total: {total}, Blocked: {blocked}"
+// in the language of msgs.
+func (msgs Messages) InsightsTrendTooltip(hour string, total int, blocked int) string {
+	return Catalog.Format(msgs.locale, "insightsTrendTooltip", map[string]any{"hour": hour, "total": total, "blocked": blocked})
+}
+
+// InsightsTopBlockedTitle says "Top Blocked Domains"
+// in the language the app shows.
+func InsightsTopBlockedTitle() string { return In(i18n.Locale()).InsightsTopBlockedTitle() }
+
+// InsightsTopBlockedTitle says "Top Blocked Domains"
+// in the language of msgs.
+func (msgs Messages) InsightsTopBlockedTitle() string {
+	return Catalog.Format(msgs.locale, "insightsTopBlockedTitle", nil)
+}
+
+// InsightsTopBlockedEmpty says "No blocked queries recorded"
+// in the language the app shows.
+func InsightsTopBlockedEmpty() string { return In(i18n.Locale()).InsightsTopBlockedEmpty() }
+
+// InsightsTopBlockedEmpty says "No blocked queries recorded"
+// in the language of msgs.
+func (msgs Messages) InsightsTopBlockedEmpty() string {
+	return Catalog.Format(msgs.locale, "insightsTopBlockedEmpty", nil)
+}
+
+// InsightsTopAllowedTitle says "Top Allowed Domains"
+// in the language the app shows.
+func InsightsTopAllowedTitle() string { return In(i18n.Locale()).InsightsTopAllowedTitle() }
+
+// InsightsTopAllowedTitle says "Top Allowed Domains"
+// in the language of msgs.
+func (msgs Messages) InsightsTopAllowedTitle() string {
+	return Catalog.Format(msgs.locale, "insightsTopAllowedTitle", nil)
+}
+
+// InsightsTopAllowedEmpty says "No allowed queries recorded"
+// in the language the app shows.
+func InsightsTopAllowedEmpty() string { return In(i18n.Locale()).InsightsTopAllowedEmpty() }
+
+// InsightsTopAllowedEmpty says "No allowed queries recorded"
+// in the language of msgs.
+func (msgs Messages) InsightsTopAllowedEmpty() string {
+	return Catalog.Format(msgs.locale, "insightsTopAllowedEmpty", nil)
+}
+
+// InsightsActionWhitelist says "+ Allow"
+// in the language the app shows.
+func InsightsActionWhitelist() string { return In(i18n.Locale()).InsightsActionWhitelist() }
+
+// InsightsActionWhitelist says "+ Allow"
+// in the language of msgs.
+func (msgs Messages) InsightsActionWhitelist() string {
+	return Catalog.Format(msgs.locale, "insightsActionWhitelist", nil)
+}
+
+// InsightsActionWhitelistTooltip says "Add to allowlist to exempt from blocking"
+// in the language the app shows.
+func InsightsActionWhitelistTooltip() string {
+	return In(i18n.Locale()).InsightsActionWhitelistTooltip()
+}
+
+// InsightsActionWhitelistTooltip says "Add to allowlist to exempt from blocking"
+// in the language of msgs.
+func (msgs Messages) InsightsActionWhitelistTooltip() string {
+	return Catalog.Format(msgs.locale, "insightsActionWhitelistTooltip", nil)
+}
+
+// InsightsActionDenylist says "+ Block"
+// in the language the app shows.
+func InsightsActionDenylist() string { return In(i18n.Locale()).InsightsActionDenylist() }
+
+// InsightsActionDenylist says "+ Block"
+// in the language of msgs.
+func (msgs Messages) InsightsActionDenylist() string {
+	return Catalog.Format(msgs.locale, "insightsActionDenylist", nil)
+}
+
+// InsightsActionDenylistTooltip says "Add to denylist to block connections"
+// in the language the app shows.
+func InsightsActionDenylistTooltip() string { return In(i18n.Locale()).InsightsActionDenylistTooltip() }
+
+// InsightsActionDenylistTooltip says "Add to denylist to block connections"
+// in the language of msgs.
+func (msgs Messages) InsightsActionDenylistTooltip() string {
+	return Catalog.Format(msgs.locale, "insightsActionDenylistTooltip", nil)
+}
+
+// InsightsQueryLogTitle says "Live Query Log"
+// in the language the app shows.
+func InsightsQueryLogTitle() string { return In(i18n.Locale()).InsightsQueryLogTitle() }
+
+// InsightsQueryLogTitle says "Live Query Log"
+// in the language of msgs.
+func (msgs Messages) InsightsQueryLogTitle() string {
+	return Catalog.Format(msgs.locale, "insightsQueryLogTitle", nil)
+}
+
+// InsightsLogCount says "{count} entries"
+// in the language the app shows.
+func InsightsLogCount(count int) string { return In(i18n.Locale()).InsightsLogCount(count) }
+
+// InsightsLogCount says "{count} entries"
+// in the language of msgs.
+func (msgs Messages) InsightsLogCount(count int) string {
+	return Catalog.Format(msgs.locale, "insightsLogCount", map[string]any{"count": count})
+}
+
+// InsightsFilterAll says "All"
+// in the language the app shows.
+func InsightsFilterAll() string { return In(i18n.Locale()).InsightsFilterAll() }
+
+// InsightsFilterAll says "All"
+// in the language of msgs.
+func (msgs Messages) InsightsFilterAll() string {
+	return Catalog.Format(msgs.locale, "insightsFilterAll", nil)
+}
+
+// InsightsFilterBlocked says "Blocked Only"
+// in the language the app shows.
+func InsightsFilterBlocked() string { return In(i18n.Locale()).InsightsFilterBlocked() }
+
+// InsightsFilterBlocked says "Blocked Only"
+// in the language of msgs.
+func (msgs Messages) InsightsFilterBlocked() string {
+	return Catalog.Format(msgs.locale, "insightsFilterBlocked", nil)
+}
+
+// InsightsFilterAllowed says "Allowed Only"
+// in the language the app shows.
+func InsightsFilterAllowed() string { return In(i18n.Locale()).InsightsFilterAllowed() }
+
+// InsightsFilterAllowed says "Allowed Only"
+// in the language of msgs.
+func (msgs Messages) InsightsFilterAllowed() string {
+	return Catalog.Format(msgs.locale, "insightsFilterAllowed", nil)
+}
+
+// InsightsSearchPlaceholder says "Filter recent queries by domain..."
+// in the language the app shows.
+func InsightsSearchPlaceholder() string { return In(i18n.Locale()).InsightsSearchPlaceholder() }
+
+// InsightsSearchPlaceholder says "Filter recent queries by domain..."
+// in the language of msgs.
+func (msgs Messages) InsightsSearchPlaceholder() string {
+	return Catalog.Format(msgs.locale, "insightsSearchPlaceholder", nil)
+}
+
+// InsightsColTime says "Time"
+// in the language the app shows.
+func InsightsColTime() string { return In(i18n.Locale()).InsightsColTime() }
+
+// InsightsColTime says "Time"
+// in the language of msgs.
+func (msgs Messages) InsightsColTime() string {
+	return Catalog.Format(msgs.locale, "insightsColTime", nil)
+}
+
+// InsightsColSource says "Source"
+// in the language the app shows.
+func InsightsColSource() string { return In(i18n.Locale()).InsightsColSource() }
+
+// InsightsColSource says "Source"
+// in the language of msgs.
+func (msgs Messages) InsightsColSource() string {
+	return Catalog.Format(msgs.locale, "insightsColSource", nil)
+}
+
+// InsightsColVerdict says "Verdict"
+// in the language the app shows.
+func InsightsColVerdict() string { return In(i18n.Locale()).InsightsColVerdict() }
+
+// InsightsColVerdict says "Verdict"
+// in the language of msgs.
+func (msgs Messages) InsightsColVerdict() string {
+	return Catalog.Format(msgs.locale, "insightsColVerdict", nil)
+}
+
+// InsightsColDomain says "Domain"
+// in the language the app shows.
+func InsightsColDomain() string { return In(i18n.Locale()).InsightsColDomain() }
+
+// InsightsColDomain says "Domain"
+// in the language of msgs.
+func (msgs Messages) InsightsColDomain() string {
+	return Catalog.Format(msgs.locale, "insightsColDomain", nil)
+}
+
+// InsightsColRule says "Matched Rule"
+// in the language the app shows.
+func InsightsColRule() string { return In(i18n.Locale()).InsightsColRule() }
+
+// InsightsColRule says "Matched Rule"
+// in the language of msgs.
+func (msgs Messages) InsightsColRule() string {
+	return Catalog.Format(msgs.locale, "insightsColRule", nil)
+}
+
+// InsightsColAction says "Action"
+// in the language the app shows.
+func InsightsColAction() string { return In(i18n.Locale()).InsightsColAction() }
+
+// InsightsColAction says "Action"
+// in the language of msgs.
+func (msgs Messages) InsightsColAction() string {
+	return Catalog.Format(msgs.locale, "insightsColAction", nil)
+}
+
+// InsightsQueryLogEmpty says "No matching query records"
+// in the language the app shows.
+func InsightsQueryLogEmpty() string { return In(i18n.Locale()).InsightsQueryLogEmpty() }
+
+// InsightsQueryLogEmpty says "No matching query records"
+// in the language of msgs.
+func (msgs Messages) InsightsQueryLogEmpty() string {
+	return Catalog.Format(msgs.locale, "insightsQueryLogEmpty", nil)
+}
+
+// InsightsModalTitle says "Blocker Rules & Subscriptions"
+// in the language the app shows.
+func InsightsModalTitle() string { return In(i18n.Locale()).InsightsModalTitle() }
+
+// InsightsModalTitle says "Blocker Rules & Subscriptions"
+// in the language of msgs.
+func (msgs Messages) InsightsModalTitle() string {
+	return Catalog.Format(msgs.locale, "insightsModalTitle", nil)
+}
+
+// InsightsModalClose says "Close"
+// in the language the app shows.
+func InsightsModalClose() string { return In(i18n.Locale()).InsightsModalClose() }
+
+// InsightsModalClose says "Close"
+// in the language of msgs.
+func (msgs Messages) InsightsModalClose() string {
+	return Catalog.Format(msgs.locale, "insightsModalClose", nil)
+}
+
+// InsightsAllowlistTitle says "User Custom Allowlist"
+// in the language the app shows.
+func InsightsAllowlistTitle() string { return In(i18n.Locale()).InsightsAllowlistTitle() }
+
+// InsightsAllowlistTitle says "User Custom Allowlist"
+// in the language of msgs.
+func (msgs Messages) InsightsAllowlistTitle() string {
+	return Catalog.Format(msgs.locale, "insightsAllowlistTitle", nil)
+}
+
+// InsightsAllowlistDesc says "Allowed domains and subdomains always bypass blocking with highest priority"
+// in the language the app shows.
+func InsightsAllowlistDesc() string { return In(i18n.Locale()).InsightsAllowlistDesc() }
+
+// InsightsAllowlistDesc says "Allowed domains and subdomains always bypass blocking with highest priority"
+// in the language of msgs.
+func (msgs Messages) InsightsAllowlistDesc() string {
+	return Catalog.Format(msgs.locale, "insightsAllowlistDesc", nil)
+}
+
+// InsightsAllowlistPlaceholder says "Enter domain (e.g. example.com)"
+// in the language the app shows.
+func InsightsAllowlistPlaceholder() string { return In(i18n.Locale()).InsightsAllowlistPlaceholder() }
+
+// InsightsAllowlistPlaceholder says "Enter domain (e.g. example.com)"
+// in the language of msgs.
+func (msgs Messages) InsightsAllowlistPlaceholder() string {
+	return Catalog.Format(msgs.locale, "insightsAllowlistPlaceholder", nil)
+}
+
+// InsightsDenylistTitle says "User Custom Denylist"
+// in the language the app shows.
+func InsightsDenylistTitle() string { return In(i18n.Locale()).InsightsDenylistTitle() }
+
+// InsightsDenylistTitle says "User Custom Denylist"
+// in the language of msgs.
+func (msgs Messages) InsightsDenylistTitle() string {
+	return Catalog.Format(msgs.locale, "insightsDenylistTitle", nil)
+}
+
+// InsightsDenylistDesc says "Blocked domains and subdomains are terminated locally without consuming proxy traffic"
+// in the language the app shows.
+func InsightsDenylistDesc() string { return In(i18n.Locale()).InsightsDenylistDesc() }
+
+// InsightsDenylistDesc says "Blocked domains and subdomains are terminated locally without consuming proxy traffic"
+// in the language of msgs.
+func (msgs Messages) InsightsDenylistDesc() string {
+	return Catalog.Format(msgs.locale, "insightsDenylistDesc", nil)
+}
+
+// InsightsDenylistPlaceholder says "Enter domain (e.g. bad-tracker.com)"
+// in the language the app shows.
+func InsightsDenylistPlaceholder() string { return In(i18n.Locale()).InsightsDenylistPlaceholder() }
+
+// InsightsDenylistPlaceholder says "Enter domain (e.g. bad-tracker.com)"
+// in the language of msgs.
+func (msgs Messages) InsightsDenylistPlaceholder() string {
+	return Catalog.Format(msgs.locale, "insightsDenylistPlaceholder", nil)
+}
+
+// InsightsSubscriptionsTitle says "External Rule Subscriptions (URL)"
+// in the language the app shows.
+func InsightsSubscriptionsTitle() string { return In(i18n.Locale()).InsightsSubscriptionsTitle() }
+
+// InsightsSubscriptionsTitle says "External Rule Subscriptions (URL)"
+// in the language of msgs.
+func (msgs Messages) InsightsSubscriptionsTitle() string {
+	return Catalog.Format(msgs.locale, "insightsSubscriptionsTitle", nil)
+}
+
+// InsightsSubscriptionsDesc says "Supports hosts format, plain domain lists, and AdGuard/EasyList basic syntax"
+// in the language the app shows.
+func InsightsSubscriptionsDesc() string { return In(i18n.Locale()).InsightsSubscriptionsDesc() }
+
+// InsightsSubscriptionsDesc says "Supports hosts format, plain domain lists, and AdGuard/EasyList basic syntax"
+// in the language of msgs.
+func (msgs Messages) InsightsSubscriptionsDesc() string {
+	return Catalog.Format(msgs.locale, "insightsSubscriptionsDesc", nil)
+}
+
+// InsightsSubscriptionsPlaceholder says "Enter subscription URL (https://...)"
+// in the language the app shows.
+func InsightsSubscriptionsPlaceholder() string {
+	return In(i18n.Locale()).InsightsSubscriptionsPlaceholder()
+}
+
+// InsightsSubscriptionsPlaceholder says "Enter subscription URL (https://...)"
+// in the language of msgs.
+func (msgs Messages) InsightsSubscriptionsPlaceholder() string {
+	return Catalog.Format(msgs.locale, "insightsSubscriptionsPlaceholder", nil)
+}
+
+// InsightsActionAdd says "+ Add"
+// in the language the app shows.
+func InsightsActionAdd() string { return In(i18n.Locale()).InsightsActionAdd() }
+
+// InsightsActionAdd says "+ Add"
+// in the language of msgs.
+func (msgs Messages) InsightsActionAdd() string {
+	return Catalog.Format(msgs.locale, "insightsActionAdd", nil)
+}
+
+// InsightsActionSubscribe says "+ Subscribe"
+// in the language the app shows.
+func InsightsActionSubscribe() string { return In(i18n.Locale()).InsightsActionSubscribe() }
+
+// InsightsActionSubscribe says "+ Subscribe"
+// in the language of msgs.
+func (msgs Messages) InsightsActionSubscribe() string {
+	return Catalog.Format(msgs.locale, "insightsActionSubscribe", nil)
+}
+
+// InsightsActionDelete says "Delete"
+// in the language the app shows.
+func InsightsActionDelete() string { return In(i18n.Locale()).InsightsActionDelete() }
+
+// InsightsActionDelete says "Delete"
+// in the language of msgs.
+func (msgs Messages) InsightsActionDelete() string {
+	return Catalog.Format(msgs.locale, "insightsActionDelete", nil)
+}
+
+// ErrorPrefix says "Error: "
+// in the language the app shows.
+func ErrorPrefix() string { return In(i18n.Locale()).ErrorPrefix() }
+
+// ErrorPrefix says "Error: "
+// in the language of msgs.
+func (msgs Messages) ErrorPrefix() string {
+	return Catalog.Format(msgs.locale, "errorPrefix", nil)
+}
+
+// ActionCopyError says "Copy Error"
+// in the language the app shows.
+func ActionCopyError() string { return In(i18n.Locale()).ActionCopyError() }
+
+// ActionCopyError says "Copy Error"
+// in the language of msgs.
+func (msgs Messages) ActionCopyError() string {
+	return Catalog.Format(msgs.locale, "actionCopyError", nil)
+}
+
+// ToastErrorCopied says "Error message copied to clipboard"
+// in the language the app shows.
+func ToastErrorCopied() string { return In(i18n.Locale()).ToastErrorCopied() }
+
+// ToastErrorCopied says "Error message copied to clipboard"
+// in the language of msgs.
+func (msgs Messages) ToastErrorCopied() string {
+	return Catalog.Format(msgs.locale, "toastErrorCopied", nil)
+}
+
+// CoreMissingNaiveError says "NaiveProxy core binary not found. Please install the core first."
+// in the language the app shows.
+func CoreMissingNaiveError() string { return In(i18n.Locale()).CoreMissingNaiveError() }
+
+// CoreMissingNaiveError says "NaiveProxy core binary not found. Please install the core first."
+// in the language of msgs.
+func (msgs Messages) CoreMissingNaiveError() string {
+	return Catalog.Format(msgs.locale, "coreMissingNaiveError", nil)
+}
+
+// CoreMissingXrayError says "Xray core binary not found. Please install the core first."
+// in the language the app shows.
+func CoreMissingXrayError() string { return In(i18n.Locale()).CoreMissingXrayError() }
+
+// CoreMissingXrayError says "Xray core binary not found. Please install the core first."
+// in the language of msgs.
+func (msgs Messages) CoreMissingXrayError() string {
+	return Catalog.Format(msgs.locale, "coreMissingXrayError", nil)
+}
+
+// ActionGoToSettings says "Settings"
+// in the language the app shows.
+func ActionGoToSettings() string { return In(i18n.Locale()).ActionGoToSettings() }
+
+// ActionGoToSettings says "Settings"
+// in the language of msgs.
+func (msgs Messages) ActionGoToSettings() string {
+	return Catalog.Format(msgs.locale, "actionGoToSettings", nil)
+}
+
+// ActionInstallCoreShort says "Install Core"
+// in the language the app shows.
+func ActionInstallCoreShort() string { return In(i18n.Locale()).ActionInstallCoreShort() }
+
+// ActionInstallCoreShort says "Install Core"
+// in the language of msgs.
+func (msgs Messages) ActionInstallCoreShort() string {
+	return Catalog.Format(msgs.locale, "actionInstallCoreShort", nil)
+}
+
+// CoreDownloading says "Downloading..."
+// in the language the app shows.
+func CoreDownloading() string { return In(i18n.Locale()).CoreDownloading() }
+
+// CoreDownloading says "Downloading..."
+// in the language of msgs.
+func (msgs Messages) CoreDownloading() string {
+	return Catalog.Format(msgs.locale, "coreDownloading", nil)
+}
+
+// RuleNameRequired says "Rule name cannot be empty"
+// in the language the app shows.
+func RuleNameRequired() string { return In(i18n.Locale()).RuleNameRequired() }
+
+// RuleNameRequired says "Rule name cannot be empty"
+// in the language of msgs.
+func (msgs Messages) RuleNameRequired() string {
+	return Catalog.Format(msgs.locale, "ruleNameRequired", nil)
+}
+
+// RuleCriteriaRequired says "Please provide at least one matching criterion (Domain suffix, IP-CIDR, Keyword, GeoSite, or GeoIP)"
+// in the language the app shows.
+func RuleCriteriaRequired() string { return In(i18n.Locale()).RuleCriteriaRequired() }
+
+// RuleCriteriaRequired says "Please provide at least one matching criterion (Domain suffix, IP-CIDR, Keyword, GeoSite, or GeoIP)"
+// in the language of msgs.
+func (msgs Messages) RuleCriteriaRequired() string {
+	return Catalog.Format(msgs.locale, "ruleCriteriaRequired", nil)
+}
+
+// ToastAddedAllowlist says "Added to allowlist"
+// in the language the app shows.
+func ToastAddedAllowlist() string { return In(i18n.Locale()).ToastAddedAllowlist() }
+
+// ToastAddedAllowlist says "Added to allowlist"
+// in the language of msgs.
+func (msgs Messages) ToastAddedAllowlist() string {
+	return Catalog.Format(msgs.locale, "toastAddedAllowlist", nil)
+}
+
+// ToastRemovedAllowlist says "Removed from allowlist"
+// in the language the app shows.
+func ToastRemovedAllowlist() string { return In(i18n.Locale()).ToastRemovedAllowlist() }
+
+// ToastRemovedAllowlist says "Removed from allowlist"
+// in the language of msgs.
+func (msgs Messages) ToastRemovedAllowlist() string {
+	return Catalog.Format(msgs.locale, "toastRemovedAllowlist", nil)
+}
+
+// ToastAddedDenylist says "Added to denylist"
+// in the language the app shows.
+func ToastAddedDenylist() string { return In(i18n.Locale()).ToastAddedDenylist() }
+
+// ToastAddedDenylist says "Added to denylist"
+// in the language of msgs.
+func (msgs Messages) ToastAddedDenylist() string {
+	return Catalog.Format(msgs.locale, "toastAddedDenylist", nil)
+}
+
+// ToastRemovedDenylist says "Removed from denylist"
+// in the language the app shows.
+func ToastRemovedDenylist() string { return In(i18n.Locale()).ToastRemovedDenylist() }
+
+// ToastRemovedDenylist says "Removed from denylist"
+// in the language of msgs.
+func (msgs Messages) ToastRemovedDenylist() string {
+	return Catalog.Format(msgs.locale, "toastRemovedDenylist", nil)
+}
+
+// ToastProtectionEnabled says "Domain & ad protection enabled"
+// in the language the app shows.
+func ToastProtectionEnabled() string { return In(i18n.Locale()).ToastProtectionEnabled() }
+
+// ToastProtectionEnabled says "Domain & ad protection enabled"
+// in the language of msgs.
+func (msgs Messages) ToastProtectionEnabled() string {
+	return Catalog.Format(msgs.locale, "toastProtectionEnabled", nil)
+}
+
+// ToastProtectionPaused says "Domain & ad protection paused"
+// in the language the app shows.
+func ToastProtectionPaused() string { return In(i18n.Locale()).ToastProtectionPaused() }
+
+// ToastProtectionPaused says "Domain & ad protection paused"
+// in the language of msgs.
+func (msgs Messages) ToastProtectionPaused() string {
+	return Catalog.Format(msgs.locale, "toastProtectionPaused", nil)
+}
+
+// ToastAdsBlockEnabled says "Built-in ad blocking enabled"
+// in the language the app shows.
+func ToastAdsBlockEnabled() string { return In(i18n.Locale()).ToastAdsBlockEnabled() }
+
+// ToastAdsBlockEnabled says "Built-in ad blocking enabled"
+// in the language of msgs.
+func (msgs Messages) ToastAdsBlockEnabled() string {
+	return Catalog.Format(msgs.locale, "toastAdsBlockEnabled", nil)
+}
+
+// ToastAdsBlockDisabled says "Built-in ad blocking disabled"
+// in the language the app shows.
+func ToastAdsBlockDisabled() string { return In(i18n.Locale()).ToastAdsBlockDisabled() }
+
+// ToastAdsBlockDisabled says "Built-in ad blocking disabled"
+// in the language of msgs.
+func (msgs Messages) ToastAdsBlockDisabled() string {
+	return Catalog.Format(msgs.locale, "toastAdsBlockDisabled", nil)
+}
+
+// ToastAddedSubscription says "Rule subscription added"
+// in the language the app shows.
+func ToastAddedSubscription() string { return In(i18n.Locale()).ToastAddedSubscription() }
+
+// ToastAddedSubscription says "Rule subscription added"
+// in the language of msgs.
+func (msgs Messages) ToastAddedSubscription() string {
+	return Catalog.Format(msgs.locale, "toastAddedSubscription", nil)
+}
+
+// ToastRemovedSubscription says "Rule subscription deleted"
+// in the language the app shows.
+func ToastRemovedSubscription() string { return In(i18n.Locale()).ToastRemovedSubscription() }
+
+// ToastRemovedSubscription says "Rule subscription deleted"
+// in the language of msgs.
+func (msgs Messages) ToastRemovedSubscription() string {
+	return Catalog.Format(msgs.locale, "toastRemovedSubscription", nil)
+}
+
+// TailnetCopiedAuthURL says "Login authorization URL copied to clipboard"
+// in the language the app shows.
+func TailnetCopiedAuthURL() string { return In(i18n.Locale()).TailnetCopiedAuthURL() }
+
+// TailnetCopiedAuthURL says "Login authorization URL copied to clipboard"
+// in the language of msgs.
+func (msgs Messages) TailnetCopiedAuthURL() string {
+	return Catalog.Format(msgs.locale, "tailnetCopiedAuthURL", nil)
+}
+
+// TailnetStarting says "Starting..."
+// in the language the app shows.
+func TailnetStarting() string { return In(i18n.Locale()).TailnetStarting() }
+
+// TailnetStarting says "Starting..."
+// in the language of msgs.
+func (msgs Messages) TailnetStarting() string {
+	return Catalog.Format(msgs.locale, "tailnetStarting", nil)
+}
+
+// BtnRefresh says "Refresh"
+// in the language the app shows.
+func BtnRefresh() string { return In(i18n.Locale()).BtnRefresh() }
+
+// BtnRefresh says "Refresh"
+// in the language of msgs.
+func (msgs Messages) BtnRefresh() string {
+	return Catalog.Format(msgs.locale, "btnRefresh", nil)
+}
+
+// TailnetExitNodeDisconnected says "Disconnected exit node"
+// in the language the app shows.
+func TailnetExitNodeDisconnected() string { return In(i18n.Locale()).TailnetExitNodeDisconnected() }
+
+// TailnetExitNodeDisconnected says "Disconnected exit node"
+// in the language of msgs.
+func (msgs Messages) TailnetExitNodeDisconnected() string {
+	return Catalog.Format(msgs.locale, "tailnetExitNodeDisconnected", nil)
+}
+
+// TailnetExitNodeSwitched says "Switched to exit node {hostname}"
+// in the language the app shows.
+func TailnetExitNodeSwitched(hostname string) string {
+	return In(i18n.Locale()).TailnetExitNodeSwitched(hostname)
+}
+
+// TailnetExitNodeSwitched says "Switched to exit node {hostname}"
+// in the language of msgs.
+func (msgs Messages) TailnetExitNodeSwitched(hostname string) string {
+	return Catalog.Format(msgs.locale, "tailnetExitNodeSwitched", map[string]any{"hostname": hostname})
+}
+
+// TailnetApplyReconnect says "Apply & Reconnect"
+// in the language the app shows.
+func TailnetApplyReconnect() string { return In(i18n.Locale()).TailnetApplyReconnect() }
+
+// TailnetApplyReconnect says "Apply & Reconnect"
+// in the language of msgs.
+func (msgs Messages) TailnetApplyReconnect() string {
+	return Catalog.Format(msgs.locale, "tailnetApplyReconnect", nil)
+}
+
+// TailnetAppliedRestarted says "Applied and restarted embedded node"
+// in the language the app shows.
+func TailnetAppliedRestarted() string { return In(i18n.Locale()).TailnetAppliedRestarted() }
+
+// TailnetAppliedRestarted says "Applied and restarted embedded node"
+// in the language of msgs.
+func (msgs Messages) TailnetAppliedRestarted() string {
+	return Catalog.Format(msgs.locale, "tailnetAppliedRestarted", nil)
+}

@@ -12,6 +12,7 @@ import (
 
 	"naive-client/internal/blocker"
 	"naive-client/internal/config"
+	"naive-client/locales"
 )
 
 // Tests that pressing Cmd+3 navigates to TabInsights and displays the Pi-hole dashboard.
@@ -279,6 +280,34 @@ func TestInsights_BlockerSharesAndReleasesGeoAdsMemory(t *testing.T) {
 	}
 	if a.cachedSiteDB != nil && a.cachedSiteDB.HasTag("category-ads-all") {
 		t.Fatalf("expected category-ads-all to be unloaded from cachedSiteDB when disabled")
+	}
+}
+
+// Tests that switching language dynamically updates Insights page labels between English and Simplified Chinese.
+func TestInsights_I18nLanguageSwitching(t *testing.T) {
+	a, tt, _ := newTestApp(t, []config.Service{})
+
+	a.activeTab = TabInsights
+	tt.Frame()
+
+	// 1. Initial language is zh-Hans
+	if !tt.HasText(locales.In("zh-Hans").InsightsProtectionActive()) {
+		t.Fatalf("expected Chinese '防护运行中' in Insights, got texts: %v", tt.Texts())
+	}
+	if !tt.HasText(locales.In("zh-Hans").InsightsKpi24hQueries()) {
+		t.Fatalf("expected Chinese '24h 总查询/连接' in Insights, got texts: %v", tt.Texts())
+	}
+
+	// 2. Switch to English
+	a.state.Language = locales.LangEn
+	a.applyLanguagePolicy()
+	tt.Frame()
+
+	if !tt.HasText(locales.In("en").InsightsProtectionActive()) {
+		t.Fatalf("expected English 'Protection Active' in Insights, got texts: %v", tt.Texts())
+	}
+	if !tt.HasText(locales.In("en").InsightsKpi24hQueries()) {
+		t.Fatalf("expected English '24h Total Queries' in Insights, got texts: %v", tt.Texts())
 	}
 }
 

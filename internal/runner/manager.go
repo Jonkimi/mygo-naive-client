@@ -441,6 +441,11 @@ func (m *Manager) Start(svc config.Service) error {
 	return nil
 }
 
+// SetError marks a service as error state with the given message.
+func (m *Manager) SetError(id, msg string) {
+	m.setError(id, msg)
+}
+
 func (m *Manager) setError(id, msg string) {
 	m.mu.Lock()
 	inst := m.ensureInstanceLocked(id)

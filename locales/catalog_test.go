@@ -47,6 +47,16 @@ func TestCatalogLanguages(t *testing.T) {
 		t.Fatalf("expected 'New Version v1.8.24', got %q", en.CoreNewVersion("v1.8.24"))
 	}
 
+	if en.InsightsProtectionActive() != "Protection Active" {
+		t.Fatalf("expected 'Protection Active', got %q", en.InsightsProtectionActive())
+	}
+	if en.ActionCopyError() != "Copy Error" {
+		t.Fatalf("expected 'Copy Error', got %q", en.ActionCopyError())
+	}
+	if en.CoreMissingNaiveError() != "NaiveProxy core binary not found. Please install the core first." {
+		t.Fatalf("expected NaiveProxy core missing error, got %q", en.CoreMissingNaiveError())
+	}
+
 	// Simplified Chinese
 	zh := In("zh-Hans")
 	if zh.NavNodes() != "节点" {
@@ -84,5 +94,14 @@ func TestCatalogLanguages(t *testing.T) {
 	}
 	if zh.CoreNewVersion("v1.8.24") != "新版本 v1.8.24" {
 		t.Fatalf("expected '新版本 v1.8.24', got %q", zh.CoreNewVersion("v1.8.24"))
+	}
+	if zh.InsightsProtectionActive() != "防护运行中" {
+		t.Fatalf("expected '防护运行中', got %q", zh.InsightsProtectionActive())
+	}
+	if zh.ActionCopyError() != "复制错误" {
+		t.Fatalf("expected '复制错误', got %q", zh.ActionCopyError())
+	}
+	if zh.CoreMissingNaiveError() != "未找到 NaiveProxy 核心文件，请先下载安装" {
+		t.Fatalf("expected NaiveProxy core missing error, got %q", zh.CoreMissingNaiveError())
 	}
 }

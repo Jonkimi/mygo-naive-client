@@ -25,12 +25,12 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 						ui.Text(c, cat.NavInsights()).FontSize(17).FontWeight(700).TextColor(p.text)
 						if a.state.BlockerEnabled {
-							tagPill(c, "防护运行中", p.green, p.greenBg)
+							tagPill(c, cat.InsightsProtectionActive(), p.green, p.greenBg)
 						} else {
-							tagPill(c, "防护已暂停", p.textDim, p.card)
+							tagPill(c, cat.InsightsProtectionPaused(), p.textDim, p.card)
 						}
 					})
-					ui.Text(c, "类 Pi-hole 双层 DNS 与网关防护，高频请求内存无损统计").FontSize(11).TextColor(p.textDim)
+					ui.Text(c, cat.InsightsSubtitle()).FontSize(11).TextColor(p.textDim)
 				})
 
 				ui.Box(c).Grow(1)
@@ -40,17 +40,17 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 					// 1. Toggle Protection Button
 					blockerBtnBg := p.greenBg
 					blockerBtnFg := p.green
-					blockerBtnLabel := "防护中"
+					blockerBtnLabel := cat.InsightsStatusActive()
 					if !a.state.BlockerEnabled {
 						blockerBtnBg = p.card
 						blockerBtnFg = p.textDim
-						blockerBtnLabel = "已暂停"
+						blockerBtnLabel = cat.InsightsStatusPaused()
 					}
 					btnToggle := ui.ButtonBase(c.Key("btn-toggle-blocker")).
 						Label("btn-toggle-blocker").
 						Padding(6, 12, 6, 12).Radius(6).
 						Background(blockerBtnBg).Border(1, p.borderSubtle).
-						Tooltip("一键开启/暂停广告与域名防护").
+						Tooltip(cat.InsightsToggleProtectionTooltip()).
 						Children(func() {
 							ui.Text(c, blockerBtnLabel).FontSize(12).FontWeight(600).TextColor(blockerBtnFg)
 						})
@@ -61,17 +61,17 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 					// 2. Toggle Ads Button
 					adsBg := p.accentBg
 					adsFg := p.accentText
-					adsLabel := "内置去广告: 开"
+					adsLabel := cat.InsightsBuiltinAdsOn()
 					if !a.state.BlockerBlockAds {
 						adsBg = p.card
 						adsFg = p.textDim
-						adsLabel = "内置去广告: 关"
+						adsLabel = cat.InsightsBuiltinAdsOff()
 					}
 					btnAds := ui.ButtonBase(c.Key("btn-toggle-ads")).
 						Label("btn-toggle-ads").
 						Padding(6, 12, 6, 12).Radius(6).
 						Background(adsBg).Border(1, p.borderSubtle).
-						Tooltip("启用或关闭内置 geosite:category-ads-all").
+						Tooltip(cat.InsightsToggleAdsTooltip()).
 						Children(func() {
 							ui.Text(c, adsLabel).FontSize(12).FontWeight(600).TextColor(adsFg)
 						})
@@ -84,9 +84,9 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 						Label("btn-manage-rules").
 						Padding(6, 12, 6, 12).Radius(6).
 						Background(p.elevated).Border(1, p.borderSubtle).
-						Tooltip("管理用户黑白名单与外部规则订阅").
+						Tooltip(cat.InsightsManageRulesTooltip()).
 						Children(func() {
-							ui.Text(c, "黑白名单与订阅").FontSize(12).FontWeight(600).TextColor(p.text)
+							ui.Text(c, cat.InsightsRulesAndSubscriptions()).FontSize(12).FontWeight(600).TextColor(p.text)
 						})
 					if btnRules.Clicked() {
 						a.insightsShowManageRules = !a.insightsShowManageRules
@@ -118,6 +118,7 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 }
 
 func (a *app) renderInsightsKPICards(c *ui.Context, p palette) {
+	cat := a.catalog()
 	var totalQueries, totalBlocked int64
 	activeRules := 0
 	if a.blocker != nil {
@@ -131,10 +132,10 @@ func (a *app) renderInsightsKPICards(c *ui.Context, p palette) {
 	}
 
 	ui.Row(c.Key("insights-kpi-row")).Gap(10).Children(func() {
-		a.renderKPICard(c, p, "24h 总查询/连接", fmt.Sprintf("%d", totalQueries), p.text, p.surface)
-		a.renderKPICard(c, p, "已拦截威胁与广告", fmt.Sprintf("%d", totalBlocked), p.red, p.redBg)
-		a.renderKPICard(c, p, "拦截率", fmt.Sprintf("%.1f%%", blockRate), p.amber, p.amberBg)
-		a.renderKPICard(c, p, "生效规则数", fmt.Sprintf("%d", activeRules), p.accentText, p.accentBg)
+		a.renderKPICard(c, p, cat.InsightsKpi24hQueries(), fmt.Sprintf("%d", totalQueries), p.text, p.surface)
+		a.renderKPICard(c, p, cat.InsightsKpiBlocked(), fmt.Sprintf("%d", totalBlocked), p.red, p.redBg)
+		a.renderKPICard(c, p, cat.InsightsKpiBlockRate(), fmt.Sprintf("%.1f%%", blockRate), p.amber, p.amberBg)
+		a.renderKPICard(c, p, cat.InsightsKpiActiveRules(), fmt.Sprintf("%d", activeRules), p.accentText, p.accentBg)
 	})
 }
 
@@ -154,6 +155,7 @@ func (a *app) renderInsightsTrendChart(c *ui.Context, p palette) {
 	if a.blocker == nil {
 		return
 	}
+	cat := a.catalog()
 
 	now := time.Now()
 	buckets := a.blocker.Logger().Get24HourlyBuckets(now)
@@ -170,15 +172,15 @@ func (a *app) renderInsightsTrendChart(c *ui.Context, p palette) {
 		Background(p.card).Border(1, p.borderSubtle).Gap(8).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Text(c, "过去 24 小时活动趋势").FontSize(12).FontWeight(600).TextColor(p.text)
+				ui.Text(c, cat.InsightsTrendTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(8, 8).Radius(2).Background(p.accent)
-						ui.Text(c, "总请求").FontSize(10).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsTrendTotal()).FontSize(10).TextColor(p.textDim)
 					})
 					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(8, 8).Radius(2).Background(p.red)
-						ui.Text(c, "已拦截").FontSize(10).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsTrendBlocked()).FontSize(10).TextColor(p.textDim)
 					})
 				})
 			})
@@ -196,7 +198,7 @@ func (a *app) renderInsightsTrendChart(c *ui.Context, p palette) {
 						}
 						blockedHeight := float32(bucket.Blocked) / float32(maxVal) * 50.0
 
-						tip := fmt.Sprintf("%s | 总: %d, 拦截: %d", bucket.Hour.Format("15:04"), bucket.Total, bucket.Blocked)
+						tip := cat.InsightsTrendTooltip(bucket.Hour.Format("15:04"), int(bucket.Total), int(bucket.Blocked))
 
 						barCol := ui.Column(c.Key(fmt.Sprintf("bar-%d", idx))).
 							Grow(1).Height(totalHeight).Radius(2).
@@ -218,6 +220,7 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 	if a.blocker == nil {
 		return
 	}
+	cat := a.catalog()
 
 	topBlocked := a.blocker.Logger().GetTopBlocked(10)
 	topAllowed := a.blocker.Logger().GetTopAllowed(10)
@@ -230,13 +233,13 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 			Background(p.card).Border(1, p.borderSubtle).Gap(6).
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "Top 被拦截域名").FontSize(12).FontWeight(600).TextColor(p.text)
+					ui.Text(c, cat.InsightsTopBlockedTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 					tagPill(c, fmt.Sprintf("%d", len(topBlocked)), p.red, p.redBg)
 				})
 
 				if len(topBlocked) == 0 {
 					ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).PaddingY(16).Children(func() {
-						ui.Text(c, "暂无拦截记录").FontSize(11).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsTopBlockedEmpty()).FontSize(11).TextColor(p.textDim)
 					})
 				} else {
 					for _, item := range topBlocked {
@@ -253,9 +256,9 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 										Label("btn-quick-whitelist-"+dom).
 										Padding(2, 6, 2, 6).Radius(4).
 										Background(p.surface).Border(1, p.borderSubtle).
-										Tooltip("加入白名单，解除拦截").
+										Tooltip(cat.InsightsActionWhitelistTooltip()).
 										Children(func() {
-											ui.Text(c, "+ 白名单").FontSize(10).TextColor(p.accentText)
+											ui.Text(c, cat.InsightsActionWhitelist()).FontSize(10).TextColor(p.accentText)
 										})
 									if btnAllow.Clicked() {
 										a.addBlockerAllowlist(dom)
@@ -274,13 +277,13 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 			Background(p.card).Border(1, p.borderSubtle).Gap(6).
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "Top 放行域名").FontSize(12).FontWeight(600).TextColor(p.text)
+					ui.Text(c, cat.InsightsTopAllowedTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 					tagPill(c, fmt.Sprintf("%d", len(topAllowed)), p.green, p.greenBg)
 				})
 
 				if len(topAllowed) == 0 {
 					ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).PaddingY(16).Children(func() {
-						ui.Text(c, "暂无放行记录").FontSize(11).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsTopAllowedEmpty()).FontSize(11).TextColor(p.textDim)
 					})
 				} else {
 					for _, item := range topAllowed {
@@ -297,9 +300,9 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 										Label("btn-quick-denylist-"+dom).
 										Padding(2, 6, 2, 6).Radius(4).
 										Background(p.surface).Border(1, p.borderSubtle).
-										Tooltip("加入黑名单，禁止连接").
+										Tooltip(cat.InsightsActionDenylistTooltip()).
 										Children(func() {
-											ui.Text(c, "+ 拦截").FontSize(10).TextColor(p.red)
+											ui.Text(c, cat.InsightsActionDenylist()).FontSize(10).TextColor(p.red)
 										})
 									if btnDeny.Clicked() {
 										a.addBlockerDenylist(dom)
@@ -317,6 +320,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 	if a.blocker == nil {
 		return
 	}
+	cat := a.catalog()
 
 	filtered, totalCount := a.blocker.Logger().GetFilteredEntries(a.insightsFilter, a.insightsSearch, 30)
 
@@ -326,8 +330,8 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					ui.Text(c, "实时查询日志").FontSize(12).FontWeight(600).TextColor(p.text)
-					tagPill(c, fmt.Sprintf("%d 条", totalCount), p.textDim, p.surface)
+					ui.Text(c, cat.InsightsQueryLogTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+					tagPill(c, cat.InsightsLogCount(totalCount), p.textDim, p.surface)
 				})
 
 				// Segment Filter Tabs
@@ -337,7 +341,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 						Padding(3, 8, 3, 8).Radius(4).
 						Background(ternaryColor(a.insightsFilter == "", p.elevated, p.surface)).
 						Children(func() {
-							ui.Text(c, "全部").FontSize(11).TextColor(ternaryColor(a.insightsFilter == "", p.text, p.textDim))
+							ui.Text(c, cat.InsightsFilterAll()).FontSize(11).TextColor(ternaryColor(a.insightsFilter == "", p.text, p.textDim))
 						})
 					if btnAll.Clicked() {
 						a.insightsFilter = ""
@@ -348,7 +352,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 						Padding(3, 8, 3, 8).Radius(4).
 						Background(ternaryColor(a.insightsFilter == "blocked", p.redBg, p.surface)).
 						Children(func() {
-							ui.Text(c, "仅拦截").FontSize(11).TextColor(ternaryColor(a.insightsFilter == "blocked", p.red, p.textDim))
+							ui.Text(c, cat.InsightsFilterBlocked()).FontSize(11).TextColor(ternaryColor(a.insightsFilter == "blocked", p.red, p.textDim))
 						})
 					if btnBlocked.Clicked() {
 						a.insightsFilter = "blocked"
@@ -359,7 +363,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 						Padding(3, 8, 3, 8).Radius(4).
 						Background(ternaryColor(a.insightsFilter == "allowed", p.greenBg, p.surface)).
 						Children(func() {
-							ui.Text(c, "仅放行").FontSize(11).TextColor(ternaryColor(a.insightsFilter == "allowed", p.green, p.textDim))
+							ui.Text(c, cat.InsightsFilterAllowed()).FontSize(11).TextColor(ternaryColor(a.insightsFilter == "allowed", p.green, p.textDim))
 						})
 					if btnAllowed.Clicked() {
 						a.insightsFilter = "allowed"
@@ -369,23 +373,23 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 
 			// Search input
 			ui.TextInput(c.Key("input-search-query-logs"), &a.insightsSearch).
-				Placeholder("按域名过滤最近请求...").
+				Placeholder(cat.InsightsSearchPlaceholder()).
 				FontSize(11).
 				Padding(4, 8, 4, 8).Radius(5).
 				Background(p.surface).Border(1, p.borderSubtle)
 
 			// Table header
 			ui.Row(c).Padding(4, 6, 4, 6).Background(p.surface).Radius(4).Children(func() {
-				ui.Text(c, "时间").FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
-				ui.Text(c, "来源").FontSize(10).FontWeight(600).TextColor(p.textDim).Width(60)
-				ui.Text(c, "裁决").FontSize(10).FontWeight(600).TextColor(p.textDim).Width(85)
-				ui.Text(c, "域名").FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
-				ui.Text(c, "匹配规则").FontSize(10).FontWeight(600).TextColor(p.textDim).Width(120)
-				ui.Text(c, "操作").FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
+				ui.Text(c, cat.InsightsColTime()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
+				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(60)
+				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(85)
+				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
+				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(120)
+				ui.Text(c, cat.InsightsColAction()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
 			})
 
 			if len(filtered) == 0 {
-				ui.Text(c, "暂无匹配的查询记录").FontSize(11).TextColor(p.textDim).Padding(10, 6, 10, 6)
+				ui.Text(c, cat.InsightsQueryLogEmpty()).FontSize(11).TextColor(p.textDim).Padding(10, 6, 10, 6)
 			} else {
 				for _, entry := range filtered {
 					e := entry
@@ -426,7 +430,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 									Padding(2, 6, 2, 6).Radius(4).
 									Background(p.surface).Border(1, p.borderSubtle).
 									Children(func() {
-										ui.Text(c, "+ 白名单").FontSize(10).TextColor(p.accentText)
+										ui.Text(c, cat.InsightsActionWhitelist()).FontSize(10).TextColor(p.accentText)
 									})
 								if btnW.Clicked() {
 									a.addBlockerAllowlist(dom)
@@ -437,7 +441,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 									Padding(2, 6, 2, 6).Radius(4).
 									Background(p.surface).Border(1, p.borderSubtle).
 									Children(func() {
-										ui.Text(c, "+ 拦截").FontSize(10).TextColor(p.red)
+										ui.Text(c, cat.InsightsActionDenylist()).FontSize(10).TextColor(p.red)
 									})
 								if btnB.Clicked() {
 									a.addBlockerDenylist(dom)
@@ -450,6 +454,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 }
 
 func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
+	cat := a.catalog()
 	white := ui.RGB(255, 255, 255)
 	ui.DialogBase(c.Key("manage-rules-dialog"), &a.insightsShowManageRules, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
@@ -462,13 +467,13 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 				ui.Column(c.Key("manage-rules-modal")).Gap(14).Children(func() {
 					// Title & Close
 					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "黑白名单与规则订阅").FontSize(15).FontWeight(700).TextColor(p.text)
+						ui.Text(c, cat.InsightsModalTitle()).FontSize(15).FontWeight(700).TextColor(p.text)
 						btnClose := ui.ButtonBase(c.Key("btn-close-rules")).
 							Label("btn-close-rules").
 							Padding(4, 8, 4, 8).Radius(4).
 							Background(p.surface).Border(1, p.borderSubtle).
 							Children(func() {
-								ui.Text(c, "关闭").FontSize(11).TextColor(p.textDim)
+								ui.Text(c, cat.InsightsModalClose()).FontSize(11).TextColor(p.textDim)
 							})
 						if btnClose.Clicked() {
 							a.insightsShowManageRules = false
@@ -478,14 +483,14 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 					// 1. User Allowlist
 					ui.Column(c).Gap(6).Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							ui.Text(c, "用户自定义白名单 (Allowlist)").FontSize(12).FontWeight(600).TextColor(p.text)
+							ui.Text(c, cat.InsightsAllowlistTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 							tagPill(c, fmt.Sprintf("%d", len(a.state.BlockerAllowlist)), p.accentText, p.accentBg)
 						})
-						ui.Text(c, "白名单域名及其子域名将永久放行，具有最高豁免优先级").FontSize(10).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsAllowlistDesc()).FontSize(10).TextColor(p.textDim)
 
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 							ui.TextInput(c.Key("input-add-allowlist"), &a.blockerAllowlistInput).
-								Placeholder("输入域名 (如 example.com)").
+								Placeholder(cat.InsightsAllowlistPlaceholder()).
 								FontSize(11).Grow(1).
 								Padding(5, 8, 5, 8).Radius(5).
 								Background(p.surface).Border(1, p.borderSubtle)
@@ -495,7 +500,7 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 								Padding(5, 12, 5, 12).Radius(5).
 								Background(p.accent).
 								Children(func() {
-									ui.Text(c, "+ 添加").FontSize(11).FontWeight(600).TextColor(white)
+									ui.Text(c, cat.InsightsActionAdd()).FontSize(11).FontWeight(600).TextColor(white)
 								})
 							if btnAdd.Clicked() {
 								if d := strings.TrimSpace(a.blockerAllowlistInput); d != "" {
@@ -533,14 +538,14 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 					// 2. User Denylist
 					ui.Column(c).Gap(6).Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							ui.Text(c, "用户自定义黑名单 (Denylist)").FontSize(12).FontWeight(600).TextColor(p.text)
+							ui.Text(c, cat.InsightsDenylistTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 							tagPill(c, fmt.Sprintf("%d", len(a.state.BlockerDenylist)), p.red, p.redBg)
 						})
-						ui.Text(c, "黑名单域名及其子域名将直接阻断，无需消耗远端代理流量").FontSize(10).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsDenylistDesc()).FontSize(10).TextColor(p.textDim)
 
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 							ui.TextInput(c.Key("input-add-denylist"), &a.blockerDenylistInput).
-								Placeholder("输入域名 (如 bad-tracker.com)").
+								Placeholder(cat.InsightsDenylistPlaceholder()).
 								FontSize(11).Grow(1).
 								Padding(5, 8, 5, 8).Radius(5).
 								Background(p.surface).Border(1, p.borderSubtle)
@@ -550,7 +555,7 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 								Padding(5, 12, 5, 12).Radius(5).
 								Background(p.red).
 								Children(func() {
-									ui.Text(c, "+ 拦截").FontSize(11).FontWeight(600).TextColor(white)
+									ui.Text(c, cat.InsightsActionDenylist()).FontSize(11).FontWeight(600).TextColor(white)
 								})
 							if btnAdd.Clicked() {
 								if d := strings.TrimSpace(a.blockerDenylistInput); d != "" {
@@ -588,14 +593,14 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 					// 3. External Rule Subscriptions
 					ui.Column(c).Gap(6).Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							ui.Text(c, "外部规则订阅 (URL)").FontSize(12).FontWeight(600).TextColor(p.text)
+							ui.Text(c, cat.InsightsSubscriptionsTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 							tagPill(c, fmt.Sprintf("%d", len(a.state.BlockerSubscriptions)), p.textDim, p.surface)
 						})
-						ui.Text(c, "支持 hosts 格式、纯域名列表与 AdGuard/EasyList 基础语法").FontSize(10).TextColor(p.textDim)
+						ui.Text(c, cat.InsightsSubscriptionsDesc()).FontSize(10).TextColor(p.textDim)
 
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 							ui.TextInput(c.Key("input-add-sub"), &a.blockerSubscriptionInput).
-								Placeholder("输入规则订阅 URL (https://...)").
+								Placeholder(cat.InsightsSubscriptionsPlaceholder()).
 								FontSize(11).Grow(1).
 								Padding(5, 8, 5, 8).Radius(5).
 								Background(p.surface).Border(1, p.borderSubtle)
@@ -605,7 +610,7 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 								Padding(5, 12, 5, 12).Radius(5).
 								Background(p.accent).
 								Children(func() {
-									ui.Text(c, "+ 订阅").FontSize(11).FontWeight(600).TextColor(white)
+									ui.Text(c, cat.InsightsActionSubscribe()).FontSize(11).FontWeight(600).TextColor(white)
 								})
 							if btnAdd.Clicked() {
 								if s := strings.TrimSpace(a.blockerSubscriptionInput); s != "" {
@@ -629,7 +634,7 @@ func (a *app) renderInsightsManageRulesDialog(c *ui.Context, p palette) {
 										Padding(2, 6, 2, 6).Radius(4).
 										Background(ui.Transparent).
 										Children(func() {
-											ui.Text(c, "删除").FontSize(10).TextColor(p.red)
+											ui.Text(c, cat.InsightsActionDelete()).FontSize(10).TextColor(p.red)
 										})
 									if btnDel.Clicked() {
 										a.removeBlockerSubscription(s)

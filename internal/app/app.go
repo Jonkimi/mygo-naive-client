@@ -1823,7 +1823,7 @@ func (a *app) addBlockerAllowlist(domain string) {
 	}
 	a.state.BlockerDenylist = newDeny
 	a.saveState()
-	a.toast("已加入白名单")
+	a.toast(a.catalog().ToastAddedAllowlist())
 }
 
 func (a *app) removeBlockerAllowlist(domain string) {
@@ -1842,7 +1842,7 @@ func (a *app) removeBlockerAllowlist(domain string) {
 	}
 	a.state.BlockerAllowlist = newAllow
 	a.saveState()
-	a.toast("已移除白名单")
+	a.toast(a.catalog().ToastRemovedAllowlist())
 }
 
 func (a *app) addBlockerDenylist(domain string) {
@@ -1872,7 +1872,7 @@ func (a *app) addBlockerDenylist(domain string) {
 	}
 	a.state.BlockerAllowlist = newAllow
 	a.saveState()
-	a.toast("已加入拦截黑名单")
+	a.toast(a.catalog().ToastAddedDenylist())
 }
 
 func (a *app) removeBlockerDenylist(domain string) {
@@ -1891,7 +1891,7 @@ func (a *app) removeBlockerDenylist(domain string) {
 	}
 	a.state.BlockerDenylist = newDeny
 	a.saveState()
-	a.toast("已移除拦截黑名单")
+	a.toast(a.catalog().ToastRemovedDenylist())
 }
 
 func (a *app) toggleBlockerEnabled() {
@@ -1901,18 +1901,18 @@ func (a *app) toggleBlockerEnabled() {
 	}
 	a.saveState()
 	if a.state.BlockerEnabled {
-		a.toast("广告与域名防护已开启")
+		a.toast(a.catalog().ToastProtectionEnabled())
 	} else {
-		a.toast("广告与域名防护已暂停")
+		a.toast(a.catalog().ToastProtectionPaused())
 	}
 }
 
 func (a *app) toggleBlockerBlockAds() {
 	a.setBlockerBlockAds(!a.state.BlockerBlockAds)
 	if a.state.BlockerBlockAds {
-		a.toast("已启用内置广告拦截")
+		a.toast(a.catalog().ToastAdsBlockEnabled())
 	} else {
-		a.toast("已关闭内置广告拦截")
+		a.toast(a.catalog().ToastAdsBlockDisabled())
 	}
 }
 
@@ -1942,7 +1942,7 @@ func (a *app) addBlockerSubscription(rawURL string) {
 	}
 	a.state.BlockerSubscriptions = append(a.state.BlockerSubscriptions, rawURL)
 	a.saveState()
-	a.toast("已添加规则订阅")
+	a.toast(a.catalog().ToastAddedSubscription())
 }
 
 func (a *app) removeBlockerSubscription(rawURL string) {
@@ -1956,5 +1956,5 @@ func (a *app) removeBlockerSubscription(rawURL string) {
 	a.state.BlockerSubscriptions = newSubs
 	a.syncBlockerRules()
 	a.saveState()
-	a.toast("已删除规则订阅")
+	a.toast(a.catalog().ToastRemovedSubscription())
 }
