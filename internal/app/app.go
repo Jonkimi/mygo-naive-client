@@ -23,6 +23,7 @@ import (
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
 	"naive-client/internal/sysproxy"
+	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
 	"naive-client/internal/tunhelper"
 	"naive-client/internal/updater"
@@ -92,6 +93,7 @@ type app struct {
 	sysproxy       *sysproxy.Sysproxy
 	router         *routing.Router
 	blocker        *blocker.Engine
+	tailnetMgr     *tailnet.Manager
 	tunDevice      *tunhelper.ReceivedDevice
 	mockTunDevice  func() (*tunhelper.ReceivedDevice, error)
 	mockTunCreator func(options tun.Options) (tun.Tun, error)
@@ -243,6 +245,9 @@ func Run() error {
 		if a.batchCancel != nil {
 			a.batchCancel()
 		}
+		if a.tailnetMgr != nil {
+			a.tailnetMgr.Close()
+		}
 		a.stopGateway()
 		if a.mgr != nil {
 			_ = a.mgr.StopAll()
@@ -289,6 +294,8 @@ func newApp(dataDir string) *app {
 		Denylist:  st.BlockerDenylist,
 		Disabled:  !st.BlockerEnabled,
 	})
+	tnCfg := st.tailnetConfig()
+	tnMgr := tailnet.NewManager(tnCfg, nil)
 	a := &app{
 		dataDir:        dataDir,
 		state:          st,
@@ -298,6 +305,7 @@ func newApp(dataDir string) *app {
 		sysproxy:       sysproxy.New(recPath),
 		router:         routing.NewRouter(st.RoutingRules, st.RoutingFinal),
 		blocker:        blk,
+		tailnetMgr:     tnMgr,
 		quitCh:         make(chan struct{}),
 	}
 	a.refreshGeoDataStatus()
@@ -858,27 +866,48 @@ func (a *app) startGateway() error {
 		tunAddrs = []string{"127.0.0.1/24"}
 	}
 
+	var tnCfg tailnet.Config
+	var tnMode tailnet.Mode = tailnet.ModeOff
+	var tnExcludes []string
+	var tnSuffix string
+	if a.tailnetMgr != nil {
+		tnCfg = a.tailnetMgr.GetConfig()
+		if a.tailnetMgr.ShouldUseHostMode() {
+			tnMode = tailnet.ModeHost
+			tnExcludes = a.tailnetMgr.GetHostExcludeAddresses()
+			tnSuffix = a.tailnetMgr.GetMagicDNSSuffix()
+		} else if a.tailnetMgr.ShouldUseEmbeddedMode() {
+			tnMode = tailnet.ModeEmbedded
+			tnSuffix = a.tailnetMgr.GetMagicDNSSuffix()
+		}
+	}
+
 	eng, err := boxengine.New(boxengine.EngineOptions{
-		ListenAddr:     fmt.Sprintf("127.0.0.1:%d", port),
-		TrafficMode:    a.state.TrafficMode,
-		TunFD:          tunFD,
-		TunInterface:   tunName,
-		TunAddresses:   tunAddrs,
-		TunCreator:     a.mockTunCreator,
-		Services:       a.state.Services,
-		AllocatedPorts: allocPorts,
-		ActiveIDs:      activeIDs,
-		Rules:          a.state.RoutingRules,
-		FinalAction:    string(a.state.RoutingFinal.Type),
-		GeoSiteDB:      a.cachedSiteDB,
-		GeoIPDB:        a.cachedIPDB,
-		Tracker:        a.tracker,
-		FailureMonitor: a.failureMonitor,
-		Blocker:        a.blocker,
-		BootstrapDNS:   parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS),
-		DomesticDoH:    parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH),
-		RemoteDoH:      parseDNSList(a.effectiveRemoteDNS(), boxengine.DefaultRemoteDoH),
-		PreferIPv4:     a.state.PreferIPv4,
+		ListenAddr:            fmt.Sprintf("127.0.0.1:%d", port),
+		TrafficMode:           a.state.TrafficMode,
+		TunFD:                 tunFD,
+		TunInterface:          tunName,
+		TunAddresses:          tunAddrs,
+		TunCreator:            a.mockTunCreator,
+		Services:              a.state.Services,
+		AllocatedPorts:        allocPorts,
+		ActiveIDs:             activeIDs,
+		Rules:                 a.state.RoutingRules,
+		FinalAction:           string(a.state.RoutingFinal.Type),
+		GeoSiteDB:             a.cachedSiteDB,
+		GeoIPDB:               a.cachedIPDB,
+		Tracker:               a.tracker,
+		FailureMonitor:        a.failureMonitor,
+		Blocker:               a.blocker,
+		BootstrapDNS:          parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS),
+		DomesticDoH:           parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH),
+		RemoteDoH:             parseDNSList(a.effectiveRemoteDNS(), boxengine.DefaultRemoteDoH),
+		PreferIPv4:            a.state.PreferIPv4,
+		TailnetConfig:         &tnCfg,
+		TailnetMode:           tnMode,
+		TailnetHostExcludes:   tnExcludes,
+		TailnetMagicDNSSuffix: tnSuffix,
+		StateDir:              a.userDataDir(),
 		OnDemandStart: func(tag string) {
 			a.startDormantServiceForTag(tag)
 		},
@@ -890,6 +919,10 @@ func (a *app) startGateway() error {
 		return err
 	}
 	a.gateway = eng
+
+	if a.tailnetMgr != nil && tnMode == tailnet.ModeEmbedded {
+		a.tailnetMgr.BindEmbeddedEndpoint(eng.TailscaleEndpoint())
+	}
 
 	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
 		_ = a.sysproxy.Set(eng.Addr(), a.state.SystemProxyBypass)

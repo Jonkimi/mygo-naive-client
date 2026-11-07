@@ -13,6 +13,7 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
+	"naive-client/internal/tailnet"
 	"naive-client/internal/updater"
 	"naive-client/locales"
 )
@@ -65,6 +66,18 @@ type PersistedState struct {
 	BlockerSubscriptions    []string            `json:"blockerSubscriptions,omitempty"`
 	BlockerAllowlist        []string            `json:"blockerAllowlist,omitempty"`
 	BlockerDenylist         []string            `json:"blockerDenylist,omitempty"`
+
+	// Tailnet integration (ADR-0007)
+	TailnetEnabled         bool     `json:"tailnetEnabled"`
+	TailnetMode            string   `json:"tailnetMode,omitempty"` // "auto", "host", "embedded", "off"
+	TailnetControlURL      string   `json:"tailnetControlUrl,omitempty"`
+	TailnetAuthKey         string   `json:"tailnetAuthKey,omitempty"`
+	TailnetHostname        string   `json:"tailnetHostname,omitempty"`
+	TailnetAcceptRoutes    bool     `json:"tailnetAcceptRoutes"`
+	TailnetExitNode        string   `json:"tailnetExitNode,omitempty"`
+	TailnetExposeMixedPort bool     `json:"tailnetExposeMixedPort"`
+	TailnetAdvertiseExit   bool     `json:"tailnetAdvertiseExit"`
+	TailnetAdvertiseRoutes []string `json:"tailnetAdvertiseRoutes,omitempty"`
 }
 
 func defaultPersistedState() PersistedState {
@@ -89,6 +102,31 @@ func defaultPersistedState() PersistedState {
 		BlockerSubscriptions:    []string{},
 		BlockerAllowlist:        []string{},
 		BlockerDenylist:         []string{},
+		TailnetEnabled:          false,
+		TailnetMode:             "auto",
+		TailnetAcceptRoutes:     true,
+		TailnetExposeMixedPort:  false,
+		TailnetAdvertiseExit:    false,
+		TailnetAdvertiseRoutes:  []string{},
+	}
+}
+
+func (s *PersistedState) tailnetConfig() tailnet.Config {
+	mode := tailnet.Mode(s.TailnetMode)
+	if mode == "" {
+		mode = tailnet.ModeAuto
+	}
+	return tailnet.Config{
+		Enabled:           s.TailnetEnabled,
+		Mode:              mode,
+		ControlURL:        s.TailnetControlURL,
+		AuthKey:           s.TailnetAuthKey,
+		Hostname:          s.TailnetHostname,
+		AcceptRoutes:      s.TailnetAcceptRoutes,
+		ExitNode:          s.TailnetExitNode,
+		ExposeMixedPort:   s.TailnetExposeMixedPort,
+		AdvertiseExitNode: s.TailnetAdvertiseExit,
+		AdvertiseRoutes:   s.TailnetAdvertiseRoutes,
 	}
 }
 
@@ -230,10 +268,16 @@ func (a *app) loadState() {
 	a.gatewayPortInput = fmt.Sprintf("%d", st.GatewayPort)
 	a.syncRouter()
 	a.syncBlocker()
+	if a.tailnetMgr != nil {
+		a.tailnetMgr.UpdateConfig(st.tailnetConfig())
+	}
 }
 
 func (a *app) saveState() {
 	a.syncRouter()
+	if a.tailnetMgr != nil {
+		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+	}
 	dir := a.userDataDir()
 	_ = os.MkdirAll(dir, 0o755)
 	raw, err := json.MarshalIndent(a.state, "", "  ")

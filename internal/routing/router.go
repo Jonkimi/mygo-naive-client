@@ -15,6 +15,8 @@ const (
 	ActionProxyTag     ActionType = "PROXY_TAG"
 	ActionProxyService ActionType = "PROXY_SERVICE"
 	ActionBlock        ActionType = "BLOCK"
+	ActionTailnet      ActionType = "TAILNET"
+	ActionTailnetExit  ActionType = "TAILNET_EXIT"
 )
 
 type RouteAction struct {
@@ -22,6 +24,7 @@ type RouteAction struct {
 	Tag       string     `json:"tag,omitempty"`
 	Tags      []string   `json:"tags,omitempty"`
 	ServiceID string     `json:"serviceId,omitempty"`
+	ExitNode  string     `json:"exitNode,omitempty"`
 }
 
 func (a RouteAction) GetTags() []string {

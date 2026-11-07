@@ -47,7 +47,7 @@ func (a *app) view(c *ui.Context) {
 			case TabInsights:
 				a.renderInsightsPage(c, p)
 			case TabTailnet:
-				a.renderPlaceholderPage(c, p, a.catalog().NavTailnet(), "Tailnet 组网将在阶段五就绪")
+				a.renderTailnetPage(c, p)
 			}
 		})
 	})
