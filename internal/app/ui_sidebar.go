@@ -475,6 +475,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
 							activeBarColor := p.navActiveColor()
 							inactiveBarColor := p.borderSubtle
+							if p.dark {
+								inactiveBarColor = p.textDim
+							}
 
 							// Left: Port
 							c1 := inactiveBarColor
