@@ -2,12 +2,14 @@ package app
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/sagernet/sing-box/constant"
 
 	"naive-client/internal/config"
+	"naive-client/internal/tailnet"
 )
 
 const collapsedTileSize float32 = 36
@@ -217,70 +219,379 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	missingCore := (needsNaive && a.localVersion == "") || (needsXray && a.localXrayVersion == "")
 	hasAnyUpdate := a.hasUpdate || a.hasXrayUpdate
 
-	dotColor := p.green
-	if missingCore {
-		dotColor = p.amber
+	gwPort := a.state.GatewayPort
+	if gwPort <= 0 {
+		gwPort = 10809
+	}
+	gwAddr := fmt.Sprintf("127.0.0.1:%d", gwPort)
+
+	// Gateway dot & badge colors
+	gwRunning := (a.gateway != nil && a.state.GatewayEnabled) || runningSidecars > 0
+	gwDotColor := p.textDim
+	if gwRunning {
+		gwDotColor = p.green
+	}
+	if missingCore || hasAnyUpdate {
+		gwDotColor = p.amber
+	}
+
+	// Tailnet status
+	var ts tailnet.Status
+	if a.tailnetMgr != nil {
+		ts = a.tailnetMgr.Status()
+	}
+	tsDotColor := p.textDim
+	tsBadgeText := cat.TailnetModeOff()
+	tsBadgeFg := p.textDim
+	tsBadgeBg := p.elevated
+	tsDetail := cat.TailnetStatusOffline()
+
+	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) {
+		switch ts.BackendState {
+		case "Running":
+			tsDotColor = p.green
+			tsBadgeFg = p.accentText
+			tsBadgeBg = p.accentBg
+			if ts.ActiveMode == tailnet.ModeHost {
+				tsBadgeText = cat.TailnetModeHost()
+			} else {
+				tsBadgeText = cat.TailnetModeEmbedded()
+			}
+			if len(ts.Self.IPs) > 0 {
+				tsDetail = ts.Self.IPs[0]
+			} else {
+				tsDetail = cat.TailnetStatusConnected()
+			}
+		case "NeedsLogin":
+			tsDotColor = p.amber
+			tsBadgeText = cat.TailnetStatusNeedsLogin()
+			tsBadgeFg = p.amber
+			tsBadgeBg = p.amberBg
+			tsDetail = cat.TailnetStatusNeedsLogin()
+		case "Starting":
+			tsDotColor = p.amber
+			tsBadgeText = cat.TailnetStarting()
+			tsBadgeFg = p.textDim
+			tsBadgeBg = p.elevated
+			tsDetail = cat.TailnetStarting()
+		default:
+			tsDotColor = p.textDim
+			tsBadgeText = cat.TailnetStatusOffline()
+			tsBadgeFg = p.textDim
+			tsBadgeBg = p.elevated
+			tsDetail = cat.TailnetStatusOffline()
+		}
+	}
+
+	// Mode handling
+	activeMode := a.state.TrafficMode
+	if activeMode == "" {
+		activeMode = "port"
+	}
+	var activeModeLabel string
+	switch activeMode {
+	case "sysproxy":
+		activeModeLabel = cat.ModeSysProxy()
+	case "tun":
+		activeModeLabel = cat.ModeTun()
+	default:
+		activeModeLabel = cat.ModePortOnly()
+	}
+
+	// Rich hover tooltip (showing gateway, tailnet, mode, and each core's version/update status)
+	var tipLines []string
+	tipLines = append(tipLines, fmt.Sprintf("%s: %s", cat.MasterGateway(), gwAddr))
+	tipLines = append(tipLines, fmt.Sprintf("%s: %s (%s)", cat.NavTailnet(), tsDetail, tsBadgeText))
+	tipLines = append(tipLines, fmt.Sprintf("%s: %s", cat.TailnetModeLabel(), activeModeLabel))
+	tipLines = append(tipLines, fmt.Sprintf("sing-box: %s (%s)", sbVer, cat.TagBuiltin()))
+	tipLines = append(tipLines, fmt.Sprintf("Naive: %s", a.naiveStatusText()))
+	tipLines = append(tipLines, fmt.Sprintf("Xray: %s", a.xrayStatusText()))
+	if hasAnyUpdate {
+		tipLines = append(tipLines, cat.UpdateAvailableBadge())
+	} else if missingCore {
+		tipLines = append(tipLines, cat.EngineMissingSidecar())
+	}
+	fullTip := strings.Join(tipLines, "\n")
+
+	renderSidebarTooltip := func(anchor ui.Element) {
+		ui.TooltipBase(c, anchor, func(tip ui.Element) {
+			tip.AttachTo(anchor, ui.AnchorRight, ui.AnchorLeft).
+				Margin(0, 0, 0, 8).
+				Padding(10, 12, 10, 12).Radius(8).
+				Background(ui.RGB(15, 23, 42)). // slate-900
+				Border(1, ui.RGB(51, 65, 85)).   // slate-700
+				Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.35)).
+				Children(func() {
+					ui.Column(c).Gap(6).Width(210).Children(func() {
+						// Section 1: Gateway, Tailnet & Mode
+						ui.Column(c).Gap(4).Children(func() {
+							// Line 1: Gateway
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									ui.Box(c).Size(6, 6).Radius(999).Background(gwDotColor)
+									ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(ui.RGB(248, 250, 252))
+								})
+								ui.Text(c, gwAddr).FontSize(11).TextColor(ui.RGB(52, 211, 153)) // emerald-400
+							})
+
+							// Line 2: Tailnet
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									ui.Box(c).Size(6, 6).Radius(999).Background(tsDotColor)
+									ui.Text(c, cat.NavTailnet()).FontSize(11).TextColor(ui.RGB(203, 213, 225))
+								})
+								ui.Text(c, tsDetail).FontSize(11).TextColor(ui.RGB(52, 211, 153))
+							})
+
+							// Line 3: Working mode
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Text(c, cat.TailnetModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
+								ui.Text(c, activeModeLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(147, 197, 253)) // blue-300
+							})
+						})
+
+						// Divider
+						ui.Box(c).Fill().Height(1).Background(ui.RGB(51, 65, 85))
+
+						// Section 2: Core versions
+						ui.Column(c).Gap(3).Children(func() {
+							// sing-box
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Text(c, "sing-box ("+cat.TagBuiltin()+")").FontSize(11).TextColor(ui.RGB(148, 163, 184))
+								ui.Text(c, sbVer).FontSize(11).TextColor(ui.RGB(52, 211, 153))
+							})
+
+							// Naive
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Text(c, "NaiveProxy").FontSize(11).TextColor(ui.RGB(148, 163, 184))
+								naiveCol := ui.RGB(226, 232, 240)
+								if a.localVersion == "" || a.hasUpdate {
+									naiveCol = ui.RGB(251, 191, 36) // amber-400
+								}
+								ui.Text(c, a.naiveStatusText()).FontSize(11).TextColor(naiveCol)
+							})
+
+							// Xray
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Text(c, "Xray-core").FontSize(11).TextColor(ui.RGB(148, 163, 184))
+								xrayCol := ui.RGB(226, 232, 240)
+								if a.localXrayVersion == "" || a.hasXrayUpdate {
+									xrayCol = ui.RGB(251, 191, 36)
+								}
+								ui.Text(c, a.xrayStatusText()).FontSize(11).TextColor(xrayCol)
+							})
+
+							if hasAnyUpdate {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Children(func() {
+									ui.Text(c, cat.UpdateAvailableBadge()).FontSize(10).FontWeight(600).TextColor(ui.RGB(251, 191, 36))
+								})
+							} else if missingCore {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Children(func() {
+									ui.Text(c, cat.EngineMissingSidecar()).FontSize(10).FontWeight(500).TextColor(ui.RGB(251, 191, 36))
+								})
+							}
+						})
+					})
+				})
+		})
 	}
 
 	if collapsed {
-		tip := fmt.Sprintf("sing-box %s (%s)\nNaive: %s\nXray: %s", sbVer, cat.TagBuiltin(), a.naiveStatusText(), a.xrayStatusText())
-		btn := ui.ButtonBase(c.Key("sidebar-engine-pill")).
+		card := ui.Column(c.Key("sidebar-engine-pill")).
 			Label(cat.EngineStatusPillTitle()).
-			Size(collapsedTileSize, collapsedTileSize).Radius(8).
-			Background(p.elevated).
-			AlignItems(ui.Center).Justify(ui.Center).
-			Tooltip(tip).
+			Width(collapsedTileSize).Padding(4, 4, 4, 4).Gap(4).Radius(8).
+			Background(p.card).Border(1, p.borderSubtle).
+			AlignItems(ui.Center).
+			Tooltip(fullTip).
 			Children(func() {
-				ui.Box(c).Size(8, 8).Radius(999).Background(dotColor)
+				// Row 1: Gateway status dot
+				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
+					Label(cat.MasterGateway()).
+					Size(24, 18).Radius(4).
+					Background(ui.Transparent).
+					AlignItems(ui.Center).Justify(ui.Center).
+					Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
+					})
+				if gwBtn.Hovered() {
+					gwBtn.Background(p.cardHover)
+				}
+				if gwBtn.Clicked() {
+					a.activeTab = TabSettings
+				}
+
+				// Divider 1
+				ui.Box(c).Width(24).Height(1).Background(p.borderSubtle)
+
+				// Row 2: Tailnet status dot
+				tsBtn := ui.ButtonBase(c.Key("collapsed-ts-dot")).
+					Label(cat.NavTailnet()).
+					Size(24, 18).Radius(4).
+					Background(ui.Transparent).
+					AlignItems(ui.Center).Justify(ui.Center).
+					Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
+					})
+				if tsBtn.Hovered() {
+					tsBtn.Background(p.cardHover)
+				}
+				if tsBtn.Clicked() {
+					a.activeTab = TabTailnet
+				}
+
+				// Divider 2
+				ui.Box(c).Width(24).Height(1).Background(p.borderSubtle)
+
+				// Row 3: Positional 3-bar gray lamp (Left: Port, Center: SysProxy, Right: TUN)
+				modeBtn := ui.ButtonBase(c.Key("collapsed-mode-lamp")).
+					Label(cat.TailnetModeLabel()).
+					Size(28, 16).Radius(4).
+					Background(ui.Transparent).
+					AlignItems(ui.Center).Justify(ui.Center).
+					Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
+							activeBarColor := p.textMuted
+							inactiveBarColor := p.borderSubtle
+
+							// Left: Port
+							c1 := inactiveBarColor
+							if activeMode == "port" {
+								c1 = activeBarColor
+							}
+							ui.Box(c).Width(7).Height(3).Radius(2).Background(c1)
+
+							// Center: SysProxy
+							c2 := inactiveBarColor
+							if activeMode == "sysproxy" {
+								c2 = activeBarColor
+							}
+							ui.Box(c).Width(7).Height(3).Radius(2).Background(c2)
+
+							// Right: TUN
+							c3 := inactiveBarColor
+							if activeMode == "tun" {
+								c3 = activeBarColor
+							}
+							ui.Box(c).Width(7).Height(3).Radius(2).Background(c3)
+						})
+					})
+				if modeBtn.Hovered() {
+					modeBtn.Background(p.cardHover)
+				}
+				if modeBtn.Clicked() {
+					nextMode := "sysproxy"
+					if activeMode == "sysproxy" {
+						nextMode = "tun"
+					} else if activeMode == "tun" {
+						nextMode = "port"
+					}
+					_ = a.setTrafficMode(nextMode)
+				}
 			})
-		if btn.Hovered() {
-			btn.Background(p.cardHover)
-		}
-		if btn.Clicked() {
-			a.activeTab = TabSettings
-		}
+		renderSidebarTooltip(card)
 		return
 	}
 
+	// Expanded state: unified 3-row white card
 	card := ui.Column(c.Key("sidebar-engine-pill")).
 		Label(cat.EngineStatusPillTitle()).
-		Padding(8, 10, 8, 10).Gap(4).Radius(8).
-		Background(p.elevated).Border(1, p.borderSubtle).
-		Tooltip(cat.EngineStatusPillHint()).
+		Padding(6, 8, 6, 8).Gap(4).Radius(8).
+		Background(p.card).Border(1, p.borderSubtle).
+		Tooltip(fullTip).
 		Children(func() {
-			// Line 1: sing-box core status
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Box(c).Size(6, 6).Radius(999).Background(p.green)
-					ui.Text(c, "sing-box "+sbVer).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-				})
-				tagPill(c, cat.TagBuiltin(), p.green, p.greenBg)
-			})
-
-			// Line 2: Sidecars / Tailnet summary
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				if missingCore {
-					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-						ui.Box(c).Size(5, 5).Radius(999).Background(p.amber)
-						ui.Text(c, cat.EngineMissingSidecar()).FontSize(10).FontWeight(500).TextColor(p.amber).NoWrap()
+			// Row 1: Gateway status + port
+			row1 := ui.Row(c.Key("expanded-gw-row")).
+				Label(cat.MasterGateway()).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Padding(2, 4, 2, 4).Radius(6).
+				Background(ui.Transparent).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
+						ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+						ui.Text(c, fmt.Sprintf(":%d", gwPort)).FontSize(11).TextColor(p.textMuted).NoWrap()
 					})
-				} else if runningSidecars > 0 {
-					ui.Text(c, cat.SidecarsRunning(runningSidecars)).FontSize(10).TextColor(p.textMuted).NoWrap()
-				} else {
-					ui.Text(c, cat.SidecarsReady()).FontSize(10).TextColor(p.textDim).NoWrap()
-				}
 
-				if hasAnyUpdate {
-					ui.Text(c, cat.UpdateAvailableBadge()).FontSize(10).FontWeight(600).TextColor(p.amber).NoWrap()
-				}
-			})
+					if missingCore {
+						tagPill(c, cat.EngineMissingSidecar(), p.amber, p.amberBg)
+					} else if hasAnyUpdate {
+						tagPill(c, cat.UpdateAvailableBadge(), p.amber, p.amberBg)
+					} else if runningSidecars > 0 {
+						tagPill(c, fmt.Sprintf("%d", runningSidecars), p.green, p.greenBg)
+					}
+				})
+			if row1.Hovered() {
+				row1.Background(p.cardHover)
+			}
+			if row1.Clicked() {
+				a.activeTab = TabSettings
+			}
+
+			// Divider 1
+			ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+
+			// Row 2: Tailnet (组网) status
+			row2 := ui.Row(c.Key("expanded-ts-row")).
+				Label(cat.NavTailnet()).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Padding(2, 4, 2, 4).Radius(6).
+				Background(ui.Transparent).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
+						ui.Text(c, cat.NavTailnet()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+						ui.Text(c, tsDetail).FontSize(11).TextColor(p.textDim).NoWrap()
+					})
+					tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
+				})
+			if row2.Hovered() {
+				row2.Background(p.cardHover)
+			}
+			if row2.Clicked() {
+				a.activeTab = TabTailnet
+			}
+
+			// Divider 2
+			ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+
+			// Row 3: 3-Way Segmented Working Mode (Left: Port, Center: SysProxy, Right: TUN)
+			// White card background, selected option has a neutral gray pill background
+			ui.Row(c.Key("expanded-mode-row")).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Padding(2, 0, 2, 0).Gap(3).
+				Children(func() {
+					renderModeBtn := func(modeID, label string) {
+						isSelected := activeMode == modeID
+						bg := ui.Transparent
+						fg := p.textDim
+						weight := 400
+						if isSelected {
+							bg = p.elevated
+							fg = p.text
+							weight = 600
+						}
+
+						btn := ui.Row(c.Key("btn-mode-" + modeID)).
+							Grow(1).Justify(ui.Center).AlignItems(ui.Center).
+							Height(22).Radius(4).
+							Background(bg).
+							Children(func() {
+								ui.Text(c, label).FontSize(10).FontWeight(weight).TextColor(fg).NoWrap()
+							})
+						if !isSelected && btn.Hovered() {
+							btn.Background(p.cardHover)
+						}
+						if btn.Clicked() {
+							_ = a.setTrafficMode(modeID)
+						}
+					}
+
+					renderModeBtn("port", cat.ModePortOnly())
+					renderModeBtn("sysproxy", cat.ModeSysProxy())
+					renderModeBtn("tun", cat.ModeTun())
+				})
 		})
-	if card.Hovered() {
-		card.Background(p.cardHover)
-	}
-	if card.Clicked() {
-		a.activeTab = TabSettings
-	}
+	renderSidebarTooltip(card)
 }
 
 func (a *app) naiveStatusText() string {

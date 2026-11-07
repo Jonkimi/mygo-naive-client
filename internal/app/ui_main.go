@@ -37,7 +37,6 @@ func (a *app) view(c *ui.Context) {
 		a.renderSidebar(c, p)
 
 		ui.Column(c.Key("main")).Grow(1).Background(p.surface).Children(func() {
-			a.renderTopControlBar(c, p)
 			switch a.activeTab {
 			case TabNodes:
 				a.renderToolbar(c, p)
@@ -75,131 +74,6 @@ func (a *app) activeRunningCount() int {
 		return 0
 	}
 	return a.mgr.RunningOrStartingCount()
-}
-
-func (a *app) gatewayEndpointLabel() string {
-	cat := a.catalog()
-	port := a.state.GatewayPort
-	if port <= 0 {
-		port = 10809
-	}
-	return fmt.Sprintf("%s 127.0.0.1:%d", cat.MasterGateway(), port)
-}
-
-func (a *app) primaryGatewayPortLabel() string {
-	return a.catalog().ModePortOnly()
-}
-
-func (a *app) renderTopControlBar(c *ui.Context, p palette) {
-	cat := a.catalog()
-	runningCount := a.activeRunningCount()
-	dotColor := p.textDim
-	if (a.gateway != nil && a.state.GatewayEnabled) || runningCount > 0 {
-		dotColor = p.green
-	}
-
-	ui.Row(c).
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		PaddingX(20).PaddingY(10).
-		Background(p.surface).
-		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-		Children(func() {
-			// Left: Gateway live status indicator
-			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				ui.Box(c).Size(8, 8).Radius(999).Background(dotColor)
-				ui.Text(c, a.gatewayEndpointLabel()).FontSize(12).FontWeight(400).TextColor(p.textMuted)
-			})
-
-			// Center: Active mode dropdown selector with label
-			activeMode := a.state.TrafficMode
-			if activeMode == "" {
-				activeMode = "port"
-			}
-			var activeLabel string
-			switch activeMode {
-			case "sysproxy":
-				activeLabel = cat.ModeSysProxy()
-			case "tun":
-				activeLabel = cat.ModeTun()
-			default:
-				activeLabel = cat.ModePortOnly()
-			}
-
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				ui.Text(c, cat.TrafficModeLabel()).FontSize(11).FontWeight(400).TextColor(p.textMuted)
-
-				selectedMode := activeMode
-				sel := ui.SelectBase(c.Key("select-traffic-mode"), &selectedMode)
-				sel.Trigger.
-					Gap(6).PaddingX(10).PaddingY(4).Radius(6).
-					Background(p.elevated).Border(1, p.borderSubtle).
-					AlignItems(ui.Center).
-					Children(func() {
-						ui.Text(c, activeLabel).FontSize(11).FontWeight(400).TextColor(p.textMuted)
-						ui.Icon(c, iconChevronDown).Size(11, 11).TextColor(p.textDim)
-					})
-				if sel.Trigger.Hovered() {
-					sel.Trigger.Background(p.cardHover)
-				}
-
-				sel.Popup(func(panel ui.Element) {
-					panel.Margin(4, 0, 0, 0).Padding(4).Radius(8).
-						Background(p.card).Border(1, p.borderSubtle).
-						Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.18))
-
-					modes := []struct {
-						id    string
-						label string
-						tip   string
-					}{
-						{id: "port", label: cat.ModePortOnly(), tip: ""},
-						{id: "sysproxy", label: cat.ModeSysProxy(), tip: ""},
-						{id: "tun", label: cat.ModeTun(), tip: ""},
-					}
-
-					for _, m := range modes {
-						item := sel.Item(m.id).Gap(8).PaddingX(10).PaddingY(6).Radius(6).AlignItems(ui.Center)
-						if item.Highlighted() {
-							item.Background(p.accentBg)
-						}
-						item.Children(func() {
-							fg := p.textMuted
-							if item.Highlighted() {
-								fg = p.accentText
-							} else if m.id == activeMode {
-								fg = p.text
-							}
-							ui.Text(c, m.label).FontSize(12).FontWeight(400).TextColor(fg)
-							if m.tip != "" {
-								ui.Text(c, "("+m.tip+")").FontSize(10).TextColor(p.textDim)
-							}
-						})
-					}
-				})
-
-				if sel.Trigger.Changed() {
-					if selectedMode != a.state.TrafficMode {
-						_ = a.setTrafficMode(selectedMode)
-					}
-				}
-			})
-
-			// Right: Core status capsule (clickable to jump to Settings)
-			coreBtn := ui.ButtonBase(c.Key("top-core-status")).
-				Radius(999).Background(ui.Transparent).
-				Children(func() {
-					if a.localVersion == "" {
-						statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
-					} else if (a.hasUpdate && a.latestRelease != nil) || (a.hasXrayUpdate && a.latestXrayRelease != nil) {
-						statusBadge(c, cat.CoreLocal()+a.localVersion+" ↑", p.amber, p.amberBg)
-					} else {
-						tagPill(c, cat.CoreLocal()+a.localVersion, p.textMuted, p.elevated)
-					}
-				})
-			if coreBtn.Clicked() {
-				a.activeTab = TabSettings
-			}
-		})
 }
 
 func (a *app) renderPlaceholderPage(c *ui.Context, p palette, title, desc string) {

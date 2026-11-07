@@ -630,9 +630,18 @@ func (a *app) buildUpdaterHTTPOptions(timeout time.Duration) updater.HTTPClientO
 		ProxyURL: strings.TrimSpace(a.state.UpdateProxy),
 		Timeout:  timeout,
 	}
-	if opts.ProxyURL == "" && a.state.UseRunningServiceForUpd && a.mgr != nil {
-		if ep, ok := a.mgr.FirstRunningEndpoint(); ok {
+	if opts.ProxyURL == "" && a.state.UseRunningServiceForUpd {
+		if a.gateway != nil && a.state.GatewayEnabled && a.gateway.Port() > 0 {
+			ep := config.ListenEndpoint{
+				Proto: "http",
+				Addr:  "127.0.0.1",
+				Port:  a.gateway.Port(),
+			}
 			opts.LocalEndpoint = &ep
+		} else if a.mgr != nil {
+			if ep, ok := a.mgr.FirstRunningEndpoint(); ok {
+				opts.LocalEndpoint = &ep
+			}
 		}
 	}
 	return opts
@@ -1530,17 +1539,12 @@ func (a *app) triggerUpdateGeoData() {
 		targetTag = rel.TagName
 	}
 	go func() {
-		var ep *config.ListenEndpoint
-		if a.state.UseRunningServiceForUpd && a.mgr != nil {
-			if e, ok := a.mgr.FirstRunningEndpoint(); ok {
-				ep = &e
-			}
-		}
+		httpOpts := a.buildUpdaterHTTPOptions(60 * time.Second)
 		opts := geodata.UpdateOptions{
 			DestDir:      a.geodataDir(),
 			GitHubMirror: a.state.GitHubMirror,
-			ProxyURL:     strings.TrimSpace(a.state.UpdateProxy),
-			ProxyEP:      ep,
+			ProxyURL:     httpOpts.ProxyURL,
+			ProxyEP:      httpOpts.LocalEndpoint,
 			Tag:          targetTag,
 		}
 		ver, err := geodata.Update(context.Background(), opts, nil)

@@ -113,14 +113,14 @@ func TestSidebar_EngineStatusPillAndNavigation(t *testing.T) {
 	a.activeTab = TabNodes
 	tt.Frame()
 
-	// Click sidebar engine pill
-	if err := tt.Click(a.catalog().EngineStatusPillTitle()); err != nil {
-		t.Fatalf("click sidebar engine status pill: %v", err)
+	// Click sidebar gateway status row
+	if err := tt.Click(a.catalog().MasterGateway()); err != nil {
+		t.Fatalf("click sidebar gateway row: %v", err)
 	}
 	tt.Frame()
 
 	if a.activeTab != TabSettings {
-		t.Fatalf("expected clicking engine status pill to navigate to TabSettings, got %v", a.activeTab)
+		t.Fatalf("expected clicking gateway status row to navigate to TabSettings, got %v", a.activeTab)
 	}
 }
 

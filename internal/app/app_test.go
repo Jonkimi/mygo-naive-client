@@ -851,6 +851,28 @@ func TestSettings_CoreEnginesAndGeodataProximity(t *testing.T) {
 	}
 }
 
+// Tests that update downloads and ruleset downloads route through the unified gateway when running.
+func TestUpdater_DownloadThroughGateway(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.state.UseRunningServiceForUpd = true
+	a.state.GatewayEnabled = true
+	a.state.GatewayPort = freeLocalPort(t)
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway failed: %v", err)
+	}
+
+	opts := a.buildUpdaterHTTPOptions(10 * time.Second)
+	if opts.LocalEndpoint == nil {
+		t.Fatalf("expected LocalEndpoint to be populated from running gateway")
+	}
+	if opts.LocalEndpoint.Port != a.gateway.Port() {
+		t.Fatalf("expected LocalEndpoint.Port == %d, got %d", a.gateway.Port(), opts.LocalEndpoint.Port)
+	}
+	if opts.LocalEndpoint.Proto != "http" {
+		t.Fatalf("expected LocalEndpoint.Proto == 'http', got %s", opts.LocalEndpoint.Proto)
+	}
+}
+
 // Tests that Xray-core is seamlessly updated in the background when AutoUpdateXray is enabled.
 func TestAutoXrayUpdateSilentHotSwap(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -1212,8 +1234,8 @@ func TestSidebarCollapseToggle(t *testing.T) {
 	}
 }
 
-// TestTopBarAndCompactCardUX verifies dynamic port reflection, upcoming mode feedback, core status navigation, and compact route rendering.
-func TestTopBarAndCompactCardUX(t *testing.T) {
+// TestSidebarGatewayCardAndCompactCardUX verifies dynamic port reflection in the sidebar, traffic mode switching, and compact route rendering.
+func TestSidebarGatewayCardAndCompactCardUX(t *testing.T) {
 	svcs := []config.Service{
 		{
 			ID:      "svc-single",
@@ -1224,12 +1246,12 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 	}
 	a, tt, _ := newTestApp(t, svcs)
 
-	// 1. Top bar reflects gateway endpoint and traffic mode pill
-	if !tt.HasText("网关 127.0.0.1:10809") {
-		t.Fatalf("expected top bar to reflect '网关 127.0.0.1:10809', got texts: %v", tt.Texts())
+	// 1. Sidebar reflects gateway label and traffic mode
+	if !tt.HasText(a.catalog().MasterGateway()) {
+		t.Fatalf("expected sidebar to reflect '%s', got texts: %v", a.catalog().MasterGateway(), tt.Texts())
 	}
-	if !tt.HasText("仅端口") {
-		t.Fatalf("expected top bar to reflect mode '仅端口', got texts: %v", tt.Texts())
+	if !tt.HasText(a.catalog().ModePortOnly()) {
+		t.Fatalf("expected sidebar to reflect mode '%s', got texts: %v", a.catalog().ModePortOnly(), tt.Texts())
 	}
 
 	// 2. Single-service toolbar omits redundant '全部启动'/'全部停止' buttons
@@ -1244,11 +1266,7 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 
 	a.state.GatewayPort = freeLocalPort(t)
 
-	// 4. Opening mode dropdown and clicking TUN mode switches to TUN
-	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
-		t.Fatalf("open mode dropdown: %v", err)
-	}
-	tt.Frame()
+	// 4. Clicking ModeTun switches to TUN
 	if err := tt.Click(a.catalog().ModeTun()); err != nil {
 		t.Fatalf("click ModeTun: %v", err)
 	}
@@ -1258,22 +1276,18 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 	}
 
 	// Switch back to PortOnly for remaining test steps
-	if err := tt.Click(a.catalog().ModeTun()); err != nil {
-		t.Fatalf("open mode dropdown: %v", err)
-	}
-	tt.Frame()
 	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
 		t.Fatalf("click ModePortOnly: %v", err)
 	}
 	tt.Frame()
 
-	// 5. Clicking the top bar core version badge navigates directly to Settings
-	if err := tt.Click(a.catalog().CoreLocal() + a.localVersion); err != nil {
-		t.Fatalf("click top bar core status: %v", err)
+	// 5. Clicking the sidebar gateway status row navigates directly to Settings
+	if err := tt.Click(a.catalog().MasterGateway()); err != nil {
+		t.Fatalf("click sidebar gateway row: %v", err)
 	}
 	tt.Frame()
 	if a.activeTab != TabSettings {
-		t.Fatalf("expected clicking core status to switch to TabSettings, got %v", a.activeTab)
+		t.Fatalf("expected clicking gateway row to switch to TabSettings, got %v", a.activeTab)
 	}
 
 	// 6. Switch back to Nodes and verify disabled test button tooltip & click toast guidance
