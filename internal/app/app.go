@@ -90,6 +90,7 @@ type app struct {
 	tracker        *telemetry.Tracker
 	failureMonitor *telemetry.FailureMonitor
 	gateway        *boxengine.Engine
+	lastGatewaySig string
 	sysproxy       *sysproxy.Sysproxy
 	router         *routing.Router
 	blocker        *blocker.Engine
@@ -1148,6 +1149,7 @@ func (a *app) startGateway() error {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
+		a.lastGatewaySig = ""
 	}
 	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
 		a.tailnetMgr.BindEmbeddedEndpoint(nil)
@@ -1250,6 +1252,7 @@ func (a *app) startGateway() error {
 		return err
 	}
 	a.gateway = eng
+	a.lastGatewaySig = a.gatewayConfigSignature()
 
 	if a.tailnetMgr != nil {
 		if tnMode == tailnet.ModeEmbedded {
@@ -1350,6 +1353,7 @@ func (a *app) stopGateway() {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
+		a.lastGatewaySig = ""
 	}
 	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
 		a.tailnetMgr.BindEmbeddedEndpoint(nil)
@@ -1723,11 +1727,74 @@ func (a *app) triggerUpdateGeoData() {
 	}()
 }
 
+func (a *app) gatewayConfigSignature() string {
+	type svcSig struct {
+		ID          string
+		Engine      config.ExecutionEngine
+		Kind        config.NodeKind
+		Protocol    config.Protocol
+		Server      string
+		Proxies     []string
+		ExternalURI string
+		Tags        []string
+	}
+	svcs := make([]svcSig, len(a.state.Services))
+	for i, s := range a.state.Services {
+		svcs[i] = svcSig{
+			ID:          s.ID,
+			Engine:      s.Engine,
+			Kind:        s.Kind,
+			Protocol:    s.Protocol,
+			Server:      s.Server,
+			Proxies:     s.Proxies,
+			ExternalURI: s.ExternalURI,
+			Tags:        s.Tags,
+		}
+	}
+	sigObj := struct {
+		Port        int
+		TrafficMode string
+		Svcs        []svcSig
+		Rules       []routing.Rule
+		Final       routing.RouteAction
+		HasSiteDB   bool
+		HasIPDB     bool
+		GeoTag      string
+		Bootstrap   string
+		Domestic    string
+		Remote      string
+		PreferIPv4  bool
+	}{
+		Port:        a.state.GatewayPort,
+		TrafficMode: a.state.TrafficMode,
+		Svcs:        svcs,
+		Rules:       a.state.RoutingRules,
+		Final:       a.state.RoutingFinal,
+		HasSiteDB:   a.cachedSiteDB != nil,
+		HasIPDB:     a.cachedIPDB != nil,
+		GeoTag:      a.localGeodataVersion,
+		Bootstrap:   a.state.BootstrapDNS,
+		Domestic:    a.effectiveDomesticDNS(),
+		Remote:      a.effectiveRemoteDNS(),
+		PreferIPv4:  a.state.PreferIPv4,
+	}
+	return fmt.Sprintf("%#v", sigObj)
+}
+
 func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
 	a.loadGeoDataIfPresent()
 	if a.gateway != nil {
-		_ = a.startGateway()
+		var allocPorts map[string]int
+		var activeIDs map[string]bool
+		if a.mgr != nil {
+			allocPorts = a.mgr.AllocatedPorts()
+			activeIDs = a.mgr.RunningServiceIDs()
+		}
+		a.gateway.UpdateNodes(a.state.Services, allocPorts, activeIDs)
+		if !a.state.GatewayEnabled || a.gatewayConfigSignature() != a.lastGatewaySig {
+			_ = a.startGateway()
+		}
 	}
 }
 
