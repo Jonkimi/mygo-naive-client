@@ -350,7 +350,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.35)).
 				Children(func() {
 					ui.Column(c).Gap(6).Width(210).Children(func() {
-						// Section 1: Gateway, Tailnet & Mode
+						// Section 1: Gateway & Working mode
 						ui.Column(c).Gap(4).Children(func() {
 							// Line 1: Gateway
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
@@ -361,7 +361,13 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 								ui.Text(c, gwDetail).FontSize(11).TextColor(gwTipColor)
 							})
 
-							// Line 1b: Running nodes count (shown in tooltip)
+							// Line 1b: Working mode (belongs to Gateway)
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+								ui.Text(c, cat.TrafficModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
+								ui.Text(c, activeModeLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(147, 197, 253)) // blue-300
+							})
+
+							// Line 1c: Running nodes count (shown in tooltip)
 							if gwRunning {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 									ui.Text(c, cat.RuleDrawerActiveNodes()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
@@ -372,7 +378,13 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 									ui.Text(c, cat.RunningCountBadge(runningSidecars)).FontSize(11).TextColor(nodeColor)
 								})
 							}
+						})
 
+						// Divider 1: separates Gateway from Tailnet
+						ui.Box(c).Fill().Height(1).Background(ui.RGB(51, 65, 85))
+
+						// Section 2: Tailnet
+						ui.Column(c).Gap(4).Children(func() {
 							// Line 2: Tailnet
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -389,15 +401,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 									ui.Text(c, tsModeName).FontSize(11).TextColor(ui.RGB(147, 197, 253)) // blue-300
 								})
 							}
-
-							// Line 3: Working mode
-							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Text(c, cat.TrafficModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
-								ui.Text(c, activeModeLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(147, 197, 253)) // blue-300
-							})
 						})
 
-						// Divider
+						// Divider 2: separates Tailnet from Core versions
 						ui.Box(c).Fill().Height(1).Background(ui.RGB(51, 65, 85))
 
 						// Section 2: Core versions
@@ -446,50 +452,12 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	if collapsed {
 		card := ui.Column(c.Key("sidebar-engine-pill")).
 			Label(cat.EngineStatusPillTitle()).
-			Width(collapsedTileSize).Height(96).
+			Width(collapsedTileSize).Height(91).
 			Padding(6, 4, 6, 4).Gap(4).Radius(8).
 			Background(p.card).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).
 			Children(func() {
-				// Row 1: Gateway status dot
-				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
-					Label(cat.MasterGateway()).
-					Size(28, 22).Radius(4).
-					Background(ui.Transparent).
-					AlignItems(ui.Center).Justify(ui.Center).
-					Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
-					})
-				if gwBtn.Hovered() {
-					gwBtn.Background(p.cardHover)
-				}
-				if gwBtn.Clicked() {
-					a.activeTab = TabSettings
-				}
-
-				// Divider 1
-				ui.Box(c).Width(24).Height(1).Background(p.borderSubtle)
-
-				// Row 2: Tailnet status dot
-				tsBtn := ui.ButtonBase(c.Key("collapsed-ts-dot")).
-					Label(cat.NavTailnet()).
-					Size(28, 22).Radius(4).
-					Background(ui.Transparent).
-					AlignItems(ui.Center).Justify(ui.Center).
-					Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
-					})
-				if tsBtn.Hovered() {
-					tsBtn.Background(p.cardHover)
-				}
-				if tsBtn.Clicked() {
-					a.activeTab = TabTailnet
-				}
-
-				// Divider 2
-				ui.Box(c).Width(24).Height(1).Background(p.borderSubtle)
-
-				// Row 3: Positional 3-bar gray lamp (Left: Port, Center: SysProxy, Right: TUN)
+				// Row 1: Positional 3-bar gray lamp (Left: Port, Center: SysProxy, Right: TUN)
 				modeBtn := ui.ButtonBase(c.Key("collapsed-mode-lamp")).
 					Label(cat.TailnetModeLabel()).
 					Size(28, 22).Radius(4).
@@ -534,6 +502,41 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					}
 					_ = a.setTrafficMode(nextMode)
 				}
+
+				// Row 2: Gateway status dot
+				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
+					Label(cat.MasterGateway()).
+					Size(28, 22).Radius(4).
+					Background(ui.Transparent).
+					AlignItems(ui.Center).Justify(ui.Center).
+					Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
+					})
+				if gwBtn.Hovered() {
+					gwBtn.Background(p.cardHover)
+				}
+				if gwBtn.Clicked() {
+					a.activeTab = TabSettings
+				}
+
+				// Divider (separates Gateway and Tailnet)
+				ui.Box(c).Width(24).Height(1).Background(p.borderSubtle)
+
+				// Row 3: Tailnet status dot
+				tsBtn := ui.ButtonBase(c.Key("collapsed-ts-dot")).
+					Label(cat.NavTailnet()).
+					Size(28, 22).Radius(4).
+					Background(ui.Transparent).
+					AlignItems(ui.Center).Justify(ui.Center).
+					Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
+					})
+				if tsBtn.Hovered() {
+					tsBtn.Background(p.cardHover)
+				}
+				if tsBtn.Clicked() {
+					a.activeTab = TabTailnet
+				}
 			})
 		renderSidebarTooltip(card)
 		return
@@ -542,68 +545,11 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	// Expanded state: unified 3-row white card
 	card := ui.Column(c.Key("sidebar-engine-pill")).
 		Label(cat.EngineStatusPillTitle()).
-		Height(96).
+		Height(91).
 		Padding(6, 8, 6, 8).Gap(4).Radius(8).
 		Background(p.card).Border(1, p.borderSubtle).
 		Children(func() {
-			// Row 1: Gateway status + full address (127.0.0.1:10809)
-			row1 := ui.Row(c.Key("expanded-gw-row")).
-				Label(cat.MasterGateway()).
-				Height(22).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(0, 4, 0, 4).Radius(6).
-				Background(ui.Transparent).
-				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
-						ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
-					})
-
-					if gwBadgeText != "" {
-						tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
-					}
-				})
-			if row1.Hovered() {
-				row1.Background(p.cardHover)
-			}
-			if row1.Clicked() {
-				a.activeTab = TabSettings
-			}
-
-			// Divider 1
-			ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
-
-			// Row 2: Tailnet (组网) status
-			row2 := ui.Row(c.Key("expanded-ts-row")).
-				Label(cat.NavTailnet()).
-				Height(22).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(0, 4, 0, 4).Radius(6).
-				Background(ui.Transparent).
-				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
-						ui.Text(c, cat.NavTailnet()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-						if tsIP != "" {
-							ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
-						}
-					})
-					if tsBadgeText != "" {
-						tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
-					}
-				})
-			if row2.Hovered() {
-				row2.Background(p.cardHover)
-			}
-			if row2.Clicked() {
-				a.activeTab = TabTailnet
-			}
-
-			// Divider 2
-			ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
-
-			// Row 3: 3-Way Segmented Working Mode (Left: Port, Center: SysProxy, Right: TUN)
+			// Row 1: 3-Way Segmented Working Mode (Left: Port, Center: SysProxy, Right: TUN)
 			// White card background, selected option has a neutral gray pill background
 			ui.Row(c.Key("expanded-mode-row")).
 				Height(22).
@@ -640,6 +586,60 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					renderModeBtn("sysproxy", cat.ModeSysProxy())
 					renderModeBtn("tun", cat.ModeTun())
 				})
+
+			// Row 2: Gateway status + full address (127.0.0.1:10809)
+			row1 := ui.Row(c.Key("expanded-gw-row")).
+				Label(cat.MasterGateway()).
+				Height(22).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Padding(0, 4, 0, 4).Radius(6).
+				Background(ui.Transparent).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
+						ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
+					})
+
+					if gwBadgeText != "" {
+						tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
+					}
+				})
+			if row1.Hovered() {
+				row1.Background(p.cardHover)
+			}
+			if row1.Clicked() {
+				a.activeTab = TabSettings
+			}
+
+			// Divider: separates Gateway and Tailnet
+			ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+
+			// Row 3: Tailnet (组网) status
+			row2 := ui.Row(c.Key("expanded-ts-row")).
+				Label(cat.NavTailnet()).
+				Height(22).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				Padding(0, 4, 0, 4).Radius(6).
+				Background(ui.Transparent).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
+						ui.Text(c, cat.NavTailnet()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+						if tsIP != "" {
+							ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
+						}
+					})
+					if tsBadgeText != "" {
+						tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
+					}
+				})
+			if row2.Hovered() {
+				row2.Background(p.cardHover)
+			}
+			if row2.Clicked() {
+				a.activeTab = TabTailnet
+			}
 		})
 	renderSidebarTooltip(card)
 }
