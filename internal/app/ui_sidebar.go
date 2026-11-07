@@ -414,25 +414,30 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 								ui.Text(c, sbVer).FontSize(11).TextColor(ui.RGB(52, 211, 153))
 							})
 
-							// Naive
-							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Text(c, "NaiveProxy").FontSize(11).TextColor(ui.RGB(148, 163, 184))
-								naiveCol := ui.RGB(226, 232, 240)
-								if a.localVersion == "" || a.hasUpdate {
-									naiveCol = ui.RGB(251, 191, 36) // amber-400
-								}
-								ui.Text(c, a.naiveStatusText()).FontSize(11).TextColor(naiveCol)
-							})
+							renderCoreVersion := func(name, statusText string, installed, hasUpd bool) {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, name).FontSize(11).TextColor(ui.RGB(148, 163, 184))
+									col := ui.RGB(226, 232, 240)
+									canUpdate := installed && hasUpd
+									if !installed || canUpdate {
+										col = ui.RGB(251, 191, 36) // amber-400
+									}
+									if canUpdate {
+										ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
+											ui.Text(c, statusText).FontSize(11).TextColor(col)
+											ui.Icon(c, iconArrowUp).Size(11, 11).TextColor(col)
+										})
+									} else {
+										ui.Text(c, statusText).FontSize(11).TextColor(col)
+									}
+								})
+							}
 
-							// Xray
-							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Text(c, "Xray-core").FontSize(11).TextColor(ui.RGB(148, 163, 184))
-								xrayCol := ui.RGB(226, 232, 240)
-								if a.localXrayVersion == "" || a.hasXrayUpdate {
-									xrayCol = ui.RGB(251, 191, 36)
-								}
-								ui.Text(c, a.xrayStatusText()).FontSize(11).TextColor(xrayCol)
-							})
+							// NaiveProxy
+							renderCoreVersion("NaiveProxy", a.naiveStatusText(), a.localVersion != "", a.hasUpdate)
+
+							// Xray-core
+							renderCoreVersion("Xray-core", a.xrayStatusText(), a.localXrayVersion != "", a.hasXrayUpdate)
 
 							if hasAnyUpdate {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Children(func() {
