@@ -127,6 +127,7 @@ type app struct {
 	updatePercent   float64
 	updateError     string
 
+	stateLoaded      bool
 	openAtLogin      bool
 	geoDataReady     bool
 	gatewayPortInput string
@@ -317,6 +318,7 @@ func newApp(dataDir string) *app {
 	a := &app{
 		dataDir:        dataDir,
 		state:          st,
+		stateLoaded:    dataDir != "",
 		expandedLogs:   make(map[string]bool),
 		tracker:        telemetry.NewTracker(),
 		failureMonitor: telemetry.NewFailureMonitor(500),
@@ -1469,7 +1471,9 @@ func (a *app) refreshGeoDataStatus() {
 		} else if v := geodata.DetectLocalVersion(dir); v != "" {
 			a.localGeodataVersion = v
 			a.state.InstalledGeodataTag = v
-			a.saveState()
+			if a.stateLoaded {
+				a.saveState()
+			}
 		} else {
 			a.localGeodataVersion = st1.ModTime().Format("20060102")
 		}

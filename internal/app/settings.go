@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -225,11 +226,33 @@ func (a *app) writeTailnetAuthKey(key string) {
 }
 
 func (a *app) loadState() {
+	a.stateLoaded = true
 	st := defaultPersistedState()
 	raw, err := os.ReadFile(a.stateFilePath())
 	var needsResave bool
 	if err == nil && len(raw) > 0 {
 		_ = json.Unmarshal(raw, &st)
+	}
+
+	if st.InstalledGeodataTag == "" && a.localGeodataVersion != "" {
+		st.InstalledGeodataTag = a.localGeodataVersion
+		needsResave = true
+	}
+
+	if len(st.Services) == 0 {
+		if bakRaw, err := os.ReadFile(a.stateFilePath() + ".bak"); err == nil && len(bakRaw) > 0 {
+			var bakSt PersistedState
+			if json.Unmarshal(bakRaw, &bakSt) == nil && len(bakSt.Services) > 0 {
+				st.Services = bakSt.Services
+				needsResave = true
+			}
+		}
+		if len(st.Services) == 0 {
+			if recovered := a.recoverServicesFromConfigs(); len(recovered) > 0 {
+				st.Services = recovered
+				needsResave = true
+			}
+		}
 	}
 	authKey := a.readTailnetAuthKey()
 	if authKey != "" {
@@ -353,18 +376,30 @@ func (a *app) loadState() {
 }
 
 func (a *app) saveState() {
+	if !a.stateLoaded {
+		return
+	}
 	a.syncRouter()
 	if a.tailnetMgr != nil {
 		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
 	}
 	a.writeTailnetAuthKey(a.state.TailnetAuthKey)
 
-	persistedState := a.state
-	persistedState.TailnetAuthKey = "" // never store plaintext auth key in state.json
+	toPersist := a.state
+	toPersist.TailnetAuthKey = "" // never store plaintext auth key in state.json
+
+	if len(toPersist.Services) == 0 {
+		if rawExisting, err := os.ReadFile(a.stateFilePath()); err == nil && len(rawExisting) > 0 {
+			var prev PersistedState
+			if json.Unmarshal(rawExisting, &prev) == nil && len(prev.Services) > 0 {
+				_ = os.WriteFile(a.stateFilePath()+".bak", rawExisting, 0o600)
+			}
+		}
+	}
 
 	dir := a.userDataDir()
 	_ = os.MkdirAll(dir, 0o755)
-	raw, err := json.MarshalIndent(persistedState, "", "  ")
+	raw, err := json.MarshalIndent(toPersist, "", "  ")
 	if err != nil {
 		return
 	}
@@ -372,6 +407,70 @@ func (a *app) saveState() {
 	if err := os.WriteFile(tmp, raw, 0o600); err == nil {
 		_ = os.Rename(tmp, a.stateFilePath())
 	}
+}
+
+func (a *app) recoverServicesFromConfigs() []config.Service {
+	cfgDir := filepath.Join(a.userDataDir(), "configs")
+	entries, err := os.ReadDir(cfgDir)
+	if err != nil {
+		return nil
+	}
+
+	prodServices := make(map[string]string)
+	prodStatePath := filepath.Join(filepath.Dir(a.userDataDir()), "Naive Client", "state.json")
+	if prodRaw, err := os.ReadFile(prodStatePath); err == nil {
+		var prodSt PersistedState
+		if json.Unmarshal(prodRaw, &prodSt) == nil {
+			for _, s := range prodSt.Services {
+				for _, p := range s.Proxies {
+					prodServices[p] = s.Name
+				}
+			}
+		}
+	}
+
+	var recovered []config.Service
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "service-") || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), "-xray.json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(cfgDir, e.Name()))
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+
+		id := strings.TrimSuffix(strings.TrimPrefix(e.Name(), "service-"), ".json")
+		var naiveCfg struct {
+			Listen string `json:"listen"`
+			Proxy  string `json:"proxy"`
+			Log    string `json:"log"`
+		}
+		if err := json.Unmarshal(raw, &naiveCfg); err != nil || naiveCfg.Proxy == "" {
+			continue
+		}
+
+		name := prodServices[naiveCfg.Proxy]
+		if name == "" {
+			name = "Node " + id
+		}
+
+		recovered = append(recovered, config.Service{
+			ID:        id,
+			Name:      name,
+			AutoStart: true,
+			Listens:   []string{naiveCfg.Listen},
+			Proxies:   []string{naiveCfg.Proxy},
+			EnableLog: true,
+		})
+	}
+
+	sort.Slice(recovered, func(i, j int) bool {
+		return recovered[i].ID < recovered[j].ID
+	})
+	return recovered
 }
 
 func (a *app) nextAvailableListenPort() int {

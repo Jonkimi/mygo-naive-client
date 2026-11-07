@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -244,7 +243,6 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	tsBadgeText := cat.TailnetModeOff()
 	tsBadgeFg := p.textDim
 	tsBadgeBg := p.elevated
-	tsDetail := cat.TailnetStatusOffline()
 
 	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) {
 		switch ts.BackendState {
@@ -257,30 +255,28 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			} else {
 				tsBadgeText = cat.TailnetModeEmbedded()
 			}
-			if len(ts.Self.IPs) > 0 {
-				tsDetail = ts.Self.IPs[0]
-			} else {
-				tsDetail = cat.TailnetStatusConnected()
-			}
 		case "NeedsLogin":
 			tsDotColor = p.amber
 			tsBadgeText = cat.TailnetStatusNeedsLogin()
 			tsBadgeFg = p.amber
 			tsBadgeBg = p.amberBg
-			tsDetail = cat.TailnetStatusNeedsLogin()
 		case "Starting":
 			tsDotColor = p.amber
 			tsBadgeText = cat.TailnetStarting()
 			tsBadgeFg = p.textDim
 			tsBadgeBg = p.elevated
-			tsDetail = cat.TailnetStarting()
 		default:
 			tsDotColor = p.textDim
 			tsBadgeText = cat.TailnetStatusOffline()
 			tsBadgeFg = p.textDim
 			tsBadgeBg = p.elevated
-			tsDetail = cat.TailnetStatusOffline()
 		}
+	}
+
+	// Tailnet detail (IP when available, otherwise the unified status label)
+	tsDetail := tsBadgeText
+	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) && len(ts.Self.IPs) > 0 {
+		tsDetail = ts.Self.IPs[0]
 	}
 
 	// Mode handling
@@ -297,21 +293,6 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	default:
 		activeModeLabel = cat.ModePortOnly()
 	}
-
-	// Rich hover tooltip (showing gateway, tailnet, mode, and each core's version/update status)
-	var tipLines []string
-	tipLines = append(tipLines, fmt.Sprintf("%s: %s", cat.MasterGateway(), gwAddr))
-	tipLines = append(tipLines, fmt.Sprintf("%s: %s (%s)", cat.NavTailnet(), tsDetail, tsBadgeText))
-	tipLines = append(tipLines, fmt.Sprintf("%s: %s", cat.TailnetModeLabel(), activeModeLabel))
-	tipLines = append(tipLines, fmt.Sprintf("sing-box: %s (%s)", sbVer, cat.TagBuiltin()))
-	tipLines = append(tipLines, fmt.Sprintf("Naive: %s", a.naiveStatusText()))
-	tipLines = append(tipLines, fmt.Sprintf("Xray: %s", a.xrayStatusText()))
-	if hasAnyUpdate {
-		tipLines = append(tipLines, cat.UpdateAvailableBadge())
-	} else if missingCore {
-		tipLines = append(tipLines, cat.EngineMissingSidecar())
-	}
-	fullTip := strings.Join(tipLines, "\n")
 
 	renderSidebarTooltip := func(anchor ui.Element) {
 		ui.TooltipBase(c, anchor, func(tip ui.Element) {
@@ -402,7 +383,6 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			Width(collapsedTileSize).Padding(4, 4, 4, 4).Gap(4).Radius(8).
 			Background(p.card).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).
-			Tooltip(fullTip).
 			Children(func() {
 				// Row 1: Gateway status dot
 				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
@@ -497,9 +477,8 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		Label(cat.EngineStatusPillTitle()).
 		Padding(6, 8, 6, 8).Gap(4).Radius(8).
 		Background(p.card).Border(1, p.borderSubtle).
-		Tooltip(fullTip).
 		Children(func() {
-			// Row 1: Gateway status + port
+			// Row 1: Gateway status + full address (127.0.0.1:10809)
 			row1 := ui.Row(c.Key("expanded-gw-row")).
 				Label(cat.MasterGateway()).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
@@ -509,7 +488,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
 						ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-						ui.Text(c, fmt.Sprintf(":%d", gwPort)).FontSize(11).TextColor(p.textMuted).NoWrap()
+						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
 					})
 
 					if missingCore {

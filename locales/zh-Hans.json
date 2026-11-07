@@ -120,7 +120,7 @@
   "tailnetModeAuto": "自动感知",
   "tailnetModeHost": "宿主机协同",
   "tailnetModeEmbedded": "内嵌独立节点",
-  "tailnetModeOff": "已禁用",
+  "tailnetModeOff": "未启用",
   "tailnetStatusConnected": "已连接",
   "tailnetStatusNeedsLogin": "等待登录授权",
   "tailnetStatusOffline": "离线",
