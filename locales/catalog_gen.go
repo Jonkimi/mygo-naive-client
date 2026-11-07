@@ -4128,11 +4128,11 @@ func (msgs Messages) InsightsColDomain() string {
 	return Catalog.Format(msgs.locale, "insightsColDomain", nil)
 }
 
-// InsightsColRule says "Matched Rule"
+// InsightsColRule says "Chain / 链路"
 // in the language the app shows.
 func InsightsColRule() string { return In(i18n.Locale()).InsightsColRule() }
 
-// InsightsColRule says "Matched Rule"
+// InsightsColRule says "Chain / 链路"
 // in the language of msgs.
 func (msgs Messages) InsightsColRule() string {
 	return Catalog.Format(msgs.locale, "insightsColRule", nil)

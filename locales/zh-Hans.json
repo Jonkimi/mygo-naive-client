@@ -500,7 +500,7 @@
   "insightsColSource": "来源",
   "insightsColVerdict": "裁决",
   "insightsColDomain": "域名",
-  "insightsColRule": "匹配规则",
+  "insightsColRule": "Chain / 链路",
   "insightsColAction": "操作",
   "insightsQueryLogEmpty": "暂无匹配的查询记录",
   "insightsModalTitle": "黑白名单与规则订阅",

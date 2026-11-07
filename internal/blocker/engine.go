@@ -125,9 +125,14 @@ func (e *Engine) Logger() *QueryLogger {
 
 // EvaluateAndLog evaluates domain against rules and records telemetry into logger.
 func (e *Engine) EvaluateAndLog(domain string, source QuerySource) (bool, string) {
+	return e.EvaluateAndLogWithChain(domain, source, "")
+}
+
+// EvaluateAndLogWithChain evaluates domain against rules and records telemetry with chain into logger.
+func (e *Engine) EvaluateAndLogWithChain(domain string, source QuerySource, chain string) (bool, string) {
 	blocked, rule, verdict := e.Evaluate(domain)
 	if e.logger != nil {
-		e.logger.Record(domain, source, verdict, rule)
+		e.logger.RecordWithChain(domain, source, verdict, rule, chain)
 	}
 	return blocked, rule
 }

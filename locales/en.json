@@ -516,7 +516,7 @@
   "insightsColSource": "Source",
   "insightsColVerdict": "Verdict",
   "insightsColDomain": "Domain",
-  "insightsColRule": "Matched Rule",
+  "insightsColRule": "Chain / 链路",
   "insightsColAction": "Action",
   "insightsQueryLogEmpty": "No matching query records",
   "insightsModalTitle": "Blocker Rules & Subscriptions",

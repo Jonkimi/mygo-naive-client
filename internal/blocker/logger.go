@@ -89,11 +89,21 @@ func (l *QueryLogger) SetDedupWindow(d time.Duration) {
 
 // Record records a query event at current timestamp.
 func (l *QueryLogger) Record(domain string, source QuerySource, verdict Verdict, rule string) {
-	l.RecordAt(domain, source, verdict, rule, time.Now())
+	l.RecordAtWithChain(domain, source, verdict, rule, "", time.Now())
+}
+
+// RecordWithChain records a query event with routing chain information at current timestamp.
+func (l *QueryLogger) RecordWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string) {
+	l.RecordAtWithChain(domain, source, verdict, rule, chain, time.Now())
 }
 
 // RecordAt records a query event at a specific timestamp.
 func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdict, rule string, ts time.Time) {
+	l.RecordAtWithChain(domain, source, verdict, rule, "", ts)
+}
+
+// RecordAtWithChain records a query event with routing chain information at a specific timestamp.
+func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string, ts time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -116,6 +126,10 @@ func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdic
 		}
 	}
 
+	if chain == "" && rule != "" {
+		chain = rule
+	}
+
 	l.nextID++
 	entry := QueryLogEntry{
 		ID:        l.nextID,
@@ -124,6 +138,7 @@ func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdic
 		Source:    source,
 		Verdict:   verdict,
 		Rule:      rule,
+		Chain:     chain,
 	}
 
 	// Ring buffer insert

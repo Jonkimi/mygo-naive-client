@@ -68,37 +68,43 @@ func (t *blockerDNSTransport) Reset() {
 	t.underlying.Reset()
 }
 
+func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool) {
+	if t.blocker == nil {
+		return nil, false
+	}
+	domain := strings.Trim(q.Name, ".")
+	blocked, rule, verdict := t.blocker.Evaluate(domain)
+	chain := formatDNSChain(t.underlying.Tag(), blocked, rule)
+	if t.blocker.Logger() != nil {
+		t.blocker.Logger().RecordWithChain(domain, blocker.SourceDNS, verdict, rule, chain)
+	}
+	if blocked {
+		var addrs []netip.Addr
+		if q.Qtype == mDNS.TypeAAAA {
+			addrs = []netip.Addr{netip.IPv6Unspecified()}
+		} else {
+			addrs = []netip.Addr{netip.IPv4Unspecified()}
+		}
+		return boxDNS.FixedResponse(0, q, addrs, 60), true
+	}
+	return nil, false
+}
+
 func (t *blockerDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	if len(message.Question) > 0 && t.blocker != nil {
-		q := message.Question[0]
-		domain := strings.Trim(q.Name, ".")
-		blocked, _ := t.blocker.AsDNS().Match(domain)
-		if blocked {
-			var addrs []netip.Addr
-			if q.Qtype == mDNS.TypeAAAA {
-				addrs = []netip.Addr{netip.IPv6Unspecified()}
-			} else {
-				addrs = []netip.Addr{netip.IPv4Unspecified()}
-			}
-			return boxDNS.FixedResponse(message.Id, q, addrs, 60), nil
+	if len(message.Question) > 0 {
+		if resp, blocked := t.handleQuery(message.Question[0]); blocked {
+			resp.Id = message.Id
+			return resp, nil
 		}
 	}
 	return t.underlying.Exchange(ctx, message)
 }
 
 func (t *blockerDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
-	if len(message.Question) > 0 && t.blocker != nil {
-		q := message.Question[0]
-		domain := strings.Trim(q.Name, ".")
-		blocked, _ := t.blocker.AsDNS().Match(domain)
-		if blocked {
-			var addrs []netip.Addr
-			if q.Qtype == mDNS.TypeAAAA {
-				addrs = []netip.Addr{netip.IPv6Unspecified()}
-			} else {
-				addrs = []netip.Addr{netip.IPv4Unspecified()}
-			}
-			callback(boxDNS.FixedResponse(message.Id, q, addrs, 60), nil)
+	if len(message.Question) > 0 {
+		if resp, blocked := t.handleQuery(message.Question[0]); blocked {
+			resp.Id = message.Id
+			callback(resp, nil)
 			return
 		}
 	}
@@ -110,6 +116,15 @@ type BlockerConnectionTracker struct {
 	blocker *blocker.Engine
 }
 
+func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
+	blocked, rule, verdict := t.blocker.Evaluate(target)
+	chain := formatGatewayChain(matchedRule, matchOutbound, blocked, rule)
+	if t.blocker.Logger() != nil {
+		t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
+	}
+	return blocked
+}
+
 func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
 	if t.blocker == nil {
 		return conn
@@ -118,8 +133,7 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 	if target == "" {
 		return conn
 	}
-	blocked, _ := t.blocker.AsGateway().Match(target)
-	if blocked {
+	if t.recordConnection(target, matchedRule, matchOutbound) {
 		_ = conn.Close()
 	}
 	return conn
@@ -133,8 +147,7 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 	if target == "" {
 		return conn
 	}
-	blocked, _ := t.blocker.AsGateway().Match(target)
-	if blocked {
+	if t.recordConnection(target, matchedRule, matchOutbound) {
 		_ = conn.Close()
 	}
 	return conn
@@ -142,6 +155,74 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 
 func (t *BlockerConnectionTracker) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) tun.FlowTracker {
 	return nil
+}
+
+func formatRouteRule(r adapter.Rule) string {
+	if r == nil {
+		return "final"
+	}
+	s := strings.TrimSpace(r.String())
+	if s == "" {
+		return "final"
+	}
+	if strings.HasPrefix(s, "rule_set=") {
+		tag := strings.TrimPrefix(s, "rule_set=")
+		tag = strings.Trim(tag, "[]")
+		return "rule_set(" + tag + ")"
+	}
+	if strings.HasPrefix(s, "domain_suffix=") {
+		tag := strings.TrimPrefix(s, "domain_suffix=")
+		tag = strings.Trim(tag, "[]")
+		return "domain_suffix(" + tag + ")"
+	}
+	if strings.HasPrefix(s, "domain=") {
+		tag := strings.TrimPrefix(s, "domain=")
+		tag = strings.Trim(tag, "[]")
+		return "domain(" + tag + ")"
+	}
+	if strings.HasPrefix(s, "ip_cidr=") {
+		tag := strings.TrimPrefix(s, "ip_cidr=")
+		tag = strings.Trim(tag, "[]")
+		return "ip_cidr(" + tag + ")"
+	}
+	return s
+}
+
+func formatGatewayChain(matchedRule adapter.Rule, matchOutbound adapter.Outbound, blocked bool, blockerRule string) string {
+	if blocked {
+		if blockerRule != "" {
+			return blockerRule + " -> block"
+		}
+		return "block"
+	}
+	rulePart := formatRouteRule(matchedRule)
+	outboundPart := "direct"
+	if matchOutbound != nil && matchOutbound.Tag() != "" {
+		outboundPart = matchOutbound.Tag()
+	}
+	return rulePart + " -> " + outboundPart
+}
+
+func formatDNSChain(serverTag string, blocked bool, blockerRule string) string {
+	if blocked {
+		if blockerRule != "" {
+			return blockerRule + " -> 0.0.0.0"
+		}
+		return "block -> 0.0.0.0"
+	}
+	switch serverTag {
+	case "domestic-doh":
+		return "rule_set(geosite-cn) -> domestic-doh"
+	case "remote-doh":
+		return "final -> remote-doh"
+	case "tailscale-dns", "tailscale-host-dns":
+		return "domain_suffix(ts.net) -> " + serverTag
+	default:
+		if serverTag != "" {
+			return "server(" + serverTag + ")"
+		}
+		return "server"
+	}
 }
 
 func extractDomainFromMetadata(metadata adapter.InboundContext) string {

@@ -158,6 +158,9 @@ func TestEngine_BlockerIntegration(t *testing.T) {
 	for _, entry := range entries {
 		if entry.Domain == "ads.example.com" && entry.Verdict == blocker.VerdictBlocked && entry.Source == blocker.SourceGateway {
 			foundBlocked = true
+			if entry.Chain != "user-denylist -> block" {
+				t.Errorf("expected chain 'user-denylist -> block', got %q", entry.Chain)
+			}
 			break
 		}
 	}
@@ -237,6 +240,9 @@ func TestEngine_BlockerDNSIntegration(t *testing.T) {
 	for _, entry := range entries {
 		if entry.Domain == "ad.doubleclick.net" && entry.Verdict == blocker.VerdictBlocked && entry.Source == blocker.SourceDNS {
 			foundDNSBlocked = true
+			if entry.Chain != "user-denylist -> 0.0.0.0" {
+				t.Errorf("expected chain 'user-denylist -> 0.0.0.0', got %q", entry.Chain)
+			}
 			break
 		}
 	}

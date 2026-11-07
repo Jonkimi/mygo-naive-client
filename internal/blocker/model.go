@@ -32,6 +32,7 @@ type QueryLogEntry struct {
 	Source    QuerySource `json:"source"`
 	Verdict   Verdict     `json:"verdict"`
 	Rule      string      `json:"rule"`
+	Chain     string      `json:"chain,omitempty"`
 }
 
 // HourlyBucket records aggregate queries in a one-hour window.
