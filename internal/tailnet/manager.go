@@ -27,6 +27,7 @@ type Manager struct {
 	embeddedEp   adapter.TailscaleEndpoint
 	cancelCtx    context.Context
 	cancelFunc   context.CancelFunc
+	epCancel     context.CancelFunc
 	pollTicker   *time.Ticker
 }
 
@@ -64,6 +65,13 @@ func (m *Manager) initStatus() {
 func (m *Manager) UpdateConfig(cfg Config) {
 	m.mu.Lock()
 	m.cfg = cfg
+	if cfg.Mode != ModeEmbedded {
+		if m.epCancel != nil {
+			m.epCancel()
+			m.epCancel = nil
+		}
+		m.embeddedEp = nil
+	}
 	m.initStatus()
 	m.mu.Unlock()
 
@@ -82,6 +90,16 @@ func (m *Manager) Status() Status {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.status
+}
+
+// SetError updates the error message in status and marks state as Offline if appropriate.
+func (m *Manager) SetError(errStr string) {
+	m.updateStatus(func(s *Status) {
+		s.Error = errStr
+		if errStr != "" && s.BackendState != "NeedsLogin" {
+			s.BackendState = "Offline"
+		}
+	})
 }
 
 // ShouldUseHostMode returns true if Tailnet is currently operating via host tailscaled daemon.
@@ -182,16 +200,22 @@ func (m *Manager) Refresh(ctx context.Context) {
 // BindEmbeddedEndpoint attaches sing-box's adapter.TailscaleEndpoint to receive live status.
 func (m *Manager) BindEmbeddedEndpoint(ep adapter.TailscaleEndpoint) {
 	m.mu.Lock()
+	if m.epCancel != nil {
+		m.epCancel()
+		m.epCancel = nil
+	}
 	m.embeddedEp = ep
-	m.mu.Unlock()
-
 	if ep == nil {
+		m.mu.Unlock()
 		return
 	}
+	ctx, cancel := context.WithCancel(m.cancelCtx)
+	m.epCancel = cancel
+	m.mu.Unlock()
 
 	go func() {
-		_ = ep.SubscribeTailscaleStatus(m.cancelCtx, func(status *adapter.TailscaleEndpointStatus) {
-			if status == nil {
+		_ = ep.SubscribeTailscaleStatus(ctx, func(status *adapter.TailscaleEndpointStatus) {
+			if status == nil || ctx.Err() != nil {
 				return
 			}
 			m.updateFromEmbedded(status)
@@ -200,6 +224,19 @@ func (m *Manager) BindEmbeddedEndpoint(ep adapter.TailscaleEndpoint) {
 }
 
 func (m *Manager) updateFromEmbedded(st *adapter.TailscaleEndpointStatus) {
+	m.mu.RLock()
+	mode := m.cfg.Mode
+	enabled := m.cfg.Enabled
+	ep := m.embeddedEp
+	active := m.status.ActiveMode
+	m.mu.RUnlock()
+
+	if !enabled || ep == nil {
+		return
+	}
+	if mode == ModeHost || mode == ModeOff || (mode == ModeAuto && active == ModeHost) {
+		return
+	}
 	var self NodeInfo
 	if st.Self != nil {
 		self.Hostname = st.Self.HostName
@@ -325,6 +362,13 @@ func (m *Manager) startPoller() {
 // Close gracefully stops polling and cleans up resources.
 func (m *Manager) Close() {
 	m.cancelFunc()
+	m.mu.Lock()
+	if m.epCancel != nil {
+		m.epCancel()
+		m.epCancel = nil
+	}
+	m.embeddedEp = nil
+	m.mu.Unlock()
 	if m.pollTicker != nil {
 		m.pollTicker.Stop()
 	}

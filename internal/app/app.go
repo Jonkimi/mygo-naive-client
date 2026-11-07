@@ -384,7 +384,9 @@ func (a *app) boot() {
 		_ = a.sysproxy.RecoverIfDirty()
 	}
 	if a.state.GatewayEnabled {
-		_ = a.startGateway()
+		if err := a.startGateway(); err != nil && a.tailnetMgr != nil {
+			a.tailnetMgr.SetError(err.Error())
+		}
 	}
 
 	if a.localVersion != "" {
@@ -977,6 +979,9 @@ func (a *app) startGateway() error {
 		_ = a.gateway.Stop()
 		a.gateway = nil
 	}
+	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
+		a.tailnetMgr.BindEmbeddedEndpoint(nil)
+	}
 	if !a.state.GatewayEnabled {
 		return nil
 	}
@@ -1072,8 +1077,12 @@ func (a *app) startGateway() error {
 	}
 	a.gateway = eng
 
-	if a.tailnetMgr != nil && tnMode == tailnet.ModeEmbedded {
-		a.tailnetMgr.BindEmbeddedEndpoint(eng.TailscaleEndpoint())
+	if a.tailnetMgr != nil {
+		if tnMode == tailnet.ModeEmbedded {
+			a.tailnetMgr.BindEmbeddedEndpoint(eng.TailscaleEndpoint())
+		} else {
+			a.tailnetMgr.BindEmbeddedEndpoint(nil)
+		}
 	}
 
 	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
@@ -1166,6 +1175,9 @@ func (a *app) stopGateway() {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
+	}
+	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
+		a.tailnetMgr.BindEmbeddedEndpoint(nil)
 	}
 	if a.tunDevice != nil {
 		_ = a.tunDevice.Close()

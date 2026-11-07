@@ -169,3 +169,25 @@ func TestTailnetUI_SharingToggles(t *testing.T) {
 		t.Error("expected TailnetAdvertiseExit to be true")
 	}
 }
+
+// Tests rendering Tailnet auth banner when login is required and error banner when errors occur.
+func TestTailnetUI_EmbeddedAuthAndError(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabTailnet
+	tt.Frame()
+
+	// 1. Simulate NeedsLogin with AuthURL
+	a.tailnetMgr.SetError("")
+	mockEp := &mockAppHostClient{}
+	det := tailnet.NewDetectorWithClient(mockEp)
+	a.tailnetMgr = tailnet.NewManager(tailnet.Config{Enabled: true, Mode: tailnet.ModeEmbedded}, det)
+	a.tailnetMgr.Refresh(context.Background())
+
+	// Simulate error
+	a.tailnetMgr.SetError("内嵌 Tailscale 节点需要添加编译标签 (-tags with_tailscale,with_gvisor)")
+	tt.Frame()
+
+	if !tt.HasText("内嵌 Tailscale 节点需要添加编译标签") {
+		t.Error("expected error banner text on screen")
+	}
+}

@@ -253,3 +253,60 @@ func TestManager_DisabledMode(t *testing.T) {
 		t.Error("expected both ShouldUseHostMode and ShouldUseEmbeddedMode to be false")
 	}
 }
+
+// SetError updates status error message and transitions state to offline.
+func TestManager_SetError(t *testing.T) {
+	mgr := NewManager(Config{Enabled: true, Mode: ModeEmbedded}, nil)
+	defer mgr.Close()
+
+	mgr.SetError("missing build tags -tags with_tailscale,with_gvisor")
+	st := mgr.Status()
+	if st.Error != "missing build tags -tags with_tailscale,with_gvisor" {
+		t.Errorf("expected error recorded, got %q", st.Error)
+	}
+	if st.BackendState != "Offline" {
+		t.Errorf("expected state Offline, got %q", st.BackendState)
+	}
+}
+
+// Switching mode from embedded to host detaches embedded endpoint and ignores stale updates.
+func TestManager_SwitchFromEmbeddedToHost(t *testing.T) {
+	det := NewDetectorWithClient(&mockHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			return &ipnstate.Status{
+				BackendState: "Running",
+				Self: &ipnstate.PeerStatus{
+					HostName:     "host-laptop",
+					TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+					Online:       true,
+				},
+			}, nil
+		},
+	})
+	mgr := NewManager(Config{Enabled: true, Mode: ModeEmbedded}, det)
+	defer mgr.Close()
+
+	endpoint := newMockEmbeddedEndpoint()
+	mgr.BindEmbeddedEndpoint(endpoint)
+	<-endpoint.subscribed
+
+	// Switch to Host mode
+	mgr.UpdateConfig(Config{Enabled: true, Mode: ModeHost})
+
+	// Simulate stale NeedsLogin from embedded endpoint
+	endpoint.emitStatus(&adapter.TailscaleEndpointStatus{
+		BackendState: "NeedsLogin",
+		AuthURL:      "https://login.tailscale.com/a/stale",
+	})
+
+	st := mgr.Status()
+	if st.ActiveMode != ModeHost {
+		t.Errorf("expected ActiveMode ModeHost, got %s", st.ActiveMode)
+	}
+	if st.BackendState != "Running" {
+		t.Errorf("expected BackendState Running, got %s", st.BackendState)
+	}
+	if st.AuthURL != "" {
+		t.Errorf("expected empty AuthURL in host mode, got %s", st.AuthURL)
+	}
+}
