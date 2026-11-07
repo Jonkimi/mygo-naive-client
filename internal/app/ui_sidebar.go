@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/sagernet/sing-box/constant"
+
+	"naive-client/internal/config"
 )
 
 const collapsedTileSize float32 = 36
@@ -50,6 +53,9 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 
 			// Spacer
 			ui.Box(c).Grow(1)
+
+			// Multi-engine status pill (sing-box + sidecars)
+			a.renderSidebarEngineStatusPill(c, p, collapsed)
 
 			// Dedicated collapse/expand toggle button at bottom of navigation
 			a.renderSidebarToggleButton(c, p, collapsed)
@@ -137,17 +143,10 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 		weight = 600
 	}
 
-	hasBadge := tab == TabSettings && (a.localVersion == "" || a.hasUpdate)
-	isUpcoming := tab == TabTailnet
-	if !active && isUpcoming {
-		fg = p.textDim
-	}
+	hasBadge := tab == TabSettings && (a.localVersion == "" || a.hasUpdate || a.hasXrayUpdate)
 	key := fmt.Sprintf("nav-item-%d", tab)
 	if collapsed {
 		tip := fmt.Sprintf("%s (%s)", label, shortcut)
-		if isUpcoming {
-			tip = fmt.Sprintf("%s · %s (%s)", label, a.catalog().BadgeSoon(), shortcut)
-		}
 		btn := ui.ButtonBase(c.Key(key)).
 			Label(label).
 			Size(collapsedTileSize, collapsedTileSize).Radius(8).
@@ -185,11 +184,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 					ui.Box(c).Size(6, 6).Radius(999).Background(p.amber)
 				}
 			})
-			if isUpcoming {
-				tagPill(c, a.catalog().BadgeSoon(), p.textDim, p.elevated)
-			} else {
-				ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
-			}
+			ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
 		})
 
 	if !active && btn.Hovered() {
@@ -198,4 +193,106 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	if btn.Clicked() {
 		a.activeTab = tab
 	}
+}
+
+func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed bool) {
+	cat := a.catalog()
+	sbVer := "v1.14.4"
+	if constant.Version != "" && constant.Version != "unknown" {
+		sbVer = constant.Version
+	}
+
+	runningSidecars := a.activeRunningCount()
+	needsNaive := false
+	needsXray := false
+	for _, s := range a.state.Services {
+		if s.EffectiveEngine() == config.EngineSidecar {
+			if s.EffectiveProtocol() == config.ProtoNaive {
+				needsNaive = true
+			} else {
+				needsXray = true
+			}
+		}
+	}
+	missingCore := (needsNaive && a.localVersion == "") || (needsXray && a.localXrayVersion == "")
+	hasAnyUpdate := a.hasUpdate || a.hasXrayUpdate
+
+	dotColor := p.green
+	if missingCore {
+		dotColor = p.amber
+	}
+
+	if collapsed {
+		tip := fmt.Sprintf("sing-box %s (内置)\nNaive: %s\nXray: %s", sbVer, a.naiveStatusText(), a.xrayStatusText())
+		btn := ui.ButtonBase(c.Key("sidebar-engine-pill")).
+			Label(cat.EngineStatusPillTitle()).
+			Size(collapsedTileSize, collapsedTileSize).Radius(8).
+			Background(p.elevated).
+			AlignItems(ui.Center).Justify(ui.Center).
+			Tooltip(tip).
+			Children(func() {
+				ui.Box(c).Size(8, 8).Radius(999).Background(dotColor)
+			})
+		if btn.Hovered() {
+			btn.Background(p.cardHover)
+		}
+		if btn.Clicked() {
+			a.activeTab = TabSettings
+		}
+		return
+	}
+
+	card := ui.Column(c.Key("sidebar-engine-pill")).
+		Label(cat.EngineStatusPillTitle()).
+		Padding(8, 10, 8, 10).Gap(4).Radius(8).
+		Background(p.elevated).Border(1, p.borderSubtle).
+		Tooltip("点击打开「设置 -> 核心管理」").
+		Children(func() {
+			// Line 1: sing-box core status
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Box(c).Size(6, 6).Radius(999).Background(p.green)
+					ui.Text(c, "sing-box "+sbVer).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+				})
+				tagPill(c, "内置", p.green, p.greenBg)
+			})
+
+			// Line 2: Sidecars / Tailnet summary
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+				if missingCore {
+					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+						ui.Box(c).Size(5, 5).Radius(999).Background(p.amber)
+						ui.Text(c, "缺少 Sidecar 核心").FontSize(10).FontWeight(500).TextColor(p.amber).NoWrap()
+					})
+				} else if runningSidecars > 0 {
+					ui.Text(c, fmt.Sprintf("%d 个 Sidecar 运行中", runningSidecars)).FontSize(10).TextColor(p.textMuted).NoWrap()
+				} else {
+					ui.Text(c, "Sidecars 就绪").FontSize(10).TextColor(p.textDim).NoWrap()
+				}
+
+				if hasAnyUpdate {
+					ui.Text(c, "↑ 可更新").FontSize(10).FontWeight(600).TextColor(p.amber).NoWrap()
+				}
+			})
+		})
+	if card.Hovered() {
+		card.Background(p.cardHover)
+	}
+	if card.Clicked() {
+		a.activeTab = TabSettings
+	}
+}
+
+func (a *app) naiveStatusText() string {
+	if a.localVersion != "" {
+		return a.localVersion
+	}
+	return "未安装"
+}
+
+func (a *app) xrayStatusText() string {
+	if a.localXrayVersion != "" {
+		return a.localXrayVersion
+	}
+	return "未安装"
 }

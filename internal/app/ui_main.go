@@ -186,7 +186,7 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 				Children(func() {
 					if a.localVersion == "" {
 						statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
-					} else if a.hasUpdate && a.latestRelease != nil {
+					} else if (a.hasUpdate && a.latestRelease != nil) || (a.hasXrayUpdate && a.latestXrayRelease != nil) {
 						statusBadge(c, cat.CoreLocal()+a.localVersion+" ↑", p.amber, p.amberBg)
 					} else {
 						tagPill(c, cat.CoreLocal()+a.localVersion, p.textMuted, p.elevated)
@@ -451,11 +451,14 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						a.renderRuntimeStatusBadge(c, p, rt.State)
 						ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
 
-						if svc.EffectiveKind() == config.KindExternalProxy {
-							tagPill(c, cat.TagExternalProxy(), p.accentText, p.accentBg)
-						} else {
-							tagPill(c, cat.TagManagedNaive(), p.textMuted, p.elevated)
+						// Protocol and Engine capsule
+						protoStr := strings.ToUpper(string(svc.EffectiveProtocol()))
+						engineStr := "SING-BOX"
+						if svc.EffectiveEngine() == config.EngineSidecar {
+							engineStr = "SIDECAR"
 						}
+						tagPill(c, protoStr+" · "+engineStr, p.accentText, p.accentBg)
+
 						for _, tag := range svc.Tags {
 							if tag != "" {
 								tagPill(c, "#"+tag, p.accentText, p.accentBg)
@@ -505,11 +508,21 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 					// Line 2: Clean Local -> Remote endpoint route summary
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						listens := strings.Join(svc.Listens, ", ")
-						if listens == "" {
-							listens = svc.PrimaryListen()
+						listenSummary := "sing-box (in-process)"
+						if svc.EffectiveEngine() == config.EngineSidecar {
+							listens := strings.Join(svc.Listens, ", ")
+							if listens == "" || svc.PrimaryListen() == "socks://127.0.0.1:0" {
+								if rt.State == runner.StateRunning && rt.PID > 0 {
+									listens = svc.PrimaryListen()
+								} else {
+									listens = "Auto Loopback (:0)"
+								}
+							}
+							listenSummary = listens
+						} else if len(svc.Listens) > 0 && svc.PrimaryListen() != "socks://127.0.0.1:0" {
+							listenSummary = svc.PrimaryListen()
 						}
-						ui.Text(c, listens).FontSize(12).FontWeight(600).TextColor(p.textMuted)
+						ui.Text(c, listenSummary).FontSize(12).FontWeight(600).TextColor(p.textMuted)
 
 						compactRemote := svc.CompactRemoteEndpoint()
 						if compactRemote != "" {

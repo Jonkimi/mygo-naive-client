@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/sagernet/sing-box/constant"
 
 	"naive-client/internal/boxengine"
 	"naive-client/locales"
@@ -198,51 +199,113 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				}
 			})
 
-			// Section 2: NaiveProxy Core & Updates
-			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+			// Section 2: Core & Geodata Management
+			sbVer := "v1.14.4"
+			if constant.Version != "" && constant.Version != "unknown" {
+				sbVer = constant.Version
+			}
+
+			ui.Column(c).Gap(10).Padding(14).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.CoreSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
-					if actionChip(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), a.checkingUpdate || a.updatingCore).Clicked() {
+					if actionChip(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), a.checkingUpdate || a.checkingXrayUpdate || a.updatingCore || a.updatingXrayCore).Clicked() {
 						a.triggerCheckUpdate(true)
 					}
 				})
 
-				// Core version and seamless update status banner
+				// 1. In-process sing-box core
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(10).Radius(8).
 					Background(p.surface).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if a.localVersion == "" {
-							statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
-						} else {
-							statusBadge(c, cat.CoreLocal()+a.localVersion, p.green, p.greenBg)
-						}
-						if a.hasUpdate && a.latestRelease != nil {
-							tagPill(c, "新版本 "+a.latestRelease.TagName, p.amber, p.amberBg)
+					ui.Column(c).Gap(2).Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+							ui.Text(c, "sing-box "+sbVer).FontSize(13).FontWeight(600).TextColor(p.text)
+							statusBadge(c, cat.CoreSingBoxStatus(), p.green, p.greenBg)
+						})
+						ui.Text(c, cat.CoreSingBoxDesc()).FontSize(11).TextColor(p.textMuted)
+					})
+					tagPill(c, "gVisor TUN · TSNet · Ruleset", p.textDim, p.elevated)
+				})
+
+				// 2. Official NaiveProxy Sidecar
+				ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+						ui.Column(c).Gap(2).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Text(c, cat.CoreNaiveTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
+								if a.localVersion == "" {
+									statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
+								} else {
+									statusBadge(c, cat.CoreLocal()+a.localVersion, p.green, p.greenBg)
+								}
+								if a.hasUpdate && a.latestRelease != nil {
+									tagPill(c, "新版本 "+a.latestRelease.TagName, p.amber, p.amberBg)
+								}
+							})
+							ui.Text(c, cat.CoreNaiveDesc()).FontSize(11).TextColor(p.textMuted)
+						})
+
+						if a.localVersion == "" || a.hasUpdate || a.updatingCore {
+							updLabel := cat.InstallCore()
+							if a.updatingCore {
+								updLabel = cat.Updating()
+							} else if a.latestRelease != nil && a.hasUpdate {
+								updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
+							}
+							if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Clicked() {
+								a.triggerSeamlessUpdate()
+							}
 						}
 					})
 
-					if a.localVersion == "" || a.hasUpdate || a.updatingCore {
-						updLabel := cat.InstallCore()
-						if a.updatingCore {
-							updLabel = cat.Updating()
-						} else if a.latestRelease != nil && a.hasUpdate {
-							updLabel = fmt.Sprintf("无感更新至 %s", a.latestRelease.TagName)
-						}
-						if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Clicked() {
-							a.triggerSeamlessUpdate()
-						}
+					if labeledInput(c, p, "page-set-custom-bin", cat.CustomCorePathLabel(), &a.state.CustomNaiveBinaryPath, cat.CustomCorePathHint()).Changed() {
+						a.saveState()
+						a.syncBinaryPathAndVersion()
 					}
 				})
 
+				// 3. Official Xray-core Sidecar
+				ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+						ui.Column(c).Gap(2).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Text(c, cat.CoreXrayTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
+								if a.localXrayVersion == "" {
+									statusBadge(c, cat.XrayNotInstalled(), p.amber, p.amberBg)
+								} else {
+									statusBadge(c, cat.XrayLocal()+a.localXrayVersion, p.green, p.greenBg)
+								}
+								if a.hasXrayUpdate && a.latestXrayRelease != nil {
+									tagPill(c, "新版本 "+a.latestXrayRelease.TagName, p.amber, p.amberBg)
+								}
+							})
+							ui.Text(c, cat.CoreXrayDesc()).FontSize(11).TextColor(p.textMuted)
+						})
+
+						if a.localXrayVersion == "" || a.hasXrayUpdate || a.updatingXrayCore {
+							updLabel := cat.InstallXray()
+							if a.updatingXrayCore {
+								updLabel = cat.Updating()
+							} else if a.latestXrayRelease != nil && a.hasXrayUpdate {
+								updLabel = fmt.Sprintf("更新至 %s", a.latestXrayRelease.TagName)
+							}
+							if primaryPillButton(c.Key("btn-update-xray"), p, iconDownload, updLabel, p.accent, a.updatingXrayCore).Clicked() {
+								a.triggerSeamlessXrayUpdate()
+							}
+						}
+					})
+
+					if labeledInput(c, p, "page-set-custom-xray-bin", cat.CustomXrayPathLabel(), &a.state.CustomXrayBinaryPath, cat.CustomCorePathHint()).Changed() {
+						a.saveState()
+						a.syncXrayBinaryPathAndVersion()
+					}
+				})
+
+				// Auto check / update switches
 				if switchRow(c, p, "page-set-auto-check", cat.CoreAutoCheckLabel(), &a.state.AutoCheckUpdate) {
 					a.saveState()
 				}
 				if switchRow(c, p, "page-set-auto-update-core", cat.CoreAutoUpdateLabel(), &a.state.AutoUpdateCore) {
 					a.saveState()
-				}
-				if labeledInput(c, p, "page-set-custom-bin", cat.CustomCorePathLabel(), &a.state.CustomNaiveBinaryPath, cat.CustomCorePathHint()).Changed() {
-					a.saveState()
-					a.syncBinaryPathAndVersion()
 				}
 			})
 

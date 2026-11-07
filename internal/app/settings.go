@@ -61,6 +61,10 @@ type PersistedState struct {
 	LastKnownRemoteTag      string              `json:"lastKnownRemoteTag,omitempty"`
 	InstalledNaiveTag       string              `json:"installedNaiveTag,omitempty"`
 	InstalledNaiveSHA256    string              `json:"installedNaiveSha256,omitempty"`
+	CustomXrayBinaryPath    string              `json:"customXrayBinaryPath,omitempty"`
+	LastKnownRemoteXrayTag  string              `json:"lastKnownRemoteXrayTag,omitempty"`
+	InstalledXrayTag        string              `json:"installedXrayTag,omitempty"`
+	InstalledXraySHA256     string              `json:"installedXraySha256,omitempty"`
 	BlockerEnabled          bool                `json:"blockerEnabled"`
 	BlockerBlockAds         bool                `json:"blockerBlockAds"`
 	BlockerSubscriptions    []string            `json:"blockerSubscriptions,omitempty"`
@@ -155,6 +159,17 @@ func (a *app) resolveBinaryPath() string {
 		return p
 	}
 	return a.defaultBinaryPath()
+}
+
+func (a *app) defaultXrayBinaryPath() string {
+	return filepath.Join(a.userDataDir(), "bin", updater.XrayBinaryFilename(runtime.GOOS))
+}
+
+func (a *app) resolveXrayBinaryPath() string {
+	if p := strings.TrimSpace(a.state.CustomXrayBinaryPath); p != "" {
+		return p
+	}
+	return a.defaultXrayBinaryPath()
 }
 
 func (a *app) loadState() {

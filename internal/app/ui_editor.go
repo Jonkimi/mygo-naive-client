@@ -1,50 +1,107 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
 )
 
+var editorProtocols = []config.Protocol{
+	config.ProtoNaive,
+	config.ProtoVLESS,
+	config.ProtoVMess,
+	config.ProtoTrojan,
+	config.ProtoShadowsocks,
+	config.ProtoHysteria2,
+	config.ProtoTUIC,
+	config.ProtoSOCKS5,
+	config.ProtoHTTP,
+}
+
+var editorProtocolNames = []string{
+	"NaiveProxy",
+	"VLESS",
+	"VMess",
+	"Trojan",
+	"Shadowsocks",
+	"Hysteria2",
+	"TUIC",
+	"SOCKS5 (External)",
+	"HTTP (External)",
+}
+
 type editorForm struct {
-	open        bool
-	isNew       bool
-	tab         int
-	kindIndex   int // 0: NaiveProxy, 1: External SOCKS5/HTTP
-	scroll      ui.ScrollState
-	errText     string
-	svcID       string
-	name        string
-	autoStart   bool
-	tagsInput   string
+	open      bool
+	isNew     bool
+	tab       int
+	scroll    ui.ScrollState
+	errText   string
+	svcID     string
+	name      string
+	autoStart bool
+	tagsInput string
+
+	// Protocol & Execution Engine
+	protoIndex  int
+	engineIndex int // 0: Sing-Box, 1: Sidecar (for Naive, 1 is default; for VLESS/VMess/Trojan/Shadowsocks, 0 is default)
+
+	// Sidecar Loopback
+	autoLoopback bool
+	listenInput  string
+
+	// NaiveProxy
+	proxyInput     string
+	concurrencyStr string
+	noPostQuantum  bool
+
+	// Multi-protocol (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)
+	server        string
+	serverPort    string
+	uuid          string
+	password      string
+	securityIndex int // 0: tls, 1: reality, 2: none
+	sni           string
+	alpnInput     string
+	fingerprint   string
+	publicKey     string
+	shortID       string
+	spiderX       string
+	flowIndex     int // 0: xtls-rprx-vision, 1: none
+	networkIndex  int // 0: tcp, 1: ws, 2: grpc, 3: xhttp
+	path          string
+	host          string
+	serviceName   string
+	method        string
+	congestionCtl string
+	zeroRTT       bool
+
+	// External SOCKS5 / HTTP
 	externalURI string
 
-	listenInput string
-	proxyInput  string
-
-	concurrencyStr string
-	tunnelTimeout  string
-	idleTimeout    string
-	extraHeaders   string
-	hostRules      string
-	resolverRange  string
-	enableLog      bool
-	logFile        string
-	logNetLog      string
-	sslKeyLogFile  string
-	noPostQuantum  bool
-	extraJSON      string
+	// Advanced Naive fields
+	tunnelTimeout string
+	idleTimeout   string
+	extraHeaders  string
+	hostRules     string
+	resolverRange string
+	enableLog     bool
+	logFile       string
+	logNetLog     string
+	sslKeyLogFile string
+	extraJSON     string
 }
 
 func (a *app) openCreateServiceDialog() {
 	port := a.nextAvailableListenPort()
 	svc := config.DefaultService(a.generateServiceID(), port)
-	svc.Name = fmt.Sprintf("Naive 节点 %d", len(a.state.Services)+1)
+	svc.Name = fmt.Sprintf("节点 %d", len(a.state.Services)+1)
 	a.populateEditorForm(svc, true)
 }
 
@@ -53,11 +110,63 @@ func (a *app) openEditServiceDialog(svc config.Service) {
 }
 
 func (a *app) populateEditorForm(svc config.Service, isNew bool) {
-	if len(svc.Listens) == 0 {
-		svc.Listens = []string{"socks://127.0.0.1:1080"}
+	proto := svc.EffectiveProtocol()
+	protoIdx := 0
+	for i, p := range editorProtocols {
+		if p == proto {
+			protoIdx = i
+			break
+		}
 	}
-	listens := strings.Join(svc.Listens, ", ")
-	proxies := strings.Join(svc.Proxies, "\n")
+
+	engineIdx := 0
+	if svc.EffectiveEngine() == config.EngineSidecar {
+		engineIdx = 1
+	} else if isNew && proto == config.ProtoNaive {
+		engineIdx = 1
+	}
+
+	autoLoop := true
+	if len(svc.Listens) > 0 {
+		ep, err := config.ParseListenURI(svc.PrimaryListen())
+		if err == nil && ep.Port > 0 {
+			autoLoop = false
+		}
+	}
+
+	secIdx := 0
+	switch strings.ToLower(svc.Security) {
+	case "reality":
+		secIdx = 1
+	case "none":
+		secIdx = 2
+	default:
+		secIdx = 0
+	}
+
+	flowIdx := 1
+	if svc.Flow == "xtls-rprx-vision" {
+		flowIdx = 0
+	}
+
+	netIdx := 0
+	switch strings.ToLower(svc.Network) {
+	case "ws":
+		netIdx = 1
+	case "grpc":
+		netIdx = 2
+	case "xhttp":
+		netIdx = 3
+	default:
+		netIdx = 0
+	}
+
+	serverPortStr := ""
+	if svc.ServerPort > 0 {
+		serverPortStr = strconv.Itoa(svc.ServerPort)
+	} else if proto != config.ProtoNaive && proto != config.ProtoSOCKS5 && proto != config.ProtoHTTP {
+		serverPortStr = "443"
+	}
 
 	conc := ""
 	if svc.InsecureConcurrency > 0 {
@@ -72,23 +181,58 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		idle = strconv.Itoa(svc.IdleTimeout)
 	}
 
-	kindIdx := 0
-	if svc.EffectiveKind() == config.KindExternalProxy {
-		kindIdx = 1
+	listens := strings.Join(svc.Listens, ", ")
+	if listens == "" {
+		listens = "socks://127.0.0.1:1080"
+	}
+	proxies := strings.Join(svc.Proxies, "\n")
+
+	method := svc.Method
+	if method == "" && proto == config.ProtoShadowsocks {
+		method = "2022-blake3-aes-128-gcm"
+	}
+	congestion := svc.CongestionController
+	if congestion == "" && (proto == config.ProtoHysteria2 || proto == config.ProtoTUIC) {
+		congestion = "bbr"
+	}
+	fingerprint := svc.Fingerprint
+	if fingerprint == "" && (proto == config.ProtoVLESS || proto == config.ProtoVMess) {
+		fingerprint = "chrome"
 	}
 
 	a.editor = editorForm{
 		open:           true,
 		isNew:          isNew,
 		tab:            0,
-		kindIndex:      kindIdx,
 		svcID:          svc.ID,
 		name:           svc.Name,
 		autoStart:      svc.AutoStart,
 		tagsInput:      strings.Join(svc.Tags, ", "),
-		externalURI:    svc.ExternalURI,
+		protoIndex:     protoIdx,
+		engineIndex:    engineIdx,
+		autoLoopback:   autoLoop,
 		listenInput:    listens,
 		proxyInput:     proxies,
+		server:         svc.Server,
+		serverPort:     serverPortStr,
+		uuid:           svc.UUID,
+		password:       svc.Password,
+		securityIndex:  secIdx,
+		sni:            svc.SNI,
+		alpnInput:      strings.Join(svc.ALPN, ", "),
+		fingerprint:    fingerprint,
+		publicKey:      svc.PublicKey,
+		shortID:        svc.ShortID,
+		spiderX:        svc.SpiderX,
+		flowIndex:      flowIdx,
+		networkIndex:   netIdx,
+		path:           svc.Path,
+		host:           svc.Host,
+		serviceName:    svc.ServiceName,
+		method:         method,
+		congestionCtl:  congestion,
+		zeroRTT:        svc.ZeroRTTHandshake,
+		externalURI:    svc.ExternalURI,
 		concurrencyStr: conc,
 		tunnelTimeout:  tunnel,
 		idleTimeout:    idle,
@@ -105,11 +249,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 }
 
 func (a *app) buildServiceFromEditor() (config.Service, error) {
-	kind := config.KindManagedNaive
-	if a.editor.kindIndex == 1 {
-		kind = config.KindExternalProxy
-	}
-
+	proto := editorProtocols[a.editor.protoIndex]
 	var tags []string
 	for _, part := range strings.Split(a.editor.tagsInput, ",") {
 		if t := strings.TrimSpace(part); t != "" {
@@ -117,12 +257,30 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		}
 	}
 
-	if kind == config.KindExternalProxy {
+	engine := config.EngineSingBox
+	if a.editor.engineIndex == 1 {
+		engine = config.EngineSidecar
+	}
+
+	var listens []string
+	if engine == config.EngineSidecar {
+		if a.editor.autoLoopback {
+			listens = []string{"socks://127.0.0.1:0"}
+		} else {
+			listens = splitMultiValues(a.editor.listenInput)
+		}
+	} else if strings.TrimSpace(a.editor.listenInput) != "" && !a.editor.autoLoopback {
+		listens = splitMultiValues(a.editor.listenInput)
+	}
+
+	if proto == config.ProtoSOCKS5 || proto == config.ProtoHTTP {
 		svc := config.Service{
 			ID:          a.editor.svcID,
 			Name:        strings.TrimSpace(a.editor.name),
 			AutoStart:   a.editor.autoStart,
 			Kind:        config.KindExternalProxy,
+			Protocol:    proto,
+			Engine:      config.EngineSingBox,
 			Tags:        tags,
 			ExternalURI: strings.TrimSpace(a.editor.externalURI),
 		}
@@ -132,45 +290,115 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		return svc, nil
 	}
 
-	svc := config.Service{
-		ID:                a.editor.svcID,
-		Name:              strings.TrimSpace(a.editor.name),
-		AutoStart:         a.editor.autoStart,
-		Kind:              config.KindManagedNaive,
-		Tags:              tags,
-		Listens:           splitMultiValues(a.editor.listenInput),
-		Proxies:           splitLinesNonEmpty(a.editor.proxyInput),
-		ExtraHeaders:      strings.TrimSpace(a.editor.extraHeaders),
-		HostResolverRules: strings.TrimSpace(a.editor.hostRules),
-		ResolverRange:     strings.TrimSpace(a.editor.resolverRange),
-		EnableLog:         a.editor.enableLog,
-		LogFile:           strings.TrimSpace(a.editor.logFile),
-		LogNetLog:         strings.TrimSpace(a.editor.logNetLog),
-		SSLKeyLogFile:     strings.TrimSpace(a.editor.sslKeyLogFile),
-		NoPostQuantum:     a.editor.noPostQuantum,
-		ExtraJSON:         strings.TrimSpace(a.editor.extraJSON),
+	if proto == config.ProtoNaive {
+		svc := config.Service{
+			ID:                a.editor.svcID,
+			Name:              strings.TrimSpace(a.editor.name),
+			AutoStart:         a.editor.autoStart,
+			Kind:              config.KindManagedNaive,
+			Protocol:          config.ProtoNaive,
+			Engine:            engine,
+			Tags:              tags,
+			Listens:           listens,
+			Proxies:           splitLinesNonEmpty(a.editor.proxyInput),
+			ExtraHeaders:      strings.TrimSpace(a.editor.extraHeaders),
+			HostResolverRules: strings.TrimSpace(a.editor.hostRules),
+			ResolverRange:     strings.TrimSpace(a.editor.resolverRange),
+			EnableLog:         a.editor.enableLog,
+			LogFile:           strings.TrimSpace(a.editor.logFile),
+			LogNetLog:         strings.TrimSpace(a.editor.logNetLog),
+			SSLKeyLogFile:     strings.TrimSpace(a.editor.sslKeyLogFile),
+			NoPostQuantum:     a.editor.noPostQuantum,
+			ExtraJSON:         strings.TrimSpace(a.editor.extraJSON),
+		}
+		if s := strings.TrimSpace(a.editor.concurrencyStr); s != "" {
+			if v, err := strconv.Atoi(s); err == nil {
+				svc.InsecureConcurrency = v
+			}
+		}
+		if s := strings.TrimSpace(a.editor.tunnelTimeout); s != "" {
+			if v, err := strconv.Atoi(s); err == nil {
+				svc.TunnelTimeout = v
+			}
+		}
+		if s := strings.TrimSpace(a.editor.idleTimeout); s != "" {
+			if v, err := strconv.Atoi(s); err == nil {
+				svc.IdleTimeout = v
+			}
+		}
+		if err := svc.Validate(); err != nil {
+			return svc, err
+		}
+		return svc, nil
 	}
 
-	if s := strings.TrimSpace(a.editor.concurrencyStr); s != "" {
-		v, err := strconv.Atoi(s)
-		if err != nil {
-			return svc, fmt.Errorf("insecure-concurrency 必须是整数")
+	// Multi-protocol (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)
+	port := 443
+	if pStr := strings.TrimSpace(a.editor.serverPort); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 && p <= 65535 {
+			port = p
 		}
-		svc.InsecureConcurrency = v
 	}
-	if s := strings.TrimSpace(a.editor.tunnelTimeout); s != "" {
-		v, err := strconv.Atoi(s)
-		if err != nil {
-			return svc, fmt.Errorf("tunnel-timeout 必须是整数 (秒)")
-		}
-		svc.TunnelTimeout = v
+
+	sec := "tls"
+	switch a.editor.securityIndex {
+	case 1:
+		sec = "reality"
+	case 2:
+		sec = "none"
 	}
-	if s := strings.TrimSpace(a.editor.idleTimeout); s != "" {
-		v, err := strconv.Atoi(s)
-		if err != nil {
-			return svc, fmt.Errorf("idle-timeout 必须是整数 (秒)")
+
+	flow := ""
+	if a.editor.flowIndex == 0 && proto == config.ProtoVLESS {
+		flow = "xtls-rprx-vision"
+	}
+
+	net := "tcp"
+	switch a.editor.networkIndex {
+	case 1:
+		net = "ws"
+	case 2:
+		net = "grpc"
+	case 3:
+		net = "xhttp"
+	}
+
+	var alpn []string
+	for _, part := range strings.Split(a.editor.alpnInput, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			alpn = append(alpn, t)
 		}
-		svc.IdleTimeout = v
+	}
+
+	svc := config.Service{
+		ID:                   a.editor.svcID,
+		Name:                 strings.TrimSpace(a.editor.name),
+		AutoStart:            a.editor.autoStart,
+		Kind:                 config.KindManagedNaive,
+		Protocol:             proto,
+		Engine:               engine,
+		Tags:                 tags,
+		Listens:              listens,
+		Server:               strings.TrimSpace(a.editor.server),
+		ServerPort:           port,
+		UUID:                 strings.TrimSpace(a.editor.uuid),
+		Password:             strings.TrimSpace(a.editor.password),
+		Security:             sec,
+		SNI:                  strings.TrimSpace(a.editor.sni),
+		ALPN:                 alpn,
+		Fingerprint:          strings.TrimSpace(a.editor.fingerprint),
+		PublicKey:            strings.TrimSpace(a.editor.publicKey),
+		ShortID:              strings.TrimSpace(a.editor.shortID),
+		SpiderX:              strings.TrimSpace(a.editor.spiderX),
+		Flow:                 flow,
+		Network:              net,
+		Path:                 strings.TrimSpace(a.editor.path),
+		Host:                 strings.TrimSpace(a.editor.host),
+		ServiceName:          strings.TrimSpace(a.editor.serviceName),
+		Method:               strings.TrimSpace(a.editor.method),
+		CongestionController: strings.TrimSpace(a.editor.congestionCtl),
+		ZeroRTTHandshake:     a.editor.zeroRTT,
+		ExtraJSON:            strings.TrimSpace(a.editor.extraJSON),
 	}
 
 	if err := svc.Validate(); err != nil {
@@ -207,7 +435,7 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 	ui.DialogBase(c.Key("service-editor-dialog"), &a.editor.open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
 		panel.Column().
-			Width(580).Height(520).
+			Width(580).Height(560).
 			Padding(20).Gap(14).
 			Radius(14).Background(p.card).Border(1, p.border).
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
@@ -280,34 +508,253 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 	cat := a.catalog()
 	ui.Column(c).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-			ui.Text(c, cat.NodeKindLabel()).FontSize(12).TextColor(p.text)
-			segmentedControl(c.Key("editor-kind-segmented"), p, &a.editor.kindIndex, []string{
-				cat.NodeKindManaged(),
-				cat.NodeKindExternal(),
-			})
-		})
-
+		// Common info: Name & Tags
 		labeledInput(c, p, "inp-name", cat.NodeNameLabel(), &a.editor.name, "HK-01")
 		labeledInput(c, p, "inp-tags", cat.TagsLabel(), &a.editor.tagsInput, cat.TagsHint())
 
-		if a.editor.kindIndex == 1 {
-			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel(), &a.editor.externalURI, cat.ExternalURIHint())
-			return
+		// Protocol selection
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+			ui.Text(c, cat.ProtocolLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+			curProto := editorProtocolNames[a.editor.protoIndex]
+			if ui.Select(c.Key("inp-proto-select"), &curProto, editorProtocolNames).Label(cat.ProtocolLabel()).Width(240).Changed() {
+				for i, name := range editorProtocolNames {
+					if name == curProto {
+						a.editor.protoIndex = i
+						// Default engine based on protocol
+						if editorProtocols[i] == config.ProtoNaive {
+							a.editor.engineIndex = 1
+						} else {
+							a.editor.engineIndex = 0
+						}
+						break
+					}
+				}
+			}
+		})
+
+		proto := editorProtocols[a.editor.protoIndex]
+
+		// Execution engine selection
+		switch proto {
+		case config.ProtoNaive:
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Column(c).Gap(2).Children(func() {
+					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+					ui.Text(c, cat.CoreNaiveDesc()).FontSize(11).TextColor(p.textMuted)
+				})
+				// 0: SingBox, 1: Sidecar
+				engineIdx := 0
+				if a.editor.engineIndex == 1 {
+					engineIdx = 1
+				}
+				if segmentedControl(c.Key("editor-naive-engine"), p, &engineIdx, []string{
+					cat.EngineSingBox(),
+					cat.EngineSidecarNaive(),
+				}) {
+					if engineIdx == 1 {
+						a.editor.engineIndex = 1
+					} else {
+						a.editor.engineIndex = 0
+					}
+				}
+			})
+		case config.ProtoVLESS, config.ProtoVMess, config.ProtoTrojan, config.ProtoShadowsocks:
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Column(c).Gap(2).Children(func() {
+					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+					ui.Text(c, cat.CoreXrayDesc()).FontSize(11).TextColor(p.textMuted)
+				})
+				engineIdx := 0
+				if a.editor.engineIndex == 1 {
+					engineIdx = 1
+				}
+				if segmentedControl(c.Key("editor-xray-engine"), p, &engineIdx, []string{
+					cat.EngineSingBox(),
+					cat.EngineSidecarXray(),
+				}) {
+					if engineIdx == 1 {
+						a.editor.engineIndex = 1
+					} else {
+						a.editor.engineIndex = 0
+					}
+				}
+			})
+		case config.ProtoHysteria2, config.ProtoTUIC:
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				tagPill(c, cat.EngineSingBoxOnly(), p.accentText, p.accentBg)
+			})
+		case config.ProtoSOCKS5, config.ProtoHTTP:
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				tagPill(c, cat.NodeKindExternal(), p.textMuted, p.elevated)
+			})
 		}
 
-		ui.Column(c).Gap(4).Children(func() {
-			labeledInput(c, p, "inp-listen", cat.ListenPortLabel(), &a.editor.listenInput, "socks://127.0.0.1:1080")
-			ui.Text(c, cat.EditorListenHint()).FontSize(11).TextColor(p.textMuted)
-		})
+		// Loopback settings for Sidecar mode
+		if a.editor.engineIndex == 1 && (proto == config.ProtoNaive || proto == config.ProtoVLESS || proto == config.ProtoVMess || proto == config.ProtoTrojan || proto == config.ProtoShadowsocks) {
+			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+				switchRow(c, p, "inp-auto-loopback", cat.AutoLoopbackPortLabel(), &a.editor.autoLoopback)
+				ui.Text(c, cat.AutoLoopbackPortDesc()).FontSize(11).TextColor(p.textDim)
+				if !a.editor.autoLoopback {
+					labeledInput(c, p, "inp-listen", cat.ListenPortLabel(), &a.editor.listenInput, "socks://127.0.0.1:1080")
+				}
+			})
+		}
 
-		ui.Column(c).Gap(4).Children(func() {
-			labeledInput(c, p, "inp-proxy", cat.ProxyURILabel(), &a.editor.proxyInput, cat.ProxyURIHint())
-			ui.Text(c, cat.EditorProxyHintFull()).FontSize(11).TextColor(p.textMuted)
-		})
+		// Protocol-specific fields
+		switch proto {
+		case config.ProtoNaive:
+			ui.Column(c).Gap(4).Children(func() {
+				labeledInput(c, p, "inp-proxy", cat.ProxyURILabel(), &a.editor.proxyInput, cat.ProxyURIHint())
+				ui.Text(c, cat.EditorProxyHintFull()).FontSize(11).TextColor(p.textMuted)
+			})
+			labeledInput(c, p, "inp-concurrency-basic", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
+			switchRow(c, p, "inp-nopq-basic", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
 
-		labeledInput(c, p, "inp-concurrency-basic", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
-		switchRow(c, p, "inp-nopq-basic", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
+		case config.ProtoVLESS:
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-vless-server", cat.ServerLabel(), &a.editor.server, "example.com")
+				})
+				ui.Box(c).Width(100).Children(func() {
+					labeledInput(c, p, "inp-vless-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
+				})
+			})
+			labeledInput(c, p, "inp-vless-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.SecurityLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				segmentedControl(c.Key("inp-vless-sec"), p, &a.editor.securityIndex, []string{"TLS", "REALITY", "None"})
+			})
+
+			if a.editor.securityIndex == 1 { // REALITY
+				labeledInput(c, p, "inp-vless-pbk", cat.PublicKeyLabel(), &a.editor.publicKey, "publicKey...")
+				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vless-sid", cat.ShortIDLabel(), &a.editor.shortID, "shortId")
+					})
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vless-spx", cat.SpiderXLabel(), &a.editor.spiderX, "/")
+					})
+				})
+			}
+
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.FlowLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				segmentedControl(c.Key("inp-vless-flow"), p, &a.editor.flowIndex, []string{"xtls-rprx-vision", "None"})
+			})
+
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-vless-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+				})
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-vless-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
+				})
+			})
+
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				segmentedControl(c.Key("inp-vless-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc", "xhttp"})
+			})
+
+			if a.editor.networkIndex == 1 || a.editor.networkIndex == 3 { // ws, xhttp
+				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vless-path", cat.PathLabel(), &a.editor.path, "/")
+					})
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vless-host", cat.HostHeaderLabel(), &a.editor.host, "")
+					})
+				})
+			} else if a.editor.networkIndex == 2 { // grpc
+				labeledInput(c, p, "inp-vless-service", cat.ServiceNameLabel(), &a.editor.serviceName, "GunService")
+			}
+
+		case config.ProtoVMess:
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-vmess-server", cat.ServerLabel(), &a.editor.server, "example.com")
+				})
+				ui.Box(c).Width(100).Children(func() {
+					labeledInput(c, p, "inp-vmess-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
+				})
+			})
+			labeledInput(c, p, "inp-vmess-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-vmess-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+				})
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-vmess-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
+				})
+			})
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				segmentedControl(c.Key("inp-vmess-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc"})
+			})
+			if a.editor.networkIndex == 1 { // ws
+				labeledInput(c, p, "inp-vmess-path", cat.PathLabel(), &a.editor.path, "/")
+			} else if a.editor.networkIndex == 2 { // grpc
+				labeledInput(c, p, "inp-vmess-service", cat.ServiceNameLabel(), &a.editor.serviceName, "")
+			}
+
+		case config.ProtoTrojan:
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-trojan-server", cat.ServerLabel(), &a.editor.server, "example.com")
+				})
+				ui.Box(c).Width(100).Children(func() {
+					labeledInput(c, p, "inp-trojan-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
+				})
+			})
+			labeledInput(c, p, "inp-trojan-password", cat.PasswordLabel(), &a.editor.password, "password")
+			labeledInput(c, p, "inp-trojan-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+			labeledInput(c, p, "inp-trojan-alpn", cat.AlpnLabel(), &a.editor.alpnInput, "h2, http/1.1")
+
+		case config.ProtoShadowsocks:
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-ss-server", cat.ServerLabel(), &a.editor.server, "example.com")
+				})
+				ui.Box(c).Width(100).Children(func() {
+					labeledInput(c, p, "inp-ss-port", cat.ServerPortLabel(), &a.editor.serverPort, "8388")
+				})
+			})
+			labeledInput(c, p, "inp-ss-password", cat.PasswordLabel(), &a.editor.password, "password")
+			labeledInput(c, p, "inp-ss-method", cat.SsMethodLabel(), &a.editor.method, "2022-blake3-aes-128-gcm")
+
+		case config.ProtoHysteria2:
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-hy2-server", cat.ServerLabel(), &a.editor.server, "example.com")
+				})
+				ui.Box(c).Width(100).Children(func() {
+					labeledInput(c, p, "inp-hy2-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
+				})
+			})
+			labeledInput(c, p, "inp-hy2-password", cat.PasswordLabel(), &a.editor.password, "password")
+			labeledInput(c, p, "inp-hy2-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+			labeledInput(c, p, "inp-hy2-cc", cat.CongestionCtlLabel(), &a.editor.congestionCtl, "bbr")
+
+		case config.ProtoTUIC:
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-tuic-server", cat.ServerLabel(), &a.editor.server, "example.com")
+				})
+				ui.Box(c).Width(100).Children(func() {
+					labeledInput(c, p, "inp-tuic-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
+				})
+			})
+			labeledInput(c, p, "inp-tuic-uuid", cat.UuidLabel(), &a.editor.uuid, "uuid")
+			labeledInput(c, p, "inp-tuic-password", cat.PasswordLabel(), &a.editor.password, "password")
+			labeledInput(c, p, "inp-tuic-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+			switchRow(c, p, "inp-tuic-zerortt", cat.ZeroRTTLabel(), &a.editor.zeroRTT)
+
+		case config.ProtoSOCKS5, config.ProtoHTTP:
+			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel(), &a.editor.externalURI, cat.ExternalURIHint())
+		}
 	})
 }
 
@@ -358,49 +805,68 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 		})
 		return
 	}
-	rawJSON, err := svc.ToConfigJSON()
-	if err != nil {
-		ui.Row(c).PaddingX(12).PaddingY(10).Radius(8).Background(p.redBg).Children(func() {
-			ui.Text(c, "生成 JSON 失败: "+err.Error()).FontSize(12).TextColor(p.red)
-		})
-		return
-	}
-
-	v2rayURI := svc.V2rayNSocksURI()
-	naiveURI := svc.NaiveShareURI()
 
 	ui.Column(c).Gap(10).Children(func() {
-		ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Text(c, "本地接入链接").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-				if actionChip(c.Key("preview-copy-local"), p, iconCopy, "复制", false).Clicked() {
-					a.writeClipboard(v2rayURI, "已复制本地链接")
-				}
-			})
-			ui.Text(c, v2rayURI).FontSize(12).FontWeight(500).TextColor(p.accent)
-		})
+		if svc.EffectiveEngine() == config.EngineSidecar && svc.EffectiveProtocol() == config.ProtoNaive {
+			rawJSON, _ := svc.ToConfigJSON()
+			v2rayURI := svc.V2rayNSocksURI()
+			naiveURI := svc.NaiveShareURI()
 
-		if naiveURI != "" {
 			ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, "NaiveProxy 节点分享链接").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-naive"), p, iconCopy, "复制", false).Clicked() {
-						a.writeClipboard(naiveURI, "已复制 Naive 分享链接")
+					ui.Text(c, "本地回环接入链接").FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-local"), p, iconCopy, "复制", false).Clicked() {
+						a.writeClipboard(v2rayURI, "已复制本地链接")
 					}
 				})
-				ui.Text(c, naiveURI).FontSize(12).TextColor(p.text)
+				ui.Text(c, v2rayURI).FontSize(12).FontWeight(500).TextColor(p.accent)
+			})
+
+			if naiveURI != "" {
+				ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+						ui.Text(c, "NaiveProxy 节点分享链接").FontSize(11).FontWeight(600).TextColor(p.textMuted)
+						if actionChip(c.Key("preview-copy-naive"), p, iconCopy, "复制", false).Clicked() {
+							a.writeClipboard(naiveURI, "已复制 Naive 分享链接")
+						}
+					})
+					ui.Text(c, naiveURI).FontSize(12).TextColor(p.text)
+				})
+			}
+
+			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, "生成的 NaiveProxy config.json").FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-json"), p, iconCopy, "复制 JSON", false).Clicked() {
+						a.writeClipboard(string(rawJSON), "已复制 config.json")
+					}
+				})
+				ui.Text(c, string(rawJSON)).FontSize(11).TextColor(p.text)
+			})
+		} else if svc.EffectiveEngine() == config.EngineSidecar {
+			cfgBytes, _ := runner.GenerateXrayConfig(svc, 1080)
+			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, "生成的 Xray-core config.json").FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-xray-json"), p, iconCopy, "复制 JSON", false).Clicked() {
+						a.writeClipboard(string(cfgBytes), "已复制 Xray 配置")
+					}
+				})
+				ui.Text(c, string(cfgBytes)).FontSize(11).TextColor(p.text)
+			})
+		} else {
+			obMap := boxengine.BuildNativeOutbound(svc)
+			obJSON, _ := json.MarshalIndent(obMap, "", "  ")
+			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, "生成的 sing-box 原生 Outbound 配置").FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-sb-json"), p, iconCopy, "复制 JSON", false).Clicked() {
+						a.writeClipboard(string(obJSON), "已复制 sing-box 配置")
+					}
+				})
+				ui.Text(c, string(obJSON)).FontSize(11).TextColor(p.text)
 			})
 		}
-
-		ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Text(c, "生成的 config.json").FontSize(11).FontWeight(600).TextColor(p.textMuted)
-				if actionChip(c.Key("preview-copy-json"), p, iconCopy, "复制 JSON", false).Clicked() {
-					a.writeClipboard(string(rawJSON), "已复制 config.json")
-				}
-			})
-			ui.Text(c, string(rawJSON)).FontSize(11).TextColor(p.text)
-		})
 	})
 }
 
