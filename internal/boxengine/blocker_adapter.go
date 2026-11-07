@@ -306,9 +306,12 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 	if t.blocker == nil {
 		return conn
 	}
-	// 1. If domain is already present in metadata (e.g. SOCKS5 domain, HTTP CONNECT domain)
+	// 1. If domain is already present in metadata (e.g. SOCKS5 domain, HTTP CONNECT domain, or TUN sniffed domain)
 	target := extractDomainFromMetadata(metadata)
 	if target != "" {
+		if metadata.Destination.Addr.IsValid() {
+			t.RecordIPDomain(metadata.Destination.Addr.String(), target)
+		}
 		if t.recordConnection(target, matchedRule, matchOutbound) {
 			_ = conn.Close()
 		}

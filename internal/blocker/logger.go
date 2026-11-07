@@ -112,6 +112,18 @@ func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdi
 		if lastTs, exists := l.recentQueries[k]; exists {
 			diff := ts.Sub(lastTs)
 			if diff >= 0 && diff < l.dedupWindow {
+				if source == SourceGateway && chain != "" {
+					for i := 0; i < l.count && i < 30; i++ {
+						idx := (l.start + l.count - 1 - i) % l.capacity
+						e := &l.entries[idx]
+						if e.Source == SourceGateway && strings.EqualFold(e.Domain, domain) {
+							if e.Chain == "" || (!strings.HasPrefix(e.Chain, chain+" -> ") && e.Chain != chain) {
+								e.Chain = chain
+							}
+							break
+						}
+					}
+				}
 				return
 			}
 		}

@@ -74,9 +74,14 @@ func (p *PoolOutbound) Dependencies() []string {
 	return nil
 }
 
-func extractTargetHost(destination M.Socksaddr) string {
+func extractTargetHost(ctx context.Context, destination M.Socksaddr) string {
 	if destination.IsFqdn() || destination.Fqdn != "" {
 		return destination.Fqdn
+	}
+	if ctx != nil {
+		if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Domain != "" {
+			return inboundCtx.Domain
+		}
 	}
 	if destination.IsIP() {
 		return destination.Addr.String()
@@ -131,7 +136,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 
 	candidates := p.provider.GetCandidates(tagKey)
 
-	targetHost := extractTargetHost(destination)
+	targetHost := extractTargetHost(ctx, destination)
 	if len(candidates) == 0 {
 		err := fmt.Errorf("no active proxy candidates available for pool %s", tagKey)
 		if p.failureMonitor != nil {
@@ -249,7 +254,7 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 
 	candidates := p.provider.GetCandidates(tagKey)
 
-	targetHost := extractTargetHost(destination)
+	targetHost := extractTargetHost(ctx, destination)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no active proxy candidates for UDP packet in pool %s", tagKey)
 	}
