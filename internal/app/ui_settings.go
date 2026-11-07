@@ -8,7 +8,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"naive-client/internal/dns"
+	"naive-client/internal/boxengine"
 	"naive-client/locales"
 )
 
@@ -307,11 +307,11 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					a.saveState()
 					a.initDNS()
 				}
-				if dnsSelectRow(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, dns.DefaultDomesticDoH[0], domesticDNSPresets, cat.DnsDomesticHint()) {
+				if dnsSelectRow(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, boxengine.DefaultDomesticDoH[0], domesticDNSPresets, cat.DnsDomesticHint()) {
 					a.saveState()
 					a.initDNS()
 				}
-				if dnsSelectRow(c, p, "page-set-dns-remote", cat.DnsRemoteLabel(), &a.state.RemoteDNS, dns.DefaultRemoteDoH[0], remoteDNSPresets, cat.DnsRemoteHint()) {
+				if dnsSelectRow(c, p, "page-set-dns-remote", cat.DnsRemoteLabel(), &a.state.RemoteDNS, boxengine.DefaultRemoteDoH[0], remoteDNSPresets, cat.DnsRemoteHint()) {
 					a.saveState()
 					a.initDNS()
 				}

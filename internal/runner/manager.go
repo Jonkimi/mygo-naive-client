@@ -225,6 +225,19 @@ func (m *Manager) RunningIDs() []string {
 	return ids
 }
 
+// AllocatedPorts returns a map of service ID to allocated loopback port for all running services.
+func (m *Manager) AllocatedPorts() map[string]int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ports := make(map[string]int)
+	for id, inst := range m.instances {
+		if inst.status.State == StateRunning && inst.status.AllocatedPort > 0 {
+			ports[id] = inst.status.AllocatedPort
+		}
+	}
+	return ports
+}
+
 // RunningServices returns the service configurations of all currently running services.
 func (m *Manager) RunningServices() []config.Service {
 	m.mu.RLock()

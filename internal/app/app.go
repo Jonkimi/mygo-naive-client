@@ -17,10 +17,8 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
-	"naive-client/internal/dns"
-	"naive-client/internal/dns/ipcache"
-	"naive-client/internal/gateway"
 	"naive-client/internal/geodata"
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
@@ -85,14 +83,12 @@ type app struct {
 	state PersistedState
 	mgr   *runner.Manager
 
-	tracker   *telemetry.Tracker
-	gateway   *gateway.Gateway
-	sysproxy  *sysproxy.Sysproxy
-	router    *routing.Router
-	ipCache   *ipcache.Cache
-	resolver  *dns.Resolver
-	dnsServer *dns.Server
-	blocker   *blocker.Engine
+	tracker        *telemetry.Tracker
+	failureMonitor *telemetry.FailureMonitor
+	gateway        *boxengine.Engine
+	sysproxy       *sysproxy.Sysproxy
+	router         *routing.Router
+	blocker        *blocker.Engine
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -282,22 +278,21 @@ func Run() error {
 func newApp(dataDir string) *app {
 	recPath := filepath.Join(dataDir, "network-recovery.json")
 	st := defaultPersistedState()
-	cache := ipcache.New(10000)
 	blk := blocker.NewEngine(blocker.Options{
 		Allowlist: st.BlockerAllowlist,
 		Denylist:  st.BlockerDenylist,
 		Disabled:  !st.BlockerEnabled,
 	})
 	a := &app{
-		dataDir:      dataDir,
-		state:        st,
-		expandedLogs: make(map[string]bool),
-		tracker:      telemetry.NewTracker(),
-		sysproxy:     sysproxy.New(recPath),
-		router:       routing.NewRouter(st.RoutingRules, st.RoutingFinal),
-		ipCache:      cache,
-		blocker:      blk,
-		quitCh:       make(chan struct{}),
+		dataDir:        dataDir,
+		state:          st,
+		expandedLogs:   make(map[string]bool),
+		tracker:        telemetry.NewTracker(),
+		failureMonitor: telemetry.NewFailureMonitor(500),
+		sysproxy:       sysproxy.New(recPath),
+		router:         routing.NewRouter(st.RoutingRules, st.RoutingFinal),
+		blocker:        blk,
+		quitCh:         make(chan struct{}),
 	}
 	a.refreshGeoDataStatus()
 	return a
@@ -307,6 +302,9 @@ func (a *app) initSubsystems() {
 	binPath := a.resolveBinaryPath()
 	cfgDir := filepath.Join(a.userDataDir(), "configs")
 	a.mgr = runner.NewManager(binPath, cfgDir, func() {
+		if a.gateway != nil {
+			a.gateway.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+		}
 		a.dispatchUI(func() {
 			a.rebuildTrayMenu()
 		})
@@ -761,6 +759,37 @@ func (a *app) readClipboard() string {
 	return os.Getenv("NAIVE_CLIENT_TEST_CLIPBOARD")
 }
 
+func (a *app) startDormantServiceForTag(tag string) {
+	tag = strings.TrimPrefix(tag, "PROXY_TAG:")
+	for _, svc := range a.state.Services {
+		matches := false
+		if tag == "" || tag == "PROXY_POOL" {
+			matches = true
+		} else {
+			for _, t := range svc.Tags {
+				if strings.EqualFold(t, tag) {
+					matches = true
+					break
+				}
+			}
+		}
+		if matches && !a.isServiceActive(svc.ID) {
+			_ = a.mgr.Start(svc)
+			for i := 0; i < 20; i++ {
+				st := a.mgr.StatusOf(svc.ID)
+				if st.State == runner.StateRunning {
+					if a.gateway != nil {
+						a.gateway.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+					}
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			return
+		}
+	}
+}
+
 func (a *app) startGateway() error {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
@@ -773,27 +802,44 @@ func (a *app) startGateway() error {
 	if port <= 0 {
 		port = 10809
 	}
-	a.initDNS()
 
-	gw, err := gateway.New(gateway.Options{
-		BindAddr: fmt.Sprintf("127.0.0.1:%d", port),
-		Tracker:  a.tracker,
-		IPCache:  a.ipCache,
-		Blocker:  a.blockerAsGateway(),
-		DialTarget: func(ctx context.Context, target string) (net.Conn, string, error) {
-			return a.dialThroughPool(ctx, target)
+	var allocPorts map[string]int
+	var activeIDs map[string]bool
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+		activeIDs = a.mgr.RunningServiceIDs()
+	}
+
+	eng, err := boxengine.New(boxengine.EngineOptions{
+		ListenAddr:     fmt.Sprintf("127.0.0.1:%d", port),
+		Services:       a.state.Services,
+		AllocatedPorts: allocPorts,
+		ActiveIDs:      activeIDs,
+		Rules:          a.state.RoutingRules,
+		FinalAction:    string(a.state.RoutingFinal.Type),
+		GeoSiteDB:      a.cachedSiteDB,
+		GeoIPDB:        a.cachedIPDB,
+		Tracker:        a.tracker,
+		FailureMonitor: a.failureMonitor,
+		Blocker:        a.blocker,
+		BootstrapDNS:   parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS),
+		DomesticDoH:    parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH),
+		RemoteDoH:      parseDNSList(a.effectiveRemoteDNS(), boxengine.DefaultRemoteDoH),
+		PreferIPv4:     a.state.PreferIPv4,
+		OnDemandStart: func(tag string) {
+			a.startDormantServiceForTag(tag)
 		},
 	})
 	if err != nil {
 		return err
 	}
-	if err := gw.Start(); err != nil {
+	if err := eng.Start(); err != nil {
 		return err
 	}
-	a.gateway = gw
+	a.gateway = eng
 
 	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
-		_ = a.sysproxy.Set(gw.Addr(), a.state.SystemProxyBypass)
+		_ = a.sysproxy.Set(eng.Addr(), a.state.SystemProxyBypass)
 	}
 	return nil
 }
@@ -858,7 +904,7 @@ func (a *app) collectBootstrapDomains() []string {
 	}
 
 	// Collect domestic DoH domains to ensure they can be resolved via Bootstrap DNS without deadlocking.
-	for _, ep := range parseDNSList(a.effectiveDomesticDNS(), dns.DefaultDomesticDoH) {
+	for _, ep := range parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH) {
 		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
 			add(u.Hostname())
 		}
@@ -868,40 +914,12 @@ func (a *app) collectBootstrapDomains() []string {
 }
 
 func (a *app) initDNS() {
-	bootDomains := a.collectBootstrapDomains()
-	bootDNS := parseDNSList(a.state.BootstrapDNS, dns.DefaultBootstrapDNS)
-	domDoH := parseDNSList(a.effectiveDomesticDNS(), dns.DefaultDomesticDoH)
-	remoteDoH := parseDNSList(a.effectiveRemoteDNS(), dns.DefaultRemoteDoH)
-
-	if a.resolver == nil {
-		a.resolver = dns.NewResolver(dns.ResolverOptions{
-			Router:           a.router,
-			BootstrapDomains: bootDomains,
-			BootstrapDNS:     bootDNS,
-			DomesticDoH:      domDoH,
-			RemoteDoH:        remoteDoH,
-			PreferIPv4:       a.state.PreferIPv4,
-			IPCache:          a.ipCache,
-			Blocker:          a.blockerAsDNS(),
-			DialProxy: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				conn, _, err := a.dialThroughPool(ctx, addr)
-				return conn, err
-			},
-		})
-	} else {
-		a.resolver.SetBootstrapDomains(bootDomains)
-		a.resolver.SetRouter(a.router)
-		a.resolver.SetUpstreams(bootDNS, domDoH, remoteDoH)
-		a.resolver.SetBlocker(a.blockerAsDNS())
-		a.resolver.SetPreferIPv4(a.state.PreferIPv4)
+	if a.gateway != nil {
+		_ = a.startGateway()
 	}
 }
 
 func (a *app) stopGateway() {
-	if a.dnsServer != nil {
-		_ = a.dnsServer.Stop()
-		a.dnsServer = nil
-	}
 	if a.sysproxy != nil {
 		_ = a.sysproxy.Unset()
 	}
@@ -1175,9 +1193,8 @@ func (a *app) triggerUpdateGeoData() {
 func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
 	a.loadGeoDataIfPresent()
-	if a.resolver != nil {
-		a.resolver.SetRouter(a.router)
-		a.resolver.SetBootstrapDomains(a.collectBootstrapDomains())
+	if a.gateway != nil {
+		_ = a.startGateway()
 	}
 }
 

@@ -1259,10 +1259,23 @@ func TestGateway_EndToEndProxyAndTelemetry(t *testing.T) {
 	if _, err := clientConn.Write(req); err != nil {
 		t.Fatalf("client write connect req: %v", err)
 	}
-	connResp := make([]byte, 10)
+	connResp := make([]byte, 4)
 	if _, err := io.ReadFull(clientConn, connResp); err != nil || connResp[0] != 0x05 || connResp[1] != 0x00 {
 		t.Fatalf("client connect resp failed: %v, err: %v", connResp, err)
 	}
+	var remLen int
+	switch connResp[3] {
+	case 1: // IPv4
+		remLen = 4 + 2
+	case 3: // Domain
+		var l [1]byte
+		_, _ = io.ReadFull(clientConn, l[:])
+		remLen = int(l[0]) + 2
+	case 4: // IPv6
+		remLen = 16 + 2
+	}
+	remBuf := make([]byte, remLen)
+	_, _ = io.ReadFull(clientConn, remBuf)
 
 	// Echo payload check
 	msg := []byte("ping-gateway-telemetry")
@@ -2334,31 +2347,15 @@ func TestRouting_PresetI18nLanguageSwitching(t *testing.T) {
 	}
 }
 
-// Tests that custom 3-tier DNS settings update the DNS resolver upstreams and bootstrap domains.
+// Tests that custom 3-tier DNS settings update bootstrap domains.
 func TestApp_CustomDoHConfiguration(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
-
-	boot, dom, remote := a.resolver.Upstreams()
-	if len(boot) != 2 || len(dom) != 2 || len(remote) != 2 {
-		t.Fatalf("expected 2 default boot, dom, and remote upstreams, got %v / %v / %v", boot, dom, remote)
-	}
 
 	a.state.BootstrapDNS = "119.29.29.29"
 	a.state.DomesticDNS = "https://custom-dns.mycorp.internal/dns-query"
 	a.state.RemoteDNS = "https://9.9.9.9/dns-query, https://dns.quad9.net/dns-query"
 	a.initDNS()
-
-	newBoot, newDom, newRemote := a.resolver.Upstreams()
-	if len(newBoot) != 1 || newBoot[0] != "119.29.29.29" {
-		t.Fatalf("unexpected custom bootstrap dns: %v", newBoot)
-	}
-	if len(newDom) != 1 || newDom[0] != "https://custom-dns.mycorp.internal/dns-query" {
-		t.Fatalf("unexpected custom domestic dns: %v", newDom)
-	}
-	if len(newRemote) != 2 || newRemote[0] != "https://9.9.9.9/dns-query" {
-		t.Fatalf("unexpected custom remote dns: %v", newRemote)
-	}
 
 	domains := a.collectBootstrapDomains()
 	foundInternal := false
@@ -2375,7 +2372,7 @@ func TestApp_CustomDoHConfiguration(t *testing.T) {
 	}
 }
 
-// Tests that selecting DNS options in the settings UI dropdowns updates state and the resolver.
+// Tests that selecting DNS options in the settings UI dropdowns updates state.
 func TestApp_DnsSelectDropdownUI(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
@@ -2395,10 +2392,6 @@ func TestApp_DnsSelectDropdownUI(t *testing.T) {
 	tt.Frame()
 	if a.state.DomesticDNS != "https://dns.alidns.com/dns-query" {
 		t.Fatalf("expected DomesticDNS to be https://dns.alidns.com/dns-query, got %q", a.state.DomesticDNS)
-	}
-	_, dom, _ := a.resolver.Upstreams()
-	if len(dom) == 0 || dom[0] != "https://dns.alidns.com/dns-query" {
-		t.Fatalf("expected resolver domestic upstream to update, got %v", dom)
 	}
 
 	// 2. Select Remote DNS from preset
@@ -2428,16 +2421,13 @@ func TestApp_DnsSelectDropdownUI(t *testing.T) {
 	}
 }
 
-// Tests that toggling PreferIPv4 switch updates persisted state and the DNS resolver.
+// Tests that toggling PreferIPv4 switch updates persisted state.
 func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
 
 	if !a.state.PreferIPv4 {
 		t.Fatalf("expected PreferIPv4 to default to true")
-	}
-	if !a.resolver.PreferIPv4() {
-		t.Fatalf("expected resolver PreferIPv4 to be true")
 	}
 
 	tt := ui.NewTester(func(c *ui.Context) {
@@ -2454,8 +2444,5 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 
 	if a.state.PreferIPv4 {
 		t.Fatalf("expected state PreferIPv4 to be toggled to false")
-	}
-	if a.resolver.PreferIPv4() {
-		t.Fatalf("expected resolver PreferIPv4 to be false after toggle")
 	}
 }
