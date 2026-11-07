@@ -1087,15 +1087,26 @@ func (a *app) readClipboard() string {
 }
 
 func (a *app) startDormantServiceForTag(tag string) {
-	tag = strings.TrimPrefix(tag, "PROXY_TAG:")
+	tag = strings.TrimSpace(strings.TrimPrefix(tag, "PROXY_TAG:"))
+	var wantTags []string
+	for _, part := range strings.Split(tag, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			wantTags = append(wantTags, p)
+		}
+	}
 	for _, svc := range a.state.Services {
 		matches := false
-		if tag == "" || tag == "PROXY_POOL" {
+		if tag == "" || tag == "PROXY_POOL" || len(wantTags) == 0 {
 			matches = true
 		} else {
 			for _, t := range svc.Tags {
-				if strings.EqualFold(t, tag) {
-					matches = true
+				for _, wt := range wantTags {
+					if strings.EqualFold(t, wt) {
+						matches = true
+						break
+					}
+				}
+				if matches {
 					break
 				}
 			}
@@ -1210,6 +1221,7 @@ func (a *app) startGateway() error {
 		ActiveIDs:             activeIDs,
 		Rules:                 a.state.RoutingRules,
 		FinalAction:           string(a.state.RoutingFinal.Type),
+		FinalRoute:            a.state.RoutingFinal,
 		GeoSiteDB:             a.cachedSiteDB,
 		GeoIPDB:               a.cachedIPDB,
 		Tracker:               a.tracker,

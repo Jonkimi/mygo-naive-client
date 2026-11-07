@@ -212,4 +212,13 @@ func TestQueryLogger_UpdateRecentGatewayChain(t *testing.T) {
 	if entries[1].Chain != expectedChain {
 		t.Errorf("chain duplicated on second update: %q", entries[1].Chain)
 	}
+
+	// Regression: updating with a different node (e.g. second dial within dedup window)
+	// previously appended a second node ("final -> PROXY_TAG:gfw -> naive-bwg -> local_warp").
+	ql.UpdateRecentGatewayChain("google.com", "local_warp")
+	entries = ql.GetEntries(10)
+	expectedReplaced := "final -> PROXY_TAG:gfw -> local_warp"
+	if entries[1].Chain != expectedReplaced {
+		t.Errorf("expected Gateway chain node replacement %q, got %q", expectedReplaced, entries[1].Chain)
+	}
 }

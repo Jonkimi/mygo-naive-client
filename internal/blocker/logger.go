@@ -204,7 +204,14 @@ func (l *QueryLogger) UpdateRecentGatewayChain(target string, nodeName string) {
 			break
 		}
 		if entry.Source == SourceGateway && strings.EqualFold(strings.Trim(entry.Domain, "."), cleanTarget) {
-			if !strings.HasSuffix(entry.Chain, " -> "+nodeName) && !strings.Contains(entry.Chain, " -> "+nodeName+" ") {
+			parts := strings.Split(entry.Chain, " -> ")
+			if len(parts) == 2 {
+				if parts[1] != nodeName {
+					entry.Chain = parts[0] + " -> " + parts[1] + " -> " + nodeName
+				}
+			} else if len(parts) >= 3 {
+				entry.Chain = parts[0] + " -> " + parts[1] + " -> " + nodeName
+			} else if entry.Chain != "" && !strings.HasSuffix(entry.Chain, " -> "+nodeName) {
 				entry.Chain = entry.Chain + " -> " + nodeName
 			}
 			return

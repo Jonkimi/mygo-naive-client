@@ -42,6 +42,7 @@ type EngineOptions struct {
 	AllocatedPorts map[string]int
 	Rules          []routing.Rule
 	FinalAction    string
+	FinalRoute     routing.RouteAction
 	GeoSiteDB      *geodata.GeoSiteDB
 	GeoIPDB        *geodata.GeoIPDB
 	Tracker        *telemetry.Tracker
@@ -188,11 +189,16 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			onDialSuccess = func(targetHost string, nodeID string) {
 				nodeName := eng.GetNodeName(nodeID)
 				if nodeName != "" {
+					resolvedDomain := ""
 					if eng.connTracker != nil {
 						eng.connTracker.RecordDialSuccess(targetHost, nodeName)
+						resolvedDomain = eng.connTracker.ResolveIPDomain(targetHost)
 					}
 					if eng.blocker != nil && eng.blocker.Logger() != nil {
 						eng.blocker.Logger().UpdateRecentGatewayChain(targetHost, nodeName)
+						if resolvedDomain != "" && !strings.EqualFold(resolvedDomain, targetHost) {
+							eng.blocker.Logger().UpdateRecentGatewayChain(resolvedDomain, nodeName)
+						}
 					}
 				}
 			}
@@ -316,6 +322,13 @@ func (e *Engine) GetCandidates(poolTag string) []string {
 }
 
 func (e *Engine) findCandidates(cleanTag string) []string {
+	var wantTags []string
+	for _, part := range strings.Split(cleanTag, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			wantTags = append(wantTags, p)
+		}
+	}
+
 	var candidates []string
 	for _, svc := range e.services {
 		if e.activeIDs != nil && !e.activeIDs[svc.ID] {
@@ -327,20 +340,68 @@ func (e *Engine) findCandidates(cleanTag string) []string {
 			}
 		}
 
-		if cleanTag == "" || cleanTag == "PROXY_POOL" {
+		if cleanTag == "" || cleanTag == "PROXY_POOL" || len(wantTags) == 0 {
 			candidates = append(candidates, svc.ID)
 			continue
 		}
 
-		// Check if service matches tag
+		// Check if service matches any requested tag
+		matched := false
 		for _, t := range svc.Tags {
-			if strings.EqualFold(t, cleanTag) {
-				candidates = append(candidates, svc.ID)
+			for _, wt := range wantTags {
+				if strings.EqualFold(t, wt) {
+					matched = true
+					break
+				}
+			}
+			if matched {
 				break
 			}
 		}
+		if matched {
+			candidates = append(candidates, svc.ID)
+		}
 	}
 	return candidates
+}
+
+func joinCleanTags(tags []string) string {
+	var clean []string
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			clean = append(clean, t)
+		}
+	}
+	return strings.Join(clean, ",")
+}
+
+func resolveRouteOutbound(act routing.RouteAction, tailnetMode tailnet.Mode) string {
+	switch act.Type {
+	case routing.ActionDirect:
+		return "direct"
+	case routing.ActionBlock:
+		return "block"
+	case routing.ActionProxyPool:
+		return "PROXY_POOL"
+	case routing.ActionProxyTag:
+		if joined := joinCleanTags(act.GetTags()); joined != "" {
+			return "PROXY_TAG:" + joined
+		}
+		return "PROXY_POOL"
+	case routing.ActionProxyService:
+		if svcID := strings.TrimSpace(act.ServiceID); svcID != "" {
+			return "node-" + svcID
+		}
+		return "PROXY_POOL"
+	case routing.ActionTailnet, routing.ActionTailnetExit:
+		if tailnetMode == tailnet.ModeHost {
+			return "direct"
+		}
+		return "tailscale-ep"
+	default:
+		return "direct"
+	}
 }
 
 // GetOutbound implements NodeProvider.
@@ -524,31 +585,59 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 
 	// Pool outbounds for tags
 	tagSet := make(map[string]bool)
+	ensurePoolTag := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !tagSet[t] {
+			tagSet[t] = true
+			outbounds = append(outbounds, map[string]any{
+				"type":     "pool",
+				"tag":      "PROXY_TAG:" + t,
+				"pool_tag": t,
+			})
+		}
+	}
 	for _, svc := range opts.Services {
 		for _, t := range svc.Tags {
-			t = strings.TrimSpace(t)
-			if t != "" && !tagSet[t] {
-				tagSet[t] = true
-				outbounds = append(outbounds, map[string]any{
-					"type":     "pool",
-					"tag":      "PROXY_TAG:" + t,
-					"pool_tag": t,
-				})
-			}
+			ensurePoolTag(t)
 		}
 	}
 	for _, r := range opts.Rules {
 		for _, t := range r.Action.GetTags() {
-			t = strings.TrimSpace(t)
-			if t != "" && !tagSet[t] {
-				tagSet[t] = true
-				outbounds = append(outbounds, map[string]any{
-					"type":     "pool",
-					"tag":      "PROXY_TAG:" + t,
-					"pool_tag": t,
-				})
-			}
+			ensurePoolTag(t)
 		}
+		if joined := joinCleanTags(r.Action.GetTags()); joined != "" {
+			ensurePoolTag(joined)
+		}
+	}
+	for _, t := range opts.FinalRoute.GetTags() {
+		ensurePoolTag(t)
+	}
+	if joined := joinCleanTags(opts.FinalRoute.GetTags()); joined != "" {
+		ensurePoolTag(joined)
+	}
+
+	finalOutbound := "direct"
+	if opts.FinalRoute.Type != "" {
+		finalOutbound = resolveRouteOutbound(opts.FinalRoute, opts.TailnetMode)
+	} else if opts.FinalAction != "" {
+		fa := strings.TrimSpace(opts.FinalAction)
+		if strings.HasPrefix(strings.ToUpper(fa), "PROXY_TAG:") {
+			tag := strings.TrimSpace(fa[len("PROXY_TAG:"):])
+			if tag != "" {
+				finalOutbound = "PROXY_TAG:" + tag
+			} else {
+				finalOutbound = "PROXY_POOL"
+			}
+		} else if strings.HasPrefix(fa, "node-") {
+			finalOutbound = fa
+		} else if strings.EqualFold(fa, "proxy") || strings.EqualFold(fa, "proxy_pool") || strings.EqualFold(fa, "proxy_tag") || strings.EqualFold(fa, "proxy_service") {
+			finalOutbound = "PROXY_POOL"
+		} else if strings.EqualFold(fa, "block") {
+			finalOutbound = "block"
+		}
+	}
+	if strings.HasPrefix(finalOutbound, "PROXY_TAG:") {
+		ensurePoolTag(strings.TrimPrefix(finalOutbound, "PROXY_TAG:"))
 	}
 
 	// Node outbounds
@@ -624,10 +713,15 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		remoteDoH = DefaultRemoteDoH
 	}
 
+	remoteDoHDetour := "PROXY_POOL"
+	if strings.HasPrefix(finalOutbound, "PROXY_TAG:") || strings.HasPrefix(finalOutbound, "node-") {
+		remoteDoHDetour = finalOutbound
+	}
+
 	dnsServers := []map[string]any{
 		buildDNSServerMap("bootstrap-dns", bootstrapDNS[0], ""),
 		buildDNSServerMap("domestic-doh", domesticDoH[0], ""),
-		buildDNSServerMap("remote-doh", remoteDoH[0], "PROXY_POOL"),
+		buildDNSServerMap("remote-doh", remoteDoH[0], remoteDoHDetour),
 	}
 
 	var dnsRules []map[string]any
@@ -732,15 +826,6 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		}
 	}
 
-	finalOutbound := "direct"
-	if opts.FinalAction != "" {
-		if strings.EqualFold(opts.FinalAction, "proxy") || strings.EqualFold(opts.FinalAction, "proxy_pool") || strings.EqualFold(opts.FinalAction, "proxy_tag") || strings.EqualFold(opts.FinalAction, "proxy_service") {
-			finalOutbound = "PROXY_POOL"
-		} else if strings.EqualFold(opts.FinalAction, "block") {
-			finalOutbound = "block"
-		}
-	}
-
 	dnsFinal := "remote-doh"
 	if finalOutbound == "direct" {
 		dnsFinal = "domestic-doh"
@@ -810,29 +895,7 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			continue
 		}
 
-		outbound := "direct"
-		switch r.Action.Type {
-		case routing.ActionDirect:
-			outbound = "direct"
-		case routing.ActionBlock:
-			outbound = "block"
-		case routing.ActionProxyPool:
-			outbound = "PROXY_POOL"
-		case routing.ActionProxyTag:
-			tag := r.Action.Tag
-			if len(r.Action.Tags) > 0 {
-				tag = r.Action.Tags[0]
-			}
-			outbound = "PROXY_TAG:" + tag
-		case routing.ActionProxyService:
-			outbound = "node-" + r.Action.ServiceID
-		case routing.ActionTailnet, routing.ActionTailnetExit:
-			if opts.TailnetMode == tailnet.ModeHost {
-				outbound = "direct"
-			} else {
-				outbound = "tailscale-ep"
-			}
-		}
+		outbound := resolveRouteOutbound(r.Action, opts.TailnetMode)
 
 		// 1. Direct domain / CIDR matching rule
 		if len(r.DomainFull) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 || len(r.IPCidr) > 0 {

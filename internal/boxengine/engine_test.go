@@ -1181,6 +1181,67 @@ func TestEngine_GatewayNodeNameLogging(t *testing.T) {
 	}
 }
 
+// Regression: setting FinalRoute to PROXY_TAG("warp") previously hardcoded route.final to "PROXY_POOL",
+// and consecutive connections switching nodes concatenated stale node names ("final -> PROXY_POOL -> naive_opc2 -> local_warp").
+func TestEngine_FinalRouteProxyTagAndNoStaleNodeConcatenation(t *testing.T) {
+	eng := &Engine{}
+	ctx := createBoxContext(context.Background(), eng)
+
+	opts := EngineOptions{
+		FinalAction: string(routing.ActionProxyTag),
+		FinalRoute: routing.RouteAction{
+			Type: routing.ActionProxyTag,
+			Tag:  "warp",
+			Tags: []string{"warp"},
+		},
+		Services: []config.Service{
+			{ID: "svc-opc2", Name: "naive_opc2", Engine: config.EngineSidecar},
+			{ID: "svc-warp", Name: "local_warp", Engine: config.EngineSidecar, Tags: []string{"warp"}},
+		},
+	}
+
+	boxOpts, err := eng.buildConfig(ctx, opts, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+	if boxOpts.Route == nil || boxOpts.Route.Final != "PROXY_TAG:warp" {
+		t.Fatalf("expected route.final to be %q, got %+v", "PROXY_TAG:warp", boxOpts.Route)
+	}
+
+	// Verify BlockerConnectionTracker does not concatenate previous dial's node with current dial's node
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+	tracker := &BlockerConnectionTracker{
+		blocker: bl,
+		nodeNameResolver: func(nodeID string) string {
+			return nodeID
+		},
+	}
+	poolOb := NewPoolOutbound(PoolOutboundOptions{Tag: "PROXY_TAG:warp", PoolTag: "warp"})
+
+	// Connection 1 dials naive_opc2
+	tracker.recordConnection("example.com", nil, poolOb)
+	tracker.RecordDialSuccess("example.com", "naive_opc2")
+	bl.Logger().UpdateRecentGatewayChain("example.com", "naive_opc2")
+
+	// Connection 2 arrives while naive_opc2 is still in recentDials, then dials local_warp
+	tracker.recordConnection("example.com", nil, poolOb)
+	tracker.RecordDialSuccess("example.com", "local_warp")
+	bl.Logger().UpdateRecentGatewayChain("example.com", "local_warp")
+
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Chain != "final -> PROXY_TAG:warp -> local_warp" {
+		t.Errorf("expected latest entry chain %q, got %q", "final -> PROXY_TAG:warp -> local_warp", entries[0].Chain)
+	}
+	if entries[1].Chain != "final -> PROXY_TAG:warp -> naive_opc2" {
+		t.Errorf("expected first entry chain %q, got %q", "final -> PROXY_TAG:warp -> naive_opc2", entries[1].Chain)
+	}
+}
+
+
 
 
 

@@ -122,11 +122,62 @@ type BlockerConnectionTracker struct {
 	nodeNameResolver func(nodeID string) string
 	recentDialsMu    sync.RWMutex
 	recentDials      map[string]recentDialInfo
+	ipDomains        map[string]recentIPDomainInfo
 }
 
 type recentDialInfo struct {
 	nodeName  string
 	timestamp time.Time
+}
+
+type recentIPDomainInfo struct {
+	domain    string
+	timestamp time.Time
+}
+
+// RecordIPDomain records a recent IP -> domain mapping from DNS reverse lookup so subsequent
+// IP-based outbound dials can update the corresponding domain's gateway log entry.
+func (t *BlockerConnectionTracker) RecordIPDomain(ipStr string, domain string) {
+	if ipStr == "" || domain == "" {
+		return
+	}
+	cleanIP := strings.TrimSpace(ipStr)
+	cleanDomain := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	t.recentDialsMu.Lock()
+	if t.ipDomains == nil {
+		t.ipDomains = make(map[string]recentIPDomainInfo)
+	}
+	t.ipDomains[cleanIP] = recentIPDomainInfo{
+		domain:    cleanDomain,
+		timestamp: time.Now(),
+	}
+	if len(t.ipDomains) > 256 {
+		cutoff := time.Now().Add(-10 * time.Second)
+		for k, v := range t.ipDomains {
+			if v.timestamp.Before(cutoff) {
+				delete(t.ipDomains, k)
+			}
+		}
+	}
+	t.recentDialsMu.Unlock()
+}
+
+// ResolveIPDomain returns the domain recently associated with ipStr if within TTL.
+func (t *BlockerConnectionTracker) ResolveIPDomain(ipStr string) string {
+	if ipStr == "" {
+		return ""
+	}
+	cleanIP := strings.TrimSpace(ipStr)
+	t.recentDialsMu.RLock()
+	defer t.recentDialsMu.RUnlock()
+	if t.ipDomains == nil {
+		return ""
+	}
+	info, ok := t.ipDomains[cleanIP]
+	if !ok || time.Since(info.timestamp) > 5*time.Second {
+		return ""
+	}
+	return info.domain
 }
 
 // RecordDialSuccess records that targetHost was successfully dialed via nodeName.
@@ -172,16 +223,24 @@ func (t *BlockerConnectionTracker) getRecentNode(targetHost string) string {
 }
 
 func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
-	return t.recordConnectionWithFallback(target, "", matchedRule, matchOutbound)
+	blocked, rule, verdict := t.blocker.Evaluate(target)
+	chain := formatGatewayChain(matchedRule, matchOutbound, blocked, rule, t.nodeNameResolver)
+	if t.blocker.Logger() != nil {
+		t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
+	}
+	return blocked
 }
 
 func (t *BlockerConnectionTracker) recordConnectionWithFallback(target string, fallbackAddr string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
 	blocked, rule, verdict := t.blocker.Evaluate(target)
 	chain := formatGatewayChain(matchedRule, matchOutbound, blocked, rule, t.nodeNameResolver)
 	if !blocked {
-		nodeName := t.getRecentNode(target)
-		if nodeName == "" && fallbackAddr != "" {
+		nodeName := ""
+		if fallbackAddr != "" {
 			nodeName = t.getRecentNode(fallbackAddr)
+		}
+		if nodeName == "" {
+			nodeName = t.getRecentNode(target)
 		}
 		if nodeName != "" && !strings.HasSuffix(chain, " -> "+nodeName) {
 			chain = chain + " -> " + nodeName
@@ -261,6 +320,7 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 		if dnsRouter := service.FromContext[adapter.DNSRouter](ctx); dnsRouter != nil {
 			if rev, ok := dnsRouter.LookupReverseMapping(metadata.Destination.Addr); ok && rev != "" {
 				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
+				t.RecordIPDomain(metadata.Destination.Addr.String(), target)
 				if t.recordConnection(target, matchedRule, matchOutbound) {
 					_ = conn.Close()
 				}
@@ -295,6 +355,7 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 		if dnsRouter := service.FromContext[adapter.DNSRouter](ctx); dnsRouter != nil {
 			if rev, ok := dnsRouter.LookupReverseMapping(metadata.Destination.Addr); ok && rev != "" {
 				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
+				t.RecordIPDomain(metadata.Destination.Addr.String(), target)
 			}
 		}
 		if target == "" {
