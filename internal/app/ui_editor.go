@@ -400,6 +400,12 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		ZeroRTTHandshake:     a.editor.zeroRTT,
 		ExtraJSON:            strings.TrimSpace(a.editor.extraJSON),
 	}
+	if s := strings.TrimSpace(a.editor.concurrencyStr); s != "" {
+		if v, err := strconv.Atoi(s); err == nil {
+			svc.InsecureConcurrency = v
+		}
+	}
+	svc.NoPostQuantum = a.editor.noPostQuantum
 
 	if err := svc.Validate(); err != nil {
 		return svc, err
@@ -773,40 +779,58 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 
 func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
 	cat := a.catalog()
+	proto := editorProtocols[a.editor.protoIndex]
+
 	ui.Column(c).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-tunnel-timeout", cat.EditorTunnelTimeoutLabel(), &a.editor.tunnelTimeout, "")
+		if proto == config.ProtoNaive {
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-tunnel-timeout", cat.EditorTunnelTimeoutLabel(), &a.editor.tunnelTimeout, "")
+				})
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-idle-timeout", cat.EditorIdleTimeoutLabel(), &a.editor.idleTimeout, "")
+				})
 			})
-			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-idle-timeout", cat.EditorIdleTimeoutLabel(), &a.editor.idleTimeout, "")
-			})
-		})
 
-		labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel(), &a.editor.extraHeaders, "Header1: Value1")
+			labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel(), &a.editor.extraHeaders, "Header1: Value1")
 
-		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-host-rules", cat.EditorHostRulesLabel(), &a.editor.hostRules, "MAP example.com 1.2.3.4")
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-host-rules", cat.EditorHostRulesLabel(), &a.editor.hostRules, "MAP example.com 1.2.3.4")
+				})
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-resolver-range", cat.EditorResolverRangeLabel(), &a.editor.resolverRange, "100.64.0.0/10")
+				})
 			})
-			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-resolver-range", cat.EditorResolverRangeLabel(), &a.editor.resolverRange, "100.64.0.0/10")
-			})
-		})
 
-		switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
-		labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
+			switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
+			labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
 
-		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel(), &a.editor.logNetLog, "")
+			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel(), &a.editor.logNetLog, "")
+				})
+				ui.Box(c).Grow(1).Children(func() {
+					labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel(), &a.editor.sslKeyLogFile, "")
+				})
 			})
-			ui.Box(c).Grow(1).Children(func() {
-				labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel(), &a.editor.sslKeyLogFile, "")
-			})
-		})
 
-		labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"padding": true}`)
+			labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"padding": true}`)
+		} else {
+			// Multi-protocol advanced options
+			labeledInput(c, p, "inp-concurrency-adv", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
+			switchRow(c, p, "inp-nopq-adv", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
+
+			if a.editor.engineIndex == 1 { // Sidecar
+				switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
+				labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
+			}
+
+			ui.Column(c).Gap(4).Children(func() {
+				labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"mux": {"enabled": true}}`)
+				ui.Text(c, cat.EditorAdvancedCoreCustomDesc()).FontSize(11).TextColor(p.textMuted)
+			})
+		}
 	})
 }
 
@@ -821,11 +845,9 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 	}
 
 	ui.Column(c).Gap(10).Children(func() {
-		if svc.EffectiveEngine() == config.EngineSidecar && svc.EffectiveProtocol() == config.ProtoNaive {
-			rawJSON, _ := svc.ToConfigJSON()
+		// 1. Local link preview - only for Sidecar nodes (内置节点没有本地链接)
+		if svc.EffectiveEngine() == config.EngineSidecar {
 			v2rayURI := svc.V2rayNSocksURI()
-			naiveURI := svc.NaiveShareURI()
-
 			ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.PreviewLocalLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
@@ -835,19 +857,25 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 				})
 				ui.Text(c, v2rayURI).FontSize(12).FontWeight(500).TextColor(p.accent)
 			})
+		}
 
-			if naiveURI != "" {
-				ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
-						if actionChip(c.Key("preview-copy-naive"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
-							a.writeClipboard(naiveURI, cat.CopiedNaiveShareLink())
-						}
-					})
-					ui.Text(c, naiveURI).FontSize(12).TextColor(p.text)
+		// 2. Share / Config link preview for all protocols
+		shareURI := svc.ShareURI()
+		if shareURI != "" {
+			ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+					if actionChip(c.Key("preview-copy-share"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+						a.writeClipboard(shareURI, cat.CopiedNaiveShareLink())
+					}
 				})
-			}
+				ui.Text(c, shareURI).FontSize(12).TextColor(p.text)
+			})
+		}
 
+		// 3. Core Engine JSON Configuration
+		if svc.EffectiveEngine() == config.EngineSidecar && svc.EffectiveProtocol() == config.ProtoNaive {
+			rawJSON, _ := svc.ToConfigJSON()
 			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.PreviewNaiveJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)

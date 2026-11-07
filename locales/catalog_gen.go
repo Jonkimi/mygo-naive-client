@@ -746,6 +746,16 @@ func (msgs Messages) NodeDrawerNetwork() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerNetwork", nil)
 }
 
+// NodeDrawerConfigPreview says "Configuration Preview"
+// in the language the app shows.
+func NodeDrawerConfigPreview() string { return In(i18n.Locale()).NodeDrawerConfigPreview() }
+
+// NodeDrawerConfigPreview says "Configuration Preview"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerConfigPreview() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerConfigPreview", nil)
+}
+
 // NodeDrawerQuickActions says "Quick Actions"
 // in the language the app shows.
 func NodeDrawerQuickActions() string { return In(i18n.Locale()).NodeDrawerQuickActions() }
@@ -874,6 +884,18 @@ func NodeDrawerLocalListen() string { return In(i18n.Locale()).NodeDrawerLocalLi
 // in the language of msgs.
 func (msgs Messages) NodeDrawerLocalListen() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerLocalListen", nil)
+}
+
+// NodeDrawerLocalListenInProcess says "Embedded Core (Managed by Master Gateway/TUN, no local port)"
+// in the language the app shows.
+func NodeDrawerLocalListenInProcess() string {
+	return In(i18n.Locale()).NodeDrawerLocalListenInProcess()
+}
+
+// NodeDrawerLocalListenInProcess says "Embedded Core (Managed by Master Gateway/TUN, no local port)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerLocalListenInProcess() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerLocalListenInProcess", nil)
 }
 
 // NodeDrawerRemoteEndpoint says "Remote Outbound"
@@ -1034,6 +1056,26 @@ func GeodataSectionTitle() string { return In(i18n.Locale()).GeodataSectionTitle
 // in the language of msgs.
 func (msgs Messages) GeodataSectionTitle() string {
 	return Catalog.Format(msgs.locale, "geodataSectionTitle", nil)
+}
+
+// GeodataDesc says "High-accuracy GeoSite domain classifications and GeoIP databases based on Loyalsoldier ruleset"
+// in the language the app shows.
+func GeodataDesc() string { return In(i18n.Locale()).GeodataDesc() }
+
+// GeodataDesc says "High-accuracy GeoSite domain classifications and GeoIP databases based on Loyalsoldier ruleset"
+// in the language of msgs.
+func (msgs Messages) GeodataDesc() string {
+	return Catalog.Format(msgs.locale, "geodataDesc", nil)
+}
+
+// GeodataLocal says "GeoData "
+// in the language the app shows.
+func GeodataLocal() string { return In(i18n.Locale()).GeodataLocal() }
+
+// GeodataLocal says "GeoData "
+// in the language of msgs.
+func (msgs Messages) GeodataLocal() string {
+	return Catalog.Format(msgs.locale, "geodataLocal", nil)
 }
 
 // GeodataStatusReady says "GeoData Ready"
@@ -2076,11 +2118,11 @@ func (msgs Messages) ActionCopyV2rayN() string {
 	return Catalog.Format(msgs.locale, "actionCopyV2rayN", nil)
 }
 
-// ActionCopyNaive says "Copy Naive Link"
+// ActionCopyNaive says "Copy Config Link"
 // in the language the app shows.
 func ActionCopyNaive() string { return In(i18n.Locale()).ActionCopyNaive() }
 
-// ActionCopyNaive says "Copy Naive Link"
+// ActionCopyNaive says "Copy Config Link"
 // in the language of msgs.
 func (msgs Messages) ActionCopyNaive() string {
 	return Catalog.Format(msgs.locale, "actionCopyNaive", nil)
@@ -2796,11 +2838,11 @@ func (msgs Messages) EditorTabBasic() string {
 	return Catalog.Format(msgs.locale, "editorTabBasic", nil)
 }
 
-// EditorTabAdvanced says "Advanced (USAGE.txt)"
+// EditorTabAdvanced says "Advanced"
 // in the language the app shows.
 func EditorTabAdvanced() string { return In(i18n.Locale()).EditorTabAdvanced() }
 
-// EditorTabAdvanced says "Advanced (USAGE.txt)"
+// EditorTabAdvanced says "Advanced"
 // in the language of msgs.
 func (msgs Messages) EditorTabAdvanced() string {
 	return Catalog.Format(msgs.locale, "editorTabAdvanced", nil)
@@ -2814,6 +2856,16 @@ func EditorTabPreview() string { return In(i18n.Locale()).EditorTabPreview() }
 // in the language of msgs.
 func (msgs Messages) EditorTabPreview() string {
 	return Catalog.Format(msgs.locale, "editorTabPreview", nil)
+}
+
+// EditorAdvancedCoreCustomDesc says "Additional JSON properties merged into outbound configuration for custom transport, TLS, or routing behavior."
+// in the language the app shows.
+func EditorAdvancedCoreCustomDesc() string { return In(i18n.Locale()).EditorAdvancedCoreCustomDesc() }
+
+// EditorAdvancedCoreCustomDesc says "Additional JSON properties merged into outbound configuration for custom transport, TLS, or routing behavior."
+// in the language of msgs.
+func (msgs Messages) EditorAdvancedCoreCustomDesc() string {
+	return Catalog.Format(msgs.locale, "editorAdvancedCoreCustomDesc", nil)
 }
 
 // EditorAutoStartDesc says "Automatically launch this service when client starts"
@@ -3668,6 +3720,26 @@ func (msgs Messages) XrayLocal() string {
 	return Catalog.Format(msgs.locale, "xrayLocal", nil)
 }
 
+// XrayAutoCheckLabel says "Check daily for XTLS/Xray-core releases"
+// in the language the app shows.
+func XrayAutoCheckLabel() string { return In(i18n.Locale()).XrayAutoCheckLabel() }
+
+// XrayAutoCheckLabel says "Check daily for XTLS/Xray-core releases"
+// in the language of msgs.
+func (msgs Messages) XrayAutoCheckLabel() string {
+	return Catalog.Format(msgs.locale, "xrayAutoCheckLabel", nil)
+}
+
+// XrayAutoUpdateLabel says "Automatically update Xray-core via seamless hot-swap"
+// in the language the app shows.
+func XrayAutoUpdateLabel() string { return In(i18n.Locale()).XrayAutoUpdateLabel() }
+
+// XrayAutoUpdateLabel says "Automatically update Xray-core via seamless hot-swap"
+// in the language of msgs.
+func (msgs Messages) XrayAutoUpdateLabel() string {
+	return Catalog.Format(msgs.locale, "xrayAutoUpdateLabel", nil)
+}
+
 // EngineStatusPillTitle says "Engine Status"
 // in the language the app shows.
 func EngineStatusPillTitle() string { return In(i18n.Locale()).EngineStatusPillTitle() }
@@ -3880,11 +3952,11 @@ func (msgs Messages) PreviewLocalLink() string {
 	return Catalog.Format(msgs.locale, "previewLocalLink", nil)
 }
 
-// PreviewNaiveShareLink says "NaiveProxy Share Link"
+// PreviewNaiveShareLink says "Config Link Preview"
 // in the language the app shows.
 func PreviewNaiveShareLink() string { return In(i18n.Locale()).PreviewNaiveShareLink() }
 
-// PreviewNaiveShareLink says "NaiveProxy Share Link"
+// PreviewNaiveShareLink says "Config Link Preview"
 // in the language of msgs.
 func (msgs Messages) PreviewNaiveShareLink() string {
 	return Catalog.Format(msgs.locale, "previewNaiveShareLink", nil)
@@ -3950,11 +4022,11 @@ func (msgs Messages) CopiedLocalLink() string {
 	return Catalog.Format(msgs.locale, "copiedLocalLink", nil)
 }
 
-// CopiedNaiveShareLink says "Copied Naive share link"
+// CopiedNaiveShareLink says "Copied config link"
 // in the language the app shows.
 func CopiedNaiveShareLink() string { return In(i18n.Locale()).CopiedNaiveShareLink() }
 
-// CopiedNaiveShareLink says "Copied Naive share link"
+// CopiedNaiveShareLink says "Copied config link"
 // in the language of msgs.
 func (msgs Messages) CopiedNaiveShareLink() string {
 	return Catalog.Format(msgs.locale, "copiedNaiveShareLink", nil)

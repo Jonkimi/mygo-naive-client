@@ -141,7 +141,7 @@ func ExtractXrayZip(zipPath, targetBinPath string) error {
 	}
 	defer r.Close()
 
-	binName := filepath.Base(targetBinPath)
+	binName := strings.TrimSuffix(filepath.Base(targetBinPath), ".new")
 	var targetFile *zip.File
 	for _, f := range r.File {
 		if filepath.Base(f.Name) == binName {

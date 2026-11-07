@@ -205,9 +205,9 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 		t.Fatalf("expected toast '已复制本地链接' after copy, got texts: %q", tt.Texts())
 	}
 
-	// Click "复制 Naive 链接" on the first card and verify clipboard format and toast
-	if err := tt.Click("复制 Naive 链接"); err != nil {
-		t.Fatalf("click 复制 Naive 链接: %v", err)
+	// Click "复制配置链接" on the first card and verify clipboard format and toast
+	if err := tt.Click("复制配置链接"); err != nil {
+		t.Fatalf("click 复制配置链接: %v", err)
 	}
 	tt.Frame()
 
@@ -215,8 +215,8 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 	if a.clipboardMem != wantNaiveURI {
 		t.Fatalf("clipboard Naive URI = %q, want %q", a.clipboardMem, wantNaiveURI)
 	}
-	if !tt.HasText("已复制 Naive 分享链接") {
-		t.Fatalf("expected toast '已复制 Naive 分享链接' after copy, got texts: %q", tt.Texts())
+	if !tt.HasText("已复制配置链接") {
+		t.Fatalf("expected toast '已复制配置链接' after copy, got texts: %q", tt.Texts())
 	}
 
 	// Click "全部停止" and verify both transition back to stopped
@@ -257,13 +257,13 @@ func TestServiceCard_CopyTooltips(t *testing.T) {
 		t.Fatalf("expected tooltip %q, got texts: %q", wantLocalTip, tt.Texts())
 	}
 
-	// Move away and hover over "复制 Naive 链接"
+	// Move away and hover over "复制配置链接"
 	tt.Move(0, 0)
 	tt.Advance(time.Second)
 
-	r, ok = tt.Find("复制 Naive 链接")
+	r, ok = tt.Find("复制配置链接")
 	if !ok {
-		t.Fatalf("could not find '复制 Naive 链接' button")
+		t.Fatalf("could not find '复制配置链接' button")
 	}
 	tt.Move(r.X+r.W/2, r.Y+r.H/2)
 	tt.Advance(time.Second)
@@ -281,9 +281,9 @@ func TestServiceCard_CopyTooltips(t *testing.T) {
 		},
 	}
 	_, tt2, _ := newTestApp(t, noProxySvcs)
-	r2, ok := tt2.Find("复制 Naive 链接")
+	r2, ok := tt2.Find("复制配置链接")
 	if !ok {
-		t.Fatalf("could not find '复制 Naive 链接' button on unconfigured service")
+		t.Fatalf("could not find '复制配置链接' button on unconfigured service")
 	}
 	tt2.Move(r2.X+r2.W/2, r2.Y+r2.H/2)
 	tt2.Advance(time.Second)
@@ -779,6 +779,170 @@ func TestAutoCoreUpdateSilentHotSwap(t *testing.T) {
 	}
 	if binSum != a.state.InstalledNaiveSHA256 {
 		t.Fatalf("persisted SHA256 %s does not match binary on disk %s", a.state.InstalledNaiveSHA256, binSum)
+	}
+}
+
+// Tests that naive and xray auto update switches are grouped with their sidecars (Law of Proximity),
+// that geodata database is displayed inside the core manager section with recorded version, and toggles persist.
+func TestSettings_CoreEnginesAndGeodataProximity(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	_ = os.MkdirAll(a.geodataDir(), 0o755)
+	_ = os.WriteFile(filepath.Join(a.geodataDir(), "geoip.dat"), []byte("mock-geoip"), 0o644)
+	_ = os.WriteFile(filepath.Join(a.geodataDir(), "geosite.dat"), []byte("mock-geosite"), 0o644)
+	a.state.InstalledGeodataTag = "202611062204"
+	a.state.AutoCheckUpdate = true
+	a.state.AutoCheckXray = true
+	a.state.AutoUpdateCore = true
+	a.state.AutoUpdateXray = true
+	a.refreshGeoDataStatus()
+
+	// Navigate to settings workbench
+	if err := tt.Click(a.catalog().NavSettings()); err != nil {
+		t.Fatalf("click settings: %v", err)
+	}
+	tt.SetSize(900, 1400)
+	tt.Frame()
+
+	// Verify section title is present
+	if !tt.HasText(a.catalog().TriCoreSectionTitle()) {
+		t.Fatalf("expected %q section in settings", a.catalog().TriCoreSectionTitle())
+	}
+
+	// Verify geodata version badge is rendered
+	expectedGeodataBadge := a.catalog().GeodataLocal() + "202611062204"
+	if !tt.HasText(expectedGeodataBadge) {
+		t.Fatalf("expected geodata version badge %q, got texts: %v", expectedGeodataBadge, tt.Texts())
+	}
+
+	// Toggle Naive auto check switch
+	if err := tt.Click(a.catalog().CoreAutoCheckLabel()); err != nil {
+		t.Fatalf("click CoreAutoCheckLabel: %v", err)
+	}
+	tt.Frame()
+	if a.state.AutoCheckUpdate != false {
+		t.Fatalf("expected AutoCheckUpdate to be false after toggle, got %v", a.state.AutoCheckUpdate)
+	}
+
+	// Toggle Naive auto update switch
+	if err := tt.Click(a.catalog().CoreAutoUpdateLabel()); err != nil {
+		t.Fatalf("click CoreAutoUpdateLabel: %v", err)
+	}
+	tt.Frame()
+	if a.state.AutoUpdateCore != false {
+		t.Fatalf("expected AutoUpdateCore to be false after toggle, got %v", a.state.AutoUpdateCore)
+	}
+
+	// Toggle Xray auto check switch
+	if err := tt.Click(a.catalog().XrayAutoCheckLabel()); err != nil {
+		t.Fatalf("click XrayAutoCheckLabel: %v", err)
+	}
+	tt.Frame()
+	if a.state.AutoCheckXray != false {
+		t.Fatalf("expected AutoCheckXray to be false after toggle, got %v", a.state.AutoCheckXray)
+	}
+
+	// Toggle Xray auto update switch
+	if err := tt.Click(a.catalog().XrayAutoUpdateLabel()); err != nil {
+		t.Fatalf("click XrayAutoUpdateLabel: %v", err)
+	}
+	tt.Frame()
+	if a.state.AutoUpdateXray != false {
+		t.Fatalf("expected AutoUpdateXray to be false after toggle, got %v", a.state.AutoUpdateXray)
+	}
+}
+
+// Tests that Xray-core is seamlessly updated in the background when AutoUpdateXray is enabled.
+func TestAutoXrayUpdateSilentHotSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows due to mock shell script")
+	}
+
+	a, tt, _ := newTestApp(t, nil)
+	a.state.InstalledXrayTag = "v24.11.30"
+	a.state.AutoUpdateXray = true
+	a.syncXrayBinaryPathAndVersion()
+
+	if a.localXrayVersion != "v24.11.30" {
+		t.Fatalf("expected initial localXrayVersion = %q, got %q", "v24.11.30", a.localXrayVersion)
+	}
+
+	// Prepare mock zip archive for Xray v25.1.30
+	newScript := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then echo \"Xray 25.1.30 (Custom)\"; exit 0; fi\ntrap 'exit 0' INT TERM\nwhile true; do sleep 0.1; done\n"
+	assetSuffix, err := updater.ExpectedXrayAssetSuffix(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatalf("xray asset suffix: %v", err)
+	}
+	assetName := "Xray-" + assetSuffix
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(updater.XrayBinaryFilename(runtime.GOOS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(newScript)); err != nil {
+		t.Fatal(err)
+	}
+	_ = zw.Close()
+	archiveBytes := buf.Bytes()
+	sum := sha256.Sum256(archiveBytes)
+	digest := hex.EncodeToString(sum[:])
+	dgstContent := fmt.Sprintf("SHA256= %s\n", digest)
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			rel := updater.Release{
+				TagName: "v25.1.30",
+				Name:    "v25.1.30",
+				Assets: []updater.Asset{
+					{
+						Name:               assetName,
+						Size:               int64(len(archiveBytes)),
+						BrowserDownloadURL: srv.URL + "/download/" + assetName,
+					},
+					{
+						Name:               assetName + ".dgst",
+						BrowserDownloadURL: srv.URL + "/download/" + assetName + ".dgst",
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(rel)
+		case "/download/" + assetName:
+			_, _ = w.Write(archiveBytes)
+		case "/download/" + assetName + ".dgst":
+			_, _ = w.Write([]byte(dgstContent))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldAPI := updater.LatestXrayReleaseAPI
+	updater.LatestXrayReleaseAPI = srv.URL + "/latest"
+	t.Cleanup(func() {
+		updater.LatestXrayReleaseAPI = oldAPI
+	})
+
+	// Trigger automatic background update check for Xray
+	a.triggerCheckXrayUpdate(false)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !a.updatingXrayCore && a.localXrayVersion == "v25.1.30" {
+			break
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	tt.Frame()
+
+	if a.localXrayVersion != "v25.1.30" {
+		t.Fatalf("localXrayVersion after auto update = %q, want v25.1.30 (err=%s)", a.localXrayVersion, a.updateXrayError)
+	}
+	if a.state.InstalledXrayTag != "v25.1.30" {
+		t.Fatalf("expected state.InstalledXrayTag = %q, got %q", "v25.1.30", a.state.InstalledXrayTag)
 	}
 }
 
@@ -2603,4 +2767,91 @@ func TestNodeDetailsDrawer_OpenCloseAndPIDDisplay(t *testing.T) {
 		t.Fatalf("PID %q should no longer be visible after closing drawer", pidStr)
 	}
 }
+
+// Tests that in-process nodes do not show local link on the card or drawer, and that the drawer shows configuration preview.
+func TestInProcessNode_NoLocalLinkAndConfigPreviewInDrawer(t *testing.T) {
+	svcs := []config.Service{
+		{
+			ID:         "svc-inprocess",
+			Name:       "US-VLESS-InProcess",
+			Protocol:   config.ProtoVLESS,
+			Engine:     config.EngineSingBox,
+			Server:     "vless.example.com",
+			ServerPort: 443,
+			UUID:       "11111111-2222-3333-4444-555555555555",
+			Security:   "tls",
+		},
+		{
+			ID:       "svc-sidecar",
+			Name:     "HK-Naive-Sidecar",
+			Protocol: config.ProtoNaive,
+			Engine:   config.EngineSidecar,
+			Listens:  []string{"socks://127.0.0.1:1088"},
+			Proxies:  []string{"https://alice:secret@hk.example.com:443"},
+		},
+	}
+	a, tt, _ := newTestApp(t, svcs)
+
+	// 1. On node card:
+	// For in-process node, "复制本地链接" should NOT be present.
+	// Only sidecar node has "复制本地链接".
+	localLinkCount := 0
+	for _, text := range tt.Texts() {
+		if text == a.catalog().ActionCopyV2rayN() {
+			localLinkCount++
+		}
+	}
+	if localLinkCount != 1 {
+		t.Fatalf("expected exactly 1 '复制本地链接' for sidecar node, got %d", localLinkCount)
+	}
+
+	// Both should have "复制配置链接"
+	shareLinkCount := 0
+	for _, text := range tt.Texts() {
+		if text == a.catalog().ActionCopyNaive() {
+			shareLinkCount++
+		}
+	}
+	if shareLinkCount != 2 {
+		t.Fatalf("expected 2 '复制配置链接', got %d", shareLinkCount)
+	}
+
+	// 2. Open details drawer for in-process node
+	a.activeNodeDrawerID = "svc-inprocess"
+	tt.Frame()
+
+	// In the drawer:
+	// Local listen should show in-process summary
+	if !tt.HasText(a.catalog().NodeDrawerLocalListenInProcess()) {
+		t.Fatalf("expected in-process local listen text %q", a.catalog().NodeDrawerLocalListenInProcess())
+	}
+	// "配置预览" header should be visible
+	if !tt.HasText(a.catalog().NodeDrawerConfigPreview()) {
+		t.Fatalf("expected config preview title %q", a.catalog().NodeDrawerConfigPreview())
+	}
+	// Sing-box outbound JSON title should be visible
+	if !tt.HasText(a.catalog().PreviewSingBoxJSON()) {
+		t.Fatalf("expected sing-box preview title %q", a.catalog().PreviewSingBoxJSON())
+	}
+	// In-process drawer should NOT have "复制本地链接"
+	inprocessDrawerLocalCount := 0
+	for _, text := range tt.Texts() {
+		if text == a.catalog().ActionCopyV2rayN() {
+			inprocessDrawerLocalCount++
+		}
+	}
+	// Only the card behind for sidecar has 1, the drawer for inprocess has 0
+	if inprocessDrawerLocalCount != 1 {
+		t.Fatalf("expected 1 '复制本地链接' (card only, none in in-process drawer), got %d", inprocessDrawerLocalCount)
+	}
+
+	// 3. Open details drawer for sidecar node
+	a.activeNodeDrawerID = "svc-sidecar"
+	tt.Frame()
+	// Sidecar node drawer should show local loopback link preview
+	if !tt.HasText(a.catalog().PreviewLocalLink()) {
+		t.Fatalf("expected sidecar node drawer to have %q", a.catalog().PreviewLocalLink())
+	}
+}
+
 

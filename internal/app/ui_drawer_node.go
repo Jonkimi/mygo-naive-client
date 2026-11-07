@@ -1,11 +1,13 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
 )
@@ -228,7 +230,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 							}
 						})
 
-					// 4. Network Inbound & Outbound
+					// 4. Network Inbound & Outbound (内置节点没有独立本地链接)
 					ui.Column(c).Gap(10).Padding(14).Radius(10).
 						Background(p.card).Border(1, p.borderSubtle).
 						Children(func() {
@@ -237,7 +239,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 							// Inbound
 							ui.Column(c).Gap(3).Children(func() {
 								ui.Text(c, cat.NodeDrawerLocalListen()).FontSize(11).TextColor(p.textDim)
-								listenSummary := "sing-box (in-process)"
+								listenSummary := cat.NodeDrawerLocalListenInProcess()
 								if svc.EffectiveEngine() == config.EngineSidecar {
 									listens := strings.Join(svc.Listens, ", ")
 									if listens == "" || svc.PrimaryListen() == "socks://127.0.0.1:0" {
@@ -248,8 +250,6 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 										}
 									}
 									listenSummary = listens
-								} else if len(svc.Listens) > 0 && svc.PrimaryListen() != "socks://127.0.0.1:0" {
-									listenSummary = svc.PrimaryListen()
 								}
 								ui.Text(c, listenSummary).FontSize(13).FontWeight(600).TextColor(p.text)
 							})
@@ -268,7 +268,79 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 							})
 						})
 
-					// 5. Quick Actions
+					// 5. Configuration Preview (配置预览项)
+					ui.Column(c).Gap(10).Padding(14).Radius(10).
+						Background(p.card).Border(1, p.borderSubtle).
+						Children(func() {
+							ui.Text(c, cat.NodeDrawerConfigPreview()).FontSize(12).FontWeight(700).TextColor(p.textDim)
+
+							// A: Share Link Preview (all protocols)
+							shareURI := svc.ShareURI()
+							if shareURI != "" {
+								ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+										ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+										if subtleActionChip(c.Key("drawer-preview-copy-share"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+											a.writeClipboard(shareURI, cat.CopiedNaiveShareLink())
+										}
+									})
+									ui.Text(c, shareURI).FontSize(11).TextColor(p.text).LineHeight(1.3)
+								})
+							}
+
+							// B: Local Link (Sidecar only, 内置节点没有独立本地链接)
+							if svc.EffectiveEngine() == config.EngineSidecar {
+								localURI := svc.V2rayNSocksURI()
+								ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+										ui.Text(c, cat.PreviewLocalLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+										if subtleActionChip(c.Key("drawer-preview-copy-local"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+											a.writeClipboard(localURI, cat.CopiedLocalLink())
+										}
+									})
+									ui.Text(c, localURI).FontSize(11).TextColor(p.accent)
+								})
+							}
+
+							// C: Core Engine JSON Configuration Preview
+							if svc.EffectiveEngine() == config.EngineSidecar && svc.EffectiveProtocol() == config.ProtoNaive {
+								rawJSON, _ := svc.ToConfigJSON()
+								ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+										ui.Text(c, cat.PreviewNaiveJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+										if subtleActionChip(c.Key("drawer-preview-copy-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+											a.writeClipboard(string(rawJSON), cat.CopiedConfigJSON())
+										}
+									})
+									ui.Text(c, string(rawJSON)).FontSize(11).TextColor(p.text).LineHeight(1.3)
+								})
+							} else if svc.EffectiveEngine() == config.EngineSidecar {
+								cfgBytes, _ := runner.GenerateXrayConfig(svc, 1080)
+								ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+										ui.Text(c, cat.PreviewXrayJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+										if subtleActionChip(c.Key("drawer-preview-copy-xray-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+											a.writeClipboard(string(cfgBytes), cat.CopiedXrayJSON())
+										}
+									})
+									ui.Text(c, string(cfgBytes)).FontSize(11).TextColor(p.text).LineHeight(1.3)
+								})
+							} else {
+								obMap := boxengine.BuildNativeOutbound(svc)
+								obJSON, _ := json.MarshalIndent(obMap, "", "  ")
+								ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+										ui.Text(c, cat.PreviewSingBoxJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
+										if subtleActionChip(c.Key("drawer-preview-copy-sb-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+											a.writeClipboard(string(obJSON), cat.CopiedSingBoxJSON())
+										}
+									})
+									ui.Text(c, string(obJSON)).FontSize(11).TextColor(p.text).LineHeight(1.3)
+								})
+							}
+						})
+
+					// 6. Quick Actions (内置节点不提供本地链接复制)
 					ui.Column(c).Gap(10).Padding(14).Radius(10).
 						Background(p.card).Border(1, p.borderSubtle).
 						Children(func() {
@@ -289,11 +361,13 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 							}
 
 							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-								if subtleActionChip(c.Key("drawer-copy-local"), p, iconCopy, cat.ActionCopyV2rayN(), false).Clicked() {
-									a.copyV2rayNLink(svc)
+								if svc.EffectiveEngine() == config.EngineSidecar {
+									if subtleActionChip(c.Key("drawer-copy-local"), p, iconCopy, cat.ActionCopyV2rayN(), false).Clicked() {
+										a.copyV2rayNLink(svc)
+									}
 								}
-								if subtleActionChip(c.Key("drawer-copy-naive"), p, iconCopy, cat.ActionCopyNaive(), false).Clicked() {
-									a.copyNaiveShareLink(svc)
+								if subtleActionChip(c.Key("drawer-copy-share"), p, iconCopy, cat.ActionCopyNaive(), false).Clicked() {
+									a.copyShareLink(svc)
 								}
 							})
 						})

@@ -31,6 +31,7 @@ type UpdateOptions struct {
 	GitHubMirror  string
 	ProxyURL      string
 	ProxyEP       *config.ListenEndpoint
+	Tag           string
 }
 
 func applyMirror(rawURL, mirror string) string {
@@ -42,12 +43,34 @@ func applyMirror(rawURL, mirror string) string {
 	return mirror + "/" + rawURL
 }
 
-func Update(ctx context.Context, opts UpdateOptions, onProgress func(stage string, percent float64)) error {
+func extractReleaseTag(rawURL string) string {
+	const marker = "/releases/download/"
+	idx := strings.Index(rawURL, marker)
+	if idx == -1 {
+		return ""
+	}
+	rem := rawURL[idx+len(marker):]
+	slash := strings.IndexByte(rem, '/')
+	if slash == -1 {
+		return rem
+	}
+	return rem[:slash]
+}
+
+// DetectLocalVersion reads the locally recorded release version from DestDir/version.txt if present.
+func DetectLocalVersion(destDir string) string {
+	if b, err := os.ReadFile(filepath.Join(destDir, "version.txt")); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
+
+func Update(ctx context.Context, opts UpdateOptions, onProgress func(stage string, percent float64)) (string, error) {
 	if opts.DestDir == "" {
-		return errors.New("destDir is required")
+		return "", errors.New("destDir is required")
 	}
 	if err := os.MkdirAll(opts.DestDir, 0o755); err != nil {
-		return err
+		return "", err
 	}
 
 	ipURL := opts.GeoIPURL
@@ -77,17 +100,31 @@ func Update(ctx context.Context, opts UpdateOptions, onProgress func(stage strin
 
 	// 1. Download & verify geoip.dat
 	ipDest := filepath.Join(opts.DestDir, "geoip.dat")
-	if err := downloadAndVerify(ctx, client, ipURL, ipSumURL, ipDest, "下载 GeoIP 规则库", 0.0, 0.5, onProgress); err != nil {
-		return fmt.Errorf("geoip: %w", err)
+	tag1, err := downloadAndVerify(ctx, client, ipURL, ipSumURL, ipDest, "下载 GeoIP 规则库", 0.0, 0.5, onProgress)
+	if err != nil {
+		return "", fmt.Errorf("geoip: %w", err)
 	}
 
 	// 2. Download & verify geosite.dat
 	siteDest := filepath.Join(opts.DestDir, "geosite.dat")
-	if err := downloadAndVerify(ctx, client, siteURL, siteSumURL, siteDest, "下载 GeoSite 规则库", 0.5, 1.0, onProgress); err != nil {
-		return fmt.Errorf("geosite: %w", err)
+	tag2, err := downloadAndVerify(ctx, client, siteURL, siteSumURL, siteDest, "下载 GeoSite 规则库", 0.5, 1.0, onProgress)
+	if err != nil {
+		return "", fmt.Errorf("geosite: %w", err)
 	}
 
-	return nil
+	finalTag := strings.TrimSpace(opts.Tag)
+	if finalTag == "" {
+		if tag1 != "" {
+			finalTag = tag1
+		} else if tag2 != "" {
+			finalTag = tag2
+		}
+	}
+	if finalTag != "" {
+		_ = os.WriteFile(filepath.Join(opts.DestDir, "version.txt"), []byte(finalTag), 0o644)
+	}
+
+	return finalTag, nil
 }
 
 func downloadAndVerify(
@@ -100,7 +137,7 @@ func downloadAndVerify(
 	pStart float64,
 	pEnd float64,
 	onProgress func(stage string, percent float64),
-) error {
+) (string, error) {
 	if onProgress != nil {
 		onProgress(stageName, pStart)
 	}
@@ -108,40 +145,45 @@ func downloadAndVerify(
 	// Download expected checksum
 	reqSum, err := http.NewRequestWithContext(ctx, http.MethodGet, sumURL, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	respSum, err := client.Do(reqSum)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer respSum.Body.Close()
 	if respSum.StatusCode != http.StatusOK {
-		return fmt.Errorf("checksum HTTP %d", respSum.StatusCode)
+		return "", fmt.Errorf("checksum HTTP %d", respSum.StatusCode)
 	}
 	sumBytes, err := io.ReadAll(respSum.Body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	expectedHash := strings.ToLower(strings.TrimSpace(strings.Fields(string(sumBytes))[0]))
 
 	// Download data payload
 	reqData, err := http.NewRequestWithContext(ctx, http.MethodGet, dataURL, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	respData, err := client.Do(reqData)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer respData.Body.Close()
 	if respData.StatusCode != http.StatusOK {
-		return fmt.Errorf("data HTTP %d", respData.StatusCode)
+		return "", fmt.Errorf("data HTTP %d", respData.StatusCode)
+	}
+
+	var detectedTag string
+	if respData.Request != nil && respData.Request.URL != nil {
+		detectedTag = extractReleaseTag(respData.Request.URL.String())
 	}
 
 	tmpFile := destFile + ".tmp"
 	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() {
 		_ = f.Close()
@@ -158,7 +200,7 @@ func downloadAndVerify(
 		n, readErr := respData.Body.Read(buf)
 		if n > 0 {
 			if _, wErr := writer.Write(buf[:n]); wErr != nil {
-				return wErr
+				return "", wErr
 			}
 			downloaded += int64(n)
 			if onProgress != nil && totalBytes > 0 {
@@ -170,25 +212,25 @@ func downloadAndVerify(
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return readErr
+			return "", readErr
 		}
 	}
 
 	if err := f.Close(); err != nil {
-		return err
+		return "", err
 	}
 
 	actualHash := hex.EncodeToString(hasher.Sum(nil))
 	if expectedHash != "" && actualHash != expectedHash {
-		return fmt.Errorf("SHA256 mismatch: got %s, expected %s", actualHash, expectedHash)
+		return "", fmt.Errorf("SHA256 mismatch: got %s, expected %s", actualHash, expectedHash)
 	}
 
 	if err := os.Rename(tmpFile, destFile); err != nil {
-		return err
+		return "", err
 	}
 
 	if onProgress != nil {
 		onProgress(stageName, pEnd)
 	}
-	return nil
+	return detectedTag, nil
 }

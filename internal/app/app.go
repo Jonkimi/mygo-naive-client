@@ -111,7 +111,11 @@ type app struct {
 	updatingXrayCore   bool
 	updateXrayError    string
 
-	updatingGeoData bool
+	localGeodataVersion   string
+	latestGeodataRelease  *updater.Release
+	hasGeodataUpdate      bool
+	checkingGeodataUpdate bool
+	updatingGeoData       bool
 	geoSiteTags     []string
 	geoIPTags       []string
 	cachedIPDB      *geodata.GeoIPDB
@@ -406,6 +410,10 @@ func (a *app) boot() {
 	if a.state.AutoCheckUpdate {
 		a.triggerCheckUpdate(false)
 	}
+	if a.state.AutoCheckXray {
+		a.triggerCheckXrayUpdate(false)
+	}
+	a.triggerCheckGeodataUpdate(false)
 
 	go a.startPeriodicUpdateCheck()
 }
@@ -418,12 +426,15 @@ func (a *app) startPeriodicUpdateCheck() {
 		case <-a.quitCh:
 			return
 		case <-ticker.C:
-			if a.state.AutoCheckUpdate {
-				a.dispatchUI(func() {
+			a.dispatchUI(func() {
+				if a.state.AutoCheckUpdate {
 					a.triggerCheckUpdate(false)
+				}
+				if a.state.AutoCheckXray {
 					a.triggerCheckXrayUpdate(false)
-				})
-			}
+				}
+				a.triggerCheckGeodataUpdate(false)
+			})
 		}
 	}
 }
@@ -633,6 +644,7 @@ func (a *app) triggerCheckUpdate(manual bool) {
 	}
 	if manual {
 		a.triggerCheckXrayUpdate(false)
+		a.triggerCheckGeodataUpdate(false)
 	}
 	a.checkingUpdate = true
 	a.updateError = ""
@@ -809,6 +821,10 @@ func (a *app) triggerCheckXrayUpdate(manual bool) {
 				a.saveState()
 			}
 			if a.hasXrayUpdate && rel != nil {
+				if !manual && a.state.AutoUpdateXray && !a.updatingXrayCore {
+					a.triggerSeamlessXrayUpdate(true)
+					return
+				}
 				if manual {
 					a.toast("发现 Xray 新版本: " + rel.TagName)
 				}
@@ -902,13 +918,17 @@ func (a *app) copyV2rayNLink(svc config.Service) {
 	a.writeClipboard(uri, "已复制本地链接: "+uri)
 }
 
-func (a *app) copyNaiveShareLink(svc config.Service) {
-	uri := svc.NaiveShareURI()
+func (a *app) copyShareLink(svc config.Service) {
+	uri := svc.ShareURI()
 	if uri == "" {
 		a.toast("该服务未配置可导出的远端节点")
 		return
 	}
-	a.writeClipboard(uri, "已复制 Naive 分享链接")
+	a.writeClipboard(uri, a.catalog().CopiedNaiveShareLink())
+}
+
+func (a *app) copyNaiveShareLink(svc config.Service) {
+	a.copyShareLink(svc)
 }
 
 func (a *app) writeClipboard(text, toastMsg string) {
@@ -1434,10 +1454,65 @@ func (a *app) refreshGeoDataStatus() {
 	st1, err1 := os.Stat(ipPath)
 	st2, err2 := os.Stat(sitePath)
 	a.geoDataReady = err1 == nil && err2 == nil && st1.Size() > 0 && st2.Size() > 0
+	if a.geoDataReady {
+		if a.state.InstalledGeodataTag != "" {
+			a.localGeodataVersion = a.state.InstalledGeodataTag
+		} else if v := geodata.DetectLocalVersion(dir); v != "" {
+			a.localGeodataVersion = v
+			a.state.InstalledGeodataTag = v
+			a.saveState()
+		} else {
+			a.localGeodataVersion = st1.ModTime().Format("20060102")
+		}
+	} else {
+		a.localGeodataVersion = ""
+	}
+	if a.latestGeodataRelease != nil {
+		a.hasGeodataUpdate = a.geoDataReady && updater.NeedsUpdateWithTag(a.state.InstalledGeodataTag, a.localGeodataVersion, a.latestGeodataRelease.TagName)
+	}
 }
 
 func (a *app) hasGeoData() bool {
 	return a.geoDataReady
+}
+
+func (a *app) triggerCheckGeodataUpdate(manual bool) {
+	if a.checkingGeodataUpdate {
+		return
+	}
+	a.checkingGeodataUpdate = true
+	opts := a.buildUpdaterHTTPOptions(20 * time.Second)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		rel, err := updater.CheckLatestGeodata(ctx, opts)
+		a.dispatchUI(func() {
+			a.checkingGeodataUpdate = false
+			a.refreshGeoDataStatus()
+			if err != nil {
+				if manual {
+					a.toast("检查规则库更新失败: " + err.Error())
+				}
+				return
+			}
+			a.latestGeodataRelease = rel
+			if a.geoDataReady {
+				a.hasGeodataUpdate = updater.NeedsUpdateWithTag(a.state.InstalledGeodataTag, a.localGeodataVersion, rel.TagName)
+			}
+			if rel != nil && a.state.LastKnownRemoteGeodataTag != rel.TagName {
+				a.state.LastKnownRemoteGeodataTag = rel.TagName
+				a.saveState()
+			}
+			if a.hasGeodataUpdate && rel != nil {
+				if manual {
+					a.toast("发现规则库新版本: " + rel.TagName)
+				}
+			} else if manual {
+				a.toast("规则库当前已是最新版本")
+			}
+		})
+	}()
 }
 
 func (a *app) triggerUpdateGeoData() {
@@ -1449,6 +1524,11 @@ func (a *app) triggerUpdateGeoData() {
 		a.win.Invalidate()
 	}
 	a.toast("正在下载与校验最新规则库 (Loyalsoldier)...")
+	rel := a.latestGeodataRelease
+	targetTag := ""
+	if rel != nil {
+		targetTag = rel.TagName
+	}
 	go func() {
 		var ep *config.ListenEndpoint
 		if a.state.UseRunningServiceForUpd && a.mgr != nil {
@@ -1461,13 +1541,20 @@ func (a *app) triggerUpdateGeoData() {
 			GitHubMirror: a.state.GitHubMirror,
 			ProxyURL:     strings.TrimSpace(a.state.UpdateProxy),
 			ProxyEP:      ep,
+			Tag:          targetTag,
 		}
-		err := geodata.Update(context.Background(), opts, nil)
+		ver, err := geodata.Update(context.Background(), opts, nil)
 		a.dispatchUI(func() {
 			a.updatingGeoData = false
 			if err != nil {
 				a.toast("规则库更新失败: " + err.Error())
 			} else {
+				if ver != "" {
+					a.state.InstalledGeodataTag = ver
+					a.localGeodataVersion = ver
+					a.hasGeodataUpdate = false
+					a.saveState()
+				}
 				a.cachedIPDB = nil
 				a.cachedSiteDB = nil
 				a.cachedIPTags = nil
@@ -1475,9 +1562,14 @@ func (a *app) triggerUpdateGeoData() {
 				a.cachedAdsRules = nil
 				a.geoSiteTags = nil
 				a.geoIPTags = nil
+				a.refreshGeoDataStatus()
 				a.syncRouter()
 				a.syncBlockerRules()
-				a.toast("规则库已更新并重新加载")
+				if ver != "" {
+					a.toast(fmt.Sprintf("规则库已更新至 %s 并重新加载", ver))
+				} else {
+					a.toast("规则库已更新并重新加载")
+				}
 			}
 			if a.win != nil {
 				a.win.Invalidate()

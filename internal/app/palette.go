@@ -95,7 +95,7 @@ func paletteFor(t *ui.Theme) palette {
 }
 
 func statusBadge(c *ui.Context, label string, fg, bg ui.Color) {
-	ui.Row(c).AlignItems(ui.Center).Gap(6).
+	ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).
 		PaddingX(9).PaddingY(4).Radius(999).Background(bg).
 		Children(func() {
 			ui.Box(c).Size(7, 7).Radius(999).Background(fg)
@@ -104,7 +104,7 @@ func statusBadge(c *ui.Context, label string, fg, bg ui.Color) {
 }
 
 func tagPill(c *ui.Context, label string, fg, bg ui.Color) {
-	ui.Row(c).AlignItems(ui.Center).
+	ui.Row(c).AlignItems(ui.Center).Shrink(0).
 		PaddingX(8).PaddingY(3).Radius(6).Background(bg).
 		Children(func() {
 			ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(fg)
@@ -237,7 +237,10 @@ func labeledTextArea(c *ui.Context, p palette, key, label string, value *string,
 func switchRow(c *ui.Context, p palette, key, label string, value *bool) bool {
 	changed := false
 	ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(p.text)
+		if ui.Text(c, label).FontSize(12).TextColor(p.text).Clicked() {
+			*value = !*value
+			changed = true
+		}
 		if ui.Switch(c.Key(key), value).Label(label).Changed() {
 			changed = true
 		}

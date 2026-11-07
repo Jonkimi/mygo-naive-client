@@ -688,16 +688,18 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 						ui.Box(c).Size(1, 14).Background(p.borderSubtle)
 
-						localLink := svc.V2rayNSocksURI()
-						if subtleActionChip(c.Key("copy-local"), p, iconCopy, cat.ActionCopyV2rayN(), false).Tooltip(localLink).Clicked() {
-							a.copyV2rayNLink(svc)
+						if svc.EffectiveEngine() == config.EngineSidecar {
+							localLink := svc.V2rayNSocksURI()
+							if subtleActionChip(c.Key("copy-local"), p, iconCopy, cat.ActionCopyV2rayN(), false).Tooltip(localLink).Clicked() {
+								a.copyV2rayNLink(svc)
+							}
 						}
-						naiveTip := svc.NaiveShareURI()
-						if naiveTip == "" {
-							naiveTip = cat.NoRemoteConfigured()
+						shareTip := svc.ShareURI()
+						if shareTip == "" {
+							shareTip = cat.NoRemoteConfigured()
 						}
-						if subtleActionChip(c.Key("copy-naive"), p, iconCopy, cat.ActionCopyNaive(), false).Tooltip(naiveTip).Clicked() {
-							a.copyNaiveShareLink(svc)
+						if subtleActionChip(c.Key("copy-naive"), p, iconCopy, cat.ActionCopyNaive(), false).Tooltip(shareTip).Clicked() {
+							a.copyShareLink(svc)
 						}
 					})
 

@@ -208,7 +208,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 			ui.Column(c).Gap(10).Padding(14).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.TriCoreSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
-					if actionChip(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), a.checkingUpdate || a.checkingXrayUpdate || a.updatingCore || a.updatingXrayCore).Clicked() {
+					if actionChip(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), a.checkingUpdate || a.checkingXrayUpdate || a.checkingGeodataUpdate || a.updatingCore || a.updatingXrayCore || a.updatingGeoData).Clicked() {
 						a.triggerCheckUpdate(true)
 					}
 				})
@@ -228,9 +228,9 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 
 				// 2. Official NaiveProxy Sidecar
 				ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Column(c).Gap(2).Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+						ui.Column(c).Grow(1).Gap(2).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Wrap().Gap(8).Children(func() {
 								ui.Text(c, cat.CoreNaiveTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
 								if a.localVersion == "" {
 									statusBadge(c, cat.CoreNotInstalled(), p.amber, p.amberBg)
@@ -251,7 +251,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 							} else if a.latestRelease != nil && a.hasUpdate {
 								updLabel = cat.CoreSeamlessUpdateTo(a.latestRelease.TagName)
 							}
-							if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Clicked() {
+							if primaryPillButton(c.Key("btn-seamless-update"), p, iconDownload, updLabel, p.accent, a.updatingCore).Shrink(0).Clicked() {
 								a.triggerSeamlessUpdate()
 							}
 						}
@@ -261,13 +261,21 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 						a.saveState()
 						a.syncBinaryPathAndVersion()
 					}
+
+					if switchRow(c, p, "page-set-auto-check", cat.CoreAutoCheckLabel(), &a.state.AutoCheckUpdate) {
+						a.saveState()
+					}
+
+					if switchRow(c, p, "page-set-auto-update-core", cat.CoreAutoUpdateLabel(), &a.state.AutoUpdateCore) {
+						a.saveState()
+					}
 				})
 
 				// 3. Official Xray-core Sidecar
 				ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Column(c).Gap(2).Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+						ui.Column(c).Grow(1).Gap(2).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Wrap().Gap(8).Children(func() {
 								ui.Text(c, cat.CoreXrayTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
 								if a.localXrayVersion == "" {
 									statusBadge(c, cat.XrayNotInstalled(), p.amber, p.amberBg)
@@ -288,7 +296,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 							} else if a.latestXrayRelease != nil && a.hasXrayUpdate {
 								updLabel = cat.CoreUpdateTo(a.latestXrayRelease.TagName)
 							}
-							if primaryPillButton(c.Key("btn-update-xray"), p, iconDownload, updLabel, p.accent, a.updatingXrayCore).Clicked() {
+							if primaryPillButton(c.Key("btn-update-xray"), p, iconDownload, updLabel, p.accent, a.updatingXrayCore).Shrink(0).Clicked() {
 								a.triggerSeamlessXrayUpdate()
 							}
 						}
@@ -298,33 +306,44 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 						a.saveState()
 						a.syncXrayBinaryPathAndVersion()
 					}
-				})
 
-				// Auto check / update switches
-				if switchRow(c, p, "page-set-auto-check", cat.CoreAutoCheckLabel(), &a.state.AutoCheckUpdate) {
-					a.saveState()
-				}
-				if switchRow(c, p, "page-set-auto-update-core", cat.CoreAutoUpdateLabel(), &a.state.AutoUpdateCore) {
-					a.saveState()
-				}
-			})
+					if switchRow(c, p, "page-set-auto-check-xray", cat.XrayAutoCheckLabel(), &a.state.AutoCheckXray) {
+						a.saveState()
+					}
 
-			// Section 2.5: Routing GeoData Database
-			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.GeodataSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
-					if actionChip(c.Key("page-btn-update-geodata"), p, iconDownload, cat.UpdateGeoData(), a.updatingGeoData).Clicked() {
-						a.triggerUpdateGeoData()
+					if switchRow(c, p, "page-set-auto-update-xray", cat.XrayAutoUpdateLabel(), &a.state.AutoUpdateXray) {
+						a.saveState()
 					}
 				})
 
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(10).Radius(8).
-					Background(p.surface).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if a.hasGeoData() {
-							statusBadge(c, cat.GeodataStatusReady(), p.green, p.greenBg)
-						} else {
-							statusBadge(c, cat.GeodataStatusMissing(), p.amber, p.amberBg)
+				// 4. Routing GeoData Database (Loyalsoldier)
+				ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+						ui.Column(c).Grow(1).Gap(3).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Wrap().Gap(8).Children(func() {
+								ui.Text(c, cat.GeodataSectionTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
+								if !a.hasGeoData() {
+									statusBadge(c, cat.GeodataStatusMissing(), p.amber, p.amberBg)
+								} else if a.localGeodataVersion != "" {
+									statusBadge(c, cat.GeodataLocal()+a.localGeodataVersion, p.green, p.greenBg)
+								} else {
+									statusBadge(c, cat.GeodataStatusReady(), p.green, p.greenBg)
+								}
+								if a.hasGeodataUpdate && a.latestGeodataRelease != nil {
+									tagPill(c, cat.CoreNewVersion(a.latestGeodataRelease.TagName), p.amber, p.amberBg)
+								}
+							})
+							ui.Text(c, cat.GeodataDesc()).FontSize(11).TextColor(p.textMuted)
+						})
+
+						updLabel := cat.UpdateGeoData()
+						if a.updatingGeoData {
+							updLabel = cat.Updating()
+						} else if a.latestGeodataRelease != nil && a.hasGeodataUpdate {
+							updLabel = cat.CoreUpdateTo(a.latestGeodataRelease.TagName)
+						}
+						if primaryPillButton(c.Key("page-btn-update-geodata"), p, iconDownload, updLabel, p.accent, a.updatingGeoData).Shrink(0).Clicked() {
+							a.triggerUpdateGeoData()
 						}
 					})
 				})

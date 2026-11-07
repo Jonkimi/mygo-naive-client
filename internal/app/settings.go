@@ -52,7 +52,9 @@ type PersistedState struct {
 	RoutingRules            []routing.Rule      `json:"routingRules,omitempty"`
 	RoutingFinal            routing.RouteAction `json:"routingFinal,omitempty"`
 	AutoCheckUpdate         bool                `json:"autoCheckUpdate"`
+	AutoCheckXray           bool                `json:"autoCheckXray"`
 	AutoUpdateCore          bool                `json:"autoUpdateCore"`
+	AutoUpdateXray          bool                `json:"autoUpdateXray"`
 	UseRunningServiceForUpd bool                `json:"useRunningServiceForUpdate"`
 	GitHubMirror            string              `json:"githubMirror,omitempty"`
 	UpdateProxy             string              `json:"updateProxy,omitempty"`
@@ -66,6 +68,8 @@ type PersistedState struct {
 	LastKnownRemoteXrayTag  string              `json:"lastKnownRemoteXrayTag,omitempty"`
 	InstalledXrayTag        string              `json:"installedXrayTag,omitempty"`
 	InstalledXraySHA256     string              `json:"installedXraySha256,omitempty"`
+	LastKnownRemoteGeodataTag string            `json:"lastKnownRemoteGeodataTag,omitempty"`
+	InstalledGeodataTag     string              `json:"installedGeodataTag,omitempty"`
 	BlockerEnabled          bool                `json:"blockerEnabled"`
 	BlockerBlockAds         bool                `json:"blockerBlockAds"`
 	BlockerSubscriptions    []string            `json:"blockerSubscriptions,omitempty"`
@@ -98,7 +102,9 @@ func defaultPersistedState() PersistedState {
 		RoutingRules:            routing.DefaultPresets(),
 		RoutingFinal:            routing.RouteAction{Type: routing.ActionProxyPool},
 		AutoCheckUpdate:         true,
+		AutoCheckXray:           true,
 		AutoUpdateCore:          true,
+		AutoUpdateXray:          true,
 		UseRunningServiceForUpd: true,
 		ProbeURL:                defaultProbeURL,
 		DownloadTestURL:         defaultDownloadURL,
