@@ -28,6 +28,7 @@ type PoolOutboundOptions struct {
 	Tracker        *telemetry.Tracker
 	FailureMonitor *telemetry.FailureMonitor
 	NodeProvider   NodeProvider
+	OnDialSuccess  func(targetHost string, nodeID string)
 }
 
 // PoolOutbound implements sing-box adapter.Outbound to dynamically route traffic across node pools.
@@ -37,6 +38,7 @@ type PoolOutbound struct {
 	tracker        *telemetry.Tracker
 	failureMonitor *telemetry.FailureMonitor
 	provider       NodeProvider
+	onDialSuccess  func(targetHost string, nodeID string)
 	mu             sync.RWMutex
 }
 
@@ -48,6 +50,7 @@ func NewPoolOutbound(opts PoolOutboundOptions) *PoolOutbound {
 		tracker:        opts.Tracker,
 		failureMonitor: opts.FailureMonitor,
 		provider:       opts.NodeProvider,
+		onDialSuccess:  opts.OnDialSuccess,
 	}
 }
 
@@ -157,6 +160,9 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		}
 
 		if err == nil {
+			if p.onDialSuccess != nil {
+				p.onDialSuccess(targetHost, candID)
+			}
 			return conn, nil
 		}
 		lastErr = err
@@ -207,6 +213,9 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 
 		conn, err := ob.ListenPacket(ctx, destination)
 		if err == nil {
+			if p.onDialSuccess != nil {
+				p.onDialSuccess(targetHost, candID)
+			}
 			return conn, nil
 		}
 		lastErr = err

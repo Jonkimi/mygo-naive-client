@@ -187,6 +187,31 @@ func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdi
 	}
 }
 
+// UpdateRecentGatewayChain updates the most recent Gateway entry for target to append the dialed node name.
+func (l *QueryLogger) UpdateRecentGatewayChain(target string, nodeName string) {
+	if target == "" || nodeName == "" {
+		return
+	}
+	cleanTarget := strings.Trim(strings.ToLower(strings.TrimSpace(target)), ".")
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	cutoff := time.Now().Add(-5 * time.Second)
+	for i := 0; i < l.count && i < 30; i++ {
+		idx := (l.start + l.count - 1 - i) % l.capacity
+		entry := &l.entries[idx]
+		if entry.Timestamp.Before(cutoff) {
+			break
+		}
+		if entry.Source == SourceGateway && strings.EqualFold(strings.Trim(entry.Domain, "."), cleanTarget) {
+			if !strings.HasSuffix(entry.Chain, " -> "+nodeName) && !strings.Contains(entry.Chain, " -> "+nodeName+" ") {
+				entry.Chain = entry.Chain + " -> " + nodeName
+			}
+			return
+		}
+	}
+}
+
 // GetEntries returns recent query log entries, sorted newest first.
 // If limit <= 0 or limit > count, returns all recorded entries.
 func (l *QueryLogger) GetEntries(limit int) []QueryLogEntry {

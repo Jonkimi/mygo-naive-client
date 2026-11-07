@@ -74,6 +74,7 @@ type Engine struct {
 	tracker        *telemetry.Tracker
 	failureMonitor *telemetry.FailureMonitor
 	blocker        *blocker.Engine
+	connTracker    *BlockerConnectionTracker
 	onDemandStart  func(poolTag string)
 	boxCtx         context.Context
 	cancel         context.CancelFunc
@@ -153,7 +154,11 @@ func New(opts EngineOptions) (*Engine, error) {
 
 	eng.boxCtx = boxCtx
 	if eng.blocker != nil {
-		b.Router().AppendTracker(&BlockerConnectionTracker{blocker: eng.blocker})
+		eng.connTracker = &BlockerConnectionTracker{
+			blocker:          eng.blocker,
+			nodeNameResolver: eng.GetNodeName,
+		}
+		b.Router().AppendTracker(eng.connTracker)
 		eng.blocker.SetOnUpdate(eng.ClearDNSCache)
 	}
 
@@ -170,10 +175,22 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 		var tracker *telemetry.Tracker
 		var fm *telemetry.FailureMonitor
 		var np NodeProvider
+		var onDialSuccess func(targetHost string, nodeID string)
 		if eng != nil {
 			tracker = eng.tracker
 			fm = eng.failureMonitor
 			np = eng
+			onDialSuccess = func(targetHost string, nodeID string) {
+				nodeName := eng.GetNodeName(nodeID)
+				if nodeName != "" {
+					if eng.connTracker != nil {
+						eng.connTracker.RecordDialSuccess(targetHost, nodeName)
+					}
+					if eng.blocker != nil && eng.blocker.Logger() != nil {
+						eng.blocker.Logger().UpdateRecentGatewayChain(targetHost, nodeName)
+					}
+				}
+			}
 		}
 		return NewPoolOutbound(PoolOutboundOptions{
 			Tag:            tag,
@@ -181,6 +198,7 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			Tracker:        tracker,
 			FailureMonitor: fm,
 			NodeProvider:   np,
+			OnDialSuccess:  onDialSuccess,
 		}), nil
 	})
 
@@ -328,6 +346,22 @@ func (e *Engine) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 		return nil, false
 	}
 	return e.box.Outbound().Outbound("node-" + nodeID)
+}
+
+// GetNodeName returns the friendly name of a node by ID or tag, implementing NodeProvider.
+func (e *Engine) GetNodeName(nodeID string) string {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, svc := range e.services {
+		if svc.ID == cleanID {
+			if svc.Name != "" {
+				return svc.Name
+			}
+			return cleanID
+		}
+	}
+	return cleanID
 }
 
 // extractSidecarExcludeAddresses extracts IP addresses from sidecar nodes as CIDR strings

@@ -178,3 +178,38 @@ func TestQueryLogger_Deduplication(t *testing.T) {
 		t.Fatalf("expected 4 entries after window expiration, got %d", len(entries))
 	}
 }
+
+// Tests that UpdateRecentGatewayChain appends the selected node name to the most recent Gateway entry.
+func TestQueryLogger_UpdateRecentGatewayChain(t *testing.T) {
+	ql := NewQueryLogger(100)
+	now := time.Now()
+
+	ql.RecordAtWithChain("google.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_TAG:gfw", now)
+	ql.RecordAtWithChain("google.com", SourceDNS, VerdictAllowed, "", "proxy -> remote-doh", now.Add(10*time.Millisecond))
+
+	// Update Gateway chain with node name
+	ql.UpdateRecentGatewayChain("google.com", "naive-bwg")
+
+	entries := ql.GetEntries(10)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// DNS entry should remain untouched
+	if entries[0].Source != SourceDNS || entries[0].Chain != "proxy -> remote-doh" {
+		t.Errorf("DNS entry modified unexpectedly: %+v", entries[0])
+	}
+
+	// Gateway entry should have node appended
+	expectedChain := "final -> PROXY_TAG:gfw -> naive-bwg"
+	if entries[1].Source != SourceGateway || entries[1].Chain != expectedChain {
+		t.Errorf("expected Gateway chain %q, got %q", expectedChain, entries[1].Chain)
+	}
+
+	// Calling again should not duplicate node
+	ql.UpdateRecentGatewayChain("google.com", "naive-bwg")
+	entries = ql.GetEntries(10)
+	if entries[1].Chain != expectedChain {
+		t.Errorf("chain duplicated on second update: %q", entries[1].Chain)
+	}
+}

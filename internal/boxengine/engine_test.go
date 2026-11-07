@@ -1028,6 +1028,159 @@ func TestEngine_DNSRuleSplitByRoutingRules(t *testing.T) {
 	}
 }
 
+// Tests that Gateway connections routed through a proxy pool record the concrete node name in the chain.
+func TestEngine_GatewayNodeNameLogging(t *testing.T) {
+	// 1. Target server
+	targetLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen target failed: %v", err)
+	}
+	defer targetLn.Close()
+	targetPort := targetLn.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/node-test", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("ok from target"))
+		})
+		_ = http.Serve(targetLn, mux)
+	}()
+
+	// 2. Mock SOCKS5 server representing a node
+	socksLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen socks failed: %v", err)
+	}
+	defer socksLn.Close()
+	socksPort := socksLn.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			c, err := socksLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 256)
+				if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+					return
+				}
+				nAuth := int(buf[1])
+				if _, err := io.ReadFull(conn, buf[:nAuth]); err != nil {
+					return
+				}
+				_, _ = conn.Write([]byte{0x05, 0x00})
+				if _, err := io.ReadFull(conn, buf[:4]); err != nil {
+					return
+				}
+				var targetHost string
+				switch buf[3] {
+				case 1:
+					if _, err := io.ReadFull(conn, buf[:4]); err != nil {
+						return
+					}
+					targetHost = net.IP(buf[:4]).String()
+				case 3:
+					if _, err := io.ReadFull(conn, buf[:1]); err != nil {
+						return
+					}
+					dLen := int(buf[0])
+					if _, err := io.ReadFull(conn, buf[:dLen]); err != nil {
+						return
+					}
+					targetHost = string(buf[:dLen])
+				}
+				if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+					return
+				}
+				p := int(buf[0])<<8 | int(buf[1])
+
+				targetConn, err := net.Dial("tcp", net.JoinHostPort(targetHost, fmt.Sprintf("%d", p)))
+				if err != nil {
+					_, _ = conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				defer targetConn.Close()
+				_, _ = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0})
+				done := make(chan struct{}, 2)
+				go func() {
+					_, _ = io.Copy(targetConn, conn)
+					done <- struct{}{}
+				}()
+				go func() {
+					_, _ = io.Copy(conn, targetConn)
+					done <- struct{}{}
+				}()
+				<-done
+			}(c)
+		}
+	}()
+
+	// 3. Start engine with blocker and service "svc-us-1" named "US-Fast-Node"
+	bl := blocker.NewEngine(blocker.Options{})
+	opts := EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		Blocker:     bl,
+		FinalAction: "proxy_pool",
+		Services: []config.Service{
+			{
+				ID:     "svc-us-1",
+				Name:   "US-Fast-Node",
+				Engine: config.EngineSidecar,
+			},
+		},
+		AllocatedPorts: map[string]int{
+			"svc-us-1": socksPort,
+		},
+		ActiveIDs: map[string]bool{
+			"svc-us-1": true,
+		},
+	}
+
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer eng.Close()
+
+	// 4. Send request through mixed proxy
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", eng.Port()))
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+		Timeout: 3 * time.Second,
+	}
+
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/node-test", targetPort))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// Give a few milliseconds for goroutines/ring buffer update
+	time.Sleep(50 * time.Millisecond)
+
+	entries := bl.Logger().GetEntries(10)
+	var foundGateway bool
+	for _, e := range entries {
+		if e.Source == blocker.SourceGateway && strings.Contains(e.Chain, "US-Fast-Node") {
+			foundGateway = true
+			if !strings.HasSuffix(e.Chain, "US-Fast-Node") {
+				t.Errorf("expected chain to end with US-Fast-Node, got %q", e.Chain)
+			}
+		}
+	}
+
+	if !foundGateway {
+		t.Fatalf("expected Gateway entry containing 'US-Fast-Node', entries: %+v", entries)
+	}
+}
+
 
 
 
