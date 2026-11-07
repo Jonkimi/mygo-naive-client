@@ -130,8 +130,9 @@ type app struct {
 	stateLoaded      bool
 	openAtLogin      bool
 	geoDataReady     bool
-	gatewayPortInput string
-	expandedLogs     map[string]bool
+	gatewayPortInput       string
+	autoProbeIntervalInput string
+	expandedLogs           map[string]bool
 
 	activeTab          TabID
 	activeLogDrawerID  string
@@ -436,6 +437,7 @@ func (a *app) boot() {
 	a.triggerCheckGeodataUpdate(false)
 
 	go a.startPeriodicUpdateCheck()
+	go a.startPeriodicProbe()
 }
 
 func (a *app) startPeriodicUpdateCheck() {
@@ -457,6 +459,68 @@ func (a *app) startPeriodicUpdateCheck() {
 			})
 		}
 	}
+}
+
+func (a *app) startPeriodicProbe() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	var lastProbe time.Time
+	for {
+		select {
+		case <-a.quitCh:
+			return
+		case <-ticker.C:
+			if a.headless || !a.state.AutoProbePeriodic {
+				continue
+			}
+			intervalMin := a.state.AutoProbeInterval
+			if intervalMin <= 0 {
+				intervalMin = 5
+			}
+			interval := time.Duration(intervalMin) * time.Minute
+			if !lastProbe.IsZero() && time.Since(lastProbe) < interval {
+				continue
+			}
+			lastProbe = time.Now()
+			a.probeAllRunningServicesSilent()
+		}
+	}
+}
+
+// probeAllRunningServicesSilent performs a quiet, parallel latency probe on all running services
+// to refresh QualityTracker metrics without interrupting the UI or showing toasts.
+func (a *app) probeAllRunningServicesSilent() {
+	if a.mgr == nil {
+		return
+	}
+	var running []config.Service
+	for _, svc := range a.state.Services {
+		if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+			running = append(running, svc)
+		}
+	}
+	if len(running) == 0 {
+		return
+	}
+
+	probeURL := a.state.ProbeURL
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var wg sync.WaitGroup
+		for _, svc := range running {
+			wg.Add(1)
+			go func(s config.Service) {
+				defer wg.Done()
+				// ProbeServiceCtx updates inst.status.Latency and fires OnProbeSuccess,
+				// which automatically records probe RTT into QualityTracker via a.tracker.RecordProbe.
+				_, _ = a.mgr.ProbeServiceCtx(ctx, s, probeURL)
+			}(svc)
+		}
+		wg.Wait()
+	}()
 }
 
 func (a *app) dispatchUI(fn func()) {

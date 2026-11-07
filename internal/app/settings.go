@@ -58,6 +58,8 @@ type PersistedState struct {
 	AutoUpdateXray          bool                `json:"autoUpdateXray"`
 	UseRunningServiceForUpd bool                `json:"useRunningServiceForUpdate"`
 	AutoProbeOnStart        bool                `json:"autoProbeOnStart"`
+	AutoProbePeriodic       bool                `json:"autoProbePeriodic"`
+	AutoProbeInterval       int                 `json:"autoProbeInterval"`
 	GitHubMirror            string              `json:"githubMirror,omitempty"`
 	UpdateProxy             string              `json:"updateProxy,omitempty"`
 	ProbeURL                string              `json:"probeUrl,omitempty"`
@@ -109,6 +111,8 @@ func defaultPersistedState() PersistedState {
 		AutoUpdateXray:          true,
 		UseRunningServiceForUpd: true,
 		AutoProbeOnStart:        true,
+		AutoProbePeriodic:       true,
+		AutoProbeInterval:       5,
 		ProbeURL:                defaultProbeURL,
 		DownloadTestURL:         defaultDownloadURL,
 		BlockerEnabled:          true,
@@ -359,6 +363,9 @@ func (a *app) loadState() {
 	}
 	if strings.TrimSpace(st.DownloadTestURL) == "" {
 		st.DownloadTestURL = defaultDownloadURL
+	}
+	if st.AutoProbeInterval <= 0 {
+		st.AutoProbeInterval = 5
 	}
 	for i := range st.Services {
 		if len(st.Services[i].Listens) == 0 {

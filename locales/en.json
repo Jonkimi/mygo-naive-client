@@ -275,6 +275,8 @@
   "customCorePathHint": "Leave blank for default managed path",
   "telemetrySectionTitle": "Connectivity & Speed Tests",
   "autoProbeOnStart": "Auto-measure latency on service start (Cold-start break-even)",
+  "autoProbePeriodic": "Periodic latency testing (keeps all node metrics fresh)",
+  "autoProbeIntervalLabel": "Periodic Test Interval (minutes)",
   "probeURLLabel": "HTTP 204 Ping Test Target URL",
   "downloadURLLabel": "Download Speed Test Target URL",
   "saveSettings": "Save Preferences",

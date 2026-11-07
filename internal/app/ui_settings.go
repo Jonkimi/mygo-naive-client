@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -372,6 +373,20 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				ui.Text(c, cat.TelemetrySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 				if switchRow(c, p, "page-set-auto-probe", cat.AutoProbeOnStart(), &a.state.AutoProbeOnStart) {
 					a.saveState()
+				}
+				if switchRow(c, p, "page-set-auto-probe-periodic", cat.AutoProbePeriodic(), &a.state.AutoProbePeriodic) {
+					a.saveState()
+				}
+				if a.state.AutoProbePeriodic {
+					if a.autoProbeIntervalInput == "" && a.state.AutoProbeInterval > 0 {
+						a.autoProbeIntervalInput = strconv.Itoa(a.state.AutoProbeInterval)
+					}
+					if labeledInput(c, p, "page-set-probe-interval", cat.AutoProbeIntervalLabel(), &a.autoProbeIntervalInput, "5").Changed() {
+						if parsed, err := strconv.Atoi(strings.TrimSpace(a.autoProbeIntervalInput)); err == nil && parsed >= 1 && parsed <= 1440 {
+							a.state.AutoProbeInterval = parsed
+							a.saveState()
+						}
+					}
 				}
 				if labeledInput(c, p, "page-set-probe-url", cat.ProbeURLLabel(), &a.state.ProbeURL, defaultProbeURL).Changed() {
 					a.saveState()

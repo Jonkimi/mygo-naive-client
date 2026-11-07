@@ -2868,4 +2868,38 @@ func TestInProcessNode_NoLocalLinkAndConfigPreviewInDrawer(t *testing.T) {
 	}
 }
 
+// Tests that periodic auto-probe settings default to enabled (5 mins) and that silent probe triggers on running services.
+func TestPeriodicAutoProbeSettingsAndSilentProbe(t *testing.T) {
+	svc := config.Service{
+		ID:         "probe-test-svc",
+		Name:       "Probe Service",
+		Protocol:   config.ProtoNaive,
+		Server:     "example.com",
+		ServerPort: 443,
+		Listens:    []string{fmt.Sprintf("socks://127.0.0.1:%d", freeLocalPort(t))},
+	}
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+
+	// 1. Verify default periodic probe settings
+	if !a.state.AutoProbeOnStart {
+		t.Errorf("expected AutoProbeOnStart default true")
+	}
+	if !a.state.AutoProbePeriodic {
+		t.Errorf("expected AutoProbePeriodic default true")
+	}
+	if a.state.AutoProbeInterval != 5 {
+		t.Errorf("expected AutoProbeInterval default 5, got %d", a.state.AutoProbeInterval)
+	}
+
+	// 2. Start service and test probeAllRunningServicesSilent
+	_ = a.mgr.Start(svc)
+	tt.Frame()
+
+	// Calling silent probe should not panic or set error toasts
+	a.probeAllRunningServicesSilent()
+	if a.pendingToast != "" {
+		t.Errorf("expected silent probe to produce no toast, got %q", a.pendingToast)
+	}
+}
+
 

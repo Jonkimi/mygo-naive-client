@@ -2788,6 +2788,26 @@ func (msgs Messages) AutoProbeOnStart() string {
 	return Catalog.Format(msgs.locale, "autoProbeOnStart", nil)
 }
 
+// AutoProbePeriodic says "Periodic latency testing (keeps all node metrics fresh)"
+// in the language the app shows.
+func AutoProbePeriodic() string { return In(i18n.Locale()).AutoProbePeriodic() }
+
+// AutoProbePeriodic says "Periodic latency testing (keeps all node metrics fresh)"
+// in the language of msgs.
+func (msgs Messages) AutoProbePeriodic() string {
+	return Catalog.Format(msgs.locale, "autoProbePeriodic", nil)
+}
+
+// AutoProbeIntervalLabel says "Periodic Test Interval (minutes)"
+// in the language the app shows.
+func AutoProbeIntervalLabel() string { return In(i18n.Locale()).AutoProbeIntervalLabel() }
+
+// AutoProbeIntervalLabel says "Periodic Test Interval (minutes)"
+// in the language of msgs.
+func (msgs Messages) AutoProbeIntervalLabel() string {
+	return Catalog.Format(msgs.locale, "autoProbeIntervalLabel", nil)
+}
+
 // ProbeURLLabel says "HTTP 204 Ping Test Target URL"
 // in the language the app shows.
 func ProbeURLLabel() string { return In(i18n.Locale()).ProbeURLLabel() }
