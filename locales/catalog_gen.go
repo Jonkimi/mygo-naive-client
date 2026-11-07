@@ -826,6 +826,326 @@ func (msgs Messages) NavTailnet() string {
 	return Catalog.Format(msgs.locale, "navTailnet", nil)
 }
 
+// TailnetTitle says "Tailnet Mesh Network"
+// in the language the app shows.
+func TailnetTitle() string { return In(i18n.Locale()).TailnetTitle() }
+
+// TailnetTitle says "Tailnet Mesh Network"
+// in the language of msgs.
+func (msgs Messages) TailnetTitle() string {
+	return Catalog.Format(msgs.locale, "tailnetTitle", nil)
+}
+
+// TailnetSubtitle says "Dual-mode host daemon cooperation and embedded lightweight mesh"
+// in the language the app shows.
+func TailnetSubtitle() string { return In(i18n.Locale()).TailnetSubtitle() }
+
+// TailnetSubtitle says "Dual-mode host daemon cooperation and embedded lightweight mesh"
+// in the language of msgs.
+func (msgs Messages) TailnetSubtitle() string {
+	return Catalog.Format(msgs.locale, "tailnetSubtitle", nil)
+}
+
+// TailnetModeLabel says "Working Mode"
+// in the language the app shows.
+func TailnetModeLabel() string { return In(i18n.Locale()).TailnetModeLabel() }
+
+// TailnetModeLabel says "Working Mode"
+// in the language of msgs.
+func (msgs Messages) TailnetModeLabel() string {
+	return Catalog.Format(msgs.locale, "tailnetModeLabel", nil)
+}
+
+// TailnetModeAuto says "Auto Detect"
+// in the language the app shows.
+func TailnetModeAuto() string { return In(i18n.Locale()).TailnetModeAuto() }
+
+// TailnetModeAuto says "Auto Detect"
+// in the language of msgs.
+func (msgs Messages) TailnetModeAuto() string {
+	return Catalog.Format(msgs.locale, "tailnetModeAuto", nil)
+}
+
+// TailnetModeHost says "Host Daemon"
+// in the language the app shows.
+func TailnetModeHost() string { return In(i18n.Locale()).TailnetModeHost() }
+
+// TailnetModeHost says "Host Daemon"
+// in the language of msgs.
+func (msgs Messages) TailnetModeHost() string {
+	return Catalog.Format(msgs.locale, "tailnetModeHost", nil)
+}
+
+// TailnetModeEmbedded says "Embedded Core"
+// in the language the app shows.
+func TailnetModeEmbedded() string { return In(i18n.Locale()).TailnetModeEmbedded() }
+
+// TailnetModeEmbedded says "Embedded Core"
+// in the language of msgs.
+func (msgs Messages) TailnetModeEmbedded() string {
+	return Catalog.Format(msgs.locale, "tailnetModeEmbedded", nil)
+}
+
+// TailnetModeOff says "Disabled"
+// in the language the app shows.
+func TailnetModeOff() string { return In(i18n.Locale()).TailnetModeOff() }
+
+// TailnetModeOff says "Disabled"
+// in the language of msgs.
+func (msgs Messages) TailnetModeOff() string {
+	return Catalog.Format(msgs.locale, "tailnetModeOff", nil)
+}
+
+// TailnetStatusConnected says "Connected"
+// in the language the app shows.
+func TailnetStatusConnected() string { return In(i18n.Locale()).TailnetStatusConnected() }
+
+// TailnetStatusConnected says "Connected"
+// in the language of msgs.
+func (msgs Messages) TailnetStatusConnected() string {
+	return Catalog.Format(msgs.locale, "tailnetStatusConnected", nil)
+}
+
+// TailnetStatusNeedsLogin says "Needs Authentication"
+// in the language the app shows.
+func TailnetStatusNeedsLogin() string { return In(i18n.Locale()).TailnetStatusNeedsLogin() }
+
+// TailnetStatusNeedsLogin says "Needs Authentication"
+// in the language of msgs.
+func (msgs Messages) TailnetStatusNeedsLogin() string {
+	return Catalog.Format(msgs.locale, "tailnetStatusNeedsLogin", nil)
+}
+
+// TailnetStatusOffline says "Offline"
+// in the language the app shows.
+func TailnetStatusOffline() string { return In(i18n.Locale()).TailnetStatusOffline() }
+
+// TailnetStatusOffline says "Offline"
+// in the language of msgs.
+func (msgs Messages) TailnetStatusOffline() string {
+	return Catalog.Format(msgs.locale, "tailnetStatusOffline", nil)
+}
+
+// TailnetLoginBtn says "Open Login URL in Browser"
+// in the language the app shows.
+func TailnetLoginBtn() string { return In(i18n.Locale()).TailnetLoginBtn() }
+
+// TailnetLoginBtn says "Open Login URL in Browser"
+// in the language of msgs.
+func (msgs Messages) TailnetLoginBtn() string {
+	return Catalog.Format(msgs.locale, "tailnetLoginBtn", nil)
+}
+
+// TailnetNodeInfo says "Local Node"
+// in the language the app shows.
+func TailnetNodeInfo() string { return In(i18n.Locale()).TailnetNodeInfo() }
+
+// TailnetNodeInfo says "Local Node"
+// in the language of msgs.
+func (msgs Messages) TailnetNodeInfo() string {
+	return Catalog.Format(msgs.locale, "tailnetNodeInfo", nil)
+}
+
+// TailnetHostname says "Hostname"
+// in the language the app shows.
+func TailnetHostname() string { return In(i18n.Locale()).TailnetHostname() }
+
+// TailnetHostname says "Hostname"
+// in the language of msgs.
+func (msgs Messages) TailnetHostname() string {
+	return Catalog.Format(msgs.locale, "tailnetHostname", nil)
+}
+
+// TailnetIPs says "Tailscale IPs"
+// in the language the app shows.
+func TailnetIPs() string { return In(i18n.Locale()).TailnetIPs() }
+
+// TailnetIPs says "Tailscale IPs"
+// in the language of msgs.
+func (msgs Messages) TailnetIPs() string {
+	return Catalog.Format(msgs.locale, "tailnetIPs", nil)
+}
+
+// TailnetMagicDNS says "MagicDNS Suffix"
+// in the language the app shows.
+func TailnetMagicDNS() string { return In(i18n.Locale()).TailnetMagicDNS() }
+
+// TailnetMagicDNS says "MagicDNS Suffix"
+// in the language of msgs.
+func (msgs Messages) TailnetMagicDNS() string {
+	return Catalog.Format(msgs.locale, "tailnetMagicDNS", nil)
+}
+
+// TailnetPeersTitle says "Discovered Peers"
+// in the language the app shows.
+func TailnetPeersTitle() string { return In(i18n.Locale()).TailnetPeersTitle() }
+
+// TailnetPeersTitle says "Discovered Peers"
+// in the language of msgs.
+func (msgs Messages) TailnetPeersTitle() string {
+	return Catalog.Format(msgs.locale, "tailnetPeersTitle", nil)
+}
+
+// TailnetNoPeers says "No peer devices found in this Tailnet"
+// in the language the app shows.
+func TailnetNoPeers() string { return In(i18n.Locale()).TailnetNoPeers() }
+
+// TailnetNoPeers says "No peer devices found in this Tailnet"
+// in the language of msgs.
+func (msgs Messages) TailnetNoPeers() string {
+	return Catalog.Format(msgs.locale, "tailnetNoPeers", nil)
+}
+
+// TailnetPeerExitNode says "Exit Node"
+// in the language the app shows.
+func TailnetPeerExitNode() string { return In(i18n.Locale()).TailnetPeerExitNode() }
+
+// TailnetPeerExitNode says "Exit Node"
+// in the language of msgs.
+func (msgs Messages) TailnetPeerExitNode() string {
+	return Catalog.Format(msgs.locale, "tailnetPeerExitNode", nil)
+}
+
+// TailnetPeerUseExitNode says "Use as Exit Node"
+// in the language the app shows.
+func TailnetPeerUseExitNode() string { return In(i18n.Locale()).TailnetPeerUseExitNode() }
+
+// TailnetPeerUseExitNode says "Use as Exit Node"
+// in the language of msgs.
+func (msgs Messages) TailnetPeerUseExitNode() string {
+	return Catalog.Format(msgs.locale, "tailnetPeerUseExitNode", nil)
+}
+
+// TailnetPeerActiveExitNode says "Currently Active Exit Node"
+// in the language the app shows.
+func TailnetPeerActiveExitNode() string { return In(i18n.Locale()).TailnetPeerActiveExitNode() }
+
+// TailnetPeerActiveExitNode says "Currently Active Exit Node"
+// in the language of msgs.
+func (msgs Messages) TailnetPeerActiveExitNode() string {
+	return Catalog.Format(msgs.locale, "tailnetPeerActiveExitNode", nil)
+}
+
+// TailnetPeerClearExitNode says "Disconnect Exit Node"
+// in the language the app shows.
+func TailnetPeerClearExitNode() string { return In(i18n.Locale()).TailnetPeerClearExitNode() }
+
+// TailnetPeerClearExitNode says "Disconnect Exit Node"
+// in the language of msgs.
+func (msgs Messages) TailnetPeerClearExitNode() string {
+	return Catalog.Format(msgs.locale, "tailnetPeerClearExitNode", nil)
+}
+
+// TailnetSharingTitle says "Inbound Gateway Sharing"
+// in the language the app shows.
+func TailnetSharingTitle() string { return In(i18n.Locale()).TailnetSharingTitle() }
+
+// TailnetSharingTitle says "Inbound Gateway Sharing"
+// in the language of msgs.
+func (msgs Messages) TailnetSharingTitle() string {
+	return Catalog.Format(msgs.locale, "tailnetSharingTitle", nil)
+}
+
+// TailnetExposeMixed says "Expose Mixed Proxy on Tailnet"
+// in the language the app shows.
+func TailnetExposeMixed() string { return In(i18n.Locale()).TailnetExposeMixed() }
+
+// TailnetExposeMixed says "Expose Mixed Proxy on Tailnet"
+// in the language of msgs.
+func (msgs Messages) TailnetExposeMixed() string {
+	return Catalog.Format(msgs.locale, "tailnetExposeMixed", nil)
+}
+
+// TailnetExposeMixedDesc says "Allow authorized peers in this Tailnet to access this client's mixed proxy port"
+// in the language the app shows.
+func TailnetExposeMixedDesc() string { return In(i18n.Locale()).TailnetExposeMixedDesc() }
+
+// TailnetExposeMixedDesc says "Allow authorized peers in this Tailnet to access this client's mixed proxy port"
+// in the language of msgs.
+func (msgs Messages) TailnetExposeMixedDesc() string {
+	return Catalog.Format(msgs.locale, "tailnetExposeMixedDesc", nil)
+}
+
+// TailnetAdvertiseExit says "Advertise as Exit Node"
+// in the language the app shows.
+func TailnetAdvertiseExit() string { return In(i18n.Locale()).TailnetAdvertiseExit() }
+
+// TailnetAdvertiseExit says "Advertise as Exit Node"
+// in the language of msgs.
+func (msgs Messages) TailnetAdvertiseExit() string {
+	return Catalog.Format(msgs.locale, "tailnetAdvertiseExit", nil)
+}
+
+// TailnetAdvertiseExitDesc says "Share this client's adaptive multi-node proxy pool and ad blocking with the entire Tailnet"
+// in the language the app shows.
+func TailnetAdvertiseExitDesc() string { return In(i18n.Locale()).TailnetAdvertiseExitDesc() }
+
+// TailnetAdvertiseExitDesc says "Share this client's adaptive multi-node proxy pool and ad blocking with the entire Tailnet"
+// in the language of msgs.
+func (msgs Messages) TailnetAdvertiseExitDesc() string {
+	return Catalog.Format(msgs.locale, "tailnetAdvertiseExitDesc", nil)
+}
+
+// TailnetAdvertiseRoutes says "Subnet Routes"
+// in the language the app shows.
+func TailnetAdvertiseRoutes() string { return In(i18n.Locale()).TailnetAdvertiseRoutes() }
+
+// TailnetAdvertiseRoutes says "Subnet Routes"
+// in the language of msgs.
+func (msgs Messages) TailnetAdvertiseRoutes() string {
+	return Catalog.Format(msgs.locale, "tailnetAdvertiseRoutes", nil)
+}
+
+// TailnetAdvancedTitle says "Advanced Configuration (Embedded)"
+// in the language the app shows.
+func TailnetAdvancedTitle() string { return In(i18n.Locale()).TailnetAdvancedTitle() }
+
+// TailnetAdvancedTitle says "Advanced Configuration (Embedded)"
+// in the language of msgs.
+func (msgs Messages) TailnetAdvancedTitle() string {
+	return Catalog.Format(msgs.locale, "tailnetAdvancedTitle", nil)
+}
+
+// TailnetControlURL says "Control Server URL (Headscale)"
+// in the language the app shows.
+func TailnetControlURL() string { return In(i18n.Locale()).TailnetControlURL() }
+
+// TailnetControlURL says "Control Server URL (Headscale)"
+// in the language of msgs.
+func (msgs Messages) TailnetControlURL() string {
+	return Catalog.Format(msgs.locale, "tailnetControlURL", nil)
+}
+
+// TailnetAuthKey says "Pre-Auth Key (tskey-auth-...)"
+// in the language the app shows.
+func TailnetAuthKey() string { return In(i18n.Locale()).TailnetAuthKey() }
+
+// TailnetAuthKey says "Pre-Auth Key (tskey-auth-...)"
+// in the language of msgs.
+func (msgs Messages) TailnetAuthKey() string {
+	return Catalog.Format(msgs.locale, "tailnetAuthKey", nil)
+}
+
+// TailnetCustomHostname says "Node Hostname"
+// in the language the app shows.
+func TailnetCustomHostname() string { return In(i18n.Locale()).TailnetCustomHostname() }
+
+// TailnetCustomHostname says "Node Hostname"
+// in the language of msgs.
+func (msgs Messages) TailnetCustomHostname() string {
+	return Catalog.Format(msgs.locale, "tailnetCustomHostname", nil)
+}
+
+// TailnetAcceptRoutes says "Accept Subnet Routes"
+// in the language the app shows.
+func TailnetAcceptRoutes() string { return In(i18n.Locale()).TailnetAcceptRoutes() }
+
+// TailnetAcceptRoutes says "Accept Subnet Routes"
+// in the language of msgs.
+func (msgs Messages) TailnetAcceptRoutes() string {
+	return Catalog.Format(msgs.locale, "tailnetAcceptRoutes", nil)
+}
+
 // NavSettings says "Settings"
 // in the language the app shows.
 func NavSettings() string { return In(i18n.Locale()).NavSettings() }

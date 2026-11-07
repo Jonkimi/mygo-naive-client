@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"naive-client/internal/config"
 	"naive-client/internal/geodata"
 	"naive-client/internal/routing"
+	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
 
 	box "github.com/sagernet/sing-box"
@@ -51,6 +53,13 @@ type EngineOptions struct {
 	PreferIPv4     bool
 	ActiveIDs      map[string]bool
 	OnDemandStart  func(poolTag string)
+
+	// Tailnet integration (ADR-0007)
+	TailnetConfig         *tailnet.Config
+	TailnetMode           tailnet.Mode
+	TailnetHostExcludes   []string
+	TailnetMagicDNSSuffix string
+	StateDir              string
 }
 
 // Engine manages the embedded sing-box instance (*box.Box) with dynamic node pools and telemetry.
@@ -377,6 +386,15 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		},
 	}
 
+	if opts.TailnetConfig != nil && opts.TailnetConfig.ExposeMixedPort {
+		inbounds = append(inbounds, map[string]any{
+			"type":        "mixed",
+			"tag":         "tailnet-mixed-in",
+			"listen":      "0.0.0.0",
+			"listen_port": port,
+		})
+	}
+
 	if opts.TrafficMode == "tun" {
 		tunAddrs := opts.TunAddresses
 		if len(tunAddrs) == 0 {
@@ -399,6 +417,16 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			tunIn["interface_name"] = opts.TunInterface
 		}
 		excludes := extractSidecarExcludeAddresses(opts.Services, nil)
+		if opts.TailnetMode == tailnet.ModeHost {
+			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
+			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
+			for _, te := range tailnetExcludes {
+				te = strings.TrimSpace(te)
+				if te != "" {
+					excludes = append(excludes, te)
+				}
+			}
+		}
 		if len(excludes) > 0 {
 			tunIn["route_exclude_address"] = excludes
 		}
@@ -472,7 +500,45 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	}
 	configMap["outbounds"] = outbounds
 
-	// 3. DNS Configuration (ADR-0003)
+	// 2.1 Endpoints: Tailscale embedded endpoint (ADR-0007)
+	if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
+		stateDir := opts.StateDir
+		if stateDir == "" {
+			stateDir = "tsnet-state"
+		} else {
+			stateDir = filepath.Join(stateDir, "tsnet-state")
+		}
+		tsEp := map[string]any{
+			"type":            "tailscale",
+			"tag":             "tailscale-ep",
+			"state_directory": stateDir,
+			"domain_resolver": "bootstrap-dns",
+		}
+		if opts.TailnetConfig.AuthKey != "" {
+			tsEp["auth_key"] = opts.TailnetConfig.AuthKey
+		}
+		if opts.TailnetConfig.ControlURL != "" {
+			tsEp["control_url"] = opts.TailnetConfig.ControlURL
+		}
+		if opts.TailnetConfig.Hostname != "" {
+			tsEp["hostname"] = opts.TailnetConfig.Hostname
+		}
+		if opts.TailnetConfig.AcceptRoutes {
+			tsEp["accept_routes"] = true
+		}
+		if opts.TailnetConfig.ExitNode != "" {
+			tsEp["exit_node"] = opts.TailnetConfig.ExitNode
+		}
+		if opts.TailnetConfig.AdvertiseExitNode {
+			tsEp["advertise_exit_node"] = true
+		}
+		if len(opts.TailnetConfig.AdvertiseRoutes) > 0 {
+			tsEp["advertise_routes"] = opts.TailnetConfig.AdvertiseRoutes
+		}
+		configMap["endpoints"] = []map[string]any{tsEp}
+	}
+
+	// 3. DNS Configuration (ADR-0003, ADR-0007)
 	dnsServers := []map[string]any{
 		{
 			"type":        "udp",
@@ -496,10 +562,47 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			"detour":      "PROXY_POOL",
 		},
 	}
-	configMap["dns"] = map[string]any{
+
+	var dnsRules []map[string]any
+	if opts.TailnetMode == tailnet.ModeHost {
+		dnsServers = append(dnsServers, map[string]any{
+			"type":        "udp",
+			"tag":         "tailscale-host-dns",
+			"server":      "100.100.100.100",
+			"server_port": 53,
+		})
+		suffixes := []string{"ts.net"}
+		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
+			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
+		}
+		dnsRules = append(dnsRules, map[string]any{
+			"domain_suffix": suffixes,
+			"server":        "tailscale-host-dns",
+		})
+	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
+		dnsServers = append(dnsServers, map[string]any{
+			"type":     "tailscale",
+			"tag":      "tailscale-dns",
+			"endpoint": "tailscale-ep",
+		})
+		suffixes := []string{"ts.net"}
+		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
+			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
+		}
+		dnsRules = append(dnsRules, map[string]any{
+			"domain_suffix": suffixes,
+			"server":        "tailscale-dns",
+		})
+	}
+
+	dnsMap := map[string]any{
 		"servers": dnsServers,
 		"final":   "remote-doh",
 	}
+	if len(dnsRules) > 0 {
+		dnsMap["rules"] = dnsRules
+	}
+	configMap["dns"] = dnsMap
 
 	// 4. Routing configuration
 	var siteTags, ipTags []string
@@ -512,7 +615,38 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 
 	var singRules []map[string]any
 
-	// Blocker rules: denylist domains route to block
+	// 4.1 Tailnet highest-priority routing & Pi-hole Blocker bypass
+	if opts.TailnetMode == tailnet.ModeHost {
+		tailnetCIDRs := append([]string{}, tailnet.DefaultTailnetSubnets...)
+		tailnetCIDRs = append(tailnetCIDRs, opts.TailnetHostExcludes...)
+		singRules = append(singRules, map[string]any{
+			"ip_cidr":  tailnetCIDRs,
+			"outbound": "direct",
+		})
+		suffixes := []string{"ts.net"}
+		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
+			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
+		}
+		singRules = append(singRules, map[string]any{
+			"domain_suffix": suffixes,
+			"outbound":      "direct",
+		})
+	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
+		suffixes := []string{"ts.net"}
+		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
+			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
+		}
+		singRules = append(singRules, map[string]any{
+			"domain_suffix": suffixes,
+			"outbound":      "tailscale-ep",
+		})
+		singRules = append(singRules, map[string]any{
+			"ip_cidr":  tailnet.DefaultTailnetSubnets,
+			"outbound": "tailscale-ep",
+		})
+	}
+
+	// 4.2 Blocker rules: denylist domains route to block (evaluated after Tailnet to allow bypass)
 	if opts.Blocker != nil {
 		deny := opts.Blocker.GetDenylist()
 		if len(deny) > 0 {
@@ -523,7 +657,7 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		}
 	}
 
-	// User rules
+	// 4.3 User rules
 	for _, r := range opts.Rules {
 		if !r.Enabled {
 			continue
@@ -545,6 +679,12 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			outbound = "PROXY_TAG:" + tag
 		case routing.ActionProxyService:
 			outbound = "node-" + r.Action.ServiceID
+		case routing.ActionTailnet, routing.ActionTailnetExit:
+			if opts.TailnetMode == tailnet.ModeHost {
+				outbound = "direct"
+			} else {
+				outbound = "tailscale-ep"
+			}
 		}
 
 		// 1. Direct domain / CIDR matching rule
@@ -620,4 +760,19 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	}
 
 	return &boxOptions, nil
+}
+
+// TailscaleEndpoint returns the adapter.TailscaleEndpoint if running in embedded mode.
+func (e *Engine) TailscaleEndpoint() adapter.TailscaleEndpoint {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.box == nil {
+		return nil
+	}
+	ep, ok := e.box.Endpoint().Get("tailscale-ep")
+	if !ok {
+		return nil
+	}
+	tsEp, _ := ep.(adapter.TailscaleEndpoint)
+	return tsEp
 }
