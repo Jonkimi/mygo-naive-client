@@ -830,6 +830,117 @@ func TestEngine_SOCKS5_IP_SNI_Sniffing(t *testing.T) {
 	}
 }
 
+// Tests that direct outbound connection to a domain resolves DNS via DoH and logs SourceDNS and SourceGateway.
+func TestEngine_DirectOutboundDNSLogging(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+	testPort := ln.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("hello"))
+		})
+		_ = http.Serve(ln, mux)
+	}()
+
+	bl := blocker.NewEngine(blocker.Options{})
+	opts := EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		Blocker:     bl,
+		FinalAction: "direct",
+	}
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer eng.Close()
+
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", eng.Port()))
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+		Timeout: 3 * time.Second,
+	}
+
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/", testPort))
+	t.Logf("Resp: %v, err: %v", resp, err)
+
+	entries := bl.Logger().GetEntries(10)
+	t.Logf("Entries count=%d:", len(entries))
+	for _, e := range entries {
+		t.Logf("Logged: domain=%s source=%s verdict=%s chain=%s", e.Domain, e.Source, e.Verdict, e.Chain)
+	}
+}
+func TestEngine_DNSQueryLogging(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+	opts := EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		Blocker:     bl,
+		FinalAction: "proxy_pool",
+		Rules: []routing.Rule{
+			{
+				ID:           "rule-direct",
+				Enabled:      true,
+				Action:       routing.RouteAction{Type: routing.ActionDirect},
+				DomainSuffix: []string{"baidu.com"},
+			},
+			{
+				ID:           "rule-proxy",
+				Enabled:      true,
+				Action:       routing.RouteAction{Type: routing.ActionProxyPool},
+				DomainSuffix: []string{"google.com"},
+			},
+		},
+	}
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer eng.Close()
+
+	// 1. Query direct domain
+	msg1 := new(dns.Msg)
+	msg1.SetQuestion("www.baidu.com.", dns.TypeA)
+	raw1, _ := msg1.Pack()
+	writer1 := &testPacketWriter{done: make(chan struct{})}
+	eng.box.Router().HijackDNSPacket(context.Background(), raw1, writer1, adapter.InboundContext{})
+	select {
+	case <-writer1.done:
+	case <-time.After(2 * time.Second):
+	}
+
+	// 2. Query proxy domain
+	msg2 := new(dns.Msg)
+	msg2.SetQuestion("www.google.com.", dns.TypeA)
+	raw2, _ := msg2.Pack()
+	writer2 := &testPacketWriter{done: make(chan struct{})}
+	eng.box.Router().HijackDNSPacket(context.Background(), raw2, writer2, adapter.InboundContext{})
+	select {
+	case <-writer2.done:
+	case <-time.After(2 * time.Second):
+	}
+
+	entries := bl.Logger().GetEntries(10)
+	t.Logf("Entries count=%d: %+v", len(entries), entries)
+	for _, e := range entries {
+		t.Logf("Entry: domain=%s source=%s verdict=%s chain=%s", e.Domain, e.Source, e.Verdict, e.Chain)
+	}
+	if len(entries) < 2 {
+		t.Fatalf("expected at least 2 entries in query logger, got %d", len(entries))
+	}
+}
+
 // Tests that DNS split rules align with user routing rules so Direct domains resolve via domestic-doh instead of remote-doh.
 func TestEngine_DNSRuleSplitByRoutingRules(t *testing.T) {
 	eng := &Engine{}
