@@ -420,8 +420,10 @@ func (s Service) Validate() error {
 		return nil
 	}
 	listens := cleanSlice(s.Listens)
-	if len(listens) == 0 {
-		return errors.New("至少需要配置一个本地监听地址 (listen)")
+	if s.EffectiveEngine() == EngineSidecar || s.EffectiveProtocol() == ProtoNaive {
+		if len(listens) == 0 {
+			return errors.New("至少需要配置一个本地监听地址 (listen)")
+		}
 	}
 	for _, l := range listens {
 		if _, err := ParseListenURI(l); err != nil {

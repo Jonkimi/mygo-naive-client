@@ -2957,3 +2957,433 @@ func LocalServicesLabel(total int) string { return In(i18n.Locale()).LocalServic
 func (msgs Messages) LocalServicesLabel(total int) string {
 	return Catalog.Format(msgs.locale, "localServicesLabel", map[string]any{"total": total})
 }
+
+// ProtocolLabel says "Protocol"
+// in the language the app shows.
+func ProtocolLabel() string { return In(i18n.Locale()).ProtocolLabel() }
+
+// ProtocolLabel says "Protocol"
+// in the language of msgs.
+func (msgs Messages) ProtocolLabel() string {
+	return Catalog.Format(msgs.locale, "protocolLabel", nil)
+}
+
+// EngineLabel says "Execution Engine"
+// in the language the app shows.
+func EngineLabel() string { return In(i18n.Locale()).EngineLabel() }
+
+// EngineLabel says "Execution Engine"
+// in the language of msgs.
+func (msgs Messages) EngineLabel() string {
+	return Catalog.Format(msgs.locale, "engineLabel", nil)
+}
+
+// EngineSingBox says "Embedded Sing-Box (In-Process)"
+// in the language the app shows.
+func EngineSingBox() string { return In(i18n.Locale()).EngineSingBox() }
+
+// EngineSingBox says "Embedded Sing-Box (In-Process)"
+// in the language of msgs.
+func (msgs Messages) EngineSingBox() string {
+	return Catalog.Format(msgs.locale, "engineSingBox", nil)
+}
+
+// EngineSidecarNaive says "Official NaiveProxy Sidecar (Chromium Fingerprint)"
+// in the language the app shows.
+func EngineSidecarNaive() string { return In(i18n.Locale()).EngineSidecarNaive() }
+
+// EngineSidecarNaive says "Official NaiveProxy Sidecar (Chromium Fingerprint)"
+// in the language of msgs.
+func (msgs Messages) EngineSidecarNaive() string {
+	return Catalog.Format(msgs.locale, "engineSidecarNaive", nil)
+}
+
+// EngineSidecarXray says "Official Xray-core Sidecar (Compatibility)"
+// in the language the app shows.
+func EngineSidecarXray() string { return In(i18n.Locale()).EngineSidecarXray() }
+
+// EngineSidecarXray says "Official Xray-core Sidecar (Compatibility)"
+// in the language of msgs.
+func (msgs Messages) EngineSidecarXray() string {
+	return Catalog.Format(msgs.locale, "engineSidecarXray", nil)
+}
+
+// EngineSingBoxOnly says "Embedded Sing-Box (Subprocess-free)"
+// in the language the app shows.
+func EngineSingBoxOnly() string { return In(i18n.Locale()).EngineSingBoxOnly() }
+
+// EngineSingBoxOnly says "Embedded Sing-Box (Subprocess-free)"
+// in the language of msgs.
+func (msgs Messages) EngineSingBoxOnly() string {
+	return Catalog.Format(msgs.locale, "engineSingBoxOnly", nil)
+}
+
+// AutoLoopbackPortLabel says "Auto Allocate Local Loopback Port"
+// in the language the app shows.
+func AutoLoopbackPortLabel() string { return In(i18n.Locale()).AutoLoopbackPortLabel() }
+
+// AutoLoopbackPortLabel says "Auto Allocate Local Loopback Port"
+// in the language of msgs.
+func (msgs Messages) AutoLoopbackPortLabel() string {
+	return Catalog.Format(msgs.locale, "autoLoopbackPortLabel", nil)
+}
+
+// AutoLoopbackPortDesc says "Dynamically allocate free local port by system"
+// in the language the app shows.
+func AutoLoopbackPortDesc() string { return In(i18n.Locale()).AutoLoopbackPortDesc() }
+
+// AutoLoopbackPortDesc says "Dynamically allocate free local port by system"
+// in the language of msgs.
+func (msgs Messages) AutoLoopbackPortDesc() string {
+	return Catalog.Format(msgs.locale, "autoLoopbackPortDesc", nil)
+}
+
+// ServerLabel says "Server Address"
+// in the language the app shows.
+func ServerLabel() string { return In(i18n.Locale()).ServerLabel() }
+
+// ServerLabel says "Server Address"
+// in the language of msgs.
+func (msgs Messages) ServerLabel() string {
+	return Catalog.Format(msgs.locale, "serverLabel", nil)
+}
+
+// ServerPortLabel says "Server Port"
+// in the language the app shows.
+func ServerPortLabel() string { return In(i18n.Locale()).ServerPortLabel() }
+
+// ServerPortLabel says "Server Port"
+// in the language of msgs.
+func (msgs Messages) ServerPortLabel() string {
+	return Catalog.Format(msgs.locale, "serverPortLabel", nil)
+}
+
+// UuidLabel says "User ID (UUID)"
+// in the language the app shows.
+func UuidLabel() string { return In(i18n.Locale()).UuidLabel() }
+
+// UuidLabel says "User ID (UUID)"
+// in the language of msgs.
+func (msgs Messages) UuidLabel() string {
+	return Catalog.Format(msgs.locale, "uuidLabel", nil)
+}
+
+// PasswordLabel says "Password"
+// in the language the app shows.
+func PasswordLabel() string { return In(i18n.Locale()).PasswordLabel() }
+
+// PasswordLabel says "Password"
+// in the language of msgs.
+func (msgs Messages) PasswordLabel() string {
+	return Catalog.Format(msgs.locale, "passwordLabel", nil)
+}
+
+// SecurityLabel says "Security"
+// in the language the app shows.
+func SecurityLabel() string { return In(i18n.Locale()).SecurityLabel() }
+
+// SecurityLabel says "Security"
+// in the language of msgs.
+func (msgs Messages) SecurityLabel() string {
+	return Catalog.Format(msgs.locale, "securityLabel", nil)
+}
+
+// SniLabel says "TLS SNI"
+// in the language the app shows.
+func SniLabel() string { return In(i18n.Locale()).SniLabel() }
+
+// SniLabel says "TLS SNI"
+// in the language of msgs.
+func (msgs Messages) SniLabel() string {
+	return Catalog.Format(msgs.locale, "sniLabel", nil)
+}
+
+// AlpnLabel says "ALPN (comma separated)"
+// in the language the app shows.
+func AlpnLabel() string { return In(i18n.Locale()).AlpnLabel() }
+
+// AlpnLabel says "ALPN (comma separated)"
+// in the language of msgs.
+func (msgs Messages) AlpnLabel() string {
+	return Catalog.Format(msgs.locale, "alpnLabel", nil)
+}
+
+// FingerprintLabel says "uTLS Fingerprint"
+// in the language the app shows.
+func FingerprintLabel() string { return In(i18n.Locale()).FingerprintLabel() }
+
+// FingerprintLabel says "uTLS Fingerprint"
+// in the language of msgs.
+func (msgs Messages) FingerprintLabel() string {
+	return Catalog.Format(msgs.locale, "fingerprintLabel", nil)
+}
+
+// PublicKeyLabel says "REALITY Public Key (pbk)"
+// in the language the app shows.
+func PublicKeyLabel() string { return In(i18n.Locale()).PublicKeyLabel() }
+
+// PublicKeyLabel says "REALITY Public Key (pbk)"
+// in the language of msgs.
+func (msgs Messages) PublicKeyLabel() string {
+	return Catalog.Format(msgs.locale, "publicKeyLabel", nil)
+}
+
+// ShortIDLabel says "REALITY Short ID (sid)"
+// in the language the app shows.
+func ShortIDLabel() string { return In(i18n.Locale()).ShortIDLabel() }
+
+// ShortIDLabel says "REALITY Short ID (sid)"
+// in the language of msgs.
+func (msgs Messages) ShortIDLabel() string {
+	return Catalog.Format(msgs.locale, "shortIDLabel", nil)
+}
+
+// SpiderXLabel says "REALITY SpiderX (spx)"
+// in the language the app shows.
+func SpiderXLabel() string { return In(i18n.Locale()).SpiderXLabel() }
+
+// SpiderXLabel says "REALITY SpiderX (spx)"
+// in the language of msgs.
+func (msgs Messages) SpiderXLabel() string {
+	return Catalog.Format(msgs.locale, "spiderXLabel", nil)
+}
+
+// FlowLabel says "Flow"
+// in the language the app shows.
+func FlowLabel() string { return In(i18n.Locale()).FlowLabel() }
+
+// FlowLabel says "Flow"
+// in the language of msgs.
+func (msgs Messages) FlowLabel() string {
+	return Catalog.Format(msgs.locale, "flowLabel", nil)
+}
+
+// NetworkLabel says "Transport Network"
+// in the language the app shows.
+func NetworkLabel() string { return In(i18n.Locale()).NetworkLabel() }
+
+// NetworkLabel says "Transport Network"
+// in the language of msgs.
+func (msgs Messages) NetworkLabel() string {
+	return Catalog.Format(msgs.locale, "networkLabel", nil)
+}
+
+// PathLabel says "Path"
+// in the language the app shows.
+func PathLabel() string { return In(i18n.Locale()).PathLabel() }
+
+// PathLabel says "Path"
+// in the language of msgs.
+func (msgs Messages) PathLabel() string {
+	return Catalog.Format(msgs.locale, "pathLabel", nil)
+}
+
+// HostHeaderLabel says "Host Header"
+// in the language the app shows.
+func HostHeaderLabel() string { return In(i18n.Locale()).HostHeaderLabel() }
+
+// HostHeaderLabel says "Host Header"
+// in the language of msgs.
+func (msgs Messages) HostHeaderLabel() string {
+	return Catalog.Format(msgs.locale, "hostHeaderLabel", nil)
+}
+
+// ServiceNameLabel says "gRPC Service Name"
+// in the language the app shows.
+func ServiceNameLabel() string { return In(i18n.Locale()).ServiceNameLabel() }
+
+// ServiceNameLabel says "gRPC Service Name"
+// in the language of msgs.
+func (msgs Messages) ServiceNameLabel() string {
+	return Catalog.Format(msgs.locale, "serviceNameLabel", nil)
+}
+
+// SsMethodLabel says "Cipher Method"
+// in the language the app shows.
+func SsMethodLabel() string { return In(i18n.Locale()).SsMethodLabel() }
+
+// SsMethodLabel says "Cipher Method"
+// in the language of msgs.
+func (msgs Messages) SsMethodLabel() string {
+	return Catalog.Format(msgs.locale, "ssMethodLabel", nil)
+}
+
+// CongestionCtlLabel says "Congestion Control"
+// in the language the app shows.
+func CongestionCtlLabel() string { return In(i18n.Locale()).CongestionCtlLabel() }
+
+// CongestionCtlLabel says "Congestion Control"
+// in the language of msgs.
+func (msgs Messages) CongestionCtlLabel() string {
+	return Catalog.Format(msgs.locale, "congestionCtlLabel", nil)
+}
+
+// ZeroRTTLabel says "0-RTT Handshake"
+// in the language the app shows.
+func ZeroRTTLabel() string { return In(i18n.Locale()).ZeroRTTLabel() }
+
+// ZeroRTTLabel says "0-RTT Handshake"
+// in the language of msgs.
+func (msgs Messages) ZeroRTTLabel() string {
+	return Catalog.Format(msgs.locale, "zeroRTTLabel", nil)
+}
+
+// TriCoreSectionTitle says "Core Engines & Geodata Manager"
+// in the language the app shows.
+func TriCoreSectionTitle() string { return In(i18n.Locale()).TriCoreSectionTitle() }
+
+// TriCoreSectionTitle says "Core Engines & Geodata Manager"
+// in the language of msgs.
+func (msgs Messages) TriCoreSectionTitle() string {
+	return Catalog.Format(msgs.locale, "triCoreSectionTitle", nil)
+}
+
+// CoreSingBoxTitle says "Embedded Sing-Box Core (In-Process)"
+// in the language the app shows.
+func CoreSingBoxTitle() string { return In(i18n.Locale()).CoreSingBoxTitle() }
+
+// CoreSingBoxTitle says "Embedded Sing-Box Core (In-Process)"
+// in the language of msgs.
+func (msgs Messages) CoreSingBoxTitle() string {
+	return Catalog.Format(msgs.locale, "coreSingBoxTitle", nil)
+}
+
+// CoreSingBoxDesc says "Master routing, TUN takeover, Split-DoH, and Tailscale mesh core"
+// in the language the app shows.
+func CoreSingBoxDesc() string { return In(i18n.Locale()).CoreSingBoxDesc() }
+
+// CoreSingBoxDesc says "Master routing, TUN takeover, Split-DoH, and Tailscale mesh core"
+// in the language of msgs.
+func (msgs Messages) CoreSingBoxDesc() string {
+	return Catalog.Format(msgs.locale, "coreSingBoxDesc", nil)
+}
+
+// CoreSingBoxStatus says "In-Memory Ready"
+// in the language the app shows.
+func CoreSingBoxStatus() string { return In(i18n.Locale()).CoreSingBoxStatus() }
+
+// CoreSingBoxStatus says "In-Memory Ready"
+// in the language of msgs.
+func (msgs Messages) CoreSingBoxStatus() string {
+	return Catalog.Format(msgs.locale, "coreSingBoxStatus", nil)
+}
+
+// CoreNaiveTitle says "Official NaiveProxy Sidecar"
+// in the language the app shows.
+func CoreNaiveTitle() string { return In(i18n.Locale()).CoreNaiveTitle() }
+
+// CoreNaiveTitle says "Official NaiveProxy Sidecar"
+// in the language of msgs.
+func (msgs Messages) CoreNaiveTitle() string {
+	return Catalog.Format(msgs.locale, "coreNaiveTitle", nil)
+}
+
+// CoreNaiveDesc says "100% Chromium network stack & TLS fingerprint"
+// in the language the app shows.
+func CoreNaiveDesc() string { return In(i18n.Locale()).CoreNaiveDesc() }
+
+// CoreNaiveDesc says "100% Chromium network stack & TLS fingerprint"
+// in the language of msgs.
+func (msgs Messages) CoreNaiveDesc() string {
+	return Catalog.Format(msgs.locale, "coreNaiveDesc", nil)
+}
+
+// CoreXrayTitle says "Official Xray-core Sidecar"
+// in the language the app shows.
+func CoreXrayTitle() string { return In(i18n.Locale()).CoreXrayTitle() }
+
+// CoreXrayTitle says "Official Xray-core Sidecar"
+// in the language of msgs.
+func (msgs Messages) CoreXrayTitle() string {
+	return Catalog.Format(msgs.locale, "coreXrayTitle", nil)
+}
+
+// CoreXrayDesc says "Loopback sidecar engine for XHTTP, REALITY, and advanced protocols"
+// in the language the app shows.
+func CoreXrayDesc() string { return In(i18n.Locale()).CoreXrayDesc() }
+
+// CoreXrayDesc says "Loopback sidecar engine for XHTTP, REALITY, and advanced protocols"
+// in the language of msgs.
+func (msgs Messages) CoreXrayDesc() string {
+	return Catalog.Format(msgs.locale, "coreXrayDesc", nil)
+}
+
+// CustomXrayPathLabel says "Custom local xray executable path (leave empty for default)"
+// in the language the app shows.
+func CustomXrayPathLabel() string { return In(i18n.Locale()).CustomXrayPathLabel() }
+
+// CustomXrayPathLabel says "Custom local xray executable path (leave empty for default)"
+// in the language of msgs.
+func (msgs Messages) CustomXrayPathLabel() string {
+	return Catalog.Format(msgs.locale, "customXrayPathLabel", nil)
+}
+
+// InstallXray says "Download & Install Xray Core"
+// in the language the app shows.
+func InstallXray() string { return In(i18n.Locale()).InstallXray() }
+
+// InstallXray says "Download & Install Xray Core"
+// in the language of msgs.
+func (msgs Messages) InstallXray() string {
+	return Catalog.Format(msgs.locale, "installXray", nil)
+}
+
+// XrayNotInstalled says "Xray Core Not Installed"
+// in the language the app shows.
+func XrayNotInstalled() string { return In(i18n.Locale()).XrayNotInstalled() }
+
+// XrayNotInstalled says "Xray Core Not Installed"
+// in the language of msgs.
+func (msgs Messages) XrayNotInstalled() string {
+	return Catalog.Format(msgs.locale, "xrayNotInstalled", nil)
+}
+
+// XrayLocal says "Xray Local "
+// in the language the app shows.
+func XrayLocal() string { return In(i18n.Locale()).XrayLocal() }
+
+// XrayLocal says "Xray Local "
+// in the language of msgs.
+func (msgs Messages) XrayLocal() string {
+	return Catalog.Format(msgs.locale, "xrayLocal", nil)
+}
+
+// EngineStatusPillTitle says "Engine Status"
+// in the language the app shows.
+func EngineStatusPillTitle() string { return In(i18n.Locale()).EngineStatusPillTitle() }
+
+// EngineStatusPillTitle says "Engine Status"
+// in the language of msgs.
+func (msgs Messages) EngineStatusPillTitle() string {
+	return Catalog.Format(msgs.locale, "engineStatusPillTitle", nil)
+}
+
+// TagSingBox says "SING-BOX"
+// in the language the app shows.
+func TagSingBox() string { return In(i18n.Locale()).TagSingBox() }
+
+// TagSingBox says "SING-BOX"
+// in the language of msgs.
+func (msgs Messages) TagSingBox() string {
+	return Catalog.Format(msgs.locale, "tagSingBox", nil)
+}
+
+// TagSidecar says "SIDECAR"
+// in the language the app shows.
+func TagSidecar() string { return In(i18n.Locale()).TagSidecar() }
+
+// TagSidecar says "SIDECAR"
+// in the language of msgs.
+func (msgs Messages) TagSidecar() string {
+	return Catalog.Format(msgs.locale, "tagSidecar", nil)
+}
+
+// TagLoopback says "Loopback"
+// in the language the app shows.
+func TagLoopback() string { return In(i18n.Locale()).TagLoopback() }
+
+// TagLoopback says "Loopback"
+// in the language of msgs.
+func (msgs Messages) TagLoopback() string {
+	return Catalog.Format(msgs.locale, "tagLoopback", nil)
+}

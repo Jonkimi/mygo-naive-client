@@ -3,14 +3,20 @@ package updater
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
+
+	"naive-client/internal/config"
+	"naive-client/internal/runner"
 )
 
 // LatestXrayReleaseAPI is the GitHub API endpoint for XTLS/Xray-core releases.
@@ -176,5 +182,160 @@ func ExtractXrayZip(zipPath, targetBinPath string) error {
 		_ = os.Remove(tmpTarget)
 		return fmt.Errorf("重命名替换二进制文件失败: %w", err)
 	}
+	return nil
+}
+
+// CheckLatestXray fetches the latest release metadata for XTLS/Xray-core.
+func CheckLatestXray(ctx context.Context, opts HTTPClientOptions) (*Release, error) {
+	return CheckLatestFromURL(ctx, LatestXrayReleaseAPI, opts)
+}
+
+// SeamlessUpdateXray downloads the xray release asset for the current platform,
+// extracts the binary, updates the manager, and restarts any affected services.
+func SeamlessUpdateXray(
+	ctx context.Context,
+	rel *Release,
+	targetBinPath string,
+	mgr *runner.Manager,
+	opts HTTPClientOptions,
+	mirrorPrefix string,
+	onProgress ProgressFunc,
+) error {
+	return SeamlessUpdateXrayForPlatform(ctx, rel, runtime.GOOS, runtime.GOARCH, targetBinPath, mgr, opts, mirrorPrefix, onProgress)
+}
+
+// SeamlessUpdateXrayForPlatform is the platform-parameterized implementation of SeamlessUpdateXray.
+func SeamlessUpdateXrayForPlatform(
+	ctx context.Context,
+	rel *Release,
+	goos, goarch string,
+	targetBinPath string,
+	mgr *runner.Manager,
+	opts HTTPClientOptions,
+	mirrorPrefix string,
+	onProgress ProgressFunc,
+) error {
+	if onProgress == nil {
+		onProgress = func(float64, string) {}
+	}
+	asset, err := MatchXrayAsset(rel, goos, goarch)
+	if err != nil {
+		return err
+	}
+
+	binDir := filepath.Dir(targetBinPath)
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return fmt.Errorf("创建核心目录失败: %w", err)
+	}
+
+	tmpArchive, err := os.CreateTemp(binDir, "xray-download-*"+filepath.Ext(asset.Name))
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	tmpArchivePath := tmpArchive.Name()
+	defer func() {
+		_ = tmpArchive.Close()
+		_ = os.Remove(tmpArchivePath)
+	}()
+
+	downloadURL := MirrorURL(asset.BrowserDownloadURL, mirrorPrefix)
+	onProgress(0.02, "正在连接下载服务器…")
+
+	opts.Timeout = 10 * time.Minute
+	client := NewHTTPClient(opts)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "naive-client-mygo/0.1")
+
+	resp, err := client.Do(req)
+	if err != nil && opts.LocalEndpoint != nil && opts.ProxyURL == "" {
+		direct := &http.Client{Timeout: 10 * time.Minute}
+		resp, err = direct.Do(req)
+	}
+	if err != nil {
+		return fmt.Errorf("下载失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载服务器返回 HTTP %d", resp.StatusCode)
+	}
+
+	totalSize := asset.Size
+	if resp.ContentLength > 0 {
+		totalSize = resp.ContentLength
+	}
+
+	hasher := sha256.New()
+	var downloaded int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, wErr := tmpArchive.Write(buf[:n]); wErr != nil {
+				return fmt.Errorf("写入下载文件失败: %w", wErr)
+			}
+			_, _ = hasher.Write(buf[:n])
+			downloaded += int64(n)
+			if totalSize > 0 {
+				ratio := float64(downloaded) / float64(totalSize)
+				onProgress(min(0.80, 0.05+ratio*0.75), fmt.Sprintf("正在下载 %s (%.1f%%)…", rel.TagName, ratio*100))
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("读取下载流失败: %w", readErr)
+		}
+	}
+	if err := tmpArchive.Close(); err != nil {
+		return err
+	}
+
+	onProgress(0.84, "正在解压核心文件…")
+	stagingBinPath := targetBinPath + ".new"
+	_ = os.Remove(stagingBinPath)
+	defer func() {
+		_ = os.Remove(stagingBinPath)
+	}()
+
+	if err := ExtractXrayZip(tmpArchivePath, stagingBinPath); err != nil {
+		return fmt.Errorf("解压核心失败: %w", err)
+	}
+	if err := os.Chmod(stagingBinPath, 0o755); err != nil && goos != "windows" {
+		return fmt.Errorf("设置可执行权限失败: %w", err)
+	}
+	clearQuarantine(stagingBinPath)
+
+	onProgress(0.92, "正在平滑切换运行中的服务…")
+	var running []config.Service
+	if mgr != nil {
+		running = mgr.StopAll()
+	}
+
+	oldBackup := targetBinPath + ".old"
+	_ = os.Remove(oldBackup)
+	if _, err := os.Stat(targetBinPath); err == nil {
+		_ = os.Rename(targetBinPath, oldBackup)
+	}
+	if err := os.Rename(stagingBinPath, targetBinPath); err != nil {
+		if _, statErr := os.Stat(oldBackup); statErr == nil {
+			_ = os.Rename(oldBackup, targetBinPath)
+		}
+		return fmt.Errorf("替换核心二进制失败: %w", err)
+	}
+	_ = os.Remove(oldBackup)
+
+	if mgr != nil {
+		mgr.SetXrayBinaryPath(targetBinPath)
+		for _, svc := range running {
+			_ = mgr.Start(svc)
+		}
+	}
+
+	onProgress(1.0, "更新完成")
 	return nil
 }

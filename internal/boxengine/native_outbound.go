@@ -8,8 +8,10 @@ import (
 	"naive-client/internal/config"
 )
 
-// buildNativeOutbound converts a config.Service into sing-box native outbound options.
-func buildNativeOutbound(svc config.Service) map[string]any {
+var buildNativeOutbound = BuildNativeOutbound
+
+// BuildNativeOutbound converts a config.Service into sing-box native outbound options.
+func BuildNativeOutbound(svc config.Service) map[string]any {
 	tag := "node-" + svc.ID
 
 	// Handle ExternalURI (e.g. socks5://user:pass@host:port or http://host:port)

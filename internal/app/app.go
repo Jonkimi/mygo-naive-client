@@ -103,6 +103,14 @@ type app struct {
 	hasUpdate       bool
 	checkingUpdate  bool
 	updatingCore    bool
+
+	localXrayVersion   string
+	latestXrayRelease  *updater.Release
+	hasXrayUpdate      bool
+	checkingXrayUpdate bool
+	updatingXrayCore   bool
+	updateXrayError    string
+
 	updatingGeoData bool
 	geoSiteTags     []string
 	geoIPTags       []string
@@ -333,6 +341,7 @@ func (a *app) initSubsystems() {
 		}
 	}
 	a.syncBinaryPathAndVersion()
+	a.syncXrayBinaryPathAndVersion()
 }
 
 func (a *app) syncBinaryPathAndVersion() {
@@ -348,6 +357,22 @@ func (a *app) syncBinaryPathAndVersion() {
 	}
 	if a.latestRelease != nil {
 		a.hasUpdate = updater.NeedsUpdateWithTag(a.state.InstalledNaiveTag, detected, a.latestRelease.TagName)
+	}
+}
+
+func (a *app) syncXrayBinaryPathAndVersion() {
+	binPath := a.resolveXrayBinaryPath()
+	if a.mgr != nil {
+		a.mgr.SetXrayBinaryPath(binPath)
+	}
+	detected := updater.DetectLocalXrayVersion(binPath)
+	if a.state.InstalledXrayTag != "" && strings.TrimSpace(a.state.CustomXrayBinaryPath) == "" {
+		a.localXrayVersion = a.state.InstalledXrayTag
+	} else {
+		a.localXrayVersion = detected
+	}
+	if a.latestXrayRelease != nil {
+		a.hasXrayUpdate = updater.NeedsUpdateWithTag(a.state.InstalledXrayTag, detected, a.latestXrayRelease.TagName)
 	}
 }
 
@@ -388,6 +413,7 @@ func (a *app) startPeriodicUpdateCheck() {
 			if a.state.AutoCheckUpdate {
 				a.dispatchUI(func() {
 					a.triggerCheckUpdate(false)
+					a.triggerCheckXrayUpdate(false)
 				})
 			}
 		}
@@ -597,6 +623,9 @@ func (a *app) triggerCheckUpdate(manual bool) {
 	if a.checkingUpdate || a.updatingCore {
 		return
 	}
+	if manual {
+		a.triggerCheckXrayUpdate(false)
+	}
 	a.checkingUpdate = true
 	a.updateError = ""
 	a.syncBinaryPathAndVersion()
@@ -731,6 +760,129 @@ func (a *app) triggerSeamlessUpdate(auto ...bool) {
 				a.toast(fmt.Sprintf("已自动无感更新 NaiveProxy 内核至 %s", rel.TagName))
 			} else {
 				a.toast(fmt.Sprintf("已无感更新至 %s", rel.TagName))
+			}
+		})
+	}()
+}
+
+func (a *app) triggerCheckXrayUpdate(manual bool) {
+	if a.checkingXrayUpdate {
+		return
+	}
+	a.checkingXrayUpdate = true
+	a.updateXrayError = ""
+	a.syncXrayBinaryPathAndVersion()
+	opts := a.buildUpdaterHTTPOptions(20 * time.Second)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		rel, err := updater.CheckLatestXray(ctx, opts)
+		a.dispatchUI(func() {
+			a.checkingXrayUpdate = false
+			binPath := a.resolveXrayBinaryPath()
+			detected := updater.DetectLocalXrayVersion(binPath)
+			if a.state.InstalledXrayTag != "" && strings.TrimSpace(a.state.CustomXrayBinaryPath) == "" {
+				a.localXrayVersion = a.state.InstalledXrayTag
+			} else {
+				a.localXrayVersion = detected
+			}
+			if err != nil {
+				a.updateXrayError = err.Error()
+				if manual {
+					a.toast("检查 Xray 更新失败: " + err.Error())
+				}
+				return
+			}
+			a.latestXrayRelease = rel
+			a.hasXrayUpdate = updater.NeedsUpdateWithTag(a.state.InstalledXrayTag, detected, rel.TagName)
+			if rel != nil && a.state.LastKnownRemoteXrayTag != rel.TagName {
+				a.state.LastKnownRemoteXrayTag = rel.TagName
+				a.saveState()
+			}
+			if a.hasXrayUpdate && rel != nil {
+				if manual {
+					a.toast("发现 Xray 新版本: " + rel.TagName)
+				}
+			} else if manual {
+				a.toast("Xray 当前已是最新版本")
+			}
+		})
+	}()
+}
+
+func (a *app) triggerSeamlessXrayUpdate(auto ...bool) {
+	isAuto := len(auto) > 0 && auto[0]
+	if a.updatingXrayCore {
+		return
+	}
+	a.updatingXrayCore = true
+	a.updateXrayError = ""
+
+	binPath := a.resolveXrayBinaryPath()
+	mirror := a.state.GitHubMirror
+	opts := a.buildUpdaterHTTPOptions(15 * time.Minute)
+	rel := a.latestXrayRelease
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+
+		if rel == nil {
+			fetched, err := updater.CheckLatestXray(ctx, opts)
+			if err != nil {
+				a.dispatchUI(func() {
+					a.updatingXrayCore = false
+					a.updateXrayError = err.Error()
+					if isAuto {
+						a.toast("自动更新 Xray 失败: " + err.Error())
+					} else {
+						a.toast("获取 Xray 最新版本失败: " + err.Error())
+					}
+				})
+				return
+			}
+			rel = fetched
+		}
+
+		err := updater.SeamlessUpdateXray(
+			ctx,
+			rel,
+			binPath,
+			a.mgr,
+			opts,
+			mirror,
+			func(progress float64, stage string) {},
+		)
+
+		a.dispatchUI(func() {
+			a.updatingXrayCore = false
+			a.latestXrayRelease = rel
+			if err != nil {
+				a.syncXrayBinaryPathAndVersion()
+				a.updateXrayError = err.Error()
+				if isAuto {
+					a.toast("自动更新 Xray 核心失败: " + err.Error())
+				} else {
+					a.toast("更新 Xray 核心失败: " + err.Error())
+				}
+				return
+			}
+
+			if strings.TrimSpace(a.state.CustomXrayBinaryPath) == "" {
+				a.state.InstalledXrayTag = rel.TagName
+				if sum, sumErr := updater.FileSHA256(binPath); sumErr == nil {
+					a.state.InstalledXraySHA256 = sum
+				}
+				a.saveState()
+			}
+
+			a.syncXrayBinaryPathAndVersion()
+			a.hasXrayUpdate = false
+			if isAuto {
+				a.toast(fmt.Sprintf("已自动更新 Xray-core 内核至 %s", rel.TagName))
+			} else {
+				a.toast(fmt.Sprintf("已成功安装/更新 Xray-core 至 %s", rel.TagName))
 			}
 		})
 	}()

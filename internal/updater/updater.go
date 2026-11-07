@@ -258,8 +258,13 @@ func NewHTTPClient(opts HTTPClientOptions) *http.Client {
 
 // CheckLatest fetches the latest release metadata from GitHub Releases API.
 func CheckLatest(ctx context.Context, opts HTTPClientOptions) (*Release, error) {
+	return CheckLatestFromURL(ctx, LatestReleaseAPI, opts)
+}
+
+// CheckLatestFromURL fetches the latest release metadata from the specified GitHub Releases API URL.
+func CheckLatestFromURL(ctx context.Context, apiURL string, opts HTTPClientOptions) (*Release, error) {
 	client := NewHTTPClient(opts)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, LatestReleaseAPI, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
 	}

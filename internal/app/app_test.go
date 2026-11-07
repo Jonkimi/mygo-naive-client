@@ -2470,7 +2470,7 @@ func TestApp_DnsSelectDropdownUI(t *testing.T) {
 
 	tt := ui.NewTester(func(c *ui.Context) {
 		a.renderSettingsPage(c, darkPalette)
-	}, 800, 1600)
+	}, 800, 2000)
 
 	// 1. Select Domestic DNS from preset
 	if err := tt.Click("https://223.5.5.5/dns-query"); err != nil {
@@ -2523,7 +2523,7 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 
 	tt := ui.NewTester(func(c *ui.Context) {
 		a.renderSettingsPage(c, darkPalette)
-	}, 800, 1600)
+	}, 800, 2000)
 
 	// Click Prefer IPv4 switch on the right side of the row to toggle it off
 	label, ok := tt.Find(a.catalog().DnsPreferIPv4Label())
