@@ -19,17 +19,66 @@ const (
 	KindExternalProxy NodeKind = "external"
 )
 
+// Protocol represents the proxy protocol of the service.
+type Protocol string
+
+const (
+	ProtoNaive       Protocol = "naive"
+	ProtoVLESS       Protocol = "vless"
+	ProtoVMess       Protocol = "vmess"
+	ProtoTrojan      Protocol = "trojan"
+	ProtoShadowsocks Protocol = "shadowsocks"
+	ProtoHysteria2   Protocol = "hysteria2"
+	ProtoTUIC        Protocol = "tuic"
+	ProtoSOCKS5      Protocol = "socks5"
+	ProtoHTTP        Protocol = "http"
+)
+
+// ExecutionEngine specifies which underlying engine handles the outbound node.
+type ExecutionEngine string
+
+const (
+	EngineSingBox ExecutionEngine = "singbox"
+	EngineSidecar ExecutionEngine = "sidecar"
+)
+
 // Service describes a local NaiveProxy instance or external proxy endpoint managed by the client.
 // For KindManagedNaive, its fields map directly to klzgrad/naiveproxy's USAGE.txt options.
 type Service struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	AutoStart bool     `json:"autoStart,omitempty"`
-	Kind      NodeKind `json:"kind,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	AutoStart bool            `json:"autoStart,omitempty"`
+	Kind      NodeKind        `json:"kind,omitempty"`
+	Protocol  Protocol        `json:"protocol,omitempty"`
+	Engine    ExecutionEngine `json:"engine,omitempty"`
+	Tags      []string        `json:"tags,omitempty"`
 
 	// ExternalURI is used when Kind == KindExternalProxy (e.g. "socks5://1.2.3.4:1080", "http://host:8080").
 	ExternalURI string `json:"externalUri,omitempty"`
+
+	// Multi-protocol parameters (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)
+	Server               string   `json:"server,omitempty"`
+	ServerPort           int      `json:"serverPort,omitempty"`
+	UUID                 string   `json:"uuid,omitempty"`
+	Password             string   `json:"password,omitempty"`
+	Security             string   `json:"security,omitempty"` // "tls", "reality", "none"
+	SNI                  string   `json:"sni,omitempty"`
+	ALPN                 []string `json:"alpn,omitempty"`
+	Fingerprint          string   `json:"fingerprint,omitempty"` // "chrome", "firefox", etc.
+	PublicKey            string   `json:"publicKey,omitempty"`   // REALITY pbk
+	ShortID              string   `json:"shortId,omitempty"`     // REALITY sid
+	SpiderX              string   `json:"spiderX,omitempty"`     // REALITY spx
+	Flow                 string   `json:"flow,omitempty"`        // "xtls-rprx-vision"
+	Network              string   `json:"network,omitempty"`     // "tcp", "ws", "grpc", "xhttp", "http"
+	Path                 string   `json:"path,omitempty"`        // ws/xhttp path
+	Host                 string   `json:"host,omitempty"`        // ws host header
+	ServiceName          string   `json:"serviceName,omitempty"` // grpc service name
+	Method               string   `json:"method,omitempty"`      // Shadowsocks cipher method
+	Plugin               string   `json:"plugin,omitempty"`      // Shadowsocks plugin
+	PluginOpts           string   `json:"pluginOpts,omitempty"`
+	CongestionController string   `json:"congestionController,omitempty"` // "bbr"
+	UDPRelayMode         string   `json:"udpRelayMode,omitempty"`
+	ZeroRTTHandshake     bool     `json:"zeroRttHandshake,omitempty"`
 
 	// Listen URIs: <LISTEN-PROTO>"://"[<USER>":"<PASS>"@"][<ADDR>][":"<PORT>]
 	// LISTEN-PROTO = "socks" | "http" | "redir"
@@ -65,6 +114,32 @@ func (s Service) EffectiveKind() NodeKind {
 		return KindExternalProxy
 	}
 	return KindManagedNaive
+}
+
+// EffectiveProtocol returns the configured Protocol, or infers it from Kind/ExternalURI/Proxies.
+func (s Service) EffectiveProtocol() Protocol {
+	if s.Protocol != "" {
+		return s.Protocol
+	}
+	if s.EffectiveKind() == KindExternalProxy {
+		if strings.HasPrefix(strings.ToLower(s.ExternalURI), "http") {
+			return ProtoHTTP
+		}
+		return ProtoSOCKS5
+	}
+	return ProtoNaive
+}
+
+// EffectiveEngine returns the execution engine for this node.
+// ProtoNaive defaults to EngineSidecar; all other protocols default to EngineSingBox.
+func (s Service) EffectiveEngine() ExecutionEngine {
+	if s.Engine != "" {
+		return s.Engine
+	}
+	if s.EffectiveProtocol() == ProtoNaive {
+		return EngineSidecar
+	}
+	return EngineSingBox
 }
 
 // OutboundEndpoint returns the proxy dial endpoint for this service.
@@ -125,6 +200,8 @@ func DefaultService(id string, port int) Service {
 	return Service{
 		ID:        id,
 		Name:      fmt.Sprintf("Naive-%d", port),
+		Protocol:  ProtoNaive,
+		Engine:    EngineSidecar,
 		Listens:   []string{fmt.Sprintf("socks://127.0.0.1:%d", port)},
 		Proxies:   []string{"https://user:pass@example.com"},
 		EnableLog: true,
@@ -153,6 +230,13 @@ func (s Service) PrimaryProxy() string {
 
 // RedactedProxy returns a display-safe summary of the primary proxy (hiding password).
 func (s Service) RedactedProxy() string {
+	if s.EffectiveProtocol() != ProtoNaive && s.Server != "" {
+		port := s.ServerPort
+		if port <= 0 {
+			port = 443
+		}
+		return fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
+	}
 	if s.EffectiveKind() == KindExternalProxy {
 		u, err := url.Parse(s.ExternalURI)
 		if err != nil || u.Host == "" {
@@ -196,6 +280,13 @@ func (s Service) RedactedProxy() string {
 // CompactRemoteEndpoint returns a concise protocol://host:port summary without credentials
 // for clean display in service cards.
 func (s Service) CompactRemoteEndpoint() string {
+	if s.EffectiveProtocol() != ProtoNaive && s.Server != "" {
+		port := s.ServerPort
+		if port <= 0 {
+			port = 443
+		}
+		return fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
+	}
 	if s.EffectiveKind() == KindExternalProxy {
 		u, err := url.Parse(s.ExternalURI)
 		if err != nil || u.Host == "" {
@@ -291,7 +382,7 @@ func ParseListenURI(raw string) (ListenEndpoint, error) {
 	}
 	if strings.HasPrefix(rest, ":") {
 		port, err := strconv.Atoi(rest[1:])
-		if err != nil || port <= 0 || port > 65535 {
+		if err != nil || port < 0 || port > 65535 {
 			return ep, fmt.Errorf("无效的监听端口: %q", rest[1:])
 		}
 		ep.Port = port
@@ -303,7 +394,7 @@ func ParseListenURI(raw string) (ListenEndpoint, error) {
 			ep.Addr = host
 		}
 		port, err := strconv.Atoi(portStr)
-		if err != nil || port <= 0 || port > 65535 {
+		if err != nil || port < 0 || port > 65535 {
 			return ep, fmt.Errorf("无效的监听端口: %q", portStr)
 		}
 		ep.Port = port
@@ -336,6 +427,15 @@ func (s Service) Validate() error {
 		if _, err := ParseListenURI(l); err != nil {
 			return err
 		}
+	}
+	if s.EffectiveProtocol() != ProtoNaive {
+		if strings.TrimSpace(s.Server) == "" {
+			return errors.New("服务器地址 (server) 不能为空")
+		}
+		if s.ServerPort < 0 || s.ServerPort > 65535 {
+			return errors.New("无效的服务器端口 (serverPort)")
+		}
+		return nil
 	}
 	proxies := cleanSlice(s.Proxies)
 	if len(proxies) > 1 && len(proxies) != len(listens) {

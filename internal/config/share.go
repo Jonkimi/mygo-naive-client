@@ -34,6 +34,288 @@ func (s Service) V2rayNSocksURI() string {
 	return fmt.Sprintf("socks://%s#%s", addr, url.PathEscape(alias))
 }
 
+// ShareURI exports the service as a standard share link based on its EffectiveProtocol().
+func (s Service) ShareURI() string {
+	switch s.EffectiveProtocol() {
+	case ProtoVLESS:
+		return s.vlessShareURI()
+	case ProtoVMess:
+		return s.vmessShareURI()
+	case ProtoTrojan:
+		return s.trojanShareURI()
+	case ProtoShadowsocks:
+		return s.shadowsocksShareURI()
+	case ProtoHysteria2:
+		return s.hysteria2ShareURI()
+	case ProtoTUIC:
+		return s.tuicShareURI()
+	case ProtoSOCKS5:
+		return s.socks5ShareURI()
+	case ProtoHTTP:
+		return s.httpShareURI()
+	default:
+		return s.NaiveShareURI()
+	}
+}
+
+func (s Service) vlessShareURI() string {
+	server := s.Server
+	port := s.ServerPort
+	if port <= 0 {
+		port = 443
+	}
+	u := &url.URL{
+		Scheme: "vless",
+		User:   url.User(s.UUID),
+		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
+	}
+	q := make(url.Values)
+	if s.Security != "" {
+		q.Set("security", s.Security)
+	}
+	if s.SNI != "" {
+		q.Set("sni", s.SNI)
+	}
+	if s.Fingerprint != "" {
+		q.Set("fp", s.Fingerprint)
+	}
+	if s.PublicKey != "" {
+		q.Set("pbk", s.PublicKey)
+	}
+	if s.ShortID != "" {
+		q.Set("sid", s.ShortID)
+	}
+	if s.SpiderX != "" {
+		q.Set("spx", s.SpiderX)
+	}
+	if s.Flow != "" {
+		q.Set("flow", s.Flow)
+	}
+	if s.Network != "" {
+		q.Set("type", s.Network)
+	}
+	if s.Path != "" {
+		q.Set("path", s.Path)
+	}
+	if s.Host != "" {
+		q.Set("host", s.Host)
+	}
+	if s.ServiceName != "" {
+		q.Set("serviceName", s.ServiceName)
+	}
+	if len(s.ALPN) > 0 {
+		q.Set("alpn", strings.Join(s.ALPN, ","))
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
+func (s Service) vmessShareURI() string {
+	portVal := any(s.ServerPort)
+	if s.ServerPort <= 0 {
+		portVal = 443
+	}
+	m := map[string]any{
+		"v":    "2",
+		"ps":   s.Name,
+		"add":  s.Server,
+		"port": portVal,
+		"id":   s.UUID,
+		"aid":  0,
+		"scy":  "auto",
+		"net":  s.Network,
+		"type": "none",
+		"host": s.Host,
+		"path": s.Path,
+		"tls":  s.Security,
+		"sni":  s.SNI,
+	}
+	if s.Network == "" {
+		m["net"] = "tcp"
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return "vmess://" + base64.StdEncoding.EncodeToString(b)
+}
+
+func (s Service) trojanShareURI() string {
+	server := s.Server
+	port := s.ServerPort
+	if port <= 0 {
+		port = 443
+	}
+	u := &url.URL{
+		Scheme: "trojan",
+		User:   url.User(s.Password),
+		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
+	}
+	q := make(url.Values)
+	if s.Security != "" {
+		q.Set("security", s.Security)
+	} else {
+		q.Set("security", "tls")
+	}
+	if s.SNI != "" {
+		q.Set("sni", s.SNI)
+	}
+	if len(s.ALPN) > 0 {
+		q.Set("alpn", strings.Join(s.ALPN, ","))
+	}
+	if s.Network != "" {
+		q.Set("type", s.Network)
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
+func (s Service) shadowsocksShareURI() string {
+	server := s.Server
+	port := s.ServerPort
+	if port <= 0 {
+		port = 8388
+	}
+	method := s.Method
+	if method == "" {
+		method = "aes-128-gcm"
+	}
+	userInfo := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", method, s.Password)))
+	u := &url.URL{
+		Scheme: "ss",
+		User:   url.User(userInfo),
+		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
+func (s Service) hysteria2ShareURI() string {
+	server := s.Server
+	port := s.ServerPort
+	if port <= 0 {
+		port = 443
+	}
+	u := &url.URL{
+		Scheme: "hysteria2",
+		User:   url.User(s.Password),
+		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
+	}
+	q := make(url.Values)
+	if s.SNI != "" {
+		q.Set("sni", s.SNI)
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
+func (s Service) tuicShareURI() string {
+	server := s.Server
+	port := s.ServerPort
+	if port <= 0 {
+		port = 8443
+	}
+	var user *url.Userinfo
+	if s.Password != "" {
+		user = url.UserPassword(s.UUID, s.Password)
+	} else {
+		user = url.User(s.UUID)
+	}
+	u := &url.URL{
+		Scheme: "tuic",
+		User:   user,
+		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
+	}
+	q := make(url.Values)
+	if s.SNI != "" {
+		q.Set("sni", s.SNI)
+	}
+	if s.CongestionController != "" {
+		q.Set("congestion_control", s.CongestionController)
+	}
+	if len(s.ALPN) > 0 {
+		q.Set("alpn", strings.Join(s.ALPN, ","))
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
+func (s Service) socks5ShareURI() string {
+	if s.ExternalURI != "" {
+		return s.ExternalURI
+	}
+	host := s.Server
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := s.ServerPort
+	if port <= 0 {
+		port = 1080
+	}
+	var user *url.Userinfo
+	if s.Password != "" {
+		user = url.UserPassword(s.UUID, s.Password)
+	}
+	u := &url.URL{
+		Scheme: "socks5",
+		User:   user,
+		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
+func (s Service) httpShareURI() string {
+	if s.ExternalURI != "" {
+		return s.ExternalURI
+	}
+	host := s.Server
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := s.ServerPort
+	if port <= 0 {
+		port = 8080
+	}
+	var user *url.Userinfo
+	if s.Password != "" {
+		user = url.UserPassword(s.UUID, s.Password)
+	}
+	u := &url.URL{
+		Scheme: "http",
+		User:   user,
+		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+	}
+	if s.Name != "" {
+		u.Fragment = s.Name
+	}
+	return u.String()
+}
+
 // NaiveShareURI exports the service as a standard `naive+https://...` or `naive+quic://...` URI.
 func (s Service) NaiveShareURI() string {
 	proxy := s.PrimaryProxy()
@@ -127,6 +409,11 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 		return parseJSONImport(raw, nextPort)
 	}
 
+	// 1.5. VMess format
+	if strings.HasPrefix(strings.ToLower(raw), "vmess://") {
+		return parseVMessImport(raw, nextPort)
+	}
+
 	// 2. URI format
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" {
@@ -144,6 +431,179 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 	}
 
 	switch scheme {
+	case "vless":
+		if u.Hostname() == "" {
+			return Service{}, errors.New("VLESS 链接缺少服务器地址")
+		}
+		if name == "" {
+			name = u.Hostname()
+		}
+		port := 443
+		if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+			port = p
+		}
+		uuid := ""
+		if u.User != nil {
+			uuid = u.User.Username()
+		}
+		q := u.Query()
+		svc := DefaultService("", nextPort)
+		svc.Name = name
+		svc.Protocol = ProtoVLESS
+		svc.Engine = EngineSingBox
+		svc.Server = u.Hostname()
+		svc.ServerPort = port
+		svc.UUID = uuid
+		svc.Security = q.Get("security")
+		svc.SNI = q.Get("sni")
+		svc.Fingerprint = q.Get("fp")
+		svc.PublicKey = q.Get("pbk")
+		svc.ShortID = q.Get("sid")
+		svc.SpiderX = q.Get("spx")
+		svc.Flow = q.Get("flow")
+		svc.Network = q.Get("type")
+		svc.Path = q.Get("path")
+		svc.Host = q.Get("host")
+		svc.ServiceName = q.Get("serviceName")
+		if alpn := q.Get("alpn"); alpn != "" {
+			svc.ALPN = strings.Split(alpn, ",")
+		}
+		return svc, nil
+
+	case "trojan":
+		if u.Hostname() == "" {
+			return Service{}, errors.New("Trojan 链接缺少服务器地址")
+		}
+		if name == "" {
+			name = u.Hostname()
+		}
+		port := 443
+		if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+			port = p
+		}
+		pass := ""
+		if u.User != nil {
+			pass = u.User.Username()
+		}
+		q := u.Query()
+		svc := DefaultService("", nextPort)
+		svc.Name = name
+		svc.Protocol = ProtoTrojan
+		svc.Engine = EngineSingBox
+		svc.Server = u.Hostname()
+		svc.ServerPort = port
+		svc.Password = pass
+		svc.Security = q.Get("security")
+		if svc.Security == "" {
+			svc.Security = "tls"
+		}
+		svc.SNI = q.Get("sni")
+		svc.Network = q.Get("type")
+		if alpn := q.Get("alpn"); alpn != "" {
+			svc.ALPN = strings.Split(alpn, ",")
+		}
+		return svc, nil
+
+	case "ss":
+		if u.Hostname() == "" {
+			return Service{}, errors.New("Shadowsocks 链接缺少服务器地址")
+		}
+		if name == "" {
+			name = u.Hostname()
+		}
+		port := 8388
+		if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+			port = p
+		}
+		method := "aes-128-gcm"
+		pass := ""
+		if u.User != nil {
+			userRaw := u.User.Username()
+			if p, hasP := u.User.Password(); hasP {
+				method = userRaw
+				pass = p
+			} else if decoded, err := decodeBase64(userRaw); err == nil && strings.Contains(decoded, ":") {
+				parts := strings.SplitN(decoded, ":", 2)
+				method = parts[0]
+				pass = parts[1]
+			} else {
+				pass = userRaw
+			}
+		}
+		svc := DefaultService("", nextPort)
+		svc.Name = name
+		svc.Protocol = ProtoShadowsocks
+		svc.Engine = EngineSingBox
+		svc.Server = u.Hostname()
+		svc.ServerPort = port
+		svc.Method = method
+		svc.Password = pass
+		return svc, nil
+
+	case "hysteria2", "hy2":
+		if u.Hostname() == "" {
+			return Service{}, errors.New("Hysteria2 链接缺少服务器地址")
+		}
+		if name == "" {
+			name = u.Hostname()
+		}
+		port := 443
+		if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+			port = p
+		}
+		pass := ""
+		if u.User != nil {
+			pass = u.User.Username()
+		}
+		q := u.Query()
+		svc := DefaultService("", nextPort)
+		svc.Name = name
+		svc.Protocol = ProtoHysteria2
+		svc.Engine = EngineSingBox
+		svc.Server = u.Hostname()
+		svc.ServerPort = port
+		svc.Password = pass
+		svc.SNI = q.Get("sni")
+		svc.CongestionController = "bbr"
+		return svc, nil
+
+	case "tuic":
+		if u.Hostname() == "" {
+			return Service{}, errors.New("TUIC 链接缺少服务器地址")
+		}
+		if name == "" {
+			name = u.Hostname()
+		}
+		port := 8443
+		if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+			port = p
+		}
+		uuid := ""
+		pass := ""
+		if u.User != nil {
+			uuid = u.User.Username()
+			pass, _ = u.User.Password()
+		}
+		q := u.Query()
+		svc := DefaultService("", nextPort)
+		svc.Name = name
+		svc.Protocol = ProtoTUIC
+		svc.Engine = EngineSingBox
+		svc.Server = u.Hostname()
+		svc.ServerPort = port
+		svc.UUID = uuid
+		svc.Password = pass
+		svc.SNI = q.Get("sni")
+		svc.CongestionController = q.Get("congestion_control")
+		if svc.CongestionController == "" {
+			svc.CongestionController = "bbr"
+		}
+		svc.UDPRelayMode = q.Get("udp_relay_mode")
+		if alpn := q.Get("alpn"); alpn != "" {
+			svc.ALPN = strings.Split(alpn, ",")
+		}
+		return svc, nil
+
 	case "socks", "socks5", "socks5h", "http":
 		cleanURL := &url.URL{
 			Scheme: scheme,
@@ -353,4 +813,65 @@ func decodeBase64(s string) (string, error) {
 		}
 	}
 	return "", errors.New("invalid base64")
+}
+
+type vmessRaw struct {
+	V    any    `json:"v"`
+	Ps   string `json:"ps"`
+	Add  string `json:"add"`
+	Port any    `json:"port"`
+	Id   string `json:"id"`
+	Aid  any    `json:"aid"`
+	Scy  string `json:"scy"`
+	Net  string `json:"net"`
+	Type string `json:"type"`
+	Host string `json:"host"`
+	Path string `json:"path"`
+	Tls  string `json:"tls"`
+	Sni  string `json:"sni"`
+	Alpn string `json:"alpn"`
+}
+
+func parseVMessImport(raw string, nextPort int) (Service, error) {
+	encoded := strings.TrimPrefix(raw, "vmess://")
+	encoded = strings.TrimPrefix(encoded, "VMESS://")
+	decoded, err := decodeBase64(encoded)
+	if err != nil {
+		return Service{}, fmt.Errorf("VMess base64 解码失败: %w", err)
+	}
+	var data vmessRaw
+	if err := json.Unmarshal([]byte(decoded), &data); err != nil {
+		return Service{}, fmt.Errorf("VMess JSON 解析失败: %w", err)
+	}
+
+	name := strings.TrimSpace(data.Ps)
+	if name == "" {
+		name = data.Add
+	}
+	port := 443
+	switch p := data.Port.(type) {
+	case float64:
+		port = int(p)
+	case string:
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			port = parsed
+		}
+	}
+
+	svc := DefaultService("", nextPort)
+	svc.Name = name
+	svc.Protocol = ProtoVMess
+	svc.Engine = EngineSingBox
+	svc.Server = data.Add
+	svc.ServerPort = port
+	svc.UUID = data.Id
+	svc.Network = data.Net
+	svc.Path = data.Path
+	svc.Host = data.Host
+	svc.Security = data.Tls
+	svc.SNI = data.Sni
+	if data.Alpn != "" {
+		svc.ALPN = strings.Split(data.Alpn, ",")
+	}
+	return svc, nil
 }
