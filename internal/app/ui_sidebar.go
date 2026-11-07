@@ -225,13 +225,43 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	gwAddr := fmt.Sprintf("127.0.0.1:%d", gwPort)
 
 	// Gateway dot & badge colors
-	gwRunning := (a.gateway != nil && a.state.GatewayEnabled) || runningSidecars > 0
+	gwRunning := a.state.GatewayEnabled && a.gateway != nil
 	gwDotColor := p.textDim
+	gwBadgeText := cat.TailnetModeOff()
+	gwBadgeFg := p.textDim
+	gwBadgeBg := p.elevated
+
 	if gwRunning {
 		gwDotColor = p.green
+		if runningSidecars > 0 {
+			gwBadgeText = fmt.Sprintf("%d", runningSidecars)
+			gwBadgeFg = p.green
+			gwBadgeBg = p.greenBg
+		} else {
+			gwBadgeText = cat.StatusRunning()
+			gwBadgeFg = p.green
+			gwBadgeBg = p.greenBg
+		}
 	}
-	if missingCore || hasAnyUpdate {
+	if missingCore {
 		gwDotColor = p.amber
+		gwBadgeText = cat.EngineMissingSidecar()
+		gwBadgeFg = p.amber
+		gwBadgeBg = p.amberBg
+	} else if hasAnyUpdate {
+		gwDotColor = p.amber
+		gwBadgeText = cat.UpdateAvailableBadge()
+		gwBadgeFg = p.amber
+		gwBadgeBg = p.amberBg
+	}
+
+	gwDetail := gwAddr
+	gwTipColor := ui.RGB(52, 211, 153) // emerald-400
+	if !gwRunning {
+		gwDetail = cat.TailnetModeOff()
+		gwTipColor = ui.RGB(148, 163, 184) // slate-400
+	} else if missingCore || hasAnyUpdate {
+		gwTipColor = ui.RGB(251, 191, 36) // amber-400
 	}
 
 	// Tailnet status
@@ -273,10 +303,24 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		}
 	}
 
-	// Tailnet detail (IP when available, otherwise the unified status label)
-	tsDetail := tsBadgeText
+	// Tailnet detail (IP when available, otherwise the unified status label for tooltip)
+	tsIP := ""
 	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) && len(ts.Self.IPs) > 0 {
-		tsDetail = ts.Self.IPs[0]
+		tsIP = ts.Self.IPs[0]
+	}
+	tsDetail := tsBadgeText
+	if tsIP != "" {
+		tsDetail = tsIP
+	}
+
+	tsTipColor := ui.RGB(148, 163, 184) // slate-400 (offline / 未启用)
+	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) {
+		switch ts.BackendState {
+		case "Running":
+			tsTipColor = ui.RGB(52, 211, 153) // emerald-400
+		case "NeedsLogin", "Starting":
+			tsTipColor = ui.RGB(251, 191, 36) // amber-400
+		}
 	}
 
 	// Mode handling
@@ -312,7 +356,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 									ui.Box(c).Size(6, 6).Radius(999).Background(gwDotColor)
 									ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(ui.RGB(248, 250, 252))
 								})
-								ui.Text(c, gwAddr).FontSize(11).TextColor(ui.RGB(52, 211, 153)) // emerald-400
+								ui.Text(c, gwDetail).FontSize(11).TextColor(gwTipColor)
 							})
 
 							// Line 2: Tailnet
@@ -321,7 +365,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 									ui.Box(c).Size(6, 6).Radius(999).Background(tsDotColor)
 									ui.Text(c, cat.NavTailnet()).FontSize(11).TextColor(ui.RGB(203, 213, 225))
 								})
-								ui.Text(c, tsDetail).FontSize(11).TextColor(ui.RGB(52, 211, 153))
+								ui.Text(c, tsDetail).FontSize(11).TextColor(tsTipColor)
 							})
 
 							// Line 3: Working mode
@@ -491,13 +535,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
 					})
 
-					if missingCore {
-						tagPill(c, cat.EngineMissingSidecar(), p.amber, p.amberBg)
-					} else if hasAnyUpdate {
-						tagPill(c, cat.UpdateAvailableBadge(), p.amber, p.amberBg)
-					} else if runningSidecars > 0 {
-						tagPill(c, fmt.Sprintf("%d", runningSidecars), p.green, p.greenBg)
-					}
+					tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
 				})
 			if row1.Hovered() {
 				row1.Background(p.cardHover)
@@ -519,7 +557,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
 						ui.Text(c, cat.NavTailnet()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
-						ui.Text(c, tsDetail).FontSize(11).TextColor(p.textDim).NoWrap()
+						if tsIP != "" {
+							ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
+						}
 					})
 					tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
 				})

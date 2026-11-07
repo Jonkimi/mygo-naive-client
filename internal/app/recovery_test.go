@@ -93,3 +93,5 @@ func TestApp_PrematureSaveStateBeforeLoadedBlocked(t *testing.T) {
 		t.Fatalf("state on disk was unexpectedly mutated by premature saveState: %+v", loaded)
 	}
 }
+
+
