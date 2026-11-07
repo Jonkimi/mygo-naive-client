@@ -87,8 +87,9 @@ type Manager struct {
 	workDir        string
 	instances      map[string]*instance
 	onChange       func()
-	OnLog          func(id string)
-	OnProbeSuccess func(id string, rtt time.Duration)
+	OnLog            func(id string)
+	OnProbeSuccess   func(id string, rtt time.Duration)
+	OnProbeFailure   func(id string, err error)
 	OnServiceStarted func(svc config.Service)
 	BackoffMin     time.Duration // overridable in tests
 }
@@ -688,15 +689,19 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 		inst.status.Latency = 0
 		inst.status.ProbeError = err.Error()
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试失败: %v", err))
+		m.mu.Unlock()
+		if m.OnProbeFailure != nil {
+			m.OnProbeFailure(svc.ID, err)
+		}
 	} else {
 		inst.status.Latency = rtt
 		inst.status.ProbeError = ""
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试成功: %d ms", max(1, rtt.Milliseconds())))
+		m.mu.Unlock()
 		if m.OnProbeSuccess != nil {
 			m.OnProbeSuccess(svc.ID, rtt)
 		}
 	}
-	m.mu.Unlock()
 	m.onChange()
 	return rtt, err
 }

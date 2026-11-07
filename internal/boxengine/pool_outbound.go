@@ -155,50 +155,57 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			continue
 		}
 
+		isSidecar := false
+		if p.provider != nil {
+			isSidecar = p.provider.IsSidecar(candID)
+		}
+
 		start := time.Now()
 		conn, err := ob.DialContext(ctx, network, destination)
 		rtt := time.Since(start)
 
-		if p.tracker != nil {
-			isSidecar := false
-			if p.provider != nil {
-				isSidecar = p.provider.IsSidecar(candID)
+		if err != nil {
+			if p.tracker != nil {
+				if isSidecar {
+					p.tracker.RecordDial(candID, targetHost, 0, err)
+				} else {
+					p.tracker.RecordDial(candID, targetHost, rtt, err)
+				}
 			}
-			if isSidecar {
-				// Sidecar outbounds connect to localhost (127.0.0.1:allocPort).
-				// We record success/failure without polluting EWMA with loopback connect time (<0.5ms).
-				// Real internet RTT will be tracked on first packet round-trip via wrapFirstRTTConn.
-				p.tracker.RecordDial(candID, targetHost, 0, err)
-			} else {
-				p.tracker.RecordDial(candID, targetHost, rtt, err)
-			}
+			lastErr = err
+			continue
 		}
 
-		if err == nil {
-			if p.onDialSuccess != nil {
-				p.onDialSuccess(targetHost, candID)
-			}
-			isSidecar := false
-			if p.provider != nil {
-				isSidecar = p.provider.IsSidecar(candID)
-			}
-			if isSidecar && network == "tcp" {
-				conn = wrapFirstRTTConn(conn, func(realRTT time.Duration) {
-					if p.tracker != nil {
-						p.tracker.RecordDial(candID, targetHost, realRTT, nil)
-					}
-					if p.onTelemetryUpdate != nil {
-						p.onTelemetryUpdate()
-					}
-				})
-			} else {
+		if p.onDialSuccess != nil {
+			p.onDialSuccess(targetHost, candID)
+		}
+
+		if isSidecar && network == "tcp" {
+			// Sidecar outbounds connect to localhost (127.0.0.1:allocPort).
+			// Local loopback TCP acceptance does not mean the remote proxy tunnel succeeded.
+			// Defer both dial success/failure and real internet TTFB RTT recording to wrapFirstRTTConn
+			// so remote timeouts, resets, and blackholes accurately update SuccessRate and CircuitBreaker.
+			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, firstErr error) {
+				if p.tracker != nil {
+					p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
+				}
 				if p.onTelemetryUpdate != nil {
 					p.onTelemetryUpdate()
 				}
+			})
+		} else {
+			if p.tracker != nil {
+				if isSidecar {
+					p.tracker.RecordDial(candID, targetHost, 0, nil)
+				} else {
+					p.tracker.RecordDial(candID, targetHost, rtt, nil)
+				}
 			}
-			return conn, nil
+			if p.onTelemetryUpdate != nil {
+				p.onTelemetryUpdate()
+			}
 		}
-		lastErr = err
+		return conn, nil
 	}
 
 	if lastErr == nil {
@@ -260,22 +267,29 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	return nil, fmt.Errorf("all candidates failed UDP in %s: %w", p.tag, lastErr)
 }
 
+const (
+	minValidFirstRTT = 2 * time.Millisecond
+	maxValidFirstRTT = 10 * time.Second
+)
+
+var errFirstPacketAborted = errors.New("connection closed before receiving first response byte")
+
 type firstRTTConn struct {
 	net.Conn
-	onRTT      func(rtt time.Duration)
+	onResult   func(rtt time.Duration, err error)
 	writeTime  time.Time
 	hasWritten bool
 	done       bool
 	mu         sync.Mutex
 }
 
-func wrapFirstRTTConn(conn net.Conn, onRTT func(rtt time.Duration)) net.Conn {
+func wrapFirstRTTConn(conn net.Conn, onResult func(rtt time.Duration, err error)) net.Conn {
 	if conn == nil {
 		return nil
 	}
 	return &firstRTTConn{
-		Conn:  conn,
-		onRTT: onRTT,
+		Conn:     conn,
+		onResult: onResult,
 	}
 }
 
@@ -288,7 +302,20 @@ func (c *firstRTTConn) Write(b []byte) (int, error) {
 		}
 		c.mu.Unlock()
 	}
-	return c.Conn.Write(b)
+	n, err := c.Conn.Write(b)
+	if err != nil {
+		c.mu.Lock()
+		if !c.done && c.hasWritten {
+			c.done = true
+			c.mu.Unlock()
+			if c.onResult != nil {
+				c.onResult(0, err)
+			}
+			return n, err
+		}
+		c.mu.Unlock()
+	}
+	return n, err
 }
 
 func (c *firstRTTConn) Read(b []byte) (int, error) {
@@ -299,14 +326,47 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 			c.done = true
 			rtt := time.Since(c.writeTime)
 			c.mu.Unlock()
-			if c.onRTT != nil && rtt >= 2*time.Millisecond && rtt <= 10*time.Second {
-				c.onRTT(rtt)
+			if c.onResult != nil {
+				sampleRTT := rtt
+				if sampleRTT < minValidFirstRTT {
+					sampleRTT = 0
+				} else if sampleRTT > maxValidFirstRTT {
+					sampleRTT = maxValidFirstRTT
+				}
+				c.onResult(sampleRTT, nil)
 			}
 		} else {
 			c.mu.Unlock()
 		}
+		return n, err
+	}
+	if err != nil {
+		c.mu.Lock()
+		if !c.done && c.hasWritten {
+			c.done = true
+			c.mu.Unlock()
+			if c.onResult != nil {
+				c.onResult(0, err)
+			}
+			return n, err
+		}
+		c.mu.Unlock()
 	}
 	return n, err
+}
+
+func (c *firstRTTConn) Close() error {
+	c.mu.Lock()
+	if !c.done && c.hasWritten {
+		c.done = true
+		c.mu.Unlock()
+		if c.onResult != nil {
+			c.onResult(0, errFirstPacketAborted)
+		}
+	} else {
+		c.mu.Unlock()
+	}
+	return c.Conn.Close()
 }
 
 func (c *firstRTTConn) CloseWrite() error {

@@ -135,7 +135,8 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	}
 }
 
-// RecordProbe records an active probe RTT measurement for nodeID into EWMA.
+// RecordProbe records an active probe RTT measurement for nodeID into EWMA
+// and counts the probe as a successful connectivity sample.
 // Probe measurements smaller than 1ms are ignored as local loopback artifacts.
 func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 	if rtt < time.Millisecond {
@@ -149,11 +150,30 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
+	st.TotalDials++
+	st.SuccessfulDials++
+	st.ConsecutiveFailures = 0
 	if st.EWMA == 0 {
 		st.EWMA = rtt
 	} else {
 		st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
 	}
+}
+
+// RecordProbeFailure records an active probe failure (e.g. timeout or connection reset)
+// into the node's success rate and consecutive failure circuit breaker metrics.
+func (t *Tracker) RecordProbeFailure(nodeID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	st, exists := t.nodes[nodeID]
+	if !exists {
+		st = &NodeStats{}
+		t.nodes[nodeID] = st
+	}
+	st.TotalDials++
+	st.ConsecutiveFailures++
+	st.LastFailure = time.Now()
 }
 
 func (t *Tracker) IsBroken(nodeID string) bool {

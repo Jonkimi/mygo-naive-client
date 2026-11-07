@@ -236,8 +236,30 @@ func TestManager_OnServiceStartedAndProbeCallbacks(t *testing.T) {
 	}
 
 	startedMu.Lock()
-	defer startedMu.Unlock()
-	if startedSvcID != "cb-svc" {
-		t.Fatalf("expected OnServiceStarted called with cb-svc, got %q", startedSvcID)
+	id := startedSvcID
+	startedMu.Unlock()
+	if id != "cb-svc" {
+		t.Fatalf("expected OnServiceStarted called with cb-svc, got %q", id)
 	}
+
+	var failedID string
+	var failedErr error
+	var failedMu sync.Mutex
+	mgr.OnProbeFailure = func(id string, err error) {
+		failedMu.Lock()
+		failedID = id
+		failedErr = err
+		failedMu.Unlock()
+	}
+
+	// Probe against an unreachable local endpoint should invoke OnProbeFailure
+	_, err := mgr.ProbeServiceCtx(context.Background(), svc, "http://127.0.0.1:9")
+	if err == nil {
+		t.Fatal("expected probe error on unreachable port, got nil")
+	}
+	failedMu.Lock()
+	if failedID != "cb-svc" || failedErr == nil {
+		t.Fatalf("expected OnProbeFailure called for cb-svc, got id=%q err=%v", failedID, failedErr)
+	}
+	failedMu.Unlock()
 }

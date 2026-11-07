@@ -186,3 +186,45 @@ func TestTracker_QualityScoreDetailedMetrics(t *testing.T) {
 	}
 }
 
+// Regression test: active probe failures must reduce SuccessRate, increase routing Score via EWMA/SR^2
+// without corrupting EWMA with fake timeout values, and trip the circuit breaker after 3 consecutive failures.
+func TestTracker_ProbeFailureUpdatesSuccessRateAndCircuitBreaker(t *testing.T) {
+	tr := NewTracker()
+	node := "sidecar-naive"
+
+	// 1. Initial successful probe at 100ms -> 1/1 (100% success rate), EWMA = 100ms, Score = 100
+	tr.RecordProbe(node, 100*time.Millisecond)
+	sc1 := tr.GetScore(node)
+	if sc1.EWMA != 100*time.Millisecond || sc1.SuccessRate != 1.0 || sc1.TotalDials != 1 || sc1.SuccessfulDials != 1 {
+		t.Fatalf("unexpected score after initial probe: %+v", sc1)
+	}
+
+	// 2. Active probe fails (e.g. context deadline exceeded) -> 1/2 (50% success rate), EWMA stays 100ms, Score = 100 / 0.25 = 400
+	tr.RecordProbeFailure(node)
+	sc2 := tr.GetScore(node)
+	if sc2.EWMA != 100*time.Millisecond {
+		t.Fatalf("expected EWMA to remain 100ms after probe failure, got %v", sc2.EWMA)
+	}
+	if sc2.SuccessRate != 0.5 || sc2.TotalDials != 2 || sc2.SuccessfulDials != 1 || sc2.ConsecutiveFailures != 1 {
+		t.Fatalf("expected 50%% success rate (1/2) and 1 consecutive failure, got %+v", sc2)
+	}
+	if sc2.Score != 400.0 {
+		t.Fatalf("expected Score = 400.0 (100 / 0.5^2), got %v", sc2.Score)
+	}
+
+	// 3. Two more consecutive probe failures trip the circuit breaker
+	tr.RecordProbeFailure(node)
+	tr.RecordProbeFailure(node)
+	sc3 := tr.GetScore(node)
+	if !sc3.IsBroken || sc3.ConsecutiveFailures != 3 || sc3.CircuitPenalty != 10000.0 {
+		t.Fatalf("expected circuit breaker tripped after 3 probe failures, got %+v", sc3)
+	}
+
+	// 4. Subsequent successful probe recovers from circuit breaker
+	tr.RecordProbe(node, 100*time.Millisecond)
+	sc4 := tr.GetScore(node)
+	if sc4.IsBroken || sc4.ConsecutiveFailures != 0 {
+		t.Fatalf("expected probe success to clear consecutive failures and circuit breaker, got %+v", sc4)
+	}
+}
+

@@ -364,6 +364,11 @@ func (a *app) initSubsystems() {
 			a.tracker.RecordProbe(id, rtt)
 		}
 	}
+	a.mgr.OnProbeFailure = func(id string, err error) {
+		if a.tracker != nil {
+			a.tracker.RecordProbeFailure(id)
+		}
+	}
 	a.mgr.OnServiceStarted = func(svc config.Service) {
 		if a.headless || !a.state.AutoProbeOnStart {
 			return

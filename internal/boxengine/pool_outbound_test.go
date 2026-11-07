@@ -236,7 +236,7 @@ func TestFirstRTTConn_SingBufioCopyRealTCP(t *testing.T) {
 	}
 	defer clientConn.Close()
 
-	wrapped := wrapFirstRTTConn(clientConn, func(rtt time.Duration) {
+	wrapped := wrapFirstRTTConn(clientConn, func(rtt time.Duration, _ error) {
 		rttMu.Lock()
 		rttReported = rtt
 		rttMu.Unlock()
@@ -373,6 +373,9 @@ func TestPoolOutbound_SidecarFirstPacketTTFBUpdatesTracker(t *testing.T) {
 	if sc.EWMA < 20*time.Millisecond || sc.EWMA > 100*time.Millisecond {
 		t.Fatalf("expected EWMA around 25ms from real traffic RTT, got %v", sc.EWMA)
 	}
+	if sc.TotalDials != 1 || sc.SuccessfulDials != 1 {
+		t.Fatalf("expected exactly 1 dial recorded (not double-counted with loopback connect), got %d/%d", sc.SuccessfulDials, sc.TotalDials)
+	}
 
 	uiMu.Lock()
 	count := uiUpdated
@@ -380,6 +383,138 @@ func TestPoolOutbound_SidecarFirstPacketTTFBUpdatesTracker(t *testing.T) {
 	if count == 0 {
 		t.Fatalf("expected OnTelemetryUpdate to be called on traffic RTT sample")
 	}
+}
+
+// Regression test: previously, sidecar loopback DialContext always recorded err=nil on 127.0.0.1 connect
+// and firstRTTConn ignored read errors/premature closes before the first response byte, leaving sidecar
+// SuccessRate permanently at 100% and preventing CircuitBreaker from ever tripping on remote blackholes.
+func TestPoolOutbound_SidecarRemoteFailureAndCircuitBreaker(t *testing.T) {
+	tracker := telemetry.NewTracker()
+	tracker.RecordProbe("sidecar-bad", 50*time.Millisecond)
+	tracker.RecordProbe("sidecar-good", 600*time.Millisecond)
+
+	// sidecar-bad accepts local loopback connections, but remote tunnel either EOFs or hangs until client closes
+	badOutbound := &funcMockOutbound{
+		tag: "node-sidecar-bad",
+		dialFn: func() (net.Conn, error) {
+			cClient, cServer := net.Pipe()
+			go func() {
+				buf := make([]byte, 64)
+				_, _ = cServer.Read(buf)
+				// Simulate remote proxy tunnel closing without sending any response byte
+				_ = cServer.Close()
+			}()
+			return cClient, nil
+		},
+	}
+	goodOutbound := &funcMockOutbound{
+		tag: "node-sidecar-good",
+		dialFn: func() (net.Conn, error) {
+			cClient, cServer := net.Pipe()
+			go func() {
+				defer cServer.Close()
+				buf := make([]byte, 64)
+				_, _ = cServer.Read(buf)
+				time.Sleep(10 * time.Millisecond)
+				_, _ = cServer.Write([]byte("ok"))
+			}()
+			return cClient, nil
+		},
+	}
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"sidecar-bad", "sidecar-good"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"sidecar-bad":  badOutbound,
+			"sidecar-good": goodOutbound,
+		},
+		sidecars: map[string]bool{
+			"sidecar-bad":  true,
+			"sidecar-good": true,
+		},
+	}
+
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		Tracker:      tracker,
+		NodeProvider: provider,
+	})
+
+	dest := M.ParseSocksaddr("cp.cloudflare.com:443")
+
+	// 1. First two requests to distinct domains fail via remote EOF before first response byte
+	failDomains := []string{"site1.com:443", "site2.com:443"}
+	for i, d := range failDomains {
+		conn, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr(d))
+		if err != nil {
+			t.Fatalf("attempt %d dial: %v", i, err)
+		}
+		_, _ = conn.Write([]byte("HEAD /generate_204 HTTP/1.1\r\n\r\n"))
+		buf := make([]byte, 16)
+		_, readErr := conn.Read(buf)
+		if readErr == nil {
+			t.Fatalf("attempt %d expected read error from EOF tunnel", i)
+		}
+		_ = conn.Close()
+	}
+
+	scBad := tracker.GetScore("sidecar-bad")
+	if scBad.ConsecutiveFailures != 2 || scBad.SuccessRate >= 1.0 {
+		t.Fatalf("expected 2 consecutive failures and SuccessRate < 100%%, got %+v", scBad)
+	}
+
+	// 2. Third request hangs on remote side and client times out & closes conn before receiving first byte
+	badOutbound.dialFn = func() (net.Conn, error) {
+		cClient, cServer := net.Pipe()
+		go func() {
+			buf := make([]byte, 64)
+			_, _ = cServer.Read(buf)
+			// Hang without replying until client closes
+		}()
+		return cClient, nil
+	}
+	conn3, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("other.com:443"))
+	if err != nil {
+		t.Fatalf("attempt 3 dial: %v", err)
+	}
+	_, _ = conn3.Write([]byte("ClientHello"))
+	// Client gives up waiting and closes connection before any byte is read
+	_ = conn3.Close()
+
+	scBadAfter3 := tracker.GetScore("sidecar-bad")
+	if !scBadAfter3.IsBroken || scBadAfter3.ConsecutiveFailures != 3 {
+		t.Fatalf("expected sidecar-bad circuit breaker tripped after 3 remote failures, got %+v", scBadAfter3)
+	}
+
+	// 3. Next request must automatically route to sidecar-good because sidecar-bad is now broken
+	conn4, err := pool.DialContext(context.Background(), "tcp", dest)
+	if err != nil {
+		t.Fatalf("attempt 4 dial: %v", err)
+	}
+	defer conn4.Close()
+	_, _ = conn4.Write([]byte("ping"))
+	resp := make([]byte, 2)
+	if _, err := conn4.Read(resp); err != nil || string(resp) != "ok" {
+		t.Fatalf("expected failover to healthy sidecar-good returning 'ok', got %q (err=%v)", string(resp), err)
+	}
+}
+
+type funcMockOutbound struct {
+	tag    string
+	dialFn func() (net.Conn, error)
+}
+
+func (m *funcMockOutbound) Type() string                                          { return "func-mock" }
+func (m *funcMockOutbound) Tag() string                                           { return m.tag }
+func (m *funcMockOutbound) Network() []string                                     { return []string{"tcp", "udp"} }
+func (m *funcMockOutbound) Dependencies() []string                                { return nil }
+func (m *funcMockOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return m.dialFn()
+}
+func (m *funcMockOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, errors.New("not implemented")
 }
 
 type customMockOutbound struct {
