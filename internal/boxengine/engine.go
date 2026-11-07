@@ -348,6 +348,19 @@ func (e *Engine) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 	return e.box.Outbound().Outbound("node-" + nodeID)
 }
 
+// IsSidecar implements NodeProvider.
+func (e *Engine) IsSidecar(nodeID string) bool {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, svc := range e.services {
+		if svc.ID == cleanID {
+			return isSidecarService(svc)
+		}
+	}
+	return false
+}
+
 // GetNodeName returns the friendly name of a node by ID or tag, implementing NodeProvider.
 func (e *Engine) GetNodeName(nodeID string) string {
 	cleanID := strings.TrimPrefix(nodeID, "node-")

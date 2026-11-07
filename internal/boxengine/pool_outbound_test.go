@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"naive-client/internal/telemetry"
 
@@ -44,6 +45,7 @@ func (m *mockOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 type testNodeProvider struct {
 	candidates map[string][]string
 	nodes      map[string]adapter.Outbound
+	sidecars   map[string]bool
 }
 
 func (p *testNodeProvider) GetCandidates(tag string) []string {
@@ -53,6 +55,13 @@ func (p *testNodeProvider) GetCandidates(tag string) []string {
 func (p *testNodeProvider) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 	ob, ok := p.nodes[nodeID]
 	return ob, ok
+}
+
+func (p *testNodeProvider) IsSidecar(nodeID string) bool {
+	if p.sidecars != nil {
+		return p.sidecars[nodeID]
+	}
+	return false
 }
 
 // Tests that PoolOutbound selects candidate using tracker and fails over when primary candidate fails.
@@ -151,5 +160,46 @@ func TestPoolOutbound_AllCandidatesFail(t *testing.T) {
 	}
 	if list[0].Category != telemetry.FailureProxy {
 		t.Errorf("expected FailureProxy category, got %v", list[0].Category)
+	}
+}
+
+// Regression test: sidecar nodes (running over local loopback socks5) pass rtt=0 to tracker
+// so local IPC connect time does not overwrite real EWMA latency with 1ms.
+func TestPoolOutbound_SidecarZeroRTT(t *testing.T) {
+	tracker := telemetry.NewTracker()
+	// Pre-seed real probe latency
+	tracker.RecordProbe("sidecar-node", 95*time.Millisecond)
+
+	node := &mockOutbound{tag: "node-sidecar-node", dialErr: nil}
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"sidecar-node"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"sidecar-node": node,
+		},
+		sidecars: map[string]bool{
+			"sidecar-node": true,
+		},
+	}
+
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		Tracker:      tracker,
+		NodeProvider: provider,
+	})
+
+	dest := M.ParseSocksaddr("openai.com:443")
+	conn, err := pool.DialContext(context.Background(), "tcp", dest)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+
+	sc := tracker.GetScore("sidecar-node")
+	if sc.EWMA != 95*time.Millisecond {
+		t.Fatalf("expected sidecar EWMA preserved at 95ms, got %v", sc.EWMA)
 	}
 }

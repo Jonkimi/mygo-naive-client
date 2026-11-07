@@ -352,6 +352,11 @@ func (a *app) initSubsystems() {
 			})
 		}
 	}
+	a.mgr.OnProbeSuccess = func(id string, rtt time.Duration) {
+		if a.tracker != nil {
+			a.tracker.RecordProbe(id, rtt)
+		}
+	}
 	a.syncBinaryPathAndVersion()
 	a.syncXrayBinaryPathAndVersion()
 }

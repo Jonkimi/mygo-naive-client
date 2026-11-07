@@ -112,3 +112,36 @@ func TestTracker_PeekBestDoesNotMutateAffinity(t *testing.T) {
 		t.Fatalf("expected SelectBest to update affinity to node-b, got %v", affAfterSelect)
 	}
 }
+
+// Regression test: sidecar loopback traffic passes rtt=0 to avoid displaying a misleading 1ms latency,
+// and unsampled nodes return EWMA=0 instead of a fake 150ms while active probes populate EWMA.
+func TestTracker_SidecarZeroRTTAndProbeRecording(t *testing.T) {
+	tr := NewTracker()
+	node := "sidecar-naive"
+
+	// 1. Fresh unsampled node should report EWMA = 0 (so UI can show "awaiting sample")
+	initScore := tr.GetScore(node)
+	if initScore.EWMA != 0 {
+		t.Fatalf("expected unsampled node EWMA = 0, got %v", initScore.EWMA)
+	}
+
+	// 2. Active probe records real internet latency (e.g. 80ms)
+	tr.RecordProbe(node, 80*time.Millisecond)
+	probeScore := tr.GetScore(node)
+	if probeScore.EWMA != 80*time.Millisecond {
+		t.Fatalf("expected EWMA after probe = 80ms, got %v", probeScore.EWMA)
+	}
+
+	// 3. Sidecar loopback dial passes rtt = 0; should increment TotalDials & affinity without polluting EWMA
+	tr.RecordDial(node, "chatgpt.com", 0, nil)
+	afterDialScore := tr.GetScore(node)
+	if afterDialScore.EWMA != 80*time.Millisecond {
+		t.Fatalf("expected EWMA to remain 80ms after rtt=0 dial, got %v", afterDialScore.EWMA)
+	}
+	tr.mu.RLock()
+	aff := tr.affinity["chatgpt.com"]
+	tr.mu.RUnlock()
+	if aff != node {
+		t.Fatalf("expected domain affinity recorded for chatgpt.com, got %v", aff)
+	}
+}

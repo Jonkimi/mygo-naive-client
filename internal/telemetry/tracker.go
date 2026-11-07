@@ -108,10 +108,12 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	// Success
 	st.ConsecutiveFailures = 0
 	st.SuccessfulDials++
-	if st.EWMA == 0 {
-		st.EWMA = rtt
-	} else {
-		st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
+	if rtt > 0 {
+		if st.EWMA == 0 {
+			st.EWMA = rtt
+		} else {
+			st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
+		}
 	}
 
 	if root != "" {
@@ -126,6 +128,27 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 			}
 			t.affinity[root] = nodeID
 		}
+	}
+}
+
+// RecordProbe records an active probe RTT measurement for nodeID into EWMA.
+// Probe measurements smaller than 1ms are ignored as local loopback artifacts.
+func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
+	if rtt < time.Millisecond {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	st, exists := t.nodes[nodeID]
+	if !exists {
+		st = &NodeStats{}
+		t.nodes[nodeID] = st
+	}
+	if st.EWMA == 0 {
+		st.EWMA = rtt
+	} else {
+		st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
 	}
 }
 
@@ -152,18 +175,21 @@ func (t *Tracker) GetScore(nodeID string) QualityScore {
 
 func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 	st, ok := t.nodes[nodeID]
-	if !ok || st.TotalDials == 0 {
+	if !ok || (st.TotalDials == 0 && st.EWMA == 0) {
 		return QualityScore{
-			EWMA:        defaultInitialRTT,
+			EWMA:        0,
 			SuccessRate: 1.0,
 			Score:       float64(defaultInitialRTT.Milliseconds()),
 			IsBroken:    false,
 		}
 	}
 
-	sr := float64(st.SuccessfulDials) / float64(st.TotalDials)
-	if sr < 0.1 {
-		sr = 0.1
+	sr := 1.0
+	if st.TotalDials > 0 {
+		sr = float64(st.SuccessfulDials) / float64(st.TotalDials)
+		if sr < 0.1 {
+			sr = 0.1
+		}
 	}
 
 	isBroken := false

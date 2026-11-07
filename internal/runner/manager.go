@@ -81,14 +81,15 @@ type instance struct {
 
 // Manager supervises multiple independent local NaiveProxy service processes.
 type Manager struct {
-	mu          sync.RWMutex
-	binPath     string
-	xrayBinPath string
-	workDir     string
-	instances   map[string]*instance
-	onChange    func()
-	OnLog       func(id string)
-	BackoffMin  time.Duration // overridable in tests
+	mu             sync.RWMutex
+	binPath        string
+	xrayBinPath    string
+	workDir        string
+	instances      map[string]*instance
+	onChange       func()
+	OnLog          func(id string)
+	OnProbeSuccess func(id string, rtt time.Duration)
+	BackoffMin     time.Duration // overridable in tests
 }
 
 // NewManager creates a process manager storing generated configs in workDir.
@@ -682,6 +683,9 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 		inst.status.Latency = rtt
 		inst.status.ProbeError = ""
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试成功: %d ms", max(1, rtt.Milliseconds())))
+		if m.OnProbeSuccess != nil {
+			m.OnProbeSuccess(svc.ID, rtt)
+		}
 	}
 	m.mu.Unlock()
 	m.onChange()

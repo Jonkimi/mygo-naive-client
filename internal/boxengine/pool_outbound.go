@@ -19,6 +19,7 @@ import (
 type NodeProvider interface {
 	GetCandidates(poolTag string) []string
 	GetOutbound(nodeID string) (adapter.Outbound, bool)
+	IsSidecar(nodeID string) bool
 }
 
 // PoolOutboundOptions defines configuration for a PoolOutbound instance.
@@ -156,7 +157,19 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		rtt := time.Since(start)
 
 		if p.tracker != nil {
-			p.tracker.RecordDial(candID, targetHost, rtt, err)
+			isSidecar := false
+			if p.provider != nil {
+				isSidecar = p.provider.IsSidecar(candID)
+			}
+			if isSidecar {
+				// Sidecar outbounds connect to localhost (127.0.0.1:allocPort).
+				// Measuring ob.DialContext only measures loopback TCP connect (<0.5ms).
+				// Pass rtt=0 so Tracker records success/failure and domain affinity
+				// without polluting EWMA with fake 1ms localhost latency.
+				p.tracker.RecordDial(candID, targetHost, 0, err)
+			} else {
+				p.tracker.RecordDial(candID, targetHost, rtt, err)
+			}
 		}
 
 		if err == nil {
