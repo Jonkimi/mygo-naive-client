@@ -227,22 +227,16 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	// Gateway dot & badge colors
 	gwRunning := a.state.GatewayEnabled && a.gateway != nil
 	gwDotColor := p.textDim
-	gwBadgeText := cat.TailnetModeOff()
+	gwBadgeText := ""
 	gwBadgeFg := p.textDim
 	gwBadgeBg := p.elevated
 
-	if gwRunning {
+	if !gwRunning {
+		gwBadgeText = cat.TailnetModeOff()
+	} else {
 		gwDotColor = p.green
-		if runningSidecars > 0 {
-			gwBadgeText = fmt.Sprintf("%d", runningSidecars)
-			gwBadgeFg = p.green
-			gwBadgeBg = p.greenBg
-		} else {
-			gwBadgeText = cat.StatusRunning()
-			gwBadgeFg = p.green
-			gwBadgeBg = p.greenBg
-		}
 	}
+
 	if missingCore {
 		gwDotColor = p.amber
 		gwBadgeText = cat.EngineMissingSidecar()
@@ -273,18 +267,29 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	tsBadgeText := cat.TailnetModeOff()
 	tsBadgeFg := p.textDim
 	tsBadgeBg := p.elevated
+	var tsModeName string
+
+	tsIP := ""
+	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) && len(ts.Self.IPs) > 0 {
+		tsIP = ts.Self.IPs[0]
+	}
 
 	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) {
+		if ts.ActiveMode == tailnet.ModeHost {
+			tsModeName = cat.TailnetModeHost()
+		} else {
+			tsModeName = cat.TailnetModeEmbedded()
+		}
 		switch ts.BackendState {
 		case "Running":
 			tsDotColor = p.green
+			if tsIP == "" {
+				tsBadgeText = cat.TailnetStatusConnected()
+			} else {
+				tsBadgeText = ""
+			}
 			tsBadgeFg = p.accentText
 			tsBadgeBg = p.accentBg
-			if ts.ActiveMode == tailnet.ModeHost {
-				tsBadgeText = cat.TailnetModeHost()
-			} else {
-				tsBadgeText = cat.TailnetModeEmbedded()
-			}
 		case "NeedsLogin":
 			tsDotColor = p.amber
 			tsBadgeText = cat.TailnetStatusNeedsLogin()
@@ -303,14 +308,11 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		}
 	}
 
-	// Tailnet detail (IP when available, otherwise the unified status label for tooltip)
-	tsIP := ""
-	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) && len(ts.Self.IPs) > 0 {
-		tsIP = ts.Self.IPs[0]
-	}
 	tsDetail := tsBadgeText
 	if tsIP != "" {
 		tsDetail = tsIP
+	} else if ts.BackendState == "Running" {
+		tsDetail = cat.TailnetStatusConnected()
 	}
 
 	tsTipColor := ui.RGB(148, 163, 184) // slate-400 (offline / 未启用)
@@ -359,6 +361,18 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 								ui.Text(c, gwDetail).FontSize(11).TextColor(gwTipColor)
 							})
 
+							// Line 1b: Running nodes count (shown in tooltip)
+							if gwRunning {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, cat.RuleDrawerActiveNodes()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
+									nodeColor := ui.RGB(52, 211, 153)
+									if runningSidecars == 0 {
+										nodeColor = ui.RGB(148, 163, 184)
+									}
+									ui.Text(c, cat.RunningCountBadge(runningSidecars)).FontSize(11).TextColor(nodeColor)
+								})
+							}
+
 							// Line 2: Tailnet
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -368,9 +382,17 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 								ui.Text(c, tsDetail).FontSize(11).TextColor(tsTipColor)
 							})
 
+							// Line 2b: Tailnet connection mode (shown in tooltip when connected)
+							if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) && ts.BackendState == "Running" && tsModeName != "" {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, cat.TailnetModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
+									ui.Text(c, tsModeName).FontSize(11).TextColor(ui.RGB(147, 197, 253)) // blue-300
+								})
+							}
+
 							// Line 3: Working mode
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Text(c, cat.TailnetModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
+								ui.Text(c, cat.TrafficModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
 								ui.Text(c, activeModeLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(147, 197, 253)) // blue-300
 							})
 						})
@@ -424,14 +446,15 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	if collapsed {
 		card := ui.Column(c.Key("sidebar-engine-pill")).
 			Label(cat.EngineStatusPillTitle()).
-			Width(collapsedTileSize).Padding(4, 4, 4, 4).Gap(4).Radius(8).
+			Width(collapsedTileSize).Height(96).
+			Padding(6, 4, 6, 4).Gap(4).Radius(8).
 			Background(p.card).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).
 			Children(func() {
 				// Row 1: Gateway status dot
 				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
 					Label(cat.MasterGateway()).
-					Size(24, 18).Radius(4).
+					Size(28, 22).Radius(4).
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
@@ -450,7 +473,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				// Row 2: Tailnet status dot
 				tsBtn := ui.ButtonBase(c.Key("collapsed-ts-dot")).
 					Label(cat.NavTailnet()).
-					Size(24, 18).Radius(4).
+					Size(28, 22).Radius(4).
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
@@ -469,7 +492,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				// Row 3: Positional 3-bar gray lamp (Left: Port, Center: SysProxy, Right: TUN)
 				modeBtn := ui.ButtonBase(c.Key("collapsed-mode-lamp")).
 					Label(cat.TailnetModeLabel()).
-					Size(28, 16).Radius(4).
+					Size(28, 22).Radius(4).
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
@@ -519,14 +542,16 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	// Expanded state: unified 3-row white card
 	card := ui.Column(c.Key("sidebar-engine-pill")).
 		Label(cat.EngineStatusPillTitle()).
+		Height(96).
 		Padding(6, 8, 6, 8).Gap(4).Radius(8).
 		Background(p.card).Border(1, p.borderSubtle).
 		Children(func() {
 			// Row 1: Gateway status + full address (127.0.0.1:10809)
 			row1 := ui.Row(c.Key("expanded-gw-row")).
 				Label(cat.MasterGateway()).
+				Height(22).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(2, 4, 2, 4).Radius(6).
+				Padding(0, 4, 0, 4).Radius(6).
 				Background(ui.Transparent).
 				Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -535,7 +560,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
 					})
 
-					tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
+					if gwBadgeText != "" {
+						tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
+					}
 				})
 			if row1.Hovered() {
 				row1.Background(p.cardHover)
@@ -550,8 +577,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			// Row 2: Tailnet (组网) status
 			row2 := ui.Row(c.Key("expanded-ts-row")).
 				Label(cat.NavTailnet()).
+				Height(22).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(2, 4, 2, 4).Radius(6).
+				Padding(0, 4, 0, 4).Radius(6).
 				Background(ui.Transparent).
 				Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -561,7 +589,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 							ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
 						}
 					})
-					tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
+					if tsBadgeText != "" {
+						tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
+					}
 				})
 			if row2.Hovered() {
 				row2.Background(p.cardHover)
@@ -576,8 +606,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			// Row 3: 3-Way Segmented Working Mode (Left: Port, Center: SysProxy, Right: TUN)
 			// White card background, selected option has a neutral gray pill background
 			ui.Row(c.Key("expanded-mode-row")).
+				Height(22).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(2, 0, 2, 0).Gap(3).
+				Padding(0, 0, 0, 0).Gap(3).
 				Children(func() {
 					renderModeBtn := func(modeID, label string) {
 						isSelected := activeMode == modeID
