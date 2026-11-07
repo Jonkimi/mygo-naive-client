@@ -150,6 +150,10 @@ func New(opts EngineOptions) (*Engine, error) {
 		return nil, fmt.Errorf("create sing-box core: %w", err)
 	}
 
+	if eng.blocker != nil {
+		b.Router().AppendTracker(&BlockerConnectionTracker{blocker: eng.blocker})
+	}
+
 	eng.box = b
 	return eng, nil
 }
@@ -177,12 +181,21 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 		}), nil
 	})
 
+	dnsReg := include.DNSTransportRegistry()
+	var finalDNSReg adapter.DNSTransportRegistry = dnsReg
+	if eng != nil && eng.blocker != nil {
+		finalDNSReg = &blockerTransportRegistry{
+			underlying: dnsReg,
+			blocker:    eng.blocker,
+		}
+	}
+
 	return box.Context(
 		ctx,
 		include.InboundRegistry(),
 		outboundReg,
 		include.EndpointRegistry(),
-		include.DNSTransportRegistry(),
+		finalDNSReg,
 		include.ServiceRegistry(),
 		include.CertificateProviderRegistry(),
 	)
@@ -542,28 +555,23 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	}
 
 	// 3. DNS Configuration (ADR-0003, ADR-0007)
+	bootstrapDNS := opts.BootstrapDNS
+	if len(bootstrapDNS) == 0 {
+		bootstrapDNS = DefaultBootstrapDNS
+	}
+	domesticDoH := opts.DomesticDoH
+	if len(domesticDoH) == 0 {
+		domesticDoH = DefaultDomesticDoH
+	}
+	remoteDoH := opts.RemoteDoH
+	if len(remoteDoH) == 0 {
+		remoteDoH = DefaultRemoteDoH
+	}
+
 	dnsServers := []map[string]any{
-		{
-			"type":        "udp",
-			"tag":         "bootstrap-dns",
-			"server":      "223.5.5.5",
-			"server_port": 53,
-		},
-		{
-			"type":        "https",
-			"tag":         "domestic-doh",
-			"server":      "223.5.5.5",
-			"server_port": 443,
-			"path":        "/dns-query",
-		},
-		{
-			"type":        "https",
-			"tag":         "remote-doh",
-			"server":      "1.1.1.1",
-			"server_port": 443,
-			"path":        "/dns-query",
-			"detour":      "PROXY_POOL",
-		},
+		buildDNSServerMap("bootstrap-dns", bootstrapDNS[0], ""),
+		buildDNSServerMap("domestic-doh", domesticDoH[0], ""),
+		buildDNSServerMap("remote-doh", remoteDoH[0], "PROXY_POOL"),
 	}
 
 	var dnsRules []map[string]any
@@ -598,15 +606,6 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		})
 	}
 
-	dnsMap := map[string]any{
-		"servers": dnsServers,
-		"final":   "remote-doh",
-	}
-	if len(dnsRules) > 0 {
-		dnsMap["rules"] = dnsRules
-	}
-	configMap["dns"] = dnsMap
-
 	// 4. Routing configuration
 	var siteTags, ipTags []string
 	for _, r := range opts.Rules {
@@ -616,7 +615,47 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 
 	ruleSets := geodata.BuildRuleSets(opts.GeoSiteDB, opts.GeoIPDB, siteTags, ipTags)
 
+	var cnRuleSets []string
+	for _, rs := range ruleSets {
+		for _, tag := range rs.Tag {
+			if tag == "geosite-cn" || tag == "geosite-private" {
+				cnRuleSets = append(cnRuleSets, tag)
+			}
+		}
+	}
+	if len(cnRuleSets) > 0 {
+		dnsRules = append(dnsRules, map[string]any{
+			"rule_set": cnRuleSets,
+			"server":   "domestic-doh",
+		})
+	}
+
+	dnsMap := map[string]any{
+		"servers": dnsServers,
+		"final":   "remote-doh",
+	}
+	if len(dnsRules) > 0 {
+		dnsMap["rules"] = dnsRules
+	}
+	configMap["dns"] = dnsMap
+
 	var singRules []map[string]any
+
+	// 0. DNS hijacking (ADR-0003, ADR-0004)
+	singRules = append(singRules, map[string]any{
+		"protocol": "dns",
+		"action":   "hijack-dns",
+	})
+	singRules = append(singRules, map[string]any{
+		"port":   []int{53},
+		"action": "hijack-dns",
+	})
+	if opts.TrafficMode == "tun" {
+		singRules = append(singRules, map[string]any{
+			"inbound": []string{"tun-in"},
+			"action":  "sniff",
+		})
+	}
 
 	// 4.1 Tailnet highest-priority routing & Pi-hole Blocker bypass
 	if opts.TailnetMode == tailnet.ModeHost {
@@ -779,3 +818,57 @@ func (e *Engine) TailscaleEndpoint() adapter.TailscaleEndpoint {
 	tsEp, _ := ep.(adapter.TailscaleEndpoint)
 	return tsEp
 }
+
+func buildDNSServerMap(tag string, rawAddr string, detour string) map[string]any {
+	rawAddr = strings.TrimSpace(rawAddr)
+	if strings.HasPrefix(rawAddr, "https://") || strings.HasPrefix(rawAddr, "http://") {
+		u, err := url.Parse(rawAddr)
+		if err == nil {
+			port := 443
+			if u.Scheme == "http" {
+				port = 80
+			}
+			if u.Port() != "" {
+				if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+					port = p
+				}
+			}
+			path := u.Path
+			if path == "" {
+				path = "/dns-query"
+			}
+			m := map[string]any{
+				"type":        "https",
+				"tag":         tag,
+				"server":      u.Hostname(),
+				"server_port": port,
+				"path":        path,
+			}
+			if detour != "" {
+				m["detour"] = detour
+			}
+			return m
+		}
+	}
+
+	host, portStr, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		host = rawAddr
+		portStr = "53"
+	}
+	port, _ := strconv.Atoi(portStr)
+	if port <= 0 {
+		port = 53
+	}
+	m := map[string]any{
+		"type":        "udp",
+		"tag":         tag,
+		"server":      host,
+		"server_port": port,
+	}
+	if detour != "" {
+		m["detour"] = detour
+	}
+	return m
+}
+

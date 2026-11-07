@@ -18,8 +18,12 @@ import (
 	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
 
+	"github.com/miekg/dns"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/buf"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // Tests that Engine starts with Mixed inbound, accepts connections, and routes direct traffic.
@@ -147,6 +151,97 @@ func TestEngine_BlockerIntegration(t *testing.T) {
 		if resp.StatusCode < 400 {
 			t.Errorf("expected error or HTTP 4xx/5xx for blocked domain, got status %d", resp.StatusCode)
 		}
+	}
+
+	entries := bl.Logger().GetEntries(10)
+	foundBlocked := false
+	for _, entry := range entries {
+		if entry.Domain == "ads.example.com" && entry.Verdict == blocker.VerdictBlocked && entry.Source == blocker.SourceGateway {
+			foundBlocked = true
+			break
+		}
+	}
+	if !foundBlocked {
+		t.Fatalf("expected ads.example.com to be logged as blocked with SourceGateway in QueryLogger, got entries: %+v", entries)
+	}
+}
+
+type testPacketWriter struct {
+	done    chan struct{}
+	payload []byte
+}
+
+func (w *testPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
+	w.payload = append([]byte(nil), buffer.Bytes()...)
+	select {
+	case <-w.done:
+	default:
+		close(w.done)
+	}
+	return nil
+}
+
+// Tests that DNS queries to blocked domains return 0.0.0.0 and record SourceDNS in QueryLogger.
+func TestEngine_BlockerDNSIntegration(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{
+		Denylist: []string{"ad.doubleclick.net"},
+	})
+
+	opts := EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		Blocker:     bl,
+		FinalAction: "direct",
+	}
+
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New Engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("eng.Start failed: %v", err)
+	}
+	defer func() {
+		_ = eng.Close()
+	}()
+
+	msg := new(dns.Msg)
+	msg.SetQuestion("ad.doubleclick.net.", dns.TypeA)
+	raw, err := msg.Pack()
+	if err != nil {
+		t.Fatalf("pack dns message failed: %v", err)
+	}
+
+	writer := &testPacketWriter{done: make(chan struct{})}
+	eng.box.Router().HijackDNSPacket(context.Background(), raw, writer, adapter.InboundContext{})
+
+	select {
+	case <-writer.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for DNS response")
+	}
+
+	var resp dns.Msg
+	if err := resp.Unpack(writer.payload); err != nil {
+		t.Fatalf("unpack dns response failed: %v", err)
+	}
+	if len(resp.Answer) != 1 {
+		t.Fatalf("expected 1 DNS answer, got %d", len(resp.Answer))
+	}
+	ansA, ok := resp.Answer[0].(*dns.A)
+	if !ok || ansA.A.String() != "0.0.0.0" {
+		t.Fatalf("expected answer 0.0.0.0, got %v", resp.Answer[0])
+	}
+
+	entries := bl.Logger().GetEntries(10)
+	foundDNSBlocked := false
+	for _, entry := range entries {
+		if entry.Domain == "ad.doubleclick.net" && entry.Verdict == blocker.VerdictBlocked && entry.Source == blocker.SourceDNS {
+			foundDNSBlocked = true
+			break
+		}
+	}
+	if !foundDNSBlocked {
+		t.Fatalf("expected ad.doubleclick.net to be logged as SourceDNS and VerdictBlocked, got entries: %+v", entries)
 	}
 }
 
