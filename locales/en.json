@@ -274,6 +274,7 @@
   "customCorePathLabel": "Custom naive Binary Path (leave blank for default managed path)",
   "customCorePathHint": "Leave blank for default managed path",
   "telemetrySectionTitle": "Connectivity & Speed Tests",
+  "autoProbeOnStart": "Auto-measure latency on service start (Cold-start break-even)",
   "probeURLLabel": "HTTP 204 Ping Test Target URL",
   "downloadURLLabel": "Download Speed Test Target URL",
   "saveSettings": "Save Preferences",

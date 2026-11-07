@@ -370,6 +370,9 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 			// Section 3: Telemetry & Network Testing
 			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 				ui.Text(c, cat.TelemetrySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+				if switchRow(c, p, "page-set-auto-probe", cat.AutoProbeOnStart(), &a.state.AutoProbeOnStart) {
+					a.saveState()
+				}
 				if labeledInput(c, p, "page-set-probe-url", cat.ProbeURLLabel(), &a.state.ProbeURL, defaultProbeURL).Changed() {
 					a.saveState()
 				}

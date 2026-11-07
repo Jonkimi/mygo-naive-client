@@ -89,6 +89,7 @@ type Manager struct {
 	onChange       func()
 	OnLog          func(id string)
 	OnProbeSuccess func(id string, rtt time.Duration)
+	OnServiceStarted func(svc config.Service)
 	BackoffMin     time.Duration // overridable in tests
 }
 
@@ -304,8 +305,12 @@ func (m *Manager) Start(svc config.Service) error {
 			StartedAt: time.Now(),
 		}
 		inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已启用: %s", time.Now().Format("15:04:05"), svc.RedactedProxy()))
+		startedCb := m.OnServiceStarted
 		m.mu.Unlock()
 		m.onChange()
+		if startedCb != nil {
+			startedCb(inst.svc)
+		}
 		return nil
 	}
 
@@ -494,9 +499,13 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 		inst.status.StartedAt = startedAt
 		inst.status.Restarts = restarts
 		inst.status.LastError = ""
+		startedCb := m.OnServiceStarted
 		m.mu.Unlock()
 		inst.logs.AppendLine(fmt.Sprintf("[%s] 服务已启动 (PID: %d)", startedAt.Format("15:04:05"), pid))
 		m.onChange()
+		if startedCb != nil {
+			startedCb(inst.svc)
+		}
 
 		waitDone := make(chan error, 1)
 		go func() {

@@ -2778,6 +2778,16 @@ func (msgs Messages) TelemetrySectionTitle() string {
 	return Catalog.Format(msgs.locale, "telemetrySectionTitle", nil)
 }
 
+// AutoProbeOnStart says "Auto-measure latency on service start (Cold-start break-even)"
+// in the language the app shows.
+func AutoProbeOnStart() string { return In(i18n.Locale()).AutoProbeOnStart() }
+
+// AutoProbeOnStart says "Auto-measure latency on service start (Cold-start break-even)"
+// in the language of msgs.
+func (msgs Messages) AutoProbeOnStart() string {
+	return Catalog.Format(msgs.locale, "autoProbeOnStart", nil)
+}
+
 // ProbeURLLabel says "HTTP 204 Ping Test Target URL"
 // in the language the app shows.
 func ProbeURLLabel() string { return In(i18n.Locale()).ProbeURLLabel() }

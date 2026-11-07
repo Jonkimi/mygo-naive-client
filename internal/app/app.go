@@ -357,6 +357,19 @@ func (a *app) initSubsystems() {
 			a.tracker.RecordProbe(id, rtt)
 		}
 	}
+	a.mgr.OnServiceStarted = func(svc config.Service) {
+		if a.headless || !a.state.AutoProbeOnStart {
+			return
+		}
+		// Cold Start (Path A): Asynchronously probe the newly running service
+		// so its real end-to-end HTTPS RTT breaks initial tie in QualityTracker immediately.
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			if a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+				a.mgr.ProbeService(svc, a.state.ProbeURL)
+			}
+		}()
+	}
 	a.syncBinaryPathAndVersion()
 	a.syncXrayBinaryPathAndVersion()
 }

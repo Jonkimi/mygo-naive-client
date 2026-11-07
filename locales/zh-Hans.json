@@ -274,6 +274,7 @@
   "customCorePathLabel": "自定义本地 naive 可执行文件路径 (留空使用默认管理路径)",
   "customCorePathHint": "留空使用默认管理路径",
   "telemetrySectionTitle": "连通性与速度测试",
+  "autoProbeOnStart": "服务启动时自动测速（冷启动选路打破均势）",
   "probeURLLabel": "HTTP 204 延迟测速目标地址",
   "downloadURLLabel": "下载测速目标地址",
   "saveSettings": "保存设置",

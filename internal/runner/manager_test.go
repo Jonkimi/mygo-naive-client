@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -199,5 +200,44 @@ func TestManagerProbeAndDownloadCancel(t *testing.T) {
 	}
 	if mgr.StatusOf("cancel-svc").SpeedTesting {
 		t.Error("expected SpeedTesting to be false after cancel")
+	}
+}
+
+// Tests that OnServiceStarted callback is dispatched on service launch for cold-start auto probing.
+func TestManager_OnServiceStartedAndProbeCallbacks(t *testing.T) {
+	dir := t.TempDir()
+	bin := writeFakeNaiveScript(t, dir, false)
+	mgr := NewManager(bin, dir, nil)
+
+	var startedSvcID string
+	var startedMu sync.Mutex
+	mgr.OnServiceStarted = func(svc config.Service) {
+		startedMu.Lock()
+		startedSvcID = svc.ID
+		startedMu.Unlock()
+	}
+
+	p := freePort(t)
+	svc := config.DefaultService("cb-svc", p)
+	if err := mgr.Start(svc); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer mgr.StopAll()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		startedMu.Lock()
+		id := startedSvcID
+		startedMu.Unlock()
+		if id == "cb-svc" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	startedMu.Lock()
+	defer startedMu.Unlock()
+	if startedSvcID != "cb-svc" {
+		t.Fatalf("expected OnServiceStarted called with cb-svc, got %q", startedSvcID)
 	}
 }

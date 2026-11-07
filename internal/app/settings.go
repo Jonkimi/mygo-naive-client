@@ -57,6 +57,7 @@ type PersistedState struct {
 	AutoUpdateCore          bool                `json:"autoUpdateCore"`
 	AutoUpdateXray          bool                `json:"autoUpdateXray"`
 	UseRunningServiceForUpd bool                `json:"useRunningServiceForUpdate"`
+	AutoProbeOnStart        bool                `json:"autoProbeOnStart"`
 	GitHubMirror            string              `json:"githubMirror,omitempty"`
 	UpdateProxy             string              `json:"updateProxy,omitempty"`
 	ProbeURL                string              `json:"probeUrl,omitempty"`
@@ -107,6 +108,7 @@ func defaultPersistedState() PersistedState {
 		AutoUpdateCore:          true,
 		AutoUpdateXray:          true,
 		UseRunningServiceForUpd: true,
+		AutoProbeOnStart:        true,
 		ProbeURL:                defaultProbeURL,
 		DownloadTestURL:         defaultDownloadURL,
 		BlockerEnabled:          true,
