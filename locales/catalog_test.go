@@ -56,8 +56,11 @@ func TestCatalogLanguages(t *testing.T) {
 	if en.CoreMissingNaiveError() != "NaiveProxy core binary not found. Please install the core first." {
 		t.Fatalf("expected NaiveProxy core missing error, got %q", en.CoreMissingNaiveError())
 	}
-	if en.RoutingDnsAlignmentTitle() != "DNS Resolution & Outbound Alignment" {
-		t.Fatalf("expected 'DNS Resolution & Outbound Alignment', got %q", en.RoutingDnsAlignmentTitle())
+	if en.RoutingDnsAlignmentTitle() != "DNS Resolution & Outbound Strategy Alignment" {
+		t.Fatalf("expected 'DNS Resolution & Outbound Strategy Alignment', got %q", en.RoutingDnsAlignmentTitle())
+	}
+	if en.RoutingDnsDescDirect() == "" || en.RoutingDnsDescProxyPort() == "" || en.RoutingDnsDescTun() == "" {
+		t.Fatalf("expected DNS descriptions to be present in en")
 	}
 	if en.DnsDomesticBadge() != "DoH: Domestic Direct" {
 		t.Fatalf("expected 'DoH: Domestic Direct', got %q", en.DnsDomesticBadge())
@@ -110,8 +113,11 @@ func TestCatalogLanguages(t *testing.T) {
 	if zh.CoreMissingNaiveError() != "未找到 NaiveProxy 核心文件，请先下载安装" {
 		t.Fatalf("expected NaiveProxy core missing error, got %q", zh.CoreMissingNaiveError())
 	}
-	if zh.RoutingDnsAlignmentTitle() != "DNS 解析与出站策略联动" {
-		t.Fatalf("expected 'DNS 解析与出站策略联动', got %q", zh.RoutingDnsAlignmentTitle())
+	if zh.RoutingDnsAlignmentTitle() != "DNS 解析与出站策略联动机制" {
+		t.Fatalf("expected 'DNS 解析与出站策略联动机制', got %q", zh.RoutingDnsAlignmentTitle())
+	}
+	if zh.RoutingDnsDescDirect() == "" || zh.RoutingDnsDescProxyPort() == "" || zh.RoutingDnsDescTun() == "" {
+		t.Fatalf("expected DNS descriptions to be present in zh")
 	}
 	if zh.DnsDomesticBadge() != "DoH: 国内直连" {
 		t.Fatalf("expected 'DoH: 国内直连', got %q", zh.DnsDomesticBadge())

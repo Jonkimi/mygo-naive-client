@@ -762,17 +762,19 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 			})
 
 			// DNS & Routing Alignment Callout Banner
-			ui.Row(c.Key("banner-routing-dns-alignment")).
-				AlignItems(ui.Center).
-				Padding(10, 14, 10, 14).Radius(8).
+			ui.Column(c.Key("banner-routing-dns-alignment")).
+				Padding(12, 14, 12, 14).Radius(8).
 				Background(p.surface).Border(1, p.borderSubtle).
+				Gap(6).
 				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 						ui.Icon(c, iconNavRouting).Size(16, 16).TextColor(p.accent)
-						ui.Column(c).Gap(2).Children(func() {
-							ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-							ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted)
-						})
+						ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+					})
+					ui.Column(c).Gap(4).Padding(0, 0, 0, 24).Children(func() {
+						ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textMuted)
+						ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textMuted)
+						ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textMuted)
 					})
 				})
 

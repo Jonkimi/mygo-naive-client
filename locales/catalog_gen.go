@@ -84,24 +84,54 @@ func (msgs Messages) RoutingSubtitle() string {
 	return Catalog.Format(msgs.locale, "routingSubtitle", nil)
 }
 
-// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Alignment"
+// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Strategy Alignment"
 // in the language the app shows.
 func RoutingDnsAlignmentTitle() string { return In(i18n.Locale()).RoutingDnsAlignmentTitle() }
 
-// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Alignment"
+// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Strategy Alignment"
 // in the language of msgs.
 func (msgs Messages) RoutingDnsAlignmentTitle() string {
 	return Catalog.Format(msgs.locale, "routingDnsAlignmentTitle", nil)
 }
 
-// RoutingDnsAlignmentDesc says "Domains matching 'Direct' outbound automatically resolve via domestic DoH directly (ensuring optimal CDN routing and …"
+// RoutingDnsAlignmentDesc says "Direct traffic resolves via Domestic DoH, proxy traffic resolves remotely, and TUN mode captures global anti-pollutio…"
 // in the language the app shows.
 func RoutingDnsAlignmentDesc() string { return In(i18n.Locale()).RoutingDnsAlignmentDesc() }
 
-// RoutingDnsAlignmentDesc says "Domains matching 'Direct' outbound automatically resolve via domestic DoH directly (ensuring optimal CDN routing and …"
+// RoutingDnsAlignmentDesc says "Direct traffic resolves via Domestic DoH, proxy traffic resolves remotely, and TUN mode captures global anti-pollutio…"
 // in the language of msgs.
 func (msgs Messages) RoutingDnsAlignmentDesc() string {
 	return Catalog.Format(msgs.locale, "routingDnsAlignmentDesc", nil)
+}
+
+// RoutingDnsDescDirect says "Direct Traffic: Resolved locally via Domestic DoH (optimal CDN routing and LAN accessibility), then connects to desti…"
+// in the language the app shows.
+func RoutingDnsDescDirect() string { return In(i18n.Locale()).RoutingDnsDescDirect() }
+
+// RoutingDnsDescDirect says "Direct Traffic: Resolved locally via Domestic DoH (optimal CDN routing and LAN accessibility), then connects to desti…"
+// in the language of msgs.
+func (msgs Messages) RoutingDnsDescDirect() string {
+	return Catalog.Format(msgs.locale, "routingDnsDescDirect", nil)
+}
+
+// RoutingDnsDescProxyPort says "Proxy Traffic (Port Proxy Mode): Domain names are forwarded via encrypted tunnel to remote nodes for resolution (Remo…"
+// in the language the app shows.
+func RoutingDnsDescProxyPort() string { return In(i18n.Locale()).RoutingDnsDescProxyPort() }
+
+// RoutingDnsDescProxyPort says "Proxy Traffic (Port Proxy Mode): Domain names are forwarded via encrypted tunnel to remote nodes for resolution (Remo…"
+// in the language of msgs.
+func (msgs Messages) RoutingDnsDescProxyPort() string {
+	return Catalog.Format(msgs.locale, "routingDnsDescProxyPort", nil)
+}
+
+// RoutingDnsDescTun says "Virtual TUN Mode: System-wide DNS requests are captured; non-direct domains resolve securely via Remote DoH over prox…"
+// in the language the app shows.
+func RoutingDnsDescTun() string { return In(i18n.Locale()).RoutingDnsDescTun() }
+
+// RoutingDnsDescTun says "Virtual TUN Mode: System-wide DNS requests are captured; non-direct domains resolve securely via Remote DoH over prox…"
+// in the language of msgs.
+func (msgs Messages) RoutingDnsDescTun() string {
+	return Catalog.Format(msgs.locale, "routingDnsDescTun", nil)
 }
 
 // DnsDomesticBadge says "DoH: Domestic Direct"
@@ -124,21 +154,21 @@ func (msgs Messages) DnsRemoteBadge() string {
 	return Catalog.Format(msgs.locale, "dnsRemoteBadge", nil)
 }
 
-// RuleActionDirectHint says "Direct Outbound: Traffic connects directly, and matched domain DNS automatically resolves via domestic DoH directly."
+// RuleActionDirectHint says "Direct Outbound: Traffic connects directly to destination, and domain DNS resolves via local Domestic DoH directly."
 // in the language the app shows.
 func RuleActionDirectHint() string { return In(i18n.Locale()).RuleActionDirectHint() }
 
-// RuleActionDirectHint says "Direct Outbound: Traffic connects directly, and matched domain DNS automatically resolves via domestic DoH directly."
+// RuleActionDirectHint says "Direct Outbound: Traffic connects directly to destination, and domain DNS resolves via local Domestic DoH directly."
 // in the language of msgs.
 func (msgs Messages) RuleActionDirectHint() string {
 	return Catalog.Format(msgs.locale, "ruleActionDirectHint", nil)
 }
 
-// RuleActionProxyHint says "Proxy Outbound: Traffic routed through proxy pool, domain DNS resolved via remote DoH through proxy tunnel."
+// RuleActionProxyHint says "Proxy Outbound: Traffic routed via proxy nodes. Domain names resolve remotely in port mode, or via Remote DoH tunnels…"
 // in the language the app shows.
 func RuleActionProxyHint() string { return In(i18n.Locale()).RuleActionProxyHint() }
 
-// RuleActionProxyHint says "Proxy Outbound: Traffic routed through proxy pool, domain DNS resolved via remote DoH through proxy tunnel."
+// RuleActionProxyHint says "Proxy Outbound: Traffic routed via proxy nodes. Domain names resolve remotely in port mode, or via Remote DoH tunnels…"
 // in the language of msgs.
 func (msgs Messages) RuleActionProxyHint() string {
 	return Catalog.Format(msgs.locale, "ruleActionProxyHint", nil)
@@ -596,11 +626,11 @@ func (msgs Messages) RuleDrawerDescDirect() string {
 	return Catalog.Format(msgs.locale, "ruleDrawerDescDirect", nil)
 }
 
-// RuleDrawerDescProxyPool says "Traffic will be dispatched across all active nodes in the global proxy pool."
+// RuleDrawerDescProxyPool says "Traffic dispatched via active proxy nodes; domains resolve remotely in port mode, or via Remote DoH in TUN mode."
 // in the language the app shows.
 func RuleDrawerDescProxyPool() string { return In(i18n.Locale()).RuleDrawerDescProxyPool() }
 
-// RuleDrawerDescProxyPool says "Traffic will be dispatched across all active nodes in the global proxy pool."
+// RuleDrawerDescProxyPool says "Traffic dispatched via active proxy nodes; domains resolve remotely in port mode, or via Remote DoH in TUN mode."
 // in the language of msgs.
 func (msgs Messages) RuleDrawerDescProxyPool() string {
 	return Catalog.Format(msgs.locale, "ruleDrawerDescProxyPool", nil)
