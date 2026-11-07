@@ -50,6 +50,9 @@ type Engine struct {
 	userDeny  map[string]bool
 	enabled   atomic.Bool
 
+	onUpdateMu sync.RWMutex
+	onUpdate   func()
+
 	// Query telemetry hooks (configured in Seam 3)
 	logger *QueryLogger
 }
@@ -129,9 +132,26 @@ func (e *Engine) EvaluateAndLog(domain string, source QuerySource) (bool, string
 	return blocked, rule
 }
 
+// SetOnUpdate registers a callback that is notified whenever rules, allowlists, or denylists change.
+func (e *Engine) SetOnUpdate(fn func()) {
+	e.onUpdateMu.Lock()
+	e.onUpdate = fn
+	e.onUpdateMu.Unlock()
+}
+
+func (e *Engine) notifyUpdate() {
+	e.onUpdateMu.RLock()
+	fn := e.onUpdate
+	e.onUpdateMu.RUnlock()
+	if fn != nil {
+		fn()
+	}
+}
+
 // SetEnabled enables or disables domain blocking.
 func (e *Engine) SetEnabled(enabled bool) {
 	e.enabled.Store(enabled)
+	e.notifyUpdate()
 }
 
 // IsEnabled reports whether blocking is active.
@@ -142,6 +162,7 @@ func (e *Engine) IsEnabled() bool {
 // SwapRuleset atomically hot-replaces the compiled subscription ruleset.
 func (e *Engine) SwapRuleset(parsed *ParsedRules) {
 	e.ruleset.Store(NewCompiledRuleset(parsed))
+	e.notifyUpdate()
 }
 
 // AddAllowlist adds a domain to the user allowlist.
@@ -153,6 +174,7 @@ func (e *Engine) AddAllowlist(domain string) {
 	e.allowMu.Lock()
 	e.userAllow[d] = true
 	e.allowMu.Unlock()
+	e.notifyUpdate()
 }
 
 // RemoveAllowlist removes a domain from the user allowlist.
@@ -164,6 +186,7 @@ func (e *Engine) RemoveAllowlist(domain string) {
 	e.allowMu.Lock()
 	delete(e.userAllow, d)
 	e.allowMu.Unlock()
+	e.notifyUpdate()
 }
 
 // GetAllowlist returns a copy of current user allowlist domains.
@@ -186,6 +209,7 @@ func (e *Engine) AddDenylist(domain string) {
 	e.denyMu.Lock()
 	e.userDeny[d] = true
 	e.denyMu.Unlock()
+	e.notifyUpdate()
 }
 
 // RemoveDenylist removes a domain from the user denylist.
@@ -197,6 +221,7 @@ func (e *Engine) RemoveDenylist(domain string) {
 	e.denyMu.Lock()
 	delete(e.userDeny, d)
 	e.denyMu.Unlock()
+	e.notifyUpdate()
 }
 
 // GetDenylist returns a copy of current user denylist domains.

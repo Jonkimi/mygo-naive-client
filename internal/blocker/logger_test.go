@@ -11,6 +11,7 @@ import (
 // correctly aggregates hourly metrics across the 24-hour window, and tracks Top domains.
 func TestQueryLogger_RingBufferAndMetrics(t *testing.T) {
 	ql := NewQueryLogger(2000)
+	ql.SetDedupWindow(0)
 
 	now := time.Now().Truncate(time.Hour)
 
@@ -79,6 +80,7 @@ func TestQueryLogger_RingBufferAndMetrics(t *testing.T) {
 // Tests that QueryLogger is thread-safe under concurrent logging.
 func TestQueryLogger_Concurrency(t *testing.T) {
 	ql := NewQueryLogger(2000)
+	ql.SetDedupWindow(0)
 	var wg sync.WaitGroup
 
 	for g := 0; g < 10; g++ {
@@ -135,5 +137,44 @@ func TestQueryLogger_GetFilteredEntriesAndTopCaching(t *testing.T) {
 	}
 	if top1[0].Domain != top2[0].Domain {
 		t.Fatalf("expected consistent top items from cache")
+	}
+}
+
+// Tests that QueryLogger suppresses duplicate queries within the deduplication window (e.g. A and AAAA dual queries).
+func TestQueryLogger_Deduplication(t *testing.T) {
+	ql := NewQueryLogger(100)
+	ql.SetDedupWindow(500 * time.Millisecond)
+
+	now := time.Now()
+
+	// 1. Same domain, same source, same verdict within 100ms -> suppressed
+	ql.RecordAt("dual-query.com", SourceDNS, VerdictAllowed, "", now)
+	ql.RecordAt("dual-query.com", SourceDNS, VerdictAllowed, "", now.Add(50*time.Millisecond))
+	ql.RecordAt("dual-query.com", SourceDNS, VerdictAllowed, "", now.Add(100*time.Millisecond))
+
+	entries := ql.GetEntries(10)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry after 3 rapid duplicate queries, got %d", len(entries))
+	}
+
+	// 2. Different domain -> recorded
+	ql.RecordAt("other-domain.com", SourceDNS, VerdictAllowed, "", now.Add(150*time.Millisecond))
+	entries = ql.GetEntries(10)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries after distinct domain query, got %d", len(entries))
+	}
+
+	// 3. Different source (SourceGateway) -> recorded
+	ql.RecordAt("dual-query.com", SourceGateway, VerdictAllowed, "", now.Add(200*time.Millisecond))
+	entries = ql.GetEntries(10)
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries after Gateway query, got %d", len(entries))
+	}
+
+	// 4. Same query after deduplication window (600ms > 500ms) -> recorded
+	ql.RecordAt("dual-query.com", SourceDNS, VerdictAllowed, "", now.Add(600*time.Millisecond))
+	entries = ql.GetEntries(10)
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 entries after window expiration, got %d", len(entries))
 	}
 }

@@ -9,6 +9,15 @@ import (
 
 const maxTrackedDomains = 5000
 
+// DefaultDedupWindow is the default time window for suppressing duplicate query logs.
+const DefaultDedupWindow = 800 * time.Millisecond
+
+type recentKey struct {
+	domain  string
+	source  QuerySource
+	verdict Verdict
+}
+
 func pruneCounts(m map[string]int64, max int) {
 	if len(m) <= max {
 		return
@@ -43,6 +52,9 @@ type QueryLogger struct {
 	totalQueries  int64
 	totalBlocked  int64
 
+	dedupWindow   time.Duration
+	recentQueries map[recentKey]time.Time
+
 	dirtyTop        bool
 	topBlockedCache []TopDomainItem
 	topAllowedCache []TopDomainItem
@@ -59,6 +71,19 @@ func NewQueryLogger(capacity int) *QueryLogger {
 		hourlyMap:     make(map[int64]*HourlyBucket),
 		blockedCounts: make(map[string]int64),
 		allowedCounts: make(map[string]int64),
+		dedupWindow:   DefaultDedupWindow,
+		recentQueries: make(map[recentKey]time.Time),
+	}
+}
+
+// SetDedupWindow updates the deduplication time window.
+// Setting it to 0 disables query deduplication.
+func (l *QueryLogger) SetDedupWindow(d time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.dedupWindow = d
+	if d <= 0 {
+		l.recentQueries = make(map[recentKey]time.Time)
 	}
 }
 
@@ -71,6 +96,25 @@ func (l *QueryLogger) Record(domain string, source QuerySource, verdict Verdict,
 func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdict, rule string, ts time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if l.dedupWindow > 0 {
+		k := recentKey{domain: domain, source: source, verdict: verdict}
+		if lastTs, exists := l.recentQueries[k]; exists {
+			diff := ts.Sub(lastTs)
+			if diff >= 0 && diff < l.dedupWindow {
+				return
+			}
+		}
+		l.recentQueries[k] = ts
+		if len(l.recentQueries) > 256 {
+			cutoff := ts.Add(-2 * l.dedupWindow)
+			for rk, rt := range l.recentQueries {
+				if rt.Before(cutoff) {
+					delete(l.recentQueries, rk)
+				}
+			}
+		}
+	}
 
 	l.nextID++
 	entry := QueryLogEntry{

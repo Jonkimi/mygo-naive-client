@@ -1792,8 +1792,15 @@ func (a *app) syncBlockerRules() {
 		merged.Merge(parsed)
 	}
 	a.blocker.SwapRuleset(merged)
+	a.clearDNSCache()
 	if prevAds != nil && a.cachedAdsRules == nil {
 		a.releaseUnusedMemory()
+	}
+}
+
+func (a *app) clearDNSCache() {
+	if a.gateway != nil {
+		a.gateway.ClearDNSCache()
 	}
 }
 
@@ -1824,6 +1831,7 @@ func (a *app) addBlockerAllowlist(domain string) {
 	}
 	a.state.BlockerDenylist = newDeny
 	a.saveState()
+	a.clearDNSCache()
 	a.toast(a.catalog().ToastAddedAllowlist())
 }
 
@@ -1843,6 +1851,7 @@ func (a *app) removeBlockerAllowlist(domain string) {
 	}
 	a.state.BlockerAllowlist = newAllow
 	a.saveState()
+	a.clearDNSCache()
 	a.toast(a.catalog().ToastRemovedAllowlist())
 }
 
@@ -1873,6 +1882,7 @@ func (a *app) addBlockerDenylist(domain string) {
 	}
 	a.state.BlockerAllowlist = newAllow
 	a.saveState()
+	a.clearDNSCache()
 	a.toast(a.catalog().ToastAddedDenylist())
 }
 
@@ -1892,6 +1902,7 @@ func (a *app) removeBlockerDenylist(domain string) {
 	}
 	a.state.BlockerDenylist = newDeny
 	a.saveState()
+	a.clearDNSCache()
 	a.toast(a.catalog().ToastRemovedDenylist())
 }
 
@@ -1901,6 +1912,7 @@ func (a *app) toggleBlockerEnabled() {
 		a.blocker.SetEnabled(a.state.BlockerEnabled)
 	}
 	a.saveState()
+	a.clearDNSCache()
 	if a.state.BlockerEnabled {
 		a.toast(a.catalog().ToastProtectionEnabled())
 	} else {

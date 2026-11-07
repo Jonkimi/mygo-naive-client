@@ -688,6 +688,45 @@ func TestEngine_TailnetEmbeddedMode_Config(t *testing.T) {
 	}
 }
 
+// Tests that Blocker dynamically blocks/allows domains at runtime and flushes sing-box DNS cache.
+func TestEngine_DynamicDenylistAndClearDNSCache(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+
+	opts := EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		Blocker:     bl,
+		FinalAction: "direct",
+	}
+
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New Engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("eng.Start failed: %v", err)
+	}
+	defer func() {
+		_ = eng.Close()
+	}()
+
+	// Verify ClearDNSCache does not panic
+	eng.ClearDNSCache()
+
+	// 1. Dynamic AddDenylist triggers onUpdate and blocks domain
+	bl.AddDenylist("dynamic-ads.org")
+	matchBlocked, rule := bl.AsGateway().Match("dynamic-ads.org")
+	if !matchBlocked || rule != blocker.RuleUserDenylist {
+		t.Fatalf("expected dynamic-ads.org to be blocked by user-denylist, got %v (%s)", matchBlocked, rule)
+	}
+
+	// 2. Dynamic AddAllowlist unblocks domain immediately
+	bl.AddAllowlist("dynamic-ads.org")
+	matchBlocked2, _ := bl.AsGateway().Match("dynamic-ads.org")
+	if matchBlocked2 {
+		t.Fatalf("expected dynamic-ads.org to be allowed after AddAllowlist")
+	}
+}
+
 
 
 

@@ -75,6 +75,7 @@ type Engine struct {
 	failureMonitor *telemetry.FailureMonitor
 	blocker        *blocker.Engine
 	onDemandStart  func(poolTag string)
+	boxCtx         context.Context
 	cancel         context.CancelFunc
 }
 
@@ -150,8 +151,10 @@ func New(opts EngineOptions) (*Engine, error) {
 		return nil, fmt.Errorf("create sing-box core: %w", err)
 	}
 
+	eng.boxCtx = boxCtx
 	if eng.blocker != nil {
 		b.Router().AppendTracker(&BlockerConnectionTracker{blocker: eng.blocker})
+		eng.blocker.SetOnUpdate(eng.ClearDNSCache)
 	}
 
 	eng.box = b
@@ -691,18 +694,7 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		})
 	}
 
-	// 4.2 Blocker rules: denylist domains route to block (evaluated after Tailnet to allow bypass)
-	if opts.Blocker != nil {
-		deny := opts.Blocker.GetDenylist()
-		if len(deny) > 0 {
-			singRules = append(singRules, map[string]any{
-				"domain_suffix": deny,
-				"outbound":      "block",
-			})
-		}
-	}
-
-	// 4.3 User rules
+	// 4.2 User rules
 	for _, r := range opts.Rules {
 		if !r.Enabled {
 			continue
@@ -820,6 +812,20 @@ func (e *Engine) TailscaleEndpoint() adapter.TailscaleEndpoint {
 	}
 	tsEp, _ := ep.(adapter.TailscaleEndpoint)
 	return tsEp
+}
+
+// ClearDNSCache clears sing-box internal DNS cache (memory LRU and persistent store).
+func (e *Engine) ClearDNSCache() {
+	e.mu.RLock()
+	boxCtx := e.boxCtx
+	e.mu.RUnlock()
+	if boxCtx == nil {
+		return
+	}
+	dnsRouter := service.FromContext[adapter.DNSRouter](boxCtx)
+	if dnsRouter != nil {
+		dnsRouter.ClearCache()
+	}
 }
 
 func buildDNSServerMap(tag string, rawAddr string, detour string) map[string]any {
