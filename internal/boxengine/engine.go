@@ -179,29 +179,12 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 		var tracker *telemetry.Tracker
 		var fm *telemetry.FailureMonitor
 		var np NodeProvider
-		var onDialSuccess func(targetHost string, nodeID string)
 		var telemetryUpdate func()
 		if eng != nil {
 			tracker = eng.tracker
 			fm = eng.failureMonitor
 			np = eng
 			telemetryUpdate = eng.onTelemetryUpdate
-			onDialSuccess = func(targetHost string, nodeID string) {
-				nodeName := eng.GetNodeName(nodeID)
-				if nodeName != "" {
-					resolvedDomain := ""
-					if eng.connTracker != nil {
-						eng.connTracker.RecordDialSuccess(targetHost, nodeName)
-						resolvedDomain = eng.connTracker.ResolveIPDomain(targetHost)
-					}
-					if eng.blocker != nil && eng.blocker.Logger() != nil {
-						eng.blocker.Logger().UpdateRecentGatewayChain(targetHost, nodeName)
-						if resolvedDomain != "" && !strings.EqualFold(resolvedDomain, targetHost) {
-							eng.blocker.Logger().UpdateRecentGatewayChain(resolvedDomain, nodeName)
-						}
-					}
-				}
-			}
 		}
 		return NewPoolOutbound(PoolOutboundOptions{
 			Tag:               tag,
@@ -209,7 +192,6 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			Tracker:           tracker,
 			FailureMonitor:    fm,
 			NodeProvider:      np,
-			OnDialSuccess:     onDialSuccess,
 			OnTelemetryUpdate: telemetryUpdate,
 		}), nil
 	})

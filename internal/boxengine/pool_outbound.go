@@ -29,7 +29,6 @@ type PoolOutboundOptions struct {
 	Tracker           *telemetry.Tracker
 	FailureMonitor    *telemetry.FailureMonitor
 	NodeProvider      NodeProvider
-	OnDialSuccess     func(targetHost string, nodeID string)
 	OnTelemetryUpdate func()
 }
 
@@ -40,7 +39,6 @@ type PoolOutbound struct {
 	tracker           *telemetry.Tracker
 	failureMonitor    *telemetry.FailureMonitor
 	provider          NodeProvider
-	onDialSuccess     func(targetHost string, nodeID string)
 	onTelemetryUpdate func()
 	mu                sync.RWMutex
 }
@@ -53,7 +51,6 @@ func NewPoolOutbound(opts PoolOutboundOptions) *PoolOutbound {
 		tracker:           opts.Tracker,
 		failureMonitor:    opts.FailureMonitor,
 		provider:          opts.NodeProvider,
-		onDialSuccess:     opts.OnDialSuccess,
 		onTelemetryUpdate: opts.OnTelemetryUpdate,
 	}
 }
@@ -124,6 +121,26 @@ func (p *PoolOutbound) orderCandidates(candidates []string, targetHost string) [
 	return ordered
 }
 
+// SelectCandidate returns the top-ranked candidate node ID for targetHost in this pool.
+func (p *PoolOutbound) SelectCandidate(targetHost string) string {
+	if p.provider == nil {
+		return ""
+	}
+	tagKey := p.poolTag
+	if tagKey == "" {
+		tagKey = p.tag
+	}
+	candidates := p.provider.GetCandidates(tagKey)
+	if len(candidates) == 0 {
+		return ""
+	}
+	ordered := p.orderCandidates(candidates, targetHost)
+	if len(ordered) == 0 {
+		return ""
+	}
+	return ordered[0]
+}
+
 func (p *PoolOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if p.provider == nil {
 		return nil, errors.New("node provider is nil")
@@ -179,10 +196,6 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			}
 			lastErr = err
 			continue
-		}
-
-		if p.onDialSuccess != nil {
-			p.onDialSuccess(targetHost, candID)
 		}
 
 		if isSidecar && network == "tcp" {
@@ -270,9 +283,6 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 
 		conn, err := ob.ListenPacket(ctx, destination)
 		if err == nil {
-			if p.onDialSuccess != nil {
-				p.onDialSuccess(targetHost, candID)
-			}
 			return conn, nil
 		}
 		lastErr = err

@@ -112,18 +112,6 @@ func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdi
 		if lastTs, exists := l.recentQueries[k]; exists {
 			diff := ts.Sub(lastTs)
 			if diff >= 0 && diff < l.dedupWindow {
-				if source == SourceGateway && chain != "" {
-					for i := 0; i < l.count && i < 30; i++ {
-						idx := (l.start + l.count - 1 - i) % l.capacity
-						e := &l.entries[idx]
-						if e.Source == SourceGateway && strings.EqualFold(e.Domain, domain) {
-							if e.Chain == "" || (!strings.HasPrefix(e.Chain, chain+" -> ") && e.Chain != chain) {
-								e.Chain = chain
-							}
-							break
-						}
-					}
-				}
 				return
 			}
 		}
@@ -195,38 +183,6 @@ func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdi
 			if k < cutoff {
 				delete(l.hourlyMap, k)
 			}
-		}
-	}
-}
-
-// UpdateRecentGatewayChain updates the most recent Gateway entry for target to append the dialed node name.
-func (l *QueryLogger) UpdateRecentGatewayChain(target string, nodeName string) {
-	if target == "" || nodeName == "" {
-		return
-	}
-	cleanTarget := strings.Trim(strings.ToLower(strings.TrimSpace(target)), ".")
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	cutoff := time.Now().Add(-5 * time.Second)
-	for i := 0; i < l.count && i < 30; i++ {
-		idx := (l.start + l.count - 1 - i) % l.capacity
-		entry := &l.entries[idx]
-		if entry.Timestamp.Before(cutoff) {
-			break
-		}
-		if entry.Source == SourceGateway && strings.EqualFold(strings.Trim(entry.Domain, "."), cleanTarget) {
-			parts := strings.Split(entry.Chain, " -> ")
-			if len(parts) == 2 {
-				if parts[1] != nodeName {
-					entry.Chain = parts[0] + " -> " + parts[1] + " -> " + nodeName
-				}
-			} else if len(parts) >= 3 {
-				entry.Chain = parts[0] + " -> " + parts[1] + " -> " + nodeName
-			} else if entry.Chain != "" && !strings.HasSuffix(entry.Chain, " -> "+nodeName) {
-				entry.Chain = entry.Chain + " -> " + nodeName
-			}
-			return
 		}
 	}
 }

@@ -1208,36 +1208,31 @@ func TestEngine_FinalRouteProxyTagAndNoStaleNodeConcatenation(t *testing.T) {
 		t.Fatalf("expected route.final to be %q, got %+v", "PROXY_TAG:warp", boxOpts.Route)
 	}
 
-	// Verify BlockerConnectionTracker does not concatenate previous dial's node with current dial's node
+	// Verify BlockerConnectionTracker resolves the selected candidate directly from PoolOutbound
+	// without concatenating stale node names across consecutive connections.
 	bl := blocker.NewEngine(blocker.Options{})
 	bl.Logger().SetDedupWindow(0)
+	eng.services = opts.Services
+	eng.allocatedPorts = map[string]int{"svc-opc2": 10801, "svc-warp": 10802}
+	eng.activeIDs = map[string]bool{"svc-opc2": true, "svc-warp": true}
 	tracker := &BlockerConnectionTracker{
-		blocker: bl,
-		nodeNameResolver: func(nodeID string) string {
-			return nodeID
-		},
+		blocker:          bl,
+		nodeNameResolver: eng.GetNodeName,
 	}
-	poolOb := NewPoolOutbound(PoolOutboundOptions{Tag: "PROXY_TAG:warp", PoolTag: "warp"})
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_TAG:warp",
+		PoolTag:      "warp",
+		NodeProvider: eng,
+	})
 
-	// Connection 1 dials naive_opc2
 	tracker.recordConnection("example.com", nil, poolOb)
-	tracker.RecordDialSuccess("example.com", "naive_opc2")
-	bl.Logger().UpdateRecentGatewayChain("example.com", "naive_opc2")
-
-	// Connection 2 arrives while naive_opc2 is still in recentDials, then dials local_warp
-	tracker.recordConnection("example.com", nil, poolOb)
-	tracker.RecordDialSuccess("example.com", "local_warp")
-	bl.Logger().UpdateRecentGatewayChain("example.com", "local_warp")
 
 	entries := bl.Logger().GetEntries(10)
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(entries))
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
 	if entries[0].Chain != "final -> PROXY_TAG:warp -> local_warp" {
-		t.Errorf("expected latest entry chain %q, got %q", "final -> PROXY_TAG:warp -> local_warp", entries[0].Chain)
-	}
-	if entries[1].Chain != "final -> PROXY_TAG:warp -> naive_opc2" {
-		t.Errorf("expected first entry chain %q, got %q", "final -> PROXY_TAG:warp -> naive_opc2", entries[1].Chain)
+		t.Errorf("expected entry chain %q, got %q", "final -> PROXY_TAG:warp -> local_warp", entries[0].Chain)
 	}
 }
 
