@@ -327,7 +327,7 @@ func TestEngine_SidecarRouting(t *testing.T) {
 				}
 				p := int(buf[0])<<8 | int(buf[1])
 
-				targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetHost, p))
+				targetConn, err := net.Dial("tcp", net.JoinHostPort(targetHost, fmt.Sprintf("%d", p)))
 				if err != nil {
 					_, _ = conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 					return
@@ -829,6 +829,94 @@ func TestEngine_SOCKS5_IP_SNI_Sniffing(t *testing.T) {
 		t.Fatalf("expected ipinfo.io to be logged as SourceGateway from sniffed TLS ClientHello, got entries: %+v", entries)
 	}
 }
+
+// Tests that DNS split rules align with user routing rules so Direct domains resolve via domestic-doh instead of remote-doh.
+func TestEngine_DNSRuleSplitByRoutingRules(t *testing.T) {
+	eng := &Engine{}
+	ctx := createBoxContext(context.Background(), eng)
+
+	opts := EngineOptions{
+		FinalAction: "proxy_pool",
+		Rules: []routing.Rule{
+			{
+				ID:      "rule-direct-company",
+				Enabled: true,
+				Action:  routing.RouteAction{Type: routing.ActionDirect},
+				DomainSuffix: []string{"corp.internal", "local.domain"},
+				DomainFull:   []string{"direct.example.com"},
+				GeoSite:      []string{"apple"},
+			},
+			{
+				ID:      "rule-proxy-overseas",
+				Enabled: true,
+				Action:  routing.RouteAction{Type: routing.ActionProxyPool},
+				DomainSuffix: []string{"overseas.com"},
+			},
+		},
+	}
+
+	boxOpts, err := eng.buildConfig(ctx, opts, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+
+	if boxOpts.DNS == nil {
+		t.Fatalf("expected DNS options to be present")
+	}
+
+	// 1. Final DNS should match FinalAction "proxy_pool" -> "remote-doh"
+	if boxOpts.DNS.Final != "remote-doh" {
+		t.Errorf("expected DNS.Final to be remote-doh when FinalAction=proxy_pool, got %q", boxOpts.DNS.Final)
+	}
+
+	// 2. Check DNS rules mapping
+	var foundDirectDomain, foundDirectGeoSite, foundProxyDomain bool
+	for _, rule := range boxOpts.DNS.Rules {
+		opts := rule.DefaultOptions
+		server := opts.RouteOptions.Server
+		if server == "domestic-doh" {
+			for _, s := range opts.DomainSuffix {
+				if s == "corp.internal" {
+					foundDirectDomain = true
+				}
+			}
+			for _, rset := range opts.RuleSet {
+				if rset == "geosite-apple" {
+					foundDirectGeoSite = true
+				}
+			}
+		} else if server == "remote-doh" {
+			for _, s := range opts.DomainSuffix {
+				if s == "overseas.com" {
+					foundProxyDomain = true
+				}
+			}
+		}
+	}
+
+	if !foundDirectDomain {
+		t.Errorf("expected domain_suffix 'corp.internal' in domestic-doh DNS rule")
+	}
+	if !foundDirectGeoSite {
+		t.Errorf("expected rule_set 'geosite-apple' in domestic-doh DNS rule")
+	}
+	if !foundProxyDomain {
+		t.Errorf("expected domain_suffix 'overseas.com' in remote-doh DNS rule")
+	}
+
+	// 3. Test that when FinalAction is direct, DNS.Final is domestic-doh
+	optsDirectFinal := EngineOptions{
+		FinalAction: "direct",
+	}
+	boxOptsDirect, err := eng.buildConfig(ctx, optsDirectFinal, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig direct final failed: %v", err)
+	}
+	if boxOptsDirect.DNS.Final != "domestic-doh" {
+		t.Errorf("expected DNS.Final to be domestic-doh when FinalAction=direct, got %q", boxOptsDirect.DNS.Final)
+	}
+}
+
 
 
 

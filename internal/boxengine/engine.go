@@ -621,24 +621,81 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 
 	ruleSets := geodata.BuildRuleSets(opts.GeoSiteDB, opts.GeoIPDB, siteTags, ipTags)
 
-	var cnRuleSets []string
-	for _, rs := range ruleSets {
-		for _, tag := range rs.Tag {
-			if tag == "geosite-cn" || tag == "geosite-private" {
-				cnRuleSets = append(cnRuleSets, tag)
+	// Build DNS rules aligned with user routing rules (ADR-0003, ADR-0007).
+	// Domains matching DIRECT rules resolve via domestic-doh (detour: direct)
+	// to ensure optimal local CDN routing and intranet resolution.
+	// Domains matching PROXY rules resolve via remote-doh (detour: PROXY_POOL)
+	// through proxy tunnel to prevent local DNS pollution.
+	for _, r := range opts.Rules {
+		if !r.Enabled {
+			continue
+		}
+
+		var targetDNSServer string
+		switch r.Action.Type {
+		case routing.ActionDirect:
+			targetDNSServer = "domestic-doh"
+		case routing.ActionProxyPool, routing.ActionProxyTag, routing.ActionProxyService:
+			targetDNSServer = "remote-doh"
+		case routing.ActionTailnet, routing.ActionTailnetExit:
+			if opts.TailnetMode == tailnet.ModeHost {
+				targetDNSServer = "tailscale-host-dns"
+			} else {
+				targetDNSServer = "tailscale-dns"
+			}
+		}
+
+		if targetDNSServer == "" {
+			continue
+		}
+
+		// 1. Direct domain / Suffix / Keyword matching rule
+		if len(r.DomainFull) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 {
+			dr := map[string]any{"server": targetDNSServer}
+			if len(r.DomainFull) > 0 {
+				dr["domain"] = r.DomainFull
+			}
+			if len(r.DomainSuffix) > 0 {
+				dr["domain_suffix"] = r.DomainSuffix
+			}
+			if len(r.DomainKeyword) > 0 {
+				dr["domain_keyword"] = r.DomainKeyword
+			}
+			dnsRules = append(dnsRules, dr)
+		}
+
+		// 2. RuleSet / GeoSite matching rule
+		if len(r.GeoSite) > 0 {
+			var rsets []string
+			for _, gs := range r.GeoSite {
+				rsets = append(rsets, "geosite-"+strings.ToLower(strings.TrimSpace(gs)))
+			}
+			if len(rsets) > 0 {
+				dnsRules = append(dnsRules, map[string]any{
+					"rule_set": rsets,
+					"server":   targetDNSServer,
+				})
 			}
 		}
 	}
-	if len(cnRuleSets) > 0 {
-		dnsRules = append(dnsRules, map[string]any{
-			"rule_set": cnRuleSets,
-			"server":   "domestic-doh",
-		})
+
+	finalOutbound := "direct"
+	if opts.FinalAction != "" {
+		if strings.EqualFold(opts.FinalAction, "proxy") || strings.EqualFold(opts.FinalAction, "proxy_pool") || strings.EqualFold(opts.FinalAction, "proxy_tag") || strings.EqualFold(opts.FinalAction, "proxy_service") {
+			finalOutbound = "PROXY_POOL"
+		} else if strings.EqualFold(opts.FinalAction, "block") {
+			finalOutbound = "block"
+		}
+	}
+
+	dnsFinal := "remote-doh"
+	if finalOutbound == "direct" {
+		dnsFinal = "domestic-doh"
 	}
 
 	dnsMap := map[string]any{
 		"servers": dnsServers,
-		"final":   "remote-doh",
+		"final":   dnsFinal,
 	}
 	if len(dnsRules) > 0 {
 		dnsMap["rules"] = dnsRules
@@ -757,15 +814,6 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 					"outbound": outbound,
 				})
 			}
-		}
-	}
-
-	finalOutbound := "direct"
-	if opts.FinalAction != "" {
-		if strings.EqualFold(opts.FinalAction, "proxy") || strings.EqualFold(opts.FinalAction, "proxy_pool") {
-			finalOutbound = "PROXY_POOL"
-		} else if strings.EqualFold(opts.FinalAction, "block") {
-			finalOutbound = "block"
 		}
 	}
 

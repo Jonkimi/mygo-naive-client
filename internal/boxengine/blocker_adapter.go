@@ -305,11 +305,13 @@ func formatDNSChain(serverTag string, blocked bool, blockerRule string) string {
 	}
 	switch serverTag {
 	case "domestic-doh":
-		return "rule_set(geosite-cn) -> domestic-doh"
+		return "direct -> domestic-doh"
 	case "remote-doh":
-		return "final -> remote-doh"
+		return "proxy -> remote-doh"
 	case "tailscale-dns", "tailscale-host-dns":
-		return "domain_suffix(ts.net) -> " + serverTag
+		return "tailnet -> " + serverTag
+	case "bootstrap-dns":
+		return "bootstrap -> direct"
 	default:
 		if serverTag != "" {
 			return "server(" + serverTag + ")"

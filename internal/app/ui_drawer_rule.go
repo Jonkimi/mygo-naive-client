@@ -130,7 +130,10 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 								ui.Text(c, cat.RuleDrawerDescBlock()).FontSize(11).TextColor(p.textMuted)
 
 							case routing.ActionDirect:
-								statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
+									tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+								})
 								ui.Text(c, cat.RuleDrawerDescDirect()).FontSize(11).TextColor(p.textMuted)
 
 							case routing.ActionProxyTag:
@@ -145,11 +148,14 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 									tagDisplay = "#Proxy"
 								}
 
-								if activeNodes > 0 {
-									statusBadge(c, fmt.Sprintf("%s (%d 在线)", tagDisplay, activeNodes), p.accentText, p.accentBg)
-								} else {
-									statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
-								}
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									if activeNodes > 0 {
+										statusBadge(c, fmt.Sprintf("%s (%d 在线)", tagDisplay, activeNodes), p.accentText, p.accentBg)
+									} else {
+										statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
+									}
+									tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
+								})
 
 								// Matched tags & online nodes
 								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -194,11 +200,17 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 							default:
 								activeCount := a.activeRunningCount()
 								label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									if activeCount > 0 {
+										statusBadge(c, label, p.green, p.greenBg)
+									} else {
+										statusBadge(c, label, p.amber, p.amberBg)
+									}
+									tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
+								})
 								if activeCount > 0 {
-									statusBadge(c, label, p.green, p.greenBg)
 									ui.Text(c, cat.RuleDrawerDescProxyPool()).FontSize(11).TextColor(p.textMuted)
 								} else {
-									statusBadge(c, label, p.amber, p.amberBg)
 									ui.Text(c, cat.RuleDrawerDescProxyPoolEmpty()).FontSize(11).TextColor(p.amber)
 								}
 							}

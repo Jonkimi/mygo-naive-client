@@ -84,6 +84,66 @@ func (msgs Messages) RoutingSubtitle() string {
 	return Catalog.Format(msgs.locale, "routingSubtitle", nil)
 }
 
+// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Alignment"
+// in the language the app shows.
+func RoutingDnsAlignmentTitle() string { return In(i18n.Locale()).RoutingDnsAlignmentTitle() }
+
+// RoutingDnsAlignmentTitle says "DNS Resolution & Outbound Alignment"
+// in the language of msgs.
+func (msgs Messages) RoutingDnsAlignmentTitle() string {
+	return Catalog.Format(msgs.locale, "routingDnsAlignmentTitle", nil)
+}
+
+// RoutingDnsAlignmentDesc says "Domains matching 'Direct' outbound automatically resolve via domestic DoH directly (ensuring optimal CDN routing and …"
+// in the language the app shows.
+func RoutingDnsAlignmentDesc() string { return In(i18n.Locale()).RoutingDnsAlignmentDesc() }
+
+// RoutingDnsAlignmentDesc says "Domains matching 'Direct' outbound automatically resolve via domestic DoH directly (ensuring optimal CDN routing and …"
+// in the language of msgs.
+func (msgs Messages) RoutingDnsAlignmentDesc() string {
+	return Catalog.Format(msgs.locale, "routingDnsAlignmentDesc", nil)
+}
+
+// DnsDomesticBadge says "DoH: Domestic Direct"
+// in the language the app shows.
+func DnsDomesticBadge() string { return In(i18n.Locale()).DnsDomesticBadge() }
+
+// DnsDomesticBadge says "DoH: Domestic Direct"
+// in the language of msgs.
+func (msgs Messages) DnsDomesticBadge() string {
+	return Catalog.Format(msgs.locale, "dnsDomesticBadge", nil)
+}
+
+// DnsRemoteBadge says "DoH: Anti-Pollution"
+// in the language the app shows.
+func DnsRemoteBadge() string { return In(i18n.Locale()).DnsRemoteBadge() }
+
+// DnsRemoteBadge says "DoH: Anti-Pollution"
+// in the language of msgs.
+func (msgs Messages) DnsRemoteBadge() string {
+	return Catalog.Format(msgs.locale, "dnsRemoteBadge", nil)
+}
+
+// RuleActionDirectHint says "Direct Outbound: Traffic connects directly, and matched domain DNS automatically resolves via domestic DoH directly."
+// in the language the app shows.
+func RuleActionDirectHint() string { return In(i18n.Locale()).RuleActionDirectHint() }
+
+// RuleActionDirectHint says "Direct Outbound: Traffic connects directly, and matched domain DNS automatically resolves via domestic DoH directly."
+// in the language of msgs.
+func (msgs Messages) RuleActionDirectHint() string {
+	return Catalog.Format(msgs.locale, "ruleActionDirectHint", nil)
+}
+
+// RuleActionProxyHint says "Proxy Outbound: Traffic routed through proxy pool, domain DNS resolved via remote DoH through proxy tunnel."
+// in the language the app shows.
+func RuleActionProxyHint() string { return In(i18n.Locale()).RuleActionProxyHint() }
+
+// RuleActionProxyHint says "Proxy Outbound: Traffic routed through proxy pool, domain DNS resolved via remote DoH through proxy tunnel."
+// in the language of msgs.
+func (msgs Messages) RuleActionProxyHint() string {
+	return Catalog.Format(msgs.locale, "ruleActionProxyHint", nil)
+}
+
 // RoutingCustomSection says "Custom Rules"
 // in the language the app shows.
 func RoutingCustomSection() string { return In(i18n.Locale()).RoutingCustomSection() }
@@ -526,11 +586,11 @@ func (msgs Messages) RuleDrawerDescBlock() string {
 	return Catalog.Format(msgs.locale, "ruleDrawerDescBlock", nil)
 }
 
-// RuleDrawerDescDirect says "Traffic matching this rule bypasses proxy and connects directly via local network."
+// RuleDrawerDescDirect says "Traffic matching this rule bypasses proxy and connects directly; associated domain DNS resolves via domestic DoH dire…"
 // in the language the app shows.
 func RuleDrawerDescDirect() string { return In(i18n.Locale()).RuleDrawerDescDirect() }
 
-// RuleDrawerDescDirect says "Traffic matching this rule bypasses proxy and connects directly via local network."
+// RuleDrawerDescDirect says "Traffic matching this rule bypasses proxy and connects directly; associated domain DNS resolves via domestic DoH dire…"
 // in the language of msgs.
 func (msgs Messages) RuleDrawerDescDirect() string {
 	return Catalog.Format(msgs.locale, "ruleDrawerDescDirect", nil)

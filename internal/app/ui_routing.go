@@ -671,6 +671,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
 				case routing.ActionDirect:
 					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
+					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
 				case routing.ActionProxyTag:
 					tags := rule.Action.GetTags()
 					activeNodes := a.activeNodesForTags(tags, runningIDs)
@@ -688,6 +689,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					} else {
 						statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
 					}
+					tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
 				default:
 					activeCount := a.activeRunningCount()
 					label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
@@ -696,6 +698,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					} else {
 						statusBadge(c, label, p.amber, p.amberBg)
 					}
+					tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
 				}
 
 				// If GeoData is missing and rule has Geo criteria, show status badge
@@ -757,6 +760,21 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.RoutingSubtitle()).FontSize(12).TextColor(p.textMuted)
 				})
 			})
+
+			// DNS & Routing Alignment Callout Banner
+			ui.Row(c.Key("banner-routing-dns-alignment")).
+				AlignItems(ui.Center).
+				Padding(10, 14, 10, 14).Radius(8).
+				Background(p.surface).Border(1, p.borderSubtle).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+						ui.Icon(c, iconNavRouting).Size(16, 16).TextColor(p.accent)
+						ui.Column(c).Gap(2).Children(func() {
+							ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+							ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted)
+						})
+					})
+				})
 
 			// Missing GeoData Callout Banner
 			if !hasGeo {
@@ -875,6 +893,7 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[s
 					statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
 				case routing.ActionDirect:
 					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
+					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
 				case routing.ActionProxyTag:
 					tags := a.state.RoutingFinal.GetTags()
 					activeNodes := a.activeNodesForTags(tags, runningIDs)
@@ -892,6 +911,7 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[s
 					} else {
 						statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
 					}
+					tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
 				default:
 					activeCount := a.activeRunningCount()
 					label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
@@ -900,6 +920,7 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[s
 					} else {
 						statusBadge(c, label, p.amber, p.amberBg)
 					}
+					tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
 				}
 
 				if pref := a.preferredNodeForAction(a.state.RoutingFinal, "", runningIDs); pref != "" {
@@ -939,6 +960,12 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 					ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
 					actions := []string{cat.RoutingTagPool(), cat.RoutingProxyPool(), cat.RoutingDirect(), cat.RoutingBlock()}
 					segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
+					switch a.ruleEditor.actionIndex {
+					case 2: // Direct
+						ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim)
+					case 0, 1: // Tag Pool or Proxy Pool
+						ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim)
+					}
 				})
 
 				if a.ruleEditor.actionIndex == 0 {
