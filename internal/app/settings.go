@@ -292,13 +292,13 @@ func (a *app) loadState() {
 				r.Action = routing.RouteAction{Type: routing.ActionProxyTag, Tag: "GFW", Tags: []string{"GFW"}}
 			}
 			if r.ID == "preset-cn-direct" {
-				// Merged into preset-lan-direct ("绕过大陆及局域网")
+				// Merged into preset-lan-direct ("直连")
 				continue
 			}
 			if r.ID == "preset-lan-direct" {
 				hasLanDirect = true
-				r.Name = "绕过大陆及局域网"
-				r.Description = "中国大陆网站与局域网私有网段直连，不走代理"
+				r.Name = "直连"
+				r.Description = "直连，不走代理"
 				r.GeoSite = []string{"cn"}
 				r.GeoIP = []string{"cn", "private"}
 				if len(r.IPCidr) == 0 {

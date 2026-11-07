@@ -112,8 +112,8 @@ func TestRouter_DefaultPresets(t *testing.T) {
 	}
 	for _, target := range testTargets {
 		act, ruleName := r.Match(target)
-		if act.Type != ActionDirect || ruleName != "绕过大陆及局域网" {
-			t.Fatalf("target %s should match '绕过大陆及局域网' ActionDirect, got %+v from rule %s", target, act, ruleName)
+		if act.Type != ActionDirect || ruleName != "直连" {
+			t.Fatalf("target %s should match '直连' ActionDirect, got %+v from rule %s", target, act, ruleName)
 		}
 	}
 }

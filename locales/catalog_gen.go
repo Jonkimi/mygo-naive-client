@@ -1150,21 +1150,21 @@ func (msgs Messages) PresetRuleGFWDesc() string {
 	return Catalog.Format(msgs.locale, "presetRuleGFWDesc", nil)
 }
 
-// PresetRuleBypassLan says "Bypass Mainland & LAN"
+// PresetRuleBypassLan says "Direct"
 // in the language the app shows.
 func PresetRuleBypassLan() string { return In(i18n.Locale()).PresetRuleBypassLan() }
 
-// PresetRuleBypassLan says "Bypass Mainland & LAN"
+// PresetRuleBypassLan says "Direct"
 // in the language of msgs.
 func (msgs Messages) PresetRuleBypassLan() string {
 	return Catalog.Format(msgs.locale, "presetRuleBypassLan", nil)
 }
 
-// PresetRuleBypassLanDesc says "Direct connection for mainland China domains and private LAN subnets"
+// PresetRuleBypassLanDesc says "Direct connection, bypass proxy"
 // in the language the app shows.
 func PresetRuleBypassLanDesc() string { return In(i18n.Locale()).PresetRuleBypassLanDesc() }
 
-// PresetRuleBypassLanDesc says "Direct connection for mainland China domains and private LAN subnets"
+// PresetRuleBypassLanDesc says "Direct connection, bypass proxy"
 // in the language of msgs.
 func (msgs Messages) PresetRuleBypassLanDesc() string {
 	return Catalog.Format(msgs.locale, "presetRuleBypassLanDesc", nil)

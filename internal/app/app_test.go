@@ -2489,8 +2489,8 @@ func TestRouting_PresetProtectionAndFallbackInPresetGroup(t *testing.T) {
 	if !tt.HasText("FINAL") {
 		t.Fatalf("expected 'FINAL' badge on fallback card")
 	}
-	if !tt.HasText("绕过大陆及局域网") {
-		t.Fatalf("expected '绕过大陆及局域网' preset rule in preset group")
+	if !tt.HasText("直连") {
+		t.Fatalf("expected '直连' preset rule in preset group")
 	}
 }
 
@@ -2585,7 +2585,7 @@ func TestRouting_PresetI18nLanguageSwitching(t *testing.T) {
 	tt.Frame()
 
 	// 1. In Simplified Chinese, preset rules show Chinese names
-	if !tt.HasText("广告拦截") || !tt.HasText("AI 服务") || !tt.HasText("流媒体服务") || !tt.HasText("GFW 专线") || !tt.HasText("绕过大陆及局域网") {
+	if !tt.HasText("广告拦截") || !tt.HasText("AI 服务") || !tt.HasText("流媒体服务") || !tt.HasText("GFW 专线") || !tt.HasText("直连") {
 		t.Fatalf("expected Chinese preset rule names in zh-Hans mode, got texts: %v", tt.Texts())
 	}
 
@@ -2593,7 +2593,7 @@ func TestRouting_PresetI18nLanguageSwitching(t *testing.T) {
 	a.state.Language = locales.LangEn
 	tt.Frame()
 
-	if !tt.HasText("Block Ads") || !tt.HasText("AI Services") || !tt.HasText("Streaming Services") || !tt.HasText("GFW Proxy") || !tt.HasText("Bypass Mainland & LAN") {
+	if !tt.HasText("Block Ads") || !tt.HasText("AI Services") || !tt.HasText("Streaming Services") || !tt.HasText("GFW Proxy") || !tt.HasText("Direct") {
 		t.Fatalf("expected English preset rule names in en mode, got texts: %v", tt.Texts())
 	}
 

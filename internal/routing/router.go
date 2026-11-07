@@ -236,8 +236,8 @@ func DefaultPresets() []Rule {
 		},
 		{
 			ID:          "preset-lan-direct",
-			Name:        "绕过大陆及局域网",
-			Description: "中国大陆网站与局域网私有网段直连，不走代理",
+			Name:        "直连",
+			Description: "直连，不走代理",
 			Enabled:     true,
 			GeoSite:     []string{"cn"},
 			GeoIP:       []string{"cn", "private"},
