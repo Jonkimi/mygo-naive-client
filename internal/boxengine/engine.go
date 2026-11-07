@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,11 +23,19 @@ import (
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/service"
 )
 
 // EngineOptions configures the embedded sing-box engine.
 type EngineOptions struct {
 	ListenAddr     string
+	TrafficMode    string // "port", "sysproxy", "tun"
+	TunFD          int    // file descriptor passed from tun-helper
+	TunInterface   string // e.g. "utun8"
+	TunAddresses   []string
+	TunMTU         int
+	TunCreator     func(options tun.Options) (tun.Tun, error)
 	Services       []config.Service
 	AllocatedPorts map[string]int
 	Rules          []routing.Rule
@@ -104,30 +113,15 @@ func New(opts EngineOptions) (*Engine, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	eng.cancel = cancel
 
-	// Build custom outbound registry that includes PoolOutbound
-	outboundReg := include.OutboundRegistry()
-	type poolOption struct {
-		PoolTag string `json:"pool_tag,omitempty"`
+	boxCtx := createBoxContext(ctx, eng)
+	if opts.TrafficMode == "tun" && opts.TunFD > 0 {
+		tunPlatform := &TunPlatform{
+			TunFD:      opts.TunFD,
+			TunName:    opts.TunInterface,
+			TunCreator: opts.TunCreator,
+		}
+		boxCtx = service.ContextWith[adapter.PlatformInterface](boxCtx, tunPlatform)
 	}
-	outbound.Register[poolOption](outboundReg, "pool", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, pOpts poolOption) (adapter.Outbound, error) {
-		return NewPoolOutbound(PoolOutboundOptions{
-			Tag:            tag,
-			PoolTag:        pOpts.PoolTag,
-			Tracker:        eng.tracker,
-			FailureMonitor: eng.failureMonitor,
-			NodeProvider:   eng,
-		}), nil
-	})
-
-	boxCtx := box.Context(
-		ctx,
-		include.InboundRegistry(),
-		outboundReg,
-		include.EndpointRegistry(),
-		include.DNSTransportRegistry(),
-		include.ServiceRegistry(),
-		include.CertificateProviderRegistry(),
-	)
 
 	boxOpts, err := eng.buildConfig(boxCtx, opts, listenHost, listenPort)
 	if err != nil {
@@ -146,6 +140,40 @@ func New(opts EngineOptions) (*Engine, error) {
 
 	eng.box = b
 	return eng, nil
+}
+
+func createBoxContext(ctx context.Context, eng *Engine) context.Context {
+	outboundReg := include.OutboundRegistry()
+	type poolOption struct {
+		PoolTag string `json:"pool_tag,omitempty"`
+	}
+	outbound.Register[poolOption](outboundReg, "pool", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, pOpts poolOption) (adapter.Outbound, error) {
+		var tracker *telemetry.Tracker
+		var fm *telemetry.FailureMonitor
+		var np NodeProvider
+		if eng != nil {
+			tracker = eng.tracker
+			fm = eng.failureMonitor
+			np = eng
+		}
+		return NewPoolOutbound(PoolOutboundOptions{
+			Tag:            tag,
+			PoolTag:        pOpts.PoolTag,
+			Tracker:        tracker,
+			FailureMonitor: fm,
+			NodeProvider:   np,
+		}), nil
+	})
+
+	return box.Context(
+		ctx,
+		include.InboundRegistry(),
+		outboundReg,
+		include.EndpointRegistry(),
+		include.DNSTransportRegistry(),
+		include.ServiceRegistry(),
+		include.CertificateProviderRegistry(),
+	)
 }
 
 // Start launches the embedded sing-box engine.
@@ -274,6 +302,64 @@ func (e *Engine) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 	return e.box.Outbound().Outbound("node-" + nodeID)
 }
 
+// extractSidecarExcludeAddresses extracts IP addresses from sidecar nodes as CIDR strings
+// to populate route_exclude_address, preventing sidecar loops through sing-tun.
+func extractSidecarExcludeAddresses(services []config.Service, resolver func(host string) []net.IP) []string {
+	var results []string
+	seen := make(map[string]bool)
+
+	addIP := func(ip net.IP) {
+		var cidr string
+		if ip4 := ip.To4(); ip4 != nil {
+			cidr = ip4.String() + "/32"
+		} else if ip16 := ip.To16(); ip16 != nil {
+			cidr = ip16.String() + "/128"
+		}
+		if cidr != "" && !seen[cidr] {
+			seen[cidr] = true
+			results = append(results, cidr)
+		}
+	}
+
+	addHost := func(host string) {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return
+		}
+		host = strings.TrimPrefix(host, "[")
+		host = strings.TrimSuffix(host, "]")
+		if ip := net.ParseIP(host); ip != nil {
+			addIP(ip)
+			return
+		}
+		if resolver != nil {
+			for _, ip := range resolver(host) {
+				addIP(ip)
+			}
+		}
+	}
+
+	for _, svc := range services {
+		if !isSidecarService(svc) {
+			continue
+		}
+		if svc.Server != "" {
+			addHost(svc.Server)
+		}
+		for _, proxyURI := range svc.Proxies {
+			if u, err := url.Parse(proxyURI); err == nil && u.Hostname() != "" {
+				addHost(u.Hostname())
+			}
+		}
+		if svc.ExternalURI != "" {
+			if u, err := url.Parse(svc.ExternalURI); err == nil && u.Hostname() != "" {
+				addHost(u.Hostname())
+			}
+		}
+	}
+	return results
+}
+
 func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host string, port int) (*option.Options, error) {
 	configMap := make(map[string]any)
 
@@ -281,8 +367,8 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		"level": "warn",
 	}
 
-	// 1. Inbound: mixed (HTTP + SOCKS5)
-	configMap["inbounds"] = []map[string]any{
+	// 1. Inbounds: mixed (HTTP + SOCKS5) and optional tun inbound
+	inbounds := []map[string]any{
 		{
 			"type":        "mixed",
 			"tag":         "mixed-in",
@@ -290,6 +376,35 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			"listen_port": port,
 		},
 	}
+
+	if opts.TrafficMode == "tun" {
+		tunAddrs := opts.TunAddresses
+		if len(tunAddrs) == 0 {
+			tunAddrs = []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"}
+		}
+		mtu := opts.TunMTU
+		if mtu <= 0 {
+			mtu = 9000
+		}
+		tunIn := map[string]any{
+			"type":         "tun",
+			"tag":          "tun-in",
+			"address":      tunAddrs,
+			"mtu":          mtu,
+			"auto_route":   true,
+			"strict_route": true,
+			"stack":        "system",
+		}
+		if opts.TunInterface != "" {
+			tunIn["interface_name"] = opts.TunInterface
+		}
+		excludes := extractSidecarExcludeAddresses(opts.Services, nil)
+		if len(excludes) > 0 {
+			tunIn["route_exclude_address"] = excludes
+		}
+		inbounds = append(inbounds, tunIn)
+	}
+	configMap["inbounds"] = inbounds
 
 	// 2. Outbounds: direct, block, node outbounds, and pool outbounds
 	outbounds := []map[string]any{
@@ -478,8 +593,9 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	}
 
 	routeMap := map[string]any{
-		"rules": singRules,
-		"final": finalOutbound,
+		"rules":                 singRules,
+		"final":                 finalOutbound,
+		"auto_detect_interface": true,
 	}
 
 	// Encode ruleSets into JSON for unmarshaling

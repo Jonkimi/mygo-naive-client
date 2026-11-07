@@ -24,8 +24,11 @@ import (
 	"naive-client/internal/runner"
 	"naive-client/internal/sysproxy"
 	"naive-client/internal/telemetry"
+	"naive-client/internal/tunhelper"
 	"naive-client/internal/updater"
 	"naive-client/locales"
+
+	"github.com/sagernet/sing-tun"
 )
 
 // TabID identifies a page in the sidebar navigation.
@@ -89,6 +92,9 @@ type app struct {
 	sysproxy       *sysproxy.Sysproxy
 	router         *routing.Router
 	blocker        *blocker.Engine
+	tunDevice      *tunhelper.ReceivedDevice
+	mockTunDevice  func() (*tunhelper.ReceivedDevice, error)
+	mockTunCreator func(options tun.Options) (tun.Tun, error)
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -790,6 +796,22 @@ func (a *app) startDormantServiceForTag(tag string) {
 	}
 }
 
+func (a *app) requestTunDevice() (*tunhelper.ReceivedDevice, error) {
+	if a.mockTunDevice != nil {
+		return a.mockTunDevice()
+	}
+	binPath := a.resolveBinaryPath()
+	if binPath == "" {
+		if exe, err := os.Executable(); err == nil {
+			binPath = exe
+		}
+	}
+	client := tunhelper.NewClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return client.RequestDevice(ctx, binPath)
+}
+
 func (a *app) startGateway() error {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
@@ -810,8 +832,39 @@ func (a *app) startGateway() error {
 		activeIDs = a.mgr.RunningServiceIDs()
 	}
 
+	var tunFD int
+	var tunName string
+	if a.state.TrafficMode == "tun" {
+		if a.tunDevice == nil {
+			dev, err := a.requestTunDevice()
+			if err != nil {
+				return fmt.Errorf("request TUN device: %w", err)
+			}
+			a.tunDevice = dev
+		}
+		if a.tunDevice != nil {
+			tunFD = a.tunDevice.FD
+			tunName = a.tunDevice.Name
+		}
+	} else {
+		if a.tunDevice != nil {
+			_ = a.tunDevice.Close()
+			a.tunDevice = nil
+		}
+	}
+
+	var tunAddrs []string
+	if a.mockTunDevice != nil {
+		tunAddrs = []string{"127.0.0.1/24"}
+	}
+
 	eng, err := boxengine.New(boxengine.EngineOptions{
 		ListenAddr:     fmt.Sprintf("127.0.0.1:%d", port),
+		TrafficMode:    a.state.TrafficMode,
+		TunFD:          tunFD,
+		TunInterface:   tunName,
+		TunAddresses:   tunAddrs,
+		TunCreator:     a.mockTunCreator,
 		Services:       a.state.Services,
 		AllocatedPorts: allocPorts,
 		ActiveIDs:      activeIDs,
@@ -840,6 +893,8 @@ func (a *app) startGateway() error {
 
 	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
 		_ = a.sysproxy.Set(eng.Addr(), a.state.SystemProxyBypass)
+	} else if a.state.TrafficMode == "tun" && a.sysproxy != nil {
+		_ = a.sysproxy.MarkDirtyTun(tunName)
 	}
 	return nil
 }
@@ -927,6 +982,10 @@ func (a *app) stopGateway() {
 		_ = a.gateway.Stop()
 		a.gateway = nil
 	}
+	if a.tunDevice != nil {
+		_ = a.tunDevice.Close()
+		a.tunDevice = nil
+	}
 }
 
 func (a *app) setTrafficMode(mode string) error {
@@ -936,6 +995,13 @@ func (a *app) setTrafficMode(mode string) error {
 		if a.sysproxy != nil {
 			_ = a.sysproxy.Unset()
 		}
+		if a.tunDevice != nil {
+			_ = a.tunDevice.Close()
+			a.tunDevice = nil
+			if a.gateway != nil {
+				_ = a.startGateway()
+			}
+		}
 		a.saveState()
 		if a.win != nil {
 			a.win.Invalidate()
@@ -943,7 +1009,13 @@ func (a *app) setTrafficMode(mode string) error {
 		return nil
 	case "sysproxy":
 		a.state.TrafficMode = "sysproxy"
-		if a.gateway == nil {
+		if a.tunDevice != nil {
+			_ = a.tunDevice.Close()
+			a.tunDevice = nil
+			if err := a.startGateway(); err != nil {
+				return err
+			}
+		} else if a.gateway == nil {
 			if err := a.startGateway(); err != nil {
 				return err
 			}
@@ -952,6 +1024,26 @@ func (a *app) setTrafficMode(mode string) error {
 			if err := a.sysproxy.Set(a.gateway.Addr(), a.state.SystemProxyBypass); err != nil {
 				return err
 			}
+		}
+		a.saveState()
+		if a.win != nil {
+			a.win.Invalidate()
+		}
+		return nil
+	case "tun":
+		a.state.TrafficMode = "tun"
+		if a.sysproxy != nil {
+			_ = a.sysproxy.Unset()
+		}
+		if err := a.startGateway(); err != nil {
+			a.state.TrafficMode = "port"
+			_ = a.startGateway()
+			a.toast("TUN Mode error: " + err.Error())
+			a.saveState()
+			if a.win != nil {
+				a.win.Invalidate()
+			}
+			return err
 		}
 		a.saveState()
 		if a.win != nil {

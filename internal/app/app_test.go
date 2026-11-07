@@ -27,9 +27,47 @@ import (
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
+	"naive-client/internal/tunhelper"
 	"naive-client/internal/updater"
 	"naive-client/locales"
+
+	"github.com/sagernet/sing-tun"
 )
+
+type mockTunDev struct {
+	name string
+	done chan struct{}
+}
+
+func (m *mockTunDev) Read(p []byte) (int, error) {
+	<-m.done
+	return 0, io.EOF
+}
+
+func (m *mockTunDev) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (m *mockTunDev) Name() (string, error) {
+	return m.name, nil
+}
+
+func (m *mockTunDev) Start() error {
+	return nil
+}
+
+func (m *mockTunDev) Close() error {
+	select {
+	case <-m.done:
+	default:
+		close(m.done)
+	}
+	return nil
+}
+
+func (m *mockTunDev) UpdateRouteOptions(options tun.Options) error {
+	return nil
+}
 
 func newTestApp(t *testing.T, initialServices []config.Service) (*app, *ui.Tester, string) {
 	t.Helper()
@@ -63,6 +101,27 @@ done
 	a.state.Services = initialServices
 	a.saveState()
 	a.initSubsystems()
+
+	rPipe, wPipe, pipeErr := os.Pipe()
+	if pipeErr == nil {
+		t.Cleanup(func() {
+			_ = rPipe.Close()
+			_ = wPipe.Close()
+		})
+		a.mockTunDevice = func() (*tunhelper.ReceivedDevice, error) {
+			return &tunhelper.ReceivedDevice{
+				FD:   int(wPipe.Fd()),
+				Name: "utunTest",
+			}, nil
+		}
+		a.mockTunCreator = func(options tun.Options) (tun.Tun, error) {
+			name := options.Name
+			if name == "" {
+				name = "utunTest"
+			}
+			return &mockTunDev{name: name, done: make(chan struct{})}, nil
+		}
+	}
 
 	t.Cleanup(func() {
 		if a.mgr != nil {
@@ -1019,7 +1078,9 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 		t.Fatalf("expected compact remote endpoint 'https://codex.sfchenlab.com:443' on card, got: %v", tt.Texts())
 	}
 
-	// 4. Opening mode dropdown and clicking upcoming mode (TUN) shows a feedback toast
+	a.state.GatewayPort = freeLocalPort(t)
+
+	// 4. Opening mode dropdown and clicking TUN mode switches to TUN
 	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
 		t.Fatalf("open mode dropdown: %v", err)
 	}
@@ -1028,9 +1089,19 @@ func TestTopBarAndCompactCardUX(t *testing.T) {
 		t.Fatalf("click ModeTun: %v", err)
 	}
 	tt.Frame()
-	if !tt.HasText(a.catalog().ModeComingSoonTip()) {
-		t.Fatalf("expected coming soon toast after clicking ModeTun, got: %v", tt.Texts())
+	if a.state.TrafficMode != "tun" {
+		t.Fatalf("expected traffic mode 'tun', got %q", a.state.TrafficMode)
 	}
+
+	// Switch back to PortOnly for remaining test steps
+	if err := tt.Click(a.catalog().ModeTun()); err != nil {
+		t.Fatalf("open mode dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ModePortOnly()); err != nil {
+		t.Fatalf("click ModePortOnly: %v", err)
+	}
+	tt.Frame()
 
 	// 5. Clicking the top bar core version badge navigates directly to Settings
 	if err := tt.Click(a.catalog().CoreLocal() + a.localVersion); err != nil {
@@ -1114,8 +1185,25 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 		t.Fatalf("expected sysproxy active after clicking ModeSysProxy")
 	}
 
-	// Open dropdown to switch back to "仅端口"
+	// Switch from sysproxy to TUN mode
 	if err := tt.Click(a.catalog().ModeSysProxy()); err != nil {
+		t.Fatalf("open mode dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ModeTun()); err != nil {
+		t.Fatalf("click ModeTun: %v", err)
+	}
+	tt.Frame()
+
+	if a.state.TrafficMode != "tun" {
+		t.Fatalf("expected trafficMode 'tun' after click, got %q", a.state.TrafficMode)
+	}
+	if a.tunDevice == nil {
+		t.Fatalf("expected tunDevice to be active in TUN mode")
+	}
+
+	// Open dropdown to switch from TUN back to "仅端口"
+	if err := tt.Click(a.catalog().ModeTun()); err != nil {
 		t.Fatalf("open mode dropdown: %v", err)
 	}
 	tt.Frame()
@@ -1126,6 +1214,9 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 
 	if a.state.TrafficMode != "port" {
 		t.Fatalf("expected trafficMode 'port' after click, got %q", a.state.TrafficMode)
+	}
+	if a.tunDevice != nil {
+		t.Fatalf("expected tunDevice to be cleaned up after switching to port mode")
 	}
 	if a.sysproxy != nil && a.sysproxy.IsActive() {
 		t.Fatalf("expected sysproxy deactivated after clicking port pill")
