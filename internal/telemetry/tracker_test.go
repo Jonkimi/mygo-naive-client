@@ -228,3 +228,67 @@ func TestTracker_ProbeFailureUpdatesSuccessRateAndCircuitBreaker(t *testing.T) {
 	}
 }
 
+// Tests that the 50-sample sliding window evicts old history so sudden packet loss is not diluted by past successes.
+func TestTracker_SlidingWindowEvictsHistoricalSamples(t *testing.T) {
+	tr := NewTracker()
+	node := "node-window"
+
+	// 1. 100 historical successful dials
+	for i := 0; i < 100; i++ {
+		tr.RecordDial(node, "example.com", 80*time.Millisecond, nil)
+	}
+	scBefore := tr.GetScore(node)
+	if scBefore.TotalDials != recentWindowSize || scBefore.SuccessfulDials != recentWindowSize || scBefore.SuccessRate != 1.0 {
+		t.Fatalf("expected full window 50/50 (100%%), got %+v", scBefore)
+	}
+
+	// 2. Sudden 50% packet loss over the next 50 requests (alternating success and failure)
+	for i := 0; i < recentWindowSize; i++ {
+		if i%2 == 0 {
+			tr.RecordDial(node, "example.com", 80*time.Millisecond, nil)
+		} else {
+			tr.RecordDial(node, "example.com", 0, errors.New("i/o timeout"))
+		}
+	}
+	scAfter := tr.GetScore(node)
+	if scAfter.TotalDials != recentWindowSize || scAfter.SuccessfulDials != 25 || scAfter.SuccessRate != 0.5 {
+		t.Fatalf("expected sliding window to reflect 50%% recent success rate (25/50), got %+v", scAfter)
+	}
+	if !scAfter.IsBroken {
+		t.Fatalf("expected high packet loss (50%% < 60%% threshold) to trip circuit breaker, got %+v", scAfter)
+	}
+}
+
+// Tests that severe RTO retransmission stalls (RTT >= 3000ms) count as packet-loss degradation, do not reset
+// ConsecutiveFailures, and trip the circuit breaker under intermittent high packet loss even when lucky packets slip through.
+func TestTracker_HighPacketLossAndSevereRTOStallCircuitBreaker(t *testing.T) {
+	tr := NewTracker()
+	node := "node-lossy"
+
+	// 1. 1 timeout failure -> ConsecutiveFailures = 1
+	tr.RecordDial(node, "site1.com", 0, errors.New("timeout"))
+	// 2. 1 severe RTO stall (4200ms >= 3000ms) -> updates EWMA, counts as degraded (0/2), does NOT reset ConsecutiveFailures
+	tr.RecordDial(node, "site2.com", 4200*time.Millisecond, nil)
+	sc1 := tr.GetScore(node)
+	if sc1.EWMA != 4200*time.Millisecond {
+		t.Fatalf("expected EWMA = 4200ms from stalled packet, got %v", sc1.EWMA)
+	}
+	if sc1.SuccessfulDials != 0 || sc1.TotalDials != 2 || sc1.ConsecutiveFailures != 1 {
+		t.Fatalf("expected stalled packet not to increment SuccessfulDials or reset ConsecutiveFailures, got %+v", sc1)
+	}
+
+	// 3. One lucky fast packet (120ms) slips through -> resets ConsecutiveFailures to 0, window is now 1/3
+	tr.RecordDial(node, "site3.com", 120*time.Millisecond, nil)
+	// 4. Another timeout and another RTO stall -> window has 5 samples: only 1 healthy out of 5 (20% < 60%)
+	tr.RecordDial(node, "site4.com", 0, errors.New("timeout"))
+	tr.RecordDial(node, "site5.com", 3500*time.Millisecond, nil)
+
+	sc2 := tr.GetScore(node)
+	if sc2.TotalDials != 5 || sc2.SuccessfulDials != 1 || sc2.SuccessRate != 0.2 {
+		t.Fatalf("expected 1/5 (20%%) healthy rate, got %+v", sc2)
+	}
+	if !sc2.IsBroken || sc2.CircuitPenalty != 10000.0 {
+		t.Fatalf("expected high packet-loss circuit breaker tripped at 20%% success rate even with ConsecutiveFailures=%d, got %+v", sc2.ConsecutiveFailures, sc2)
+	}
+}
+

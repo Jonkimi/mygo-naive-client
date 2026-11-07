@@ -8,13 +8,18 @@ import (
 )
 
 const (
-	ewmaAlpha             = 0.2
+	ewmaAlpha               = 0.2
 	circuitFailureThreshold = 3
 	circuitCooldownDuration = 60 * time.Second
 	hysteresisRTTDelta      = 30 * time.Millisecond
 	hysteresisRatioDelta    = 0.20
 	defaultInitialRTT       = 150 * time.Millisecond
 	maxTrackerDomains       = 2000
+
+	recentWindowSize    = 50
+	severePacketLossRTT = 3000 * time.Millisecond
+	highLossMinSamples  = 5
+	highLossSuccessRate = 0.60
 )
 
 type NodeStats struct {
@@ -23,6 +28,49 @@ type NodeStats struct {
 	TotalDials          int
 	SuccessfulDials     int
 	LastFailure         time.Time
+	circuitTrippedAt    time.Time
+
+	window    [recentWindowSize]bool
+	winCursor int
+	winCount  int
+}
+
+func (st *NodeStats) recordWindowSample(success bool) {
+	if st.winCount < recentWindowSize {
+		st.window[st.winCursor] = success
+		st.winCursor = (st.winCursor + 1) % recentWindowSize
+		st.winCount++
+		st.TotalDials = st.winCount
+		if success {
+			st.SuccessfulDials++
+		}
+		return
+	}
+	oldest := st.window[st.winCursor]
+	if oldest {
+		st.SuccessfulDials--
+	}
+	st.window[st.winCursor] = success
+	st.winCursor = (st.winCursor + 1) % recentWindowSize
+	if success {
+		st.SuccessfulDials++
+	}
+	st.TotalDials = recentWindowSize
+}
+
+func (st *NodeStats) checkAndTripCircuit() {
+	now := time.Now()
+	st.LastFailure = now
+	if st.ConsecutiveFailures >= circuitFailureThreshold {
+		st.circuitTrippedAt = now
+		return
+	}
+	if st.TotalDials >= highLossMinSamples {
+		sr := float64(st.SuccessfulDials) / float64(st.TotalDials)
+		if sr < highLossSuccessRate {
+			st.circuitTrippedAt = now
+		}
+	}
 }
 
 type QualityScore struct {
@@ -85,10 +133,10 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 		t.nodes[nodeID] = st
 	}
 
-	st.TotalDials++
 	if err != nil {
+		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
-		st.LastFailure = time.Now()
+		st.checkAndTripCircuit()
 		if root != "" {
 			if len(t.domainErrors) >= maxTrackerDomains && t.domainErrors[root] == nil {
 				for k := range t.domainErrors {
@@ -109,15 +157,27 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 		return
 	}
 
-	// Success
-	st.ConsecutiveFailures = 0
-	st.SuccessfulDials++
 	if rtt > 0 {
 		if st.EWMA == 0 {
 			st.EWMA = rtt
 		} else {
 			st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
 		}
+	}
+
+	// Connections that took >= severePacketLossRTT (3000ms) suffered multi-RTO packet loss stalls.
+	// Record them as degraded in the sliding window and do not let them clear ConsecutiveFailures.
+	if rtt >= severePacketLossRTT {
+		st.recordWindowSample(false)
+		st.checkAndTripCircuit()
+		return
+	}
+
+	// Healthy success
+	st.recordWindowSample(true)
+	st.ConsecutiveFailures = 0
+	if st.TotalDials < highLossMinSamples || float64(st.SuccessfulDials)/float64(st.TotalDials) >= highLossSuccessRate {
+		st.circuitTrippedAt = time.Time{}
 	}
 
 	if root != "" {
@@ -136,7 +196,7 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 }
 
 // RecordProbe records an active probe RTT measurement for nodeID into EWMA
-// and counts the probe as a successful connectivity sample.
+// and counts the probe in the sliding window connectivity metrics.
 // Probe measurements smaller than 1ms are ignored as local loopback artifacts.
 func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 	if rtt < time.Millisecond {
@@ -150,14 +210,19 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
-	st.TotalDials++
-	st.SuccessfulDials++
-	st.ConsecutiveFailures = 0
 	if st.EWMA == 0 {
 		st.EWMA = rtt
 	} else {
 		st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
 	}
+	if rtt >= severePacketLossRTT {
+		st.recordWindowSample(false)
+		st.checkAndTripCircuit()
+		return
+	}
+	st.recordWindowSample(true)
+	st.ConsecutiveFailures = 0
+	st.circuitTrippedAt = time.Time{}
 }
 
 // RecordProbeFailure records an active probe failure (e.g. timeout or connection reset)
@@ -171,9 +236,16 @@ func (t *Tracker) RecordProbeFailure(nodeID string) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
-	st.TotalDials++
+	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
-	st.LastFailure = time.Now()
+	st.checkAndTripCircuit()
+}
+
+func isNodeBrokenLocked(st *NodeStats) bool {
+	if st == nil || st.circuitTrippedAt.IsZero() {
+		return false
+	}
+	return time.Since(st.circuitTrippedAt) < circuitCooldownDuration
 }
 
 func (t *Tracker) IsBroken(nodeID string) bool {
@@ -183,12 +255,7 @@ func (t *Tracker) IsBroken(nodeID string) bool {
 	if !ok {
 		return false
 	}
-	if st.ConsecutiveFailures >= circuitFailureThreshold {
-		if time.Since(st.LastFailure) < circuitCooldownDuration {
-			return true
-		}
-	}
-	return false
+	return isNodeBrokenLocked(st)
 }
 
 func (t *Tracker) GetScore(nodeID string) QualityScore {
@@ -220,13 +287,10 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 		}
 	}
 
-	isBroken := false
+	isBroken := isNodeBrokenLocked(st)
 	circuitPenalty := 0.0
-	if st.ConsecutiveFailures >= circuitFailureThreshold {
-		if time.Since(st.LastFailure) < circuitCooldownDuration {
-			isBroken = true
-			circuitPenalty = 10000.0 // 10s artificial penalty
-		}
+	if isBroken {
+		circuitPenalty = 10000.0 // 10s artificial penalty
 	}
 
 	rttMs := float64(st.EWMA.Milliseconds())
