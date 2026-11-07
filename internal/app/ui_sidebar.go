@@ -40,7 +40,7 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 			a.renderSidebarHeader(c, p, collapsed)
 
 			// Navigation items
-			navCol := ui.Column(c).Gap(4)
+			navCol := ui.Column(c).Fill().Gap(4)
 			if collapsed {
 				navCol.AlignItems(ui.Center)
 			}
@@ -110,6 +110,7 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 	}
 
 	btn := ui.Row(c.Key("btn-sidebar-toggle-bottom")).
+		Fill().
 		Label(cat.SidebarCollapse()).
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
 		Height(collapsedTileSize).PaddingX(10).Radius(8).
@@ -120,7 +121,9 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 				ui.Icon(c, iconSidebarCollapse).Size(16, 16).TextColor(p.textDim)
 				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted).NoWrap()
 			})
-			ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim).NoWrap()
+			ui.Row(c).Width(24).Justify(ui.Start).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim).NoWrap()
+			})
 		})
 	if btn.Hovered() {
 		btn.Background(p.cardHover)
@@ -172,6 +175,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	}
 
 	btn := ui.Row(c.Key(key)).
+		Fill().
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
 		Height(collapsedTileSize).PaddingX(10).Radius(8).
 		Background(bg).
@@ -185,7 +189,9 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 					ui.Box(c).Size(6, 6).Radius(999).Background(p.amber)
 				}
 			})
-			ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
+			ui.Row(c).Width(24).Justify(ui.Start).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
+			})
 		})
 
 	if !active && btn.Hovered() {
@@ -462,7 +468,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			Background(p.card).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).
 			Children(func() {
-				// Row 1: Positional 3-bar gray lamp (Left: Port, Center: SysProxy, Right: TUN)
+				// Row 1: Positional 3-bar mode capsule (Left: Port, Center: SysProxy, Right: TUN)
 				modeBtn := ui.ButtonBase(c.Key("collapsed-mode-lamp")).
 					Label(cat.TailnetModeLabel()).
 					Size(28, 22).Radius(4).
@@ -470,7 +476,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
-							activeBarColor := p.textMuted
+							activeBarColor := p.text
 							inactiveBarColor := p.borderSubtle
 
 							// Left: Port
@@ -478,21 +484,21 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 							if activeMode == "port" {
 								c1 = activeBarColor
 							}
-							ui.Box(c).Width(7).Height(3).Radius(2).Background(c1)
+							ui.Box(c).Width(7).Height(10).Radius(2.5).Background(c1)
 
 							// Center: SysProxy
 							c2 := inactiveBarColor
 							if activeMode == "sysproxy" {
 								c2 = activeBarColor
 							}
-							ui.Box(c).Width(7).Height(3).Radius(2).Background(c2)
+							ui.Box(c).Width(7).Height(10).Radius(2.5).Background(c2)
 
 							// Right: TUN
 							c3 := inactiveBarColor
 							if activeMode == "tun" {
 								c3 = activeBarColor
 							}
-							ui.Box(c).Width(7).Height(3).Radius(2).Background(c3)
+							ui.Box(c).Width(7).Height(10).Radius(2.5).Background(c3)
 						})
 					})
 				if modeBtn.Hovered() {
