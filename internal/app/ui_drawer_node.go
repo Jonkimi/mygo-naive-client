@@ -167,27 +167,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 								ui.Text(c, cat.NodeDrawerRealLatencyDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
 							})
 
-							// C: Download Bandwidth (下载测速)
-							ui.Column(c).Gap(3).Children(func() {
-								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-									ui.Text(c, cat.NodeDrawerDownloadSpeed()).FontSize(12).FontWeight(600).TextColor(p.text)
-									if rt.SpeedTesting {
-										if rt.DownloadSpeed > 0 {
-											tagPill(c, cat.DownloadTesting()+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
-										} else {
-											tagPill(c, cat.DownloadTesting(), p.amber, p.amberBg)
-										}
-									} else if rt.SpeedError != "" {
-										tagPill(c, cat.DownloadFailed(), p.red, p.redBg)
-									} else if rt.DownloadSpeed > 0 {
-										tagPill(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.green, p.greenBg)
-									} else {
-										ui.Text(c, cat.NodeDrawerNotTested()).FontSize(12).TextColor(p.textDim)
-									}
-								})
-							})
-
-							// D: Success Rate (连接成功率)
+							// C: Success Rate (连接成功率)
 							ui.Column(c).Gap(3).Children(func() {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 									ui.Text(c, cat.NodeDrawerSuccessRate()).FontSize(12).FontWeight(600).TextColor(p.text)
@@ -213,7 +193,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 								ui.Text(c, cat.NodeDrawerSuccessRateDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
 							})
 
-							// E: Circuit Breaker Status (熔断与健康状态)
+							// D: Circuit Breaker Status (熔断与健康状态)
 							ui.Column(c).Gap(3).Children(func() {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 									ui.Text(c, cat.NodeDrawerCircuit()).FontSize(12).FontWeight(600).TextColor(p.text)
@@ -233,7 +213,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 								ui.Text(c, cat.NodeDrawerCircuitDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
 							})
 
-							// F: Final Quality Score (自适应调度评分)
+							// E: Final Quality Score (自适应调度评分)
 							ui.Column(c).Gap(3).Children(func() {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 									ui.Text(c, cat.NodeDrawerFinalScore()).FontSize(12).FontWeight(600).TextColor(p.text)
@@ -245,6 +225,26 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 									}
 								})
 								ui.Text(c, cat.NodeDrawerFinalScoreDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
+							})
+
+							// F: Download Bandwidth (下载测速带宽)
+							ui.Column(c).Gap(3).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+									ui.Text(c, cat.NodeDrawerDownloadSpeed()).FontSize(12).FontWeight(600).TextColor(p.text)
+									if rt.SpeedTesting {
+										if rt.DownloadSpeed > 0 {
+											tagPill(c, cat.DownloadTesting()+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
+										} else {
+											tagPill(c, cat.DownloadTesting(), p.amber, p.amberBg)
+										}
+									} else if rt.SpeedError != "" {
+										tagPill(c, cat.DownloadFailed(), p.red, p.redBg)
+									} else if rt.DownloadSpeed > 0 {
+										tagPill(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.green, p.greenBg)
+									} else {
+										ui.Text(c, cat.NodeDrawerNotTested()).FontSize(12).TextColor(p.textDim)
+									}
+								})
 							})
 						})
 

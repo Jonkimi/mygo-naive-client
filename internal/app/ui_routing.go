@@ -781,20 +781,17 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 								a.showRoutingDnsDetail = !a.showRoutingDnsDetail
 							}
 							ui.Popover(c, dnsInfoBtn, &a.showRoutingDnsDetail, func() {
-								ui.Column(c).Width(340).Padding(12, 14, 12, 14).Radius(8).
-									Background(p.card).Border(1, p.borderSubtle).
-									Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.25)).
-									Gap(8).Children(func() {
-										ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-											ui.Icon(c, iconInfo).Size(14, 14).TextColor(p.accent)
-											ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-										})
-										ui.Column(c).Gap(6).Children(func() {
-											ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-											ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-											ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-										})
+								ui.Column(c).Width(340).Padding(6, 4).Gap(8).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+										ui.Icon(c, iconInfo).Size(14, 14).TextColor(p.accent)
+										ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 									})
+									ui.Column(c).Gap(6).Children(func() {
+										ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+										ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+										ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+									})
+								})
 							})
 						})
 						ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
@@ -818,20 +815,17 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 								a.showRoutingPoolDetail = !a.showRoutingPoolDetail
 							}
 							ui.Popover(c, poolInfoBtn, &a.showRoutingPoolDetail, func() {
-								ui.Column(c).Width(360).Padding(12, 14, 12, 14).Radius(8).
-									Background(p.card).Border(1, p.borderSubtle).
-									Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.25)).
-									Gap(8).Children(func() {
-										ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-											ui.Icon(c, iconBolt).Size(14, 14).TextColor(p.accent)
-											ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-										})
-										ui.Column(c).Gap(6).Children(func() {
-											ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-											ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-											ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-										})
+								ui.Column(c).Width(360).Padding(6, 4).Gap(8).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+										ui.Icon(c, iconBolt).Size(14, 14).TextColor(p.accent)
+										ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
 									})
+									ui.Column(c).Gap(6).Children(func() {
+										ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+										ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+										ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+									})
+								})
 							})
 						})
 						ui.Text(c, cat.RoutingSmartPoolDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
