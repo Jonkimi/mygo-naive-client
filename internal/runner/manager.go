@@ -42,6 +42,7 @@ func (s State) Label() string {
 type Status struct {
 	State         State
 	PID           int
+	AllocatedPort int
 	StartedAt     time.Time
 	Restarts      int
 	LastError     string
@@ -80,13 +81,14 @@ type instance struct {
 
 // Manager supervises multiple independent local NaiveProxy service processes.
 type Manager struct {
-	mu         sync.RWMutex
-	binPath    string
-	workDir    string
-	instances  map[string]*instance
-	onChange   func()
-	OnLog      func(id string)
-	BackoffMin time.Duration // overridable in tests
+	mu          sync.RWMutex
+	binPath     string
+	xrayBinPath string
+	workDir     string
+	instances   map[string]*instance
+	onChange    func()
+	OnLog       func(id string)
+	BackoffMin  time.Duration // overridable in tests
 }
 
 // NewManager creates a process manager storing generated configs in workDir.
@@ -117,9 +119,33 @@ func (m *Manager) SetBinaryPath(path string) {
 	m.mu.Unlock()
 }
 
+// XrayBinaryPath returns the current xray binary path.
+func (m *Manager) XrayBinaryPath() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.xrayBinPath
+}
+
+// SetXrayBinaryPath updates the xray binary path used for starting services.
+func (m *Manager) SetXrayBinaryPath(path string) {
+	m.mu.Lock()
+	m.xrayBinPath = path
+	m.mu.Unlock()
+}
+
 // BinaryExists reports whether the configured naive binary exists on disk.
 func (m *Manager) BinaryExists() bool {
 	p := m.BinaryPath()
+	if p == "" {
+		return false
+	}
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// XrayBinaryExists reports whether the configured xray binary exists on disk.
+func (m *Manager) XrayBinaryExists() bool {
+	p := m.XrayBinaryPath()
 	if p == "" {
 		return false
 	}
@@ -212,12 +238,26 @@ func (m *Manager) RunningServices() []config.Service {
 	return out
 }
 
+// AllocateFreePort binds a temporary tcp listener on 127.0.0.1:0 to find an available port.
+func AllocateFreePort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port, nil
+}
+
 // CheckPortsAvailable verifies that all TCP ports in svc.Listens can be bound locally.
 func CheckPortsAvailable(svc config.Service) error {
 	for _, raw := range svc.Listens {
 		ep, err := config.ParseListenURI(raw)
 		if err != nil {
 			return err
+		}
+		if ep.Port == 0 {
+			continue // dynamic port
 		}
 		ln, err := net.Listen("tcp", ep.ListenAddr())
 		if err != nil {
@@ -228,7 +268,7 @@ func CheckPortsAvailable(svc config.Service) error {
 	return nil
 }
 
-// Start validates svc, checks port availability, writes config.json, and starts the naive process
+// Start validates svc, checks port availability, writes config, and starts the sidecar process
 // with automatic crash supervision. For KindExternalProxy, it enables the proxy directly without a subprocess.
 func (m *Manager) Start(svc config.Service) error {
 	if err := svc.Validate(); err != nil {
@@ -255,37 +295,113 @@ func (m *Manager) Start(svc config.Service) error {
 		return nil
 	}
 
+	allocatedPort := 0
+	listens := make([]string, len(svc.Listens))
+	copy(listens, svc.Listens)
+
+	if len(listens) == 0 {
+		p, err := AllocateFreePort()
+		if err != nil {
+			m.setError(svc.ID, fmt.Sprintf("无法分配空闲端口: %v", err))
+			return err
+		}
+		allocatedPort = p
+		listens = []string{fmt.Sprintf("socks://127.0.0.1:%d", allocatedPort)}
+	} else {
+		for i, raw := range listens {
+			ep, err := config.ParseListenURI(raw)
+			if err == nil {
+				if ep.Port == 0 {
+					if allocatedPort == 0 {
+						p, err := AllocateFreePort()
+						if err != nil {
+							m.setError(svc.ID, fmt.Sprintf("无法分配空闲端口: %v", err))
+							return err
+						}
+						allocatedPort = p
+					}
+					host := ep.Addr
+					if host == "" || host == "0.0.0.0" || host == "::" {
+						host = "127.0.0.1"
+					}
+					listens[i] = fmt.Sprintf("%s://%s:%d", ep.Proto, host, allocatedPort)
+				} else if allocatedPort == 0 {
+					allocatedPort = ep.Port
+				}
+			}
+		}
+	}
+	svc.Listens = listens
+
 	m.mu.Lock()
-	bin := m.binPath
 	workDir := m.workDir
 	inst := m.ensureInstanceLocked(svc.ID)
+	naiveBin := m.binPath
+	xrayBin := m.xrayBinPath
 	m.mu.Unlock()
 
-	if bin == "" {
-		err := errors.New("未找到 naive 核心文件，请先点击顶部栏下载安装")
-		m.setError(svc.ID, err.Error())
-		return err
+	isXray := svc.EffectiveProtocol() != config.ProtoNaive
+	var bin string
+	if isXray {
+		bin = xrayBin
+		if bin == "" {
+			err := errors.New("未找到 xray 核心文件，请先下载安装")
+			m.setError(svc.ID, err.Error())
+			return err
+		}
+		if _, err := os.Stat(bin); err != nil {
+			err := fmt.Errorf("xray 核心文件不存在 (%s)，请先下载核心", bin)
+			m.setError(svc.ID, err.Error())
+			return err
+		}
+	} else {
+		bin = naiveBin
+		if bin == "" {
+			err := errors.New("未找到 naive 核心文件，请先点击顶部栏下载安装")
+			m.setError(svc.ID, err.Error())
+			return err
+		}
+		if _, err := os.Stat(bin); err != nil {
+			err := fmt.Errorf("naive 核心文件不存在 (%s)，请先下载核心", bin)
+			m.setError(svc.ID, err.Error())
+			return err
+		}
 	}
-	if _, err := os.Stat(bin); err != nil {
-		err := fmt.Errorf("naive 核心文件不存在 (%s)，请先下载核心", bin)
-		m.setError(svc.ID, err.Error())
-		return err
-	}
+
 	if err := CheckPortsAvailable(svc); err != nil {
 		m.setError(svc.ID, err.Error())
 		return err
 	}
 
-	cfgBytes, err := svc.ToConfigJSON()
-	if err != nil {
-		m.setError(svc.ID, err.Error())
-		return err
-	}
 	if err := os.MkdirAll(workDir, 0o700); err != nil {
 		m.setError(svc.ID, err.Error())
 		return err
 	}
-	cfgPath := filepath.Join(workDir, fmt.Sprintf("service-%s.json", svc.ID))
+
+	var cfgBytes []byte
+	var cfgPath string
+	var cmdArgs []string
+
+	if isXray {
+		var err error
+		cfgBytes, err = GenerateXrayConfig(svc, allocatedPort)
+		if err != nil {
+			m.setError(svc.ID, err.Error())
+			return err
+		}
+		cfgPath = filepath.Join(workDir, fmt.Sprintf("service-%s-xray.json", svc.ID))
+		cmdArgs = []string{"run", "-c", cfgPath}
+	} else {
+		var err error
+		cfgBytes, err = svc.ToConfigJSON()
+		if err != nil {
+			m.setError(svc.ID, err.Error())
+			return err
+		}
+		cfgPath = filepath.Join(workDir, fmt.Sprintf("service-%s.json", svc.ID))
+		cmdArgs = []string{cfgPath}
+	}
+
 	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
 		m.setError(svc.ID, err.Error())
 		return err
@@ -301,13 +417,14 @@ func (m *Manager) Start(svc config.Service) error {
 	inst.stopping = false
 	inst.done = done
 	inst.status = Status{
-		State: StateStarting,
+		State:         StateStarting,
+		AllocatedPort: allocatedPort,
 	}
 	m.mu.Unlock()
 	inst.logs.AppendLine(fmt.Sprintf("[%s] 正在启动服务 %s (%s)...", time.Now().Format("15:04:05"), svc.Name, svc.PrimaryListen()))
 	m.onChange()
 
-	go m.supervise(ctx, inst, bin, cfgPath, done)
+	go m.supervise(ctx, inst, bin, cmdArgs, done)
 	return nil
 }
 
@@ -322,7 +439,7 @@ func (m *Manager) setError(id, msg string) {
 	m.onChange()
 }
 
-func (m *Manager) supervise(ctx context.Context, inst *instance, bin, cfgPath string, done chan struct{}) {
+func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, args []string, done chan struct{}) {
 	defer close(done)
 
 	restarts := 0
@@ -331,7 +448,7 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin, cfgPath st
 			return
 		}
 
-		cmd := exec.Command(bin, cfgPath)
+		cmd := exec.Command(bin, args...)
 		cmd.Stdout = inst.logs
 		cmd.Stderr = inst.logs
 		hideWindow(cmd)
