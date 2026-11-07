@@ -140,10 +140,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	weight := 400
 	if active {
 		bg = p.elevated
-		fg = p.accentText
-		if !p.dark {
-			fg = p.accent
-		}
+		fg = p.navActiveColor()
 		weight = 600
 	}
 
@@ -476,7 +473,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
-							activeBarColor := p.text
+							activeBarColor := p.navActiveColor()
 							inactiveBarColor := p.borderSubtle
 
 							// Left: Port
@@ -574,7 +571,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 						weight := 400
 						if isSelected {
 							bg = p.elevated
-							fg = p.text
+							fg = p.navActiveColor()
 							weight = 600
 						}
 

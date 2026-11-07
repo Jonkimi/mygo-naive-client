@@ -94,6 +94,13 @@ func paletteFor(t *ui.Theme) palette {
 	return lightPalette
 }
 
+func (p palette) navActiveColor() ui.Color {
+	if !p.dark {
+		return p.accent
+	}
+	return p.accentText
+}
+
 func statusBadge(c *ui.Context, label string, fg, bg ui.Color) {
 	ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).
 		PaddingX(9).PaddingY(4).Radius(999).Background(bg).
