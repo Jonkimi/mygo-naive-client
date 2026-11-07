@@ -16,9 +16,11 @@ import (
 type CommandExecutor func(name string, args ...string) ([]byte, error)
 
 type RecoveryState struct {
-	Dirty     bool      `json:"dirty"`
-	Timestamp time.Time `json:"timestamp"`
-	Addr      string    `json:"addr"`
+	Dirty        bool      `json:"dirty"`
+	Timestamp    time.Time `json:"timestamp"`
+	Mode         string    `json:"mode,omitempty"`
+	Addr         string    `json:"addr,omitempty"`
+	TunInterface string    `json:"tunInterface,omitempty"`
 }
 
 type Sysproxy struct {
@@ -110,6 +112,7 @@ func (s *Sysproxy) Set(addr string, bypass []string) error {
 			rec := RecoveryState{
 				Dirty:     true,
 				Timestamp: time.Now(),
+				Mode:      "sysproxy",
 				Addr:      addr,
 			}
 			if b, err := json.MarshalIndent(rec, "", "  "); err == nil {
@@ -133,6 +136,28 @@ func (s *Sysproxy) Set(addr string, bypass []string) error {
 		}
 	}
 
+	s.active = true
+	return nil
+}
+
+// MarkDirtyTun writes a recovery marker for TUN mode before altering system network settings.
+func (s *Sysproxy) MarkDirtyTun(tunName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.recoveryPath != "" {
+		if err := os.MkdirAll(filepath.Dir(s.recoveryPath), 0o755); err == nil {
+			rec := RecoveryState{
+				Dirty:        true,
+				Timestamp:    time.Now(),
+				Mode:         "tun",
+				TunInterface: tunName,
+			}
+			if b, err := json.MarshalIndent(rec, "", "  "); err == nil {
+				_ = os.WriteFile(s.recoveryPath, b, 0o600)
+			}
+		}
+	}
 	s.active = true
 	return nil
 }

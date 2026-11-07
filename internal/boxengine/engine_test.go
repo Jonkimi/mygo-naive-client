@@ -1,6 +1,7 @@
 package boxengine
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,9 @@ import (
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/telemetry"
+
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-tun"
 )
 
 // Tests that Engine starts with Mixed inbound, accepts connections, and routes direct traffic.
@@ -299,4 +303,144 @@ func TestEngine_SidecarRouting(t *testing.T) {
 		t.Errorf("unexpected body: %s", string(body))
 	}
 }
+
+// Tests that sidecar nodes remote addresses are extracted as CIDR prefixes for route_exclude_address.
+func TestExtractSidecarExcludeAddresses(t *testing.T) {
+	services := []config.Service{
+		{
+			ID:       "naive-1",
+			Protocol: config.ProtoNaive,
+			Engine:   config.EngineSidecar,
+			Proxies:  []string{"https://user:pass@198.51.100.1:443"},
+		},
+		{
+			ID:       "xray-1",
+			Protocol: config.ProtoVLESS,
+			Engine:   config.EngineSidecar,
+			Server:   "203.0.113.5",
+		},
+		{
+			ID:       "naive-ipv6",
+			Protocol: config.ProtoNaive,
+			Engine:   config.EngineSidecar,
+			Proxies:  []string{"https://user:pass@[2001:db8::1]:443"},
+		},
+		{
+			// Native sing-box node should not be in sidecar route exclusion
+			ID:       "native-vless",
+			Protocol: config.ProtoVLESS,
+			Engine:   config.EngineSingBox,
+			Server:   "192.0.2.1",
+		},
+	}
+
+	excludes := extractSidecarExcludeAddresses(services, nil)
+	expected := map[string]bool{
+		"198.51.100.1/32": true,
+		"203.0.113.5/32":  true,
+		"2001:db8::1/128": true,
+	}
+
+	if len(excludes) != len(expected) {
+		t.Fatalf("expected %d exclude addresses, got %d: %v", len(expected), len(excludes), excludes)
+	}
+	for _, ex := range excludes {
+		if !expected[ex] {
+			t.Errorf("unexpected exclude address %q", ex)
+		}
+	}
+}
+
+// Tests that TunPlatform injects TunFD and TunName into tun.Options.
+func TestTunPlatform_OpenInterface(t *testing.T) {
+	var captured tun.Options
+	called := false
+
+	tp := &TunPlatform{
+		TunFD:   42,
+		TunName: "utun7",
+		TunCreator: func(opts tun.Options) (tun.Tun, error) {
+			called = true
+			captured = opts
+			return nil, nil
+		},
+	}
+
+	if !tp.UsePlatformInterface() {
+		t.Fatalf("expected UsePlatformInterface to be true when TunFD > 0")
+	}
+
+	var opts tun.Options
+	_, _ = tp.OpenInterface(&opts, option.TunPlatformOptions{})
+
+	if !called {
+		t.Fatalf("expected TunCreator to be called")
+	}
+	if captured.FileDescriptor != 42 {
+		t.Errorf("expected FileDescriptor 42, got %d", captured.FileDescriptor)
+	}
+	if captured.Name != "utun7" {
+		t.Errorf("expected Name utun7, got %q", captured.Name)
+	}
+}
+
+// Tests that when TrafficMode is "tun", buildConfig includes tun inbound with auto_route and route_exclude_address.
+func TestEngine_TUNConfigOptions(t *testing.T) {
+	eng := &Engine{}
+	ctx := createBoxContext(context.Background(), eng)
+	opts := EngineOptions{
+		TrafficMode:  "tun",
+		TunFD:        55,
+		TunInterface: "utun3",
+		Services: []config.Service{
+			{
+				ID:       "sidecar-node",
+				Protocol: config.ProtoNaive,
+				Engine:   config.EngineSidecar,
+				Proxies:  []string{"https://user:pass@198.51.100.99:443"},
+			},
+		},
+	}
+
+	cfg, err := eng.buildConfig(ctx, opts, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+
+	if cfg.Route == nil || !cfg.Route.AutoDetectInterface {
+		t.Errorf("expected Route.AutoDetectInterface to be true")
+	}
+
+	foundTun := false
+	for _, in := range cfg.Inbounds {
+		if in.Type == "tun" {
+			foundTun = true
+			tunOpts, ok := in.Options.(*option.TunInboundOptions)
+			if !ok || tunOpts == nil {
+				t.Fatalf("expected *option.TunInboundOptions, got %T", in.Options)
+			}
+			if tunOpts.InterfaceName != "utun3" {
+				t.Errorf("expected interface_name utun3, got %q", tunOpts.InterfaceName)
+			}
+			if !tunOpts.AutoRoute {
+				t.Errorf("expected auto_route to be true")
+			}
+			if !tunOpts.StrictRoute {
+				t.Errorf("expected strict_route to be true")
+			}
+			excludes := tunOpts.RouteExcludeAddress
+			if len(excludes) == 0 {
+				t.Fatalf("expected non-empty route_exclude_address")
+			}
+			if excludes[0].String() != "198.51.100.99/32" {
+				t.Errorf("expected exclude 198.51.100.99/32, got %v", excludes[0])
+			}
+		}
+	}
+	if !foundTun {
+		t.Errorf("expected tun inbound in configuration")
+	}
+}
+
+
 

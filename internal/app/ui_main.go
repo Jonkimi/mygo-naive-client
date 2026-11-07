@@ -150,7 +150,7 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 					}{
 						{id: "port", label: cat.ModePortOnly(), tip: ""},
 						{id: "sysproxy", label: cat.ModeSysProxy(), tip: ""},
-						{id: "tun", label: cat.ModeTun(), tip: cat.ModeComingSoonTip()},
+						{id: "tun", label: cat.ModeTun(), tip: ""},
 					}
 
 					for _, m := range modes {
@@ -164,8 +164,6 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 								fg = p.accentText
 							} else if m.id == activeMode {
 								fg = p.text
-							} else if m.id == "tun" {
-								fg = p.textDim
 							}
 							ui.Text(c, m.label).FontSize(12).FontWeight(400).TextColor(fg)
 							if m.tip != "" {
@@ -176,9 +174,7 @@ func (a *app) renderTopControlBar(c *ui.Context, p palette) {
 				})
 
 				if sel.Trigger.Changed() {
-					if selectedMode == "tun" {
-						a.toast(cat.ModeComingSoonTip())
-					} else if selectedMode != a.state.TrafficMode {
+					if selectedMode != a.state.TrafficMode {
 						_ = a.setTrafficMode(selectedMode)
 					}
 				}
