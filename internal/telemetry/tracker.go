@@ -31,6 +31,7 @@ type NodeStats struct {
 	SuccessfulDials      int
 	LastFailure          time.Time
 	circuitTrippedAt     time.Time
+	samplesSinceRecovery int
 
 	window    [recentWindowSize]bool
 	winCursor int
@@ -38,6 +39,7 @@ type NodeStats struct {
 }
 
 func (st *NodeStats) recordWindowSample(success bool) {
+	st.samplesSinceRecovery++
 	if st.winCount < recentWindowSize {
 		st.window[st.winCursor] = success
 		st.winCursor = (st.winCursor + 1) % recentWindowSize
@@ -67,11 +69,18 @@ func (st *NodeStats) checkAndTripCircuit() {
 		st.circuitTrippedAt = now
 		return
 	}
-	if st.TotalDials >= highLossMinSamples {
+	if st.TotalDials >= highLossMinSamples && st.samplesSinceRecovery >= highLossMinSamples {
 		sr := float64(st.SuccessfulDials) / float64(st.TotalDials)
 		if sr < highLossSuccessRate {
 			st.circuitTrippedAt = now
 		}
+	}
+}
+
+func (st *NodeStats) clearCircuit() {
+	if !st.circuitTrippedAt.IsZero() {
+		st.circuitTrippedAt = time.Time{}
+		st.samplesSinceRecovery = 0
 	}
 }
 
@@ -170,7 +179,7 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	if st.ConsecutiveSuccesses >= circuitRecoverySuccessTarget ||
 		st.TotalDials < highLossMinSamples ||
 		float64(st.SuccessfulDials)/float64(st.TotalDials) >= highLossSuccessRate {
-		st.circuitTrippedAt = time.Time{}
+		st.clearCircuit()
 	}
 
 	if root != "" {
@@ -251,8 +260,21 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 	st.recordWindowSample(true)
 	st.ConsecutiveFailures = 0
 	st.ConsecutiveSuccesses++
-	st.circuitTrippedAt = time.Time{}
+	st.clearCircuit()
 	t.clearNodeDomainErrorsLocked(nodeID)
+}
+
+// ResetNode clears all telemetry stats, sticky domain affinities, and domain error records for nodeID.
+func (t *Tracker) ResetNode(nodeID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.nodes, nodeID)
+	t.clearNodeDomainErrorsLocked(nodeID)
+	for root, affID := range t.affinity {
+		if affID == nodeID {
+			delete(t.affinity, root)
+		}
+	}
 }
 
 // RecordProbeFailure records an active probe failure (e.g. timeout or connection reset)

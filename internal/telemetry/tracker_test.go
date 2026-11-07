@@ -303,5 +303,18 @@ func TestTracker_HighPacketLossAndSevereRTOStallCircuitBreaker(t *testing.T) {
 	if tr.IsBroken(node) {
 		t.Fatalf("expected 3 consecutive healthy responses to recover from high-loss circuit breaker")
 	}
+
+	// 7. After recovery, a single isolated failure must NOT immediately re-trip the high-loss breaker from old window debt
+	tr.RecordDial(node, "site9.com", 0, errors.New("single transient blip"))
+	if tr.IsBroken(node) {
+		t.Fatalf("expected single isolated failure after recovery not to re-trip breaker on old window debt")
+	}
+
+	// 8. ResetNode clears all node stats, domain errors, and sticky affinity on service restart
+	tr.ResetNode(node)
+	scReset := tr.GetScore(node)
+	if scReset.TotalDials != 0 || scReset.EWMA != 0 || scReset.IsBroken {
+		t.Fatalf("expected clean state after ResetNode, got %+v", scReset)
+	}
 }
 

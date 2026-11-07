@@ -370,6 +370,9 @@ func (a *app) initSubsystems() {
 		}
 	}
 	a.mgr.OnServiceStarted = func(svc config.Service) {
+		if a.tracker != nil {
+			a.tracker.ResetNode(svc.ID)
+		}
 		if a.headless || !a.state.AutoProbeOnStart {
 			return
 		}
