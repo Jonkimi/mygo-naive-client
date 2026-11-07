@@ -21,6 +21,9 @@ func (a *app) view(c *ui.Context) {
 		if a.activeRuleDrawerID != "" {
 			a.activeRuleDrawerID = ""
 		}
+		if a.activeNodeDrawerID != "" {
+			a.activeNodeDrawerID = ""
+		}
 	})
 	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
 	c.OnShortcut(ui.Cmd, ui.Key2, func() { a.activeTab = TabRouting })
@@ -54,6 +57,7 @@ func (a *app) view(c *ui.Context) {
 
 	a.renderLogDrawer(c, p)
 	a.renderRuleDrawer(c, p)
+	a.renderNodeDrawer(c, p)
 
 	a.renderEditorDialog(c, p)
 	a.renderImportDialog(c, p)
@@ -476,9 +480,6 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						if svc.NoPostQuantum {
 							tagPill(c, "No-PQ", p.textMuted, p.elevated)
 						}
-						if rt.State == runner.StateRunning && rt.PID > 0 {
-							tagPill(c, fmt.Sprintf("PID %d", rt.PID), p.green, p.greenBg)
-						}
 						if rt.Restarts > 0 {
 							tagPill(c, cat.RestartsPill(rt.Restarts), p.amber, p.amberBg)
 						}
@@ -680,6 +681,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 							if a.activeLogDrawerID == svc.ID {
 								a.activeLogDrawerID = ""
 							} else {
+								a.activeNodeDrawerID = ""
 								a.activeLogDrawerID = svc.ID
 							}
 						}
@@ -700,6 +702,14 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					})
 
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+						if subtleActionChip(c.Key("detail-btn"), p, iconInfo, cat.ActionDetails(), false).Clicked() {
+							if a.activeNodeDrawerID == svc.ID {
+								a.activeNodeDrawerID = ""
+							} else {
+								a.activeLogDrawerID = ""
+								a.activeNodeDrawerID = svc.ID
+							}
+						}
 						if subtleActionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false).Clicked() {
 							a.openEditServiceDialog(svc)
 						}

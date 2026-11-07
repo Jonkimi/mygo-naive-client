@@ -131,6 +131,7 @@ type app struct {
 	activeTab          TabID
 	activeLogDrawerID  string
 	activeRuleDrawerID string
+	activeNodeDrawerID string
 	activeTagFilter    string
 	searchQuery        string
 

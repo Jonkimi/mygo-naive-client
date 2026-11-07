@@ -2537,3 +2537,70 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 		t.Fatalf("expected state PreferIPv4 to be toggled to false")
 	}
 }
+
+// Tests that the node card opens the details drawer on "详情" click, showing PID inside the drawer rather than on the list card.
+func TestNodeDetailsDrawer_OpenCloseAndPIDDisplay(t *testing.T) {
+	p := freeLocalPort(t)
+	svcs := []config.Service{
+		{
+			ID:      "svc-1",
+			Name:    "HK-01",
+			Listens: []string{fmt.Sprintf("socks://127.0.0.1:%d", p)},
+			Proxies: []string{"https://alice:secret@hk.example.com:443"},
+		},
+	}
+	a, tt, _ := newTestApp(t, svcs)
+
+	// Start service so it gets a PID
+	if err := a.mgr.Start(svcs[0]); err != nil {
+		t.Fatalf("start svc-1: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.mgr.StatusOf("svc-1").State == runner.StateRunning && a.mgr.StatusOf("svc-1").PID > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	tt.Frame()
+
+	pid := a.mgr.StatusOf("svc-1").PID
+	if pid <= 0 {
+		t.Fatalf("expected running service to have PID > 0, got %d", pid)
+	}
+	pidStr := fmt.Sprintf("PID %d", pid)
+
+	// When drawer is closed, PID should not be visible on the node list page
+	if tt.HasText(pidStr) {
+		t.Fatalf("PID %q should not be displayed on the node list page", pidStr)
+	}
+
+	// Click "详情" button to open the Node Details Drawer
+	if err := tt.Click(a.catalog().ActionDetails()); err != nil {
+		t.Fatalf("click 详情 failed: %v", err)
+	}
+	tt.Frame()
+
+	if a.activeNodeDrawerID != "svc-1" {
+		t.Fatalf("expected activeNodeDrawerID to be 'svc-1', got %q", a.activeNodeDrawerID)
+	}
+
+	// Inside the drawer, the title and PID should be displayed
+	if !tt.HasText(a.catalog().NodeDrawerTitle()) {
+		t.Fatalf("expected drawer title %q to be visible", a.catalog().NodeDrawerTitle())
+	}
+	if !tt.HasText(pidStr) {
+		t.Fatalf("expected PID %q to be visible in the details drawer", pidStr)
+	}
+
+	// Press Esc to dismiss the drawer
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.activeNodeDrawerID != "" {
+		t.Fatalf("expected activeNodeDrawerID to be empty after Esc, got %q", a.activeNodeDrawerID)
+	}
+	if tt.HasText(pidStr) {
+		t.Fatalf("PID %q should no longer be visible after closing drawer", pidStr)
+	}
+}
+

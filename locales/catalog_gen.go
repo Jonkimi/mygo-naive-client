@@ -696,6 +696,226 @@ func (msgs Messages) RuleDrawerKeywordTitle() string {
 	return Catalog.Format(msgs.locale, "ruleDrawerKeywordTitle", nil)
 }
 
+// NodeDrawerTitle says "Node Details"
+// in the language the app shows.
+func NodeDrawerTitle() string { return In(i18n.Locale()).NodeDrawerTitle() }
+
+// NodeDrawerTitle says "Node Details"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerTitle() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerTitle", nil)
+}
+
+// NodeDrawerBasic says "Basic Info"
+// in the language the app shows.
+func NodeDrawerBasic() string { return In(i18n.Locale()).NodeDrawerBasic() }
+
+// NodeDrawerBasic says "Basic Info"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerBasic() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerBasic", nil)
+}
+
+// NodeDrawerRuntime says "Process & Runtime"
+// in the language the app shows.
+func NodeDrawerRuntime() string { return In(i18n.Locale()).NodeDrawerRuntime() }
+
+// NodeDrawerRuntime says "Process & Runtime"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerRuntime() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerRuntime", nil)
+}
+
+// NodeDrawerTelemetry says "Latency & Telemetry"
+// in the language the app shows.
+func NodeDrawerTelemetry() string { return In(i18n.Locale()).NodeDrawerTelemetry() }
+
+// NodeDrawerTelemetry says "Latency & Telemetry"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerTelemetry() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerTelemetry", nil)
+}
+
+// NodeDrawerNetwork says "Network Routing"
+// in the language the app shows.
+func NodeDrawerNetwork() string { return In(i18n.Locale()).NodeDrawerNetwork() }
+
+// NodeDrawerNetwork says "Network Routing"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerNetwork() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerNetwork", nil)
+}
+
+// NodeDrawerQuickActions says "Quick Actions"
+// in the language the app shows.
+func NodeDrawerQuickActions() string { return In(i18n.Locale()).NodeDrawerQuickActions() }
+
+// NodeDrawerQuickActions says "Quick Actions"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerQuickActions() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerQuickActions", nil)
+}
+
+// NodeDrawerPID says "Process PID"
+// in the language the app shows.
+func NodeDrawerPID() string { return In(i18n.Locale()).NodeDrawerPID() }
+
+// NodeDrawerPID says "Process PID"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerPID() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerPID", nil)
+}
+
+// NodeDrawerPIDNone says "Not Running (-)"
+// in the language the app shows.
+func NodeDrawerPIDNone() string { return In(i18n.Locale()).NodeDrawerPIDNone() }
+
+// NodeDrawerPIDNone says "Not Running (-)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerPIDNone() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerPIDNone", nil)
+}
+
+// NodeDrawerState says "Current State"
+// in the language the app shows.
+func NodeDrawerState() string { return In(i18n.Locale()).NodeDrawerState() }
+
+// NodeDrawerState says "Current State"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerState() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerState", nil)
+}
+
+// NodeDrawerRestarts says "Crash Restarts"
+// in the language the app shows.
+func NodeDrawerRestarts() string { return In(i18n.Locale()).NodeDrawerRestarts() }
+
+// NodeDrawerRestarts says "Crash Restarts"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerRestarts() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerRestarts", nil)
+}
+
+// NodeDrawerProbeLatency says "Probe Latency (RTT)"
+// in the language the app shows.
+func NodeDrawerProbeLatency() string { return In(i18n.Locale()).NodeDrawerProbeLatency() }
+
+// NodeDrawerProbeLatency says "Probe Latency (RTT)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerProbeLatency() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerProbeLatency", nil)
+}
+
+// NodeDrawerProbeLatencyDesc says "Active round-trip handshake time to HTTP 204 endpoint"
+// in the language the app shows.
+func NodeDrawerProbeLatencyDesc() string { return In(i18n.Locale()).NodeDrawerProbeLatencyDesc() }
+
+// NodeDrawerProbeLatencyDesc says "Active round-trip handshake time to HTTP 204 endpoint"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerProbeLatencyDesc() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerProbeLatencyDesc", nil)
+}
+
+// NodeDrawerRealLatency says "Real Traffic Latency (EWMA)"
+// in the language the app shows.
+func NodeDrawerRealLatency() string { return In(i18n.Locale()).NodeDrawerRealLatency() }
+
+// NodeDrawerRealLatency says "Real Traffic Latency (EWMA)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerRealLatency() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerRealLatency", nil)
+}
+
+// NodeDrawerRealLatencyDesc says "EWMA latency tracked from actual proxy traffic by QualityTracker"
+// in the language the app shows.
+func NodeDrawerRealLatencyDesc() string { return In(i18n.Locale()).NodeDrawerRealLatencyDesc() }
+
+// NodeDrawerRealLatencyDesc says "EWMA latency tracked from actual proxy traffic by QualityTracker"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerRealLatencyDesc() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerRealLatencyDesc", nil)
+}
+
+// NodeDrawerAwaitingSample says "Awaiting traffic samples..."
+// in the language the app shows.
+func NodeDrawerAwaitingSample() string { return In(i18n.Locale()).NodeDrawerAwaitingSample() }
+
+// NodeDrawerAwaitingSample says "Awaiting traffic samples..."
+// in the language of msgs.
+func (msgs Messages) NodeDrawerAwaitingSample() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerAwaitingSample", nil)
+}
+
+// NodeDrawerNotTested says "Not tested yet"
+// in the language the app shows.
+func NodeDrawerNotTested() string { return In(i18n.Locale()).NodeDrawerNotTested() }
+
+// NodeDrawerNotTested says "Not tested yet"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerNotTested() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerNotTested", nil)
+}
+
+// NodeDrawerDownloadSpeed says "Download Speed"
+// in the language the app shows.
+func NodeDrawerDownloadSpeed() string { return In(i18n.Locale()).NodeDrawerDownloadSpeed() }
+
+// NodeDrawerDownloadSpeed says "Download Speed"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerDownloadSpeed() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerDownloadSpeed", nil)
+}
+
+// NodeDrawerLocalListen says "Local Inbound"
+// in the language the app shows.
+func NodeDrawerLocalListen() string { return In(i18n.Locale()).NodeDrawerLocalListen() }
+
+// NodeDrawerLocalListen says "Local Inbound"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerLocalListen() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerLocalListen", nil)
+}
+
+// NodeDrawerRemoteEndpoint says "Remote Outbound"
+// in the language the app shows.
+func NodeDrawerRemoteEndpoint() string { return In(i18n.Locale()).NodeDrawerRemoteEndpoint() }
+
+// NodeDrawerRemoteEndpoint says "Remote Outbound"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerRemoteEndpoint() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerRemoteEndpoint", nil)
+}
+
+// NodeDrawerEdit says "Edit Node"
+// in the language the app shows.
+func NodeDrawerEdit() string { return In(i18n.Locale()).NodeDrawerEdit() }
+
+// NodeDrawerEdit says "Edit Node"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerEdit() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerEdit", nil)
+}
+
+// NodeDrawerLogs says "View Logs"
+// in the language the app shows.
+func NodeDrawerLogs() string { return In(i18n.Locale()).NodeDrawerLogs() }
+
+// NodeDrawerLogs says "View Logs"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerLogs() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerLogs", nil)
+}
+
+// NodeDrawerClose says "Close"
+// in the language the app shows.
+func NodeDrawerClose() string { return In(i18n.Locale()).NodeDrawerClose() }
+
+// NodeDrawerClose says "Close"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerClose() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerClose", nil)
+}
+
 // PresetRuleBlockAds says "Block Ads"
 // in the language the app shows.
 func PresetRuleBlockAds() string { return In(i18n.Locale()).PresetRuleBlockAds() }
@@ -1824,6 +2044,16 @@ func ActionEdit() string { return In(i18n.Locale()).ActionEdit() }
 // in the language of msgs.
 func (msgs Messages) ActionEdit() string {
 	return Catalog.Format(msgs.locale, "actionEdit", nil)
+}
+
+// ActionDetails says "Details"
+// in the language the app shows.
+func ActionDetails() string { return In(i18n.Locale()).ActionDetails() }
+
+// ActionDetails says "Details"
+// in the language of msgs.
+func (msgs Messages) ActionDetails() string {
+	return Catalog.Format(msgs.locale, "actionDetails", nil)
 }
 
 // ActionMore says "More"
