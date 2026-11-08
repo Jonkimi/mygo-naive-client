@@ -2988,6 +2988,7 @@ func TestGateway_SingBoxRealityNodeStartupAndDialer(t *testing.T) {
 
 	a, _, _ := newTestApp(t, []config.Service{svc})
 	a.state.GatewayEnabled = true
+	a.state.GatewayPort = freeLocalPort(t)
 
 	// 1. Starting gateway with reality node should succeed when with_utls is enabled
 	if err := a.startGateway(); err != nil {

@@ -8,7 +8,7 @@ tmp_dir = "tmp"
 [build]
   args_bin = []
   bin = "./tmp/main"
-  cmd = "go build -tags with_tailscale,with_gvisor,with_utls,with_quic,with_wireguard,with_grpc,with_naive_outbound -o ./tmp/main ."
+  cmd = "go build -tags with_tailscale,with_gvisor,with_utls,with_quic,with_wireguard,with_grpc -o ./tmp/main ."
   delay = 1000
   entrypoint = ["./tmp/main"]
   exclude_dir = ["assets", "tmp", "vendor", "testdata"]
