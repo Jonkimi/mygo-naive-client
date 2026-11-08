@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/GUI-MyGo%20(Pure%20Go%20GPU)-blue" alt="GUI Framework" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-green" alt="Platforms" />
   <img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License" />
-  <img src="https://img.shields.io/badge/Memory-~50MB%20Idle-brightgreen" alt="Memory Footprint" />
+  <img src="https://img.shields.io/badge/Memory-70MB~%20Idle-brightgreen" alt="Memory Footprint" />
 </p>
 
 ---
@@ -23,7 +23,7 @@
 
 ### 🚀 极轻量原生 GPU 渲染体验
 - **Pure Go 原生渲染**：基于 `egoist/mygo` 纯 Go 图形栈，直连操作系统底层现代图形 API（macOS Metal、Windows Direct3D、Linux OpenGL/Wayland）。
-- **零 Web 运行时开销**：摒弃 Electron、Chromium 或 WebKit 等庞大浏览器运行时，日常空闲内存仅约 **50MB**，启动秒开且帧率稳定流畅。
+- **零 Web 运行时开销**：摒弃 Electron、Chromium 或 WebKit 等庞大浏览器运行时，日常空闲内存仅 **70MB~**，启动秒开且帧率稳定流畅。
 
 ### ⚡ 统一入站代理网关与真实流量遥测 (Phase 1)
 - **混合协议统一入站**：提供单端口混合 SOCKS5 / HTTP 统一入站网关，支持启动前自动检测端口冲突。
@@ -81,71 +81,6 @@
 - **系统托盘**：系统托盘菜单常驻，可在托盘快速启停任意服务或全部服务。
 - **开机自启**：支持开机静默随系统启动。
 - **外观主题**：支持跟随系统、明亮与暗黑主题切换；macOS 下支持灵活切换程序坞（Dock）与仅菜单栏模式。
-
----
-
-## 🛠️ 项目结构
-
-```text
-├── main.go                       # 应用程序主入口
-├── mygo.json                     # MyGo 跨平台打包、元数据与 i18n 配置
-├── locales/                      # 应用多语言国际化目录
-│   ├── locales.go                # 语言检测与解析
-│   ├── en.json                   # 英文文案目录
-│   ├── zh-Hans.json              # 简体中文文案目录
-│   └── catalog_gen.go            # mygo generate 自动生成的类型安全多语言编目
-├── docs/                         # 项目设计与架构决策记录 (ADR)
-│   ├── adr/                      # 架构决策文档 (0001~0008)
-│   ├── TODOLIST.md               # 规则分流与控制面问题清单
-│   └── glossary.md               # 专有名词与架构概念说明
-├── internal/
-│   ├── app/                      # UI 工作台界面、导航侧栏与交互逻辑
-│   │   ├── app.go                # 应用核心状态持久化、生命周期管理
-│   │   ├── ui_main.go            # 节点列表工作台（顶部栏、服务卡片、状态流）
-│   │   ├── ui_sidebar.go         # 平滑折叠侧栏、导航导轨与快捷键切换
-│   │   ├── ui_routing.go         # 规则分流工作台（预设规则网格、规则列表）
-│   │   ├── ui_drawer_rule.go     # 规则编辑抽屉（多维匹配条件、Chips 标签选择器）
-│   │   ├── ui_insights.go        # 洞察看板（24h 拦截率、查询趋势图、Top 统计）
-│   │   ├── ui_drawer_log.go      # 全局平滑滑入式日志抽屉
-│   │   ├── ui_settings.go        # 全局偏好设置（DNS、内核管理、下载通道、通用设置）
-│   │   ├── ui_editor.go          # 节点编辑与多行批量导入弹窗
-│   │   ├── settings.go           # 偏好设置状态与持久化逻辑
-│   │   ├── palette.go            # 主题调色板与通用 UI 渲染组件
-│   │   ├── icons.go              # 内置矢量图标集
-│   │   ├── menu.go               # 原生应用主菜单定义
-│   │   └── tray.go               # 系统托盘菜单常驻管理
-│   ├── gateway/                  # 统一入站代理网关
-│   │   └── gateway.go            # 混合 SOCKS5 / HTTP 统一入站、流量调度与分流拦截
-│   ├── routing/                  # 智能规则分流引擎
-│   │   └── router.go             # 预设规则组、多维匹配规则树、防直连泄漏机制
-│   ├── dns/                      # 三级 Split-DoH 解析引擎
-│   │   ├── resolver.go           # 国内/远程/引导 DoH 调度与优先 IPv4 拦截
-│   │   ├── server.go             # 本地 DNS 服务入站
-│   │   ├── ipcache/              # IP-Domain 映射缓存，用于纯 IP 域名还原
-│   │   └── sniffer/              # TLS SNI 与 HTTP Host 透明流量嗅探器
-│   ├── blocker/                  # 高性能广告与追踪拦截器
-│   │   ├── engine.go             # 拦截引擎核心协调器
-│   │   ├── trie.go               # 基于 Pi-hole 后缀树算法的高性能域名 Trie 树
-│   │   ├── logger.go             # 24 小时滚动时间桶统计与 Top 域名排行
-│   │   └── parser.go             # Adblock 规则解析器
-│   ├── geodata/                  # 流式 Geodata 规则库引擎
-│   │   ├── geodata.go            # 流式 Protobuf 解析器、增量标签缓存、零碎堆内存优化
-│   │   └── updater.go            # geoip.dat / geosite.dat 在线下载与自动更新
-│   ├── telemetry/                # 真实流量质量遥测
-│   │   └── tracker.go            # RTT 延迟、抖动、域名亲和调度与智能故障熔断
-│   ├── sysproxy/                 # 跨平台系统代理集成
-│   │   └── sysproxy.go           # macOS / Windows / Linux 系统代理一键开关与恢复
-│   ├── runner/                   # 多服务进程守护与测速引擎
-│   │   ├── manager.go            # 独立进程生命周期管理、端口检查、崩溃重试
-│   │   ├── probe.go              # SOCKS5/HTTP 代理拨号器、延迟测速、流式下载测速
-│   │   └── logbuf.go             # 线程安全的环形实时日志缓冲区
-│   ├── updater/                  # 核心无感更新器
-│   │   ├── updater.go            # GitHub Releases 匹配、SHA256 校验、热替换重启
-│   │   └── xz.go                 # 纯 Go 实现的 XZ / LZMA2 解压器
-│   └── config/                   # 配置模型与链接解析
-│       ├── config.go             # 对齐 USAGE.txt 的 Service 配置模型与 JSON 生成
-│       └── share.go              # V2rayN 格式与 Naive 分享链接编解码、多行导入解析
-```
 
 ---
 
