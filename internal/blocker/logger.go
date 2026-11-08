@@ -308,6 +308,45 @@ func (l *QueryLogger) GetStatsSummary() (total int64, blocked int64) {
 	return l.totalQueries, l.totalBlocked
 }
 
+// AnnotateLatestGatewayFailure finds the most recent matching Gateway entry for domain
+// (and optional nodeName in chain) within the recent buffer and appends the failure annotation.
+func (l *QueryLogger) AnnotateLatestGatewayFailure(domain string, nodeName string, errReason string) bool {
+	if l == nil || errReason == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+
+	limit := 30
+	if limit > l.count {
+		limit = l.count
+	}
+
+	for i := 0; i < limit; i++ {
+		idx := (l.start + l.count - 1 - i + l.capacity) % l.capacity
+		entry := &l.entries[idx]
+		if entry.Source != SourceGateway {
+			continue
+		}
+		cleanEntryDomain := strings.Trim(strings.ToLower(strings.TrimSpace(entry.Domain)), ".")
+		if domain != "" && cleanEntryDomain != domain {
+			continue
+		}
+		if nodeName != "" && !strings.Contains(entry.Chain, nodeName) {
+			continue
+		}
+		if strings.Contains(entry.Chain, "(") && strings.Contains(entry.Chain, ")") {
+			// Already annotated
+			return false
+		}
+		entry.Chain = entry.Chain + " (" + errReason + ")"
+		return true
+	}
+	return false
+}
+
 func sortTopItems(counts map[string]int64, limit int) []TopDomainItem {
 	items := make([]TopDomainItem, 0, len(counts))
 	for domain, count := range counts {

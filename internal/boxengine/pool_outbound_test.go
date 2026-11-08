@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"naive-client/internal/blocker"
 	"naive-client/internal/telemetry"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -532,4 +533,72 @@ func (m *customMockOutbound) DialContext(ctx context.Context, network string, de
 func (m *customMockOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	return nil, errors.New("not implemented")
 }
+
+// Tests that when a connection encounters EOF/failure, the Blocker QueryLogger entry is annotated with the failure reason.
+func TestPoolOutbound_AnnotatesFailureOnLogEntry(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+
+	// Pre-record Gateway connection entry
+	bl.Logger().RecordWithChain("api.test.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> test-node")
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"test-node"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"test-node": &customMockOutbound{
+				tag:  "test-node",
+				conn: clientConn,
+			},
+		},
+		sidecars: map[string]bool{
+			"test-node": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		PoolTag:      "PROXY_POOL",
+		NodeProvider: provider,
+		Blocker:      bl,
+	})
+
+	ctx := context.Background()
+	dest := M.ParseSocksaddr("api.test.com:443")
+	conn, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+
+	// Write request from client side
+	go func() {
+		_, _ = conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	}()
+
+	// Server reads request and immediately closes with EOF without responding
+	buf := make([]byte, 64)
+	_, _ = serverConn.Read(buf)
+	_ = serverConn.Close()
+
+	// Read on client side triggers io.EOF
+	_, readErr := conn.Read(make([]byte, 64))
+	if readErr == nil {
+		t.Fatalf("expected EOF error on read")
+	}
+
+	// Check that QueryLogger was annotated with (远端断开: EOF)
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) == 0 {
+		t.Fatalf("expected log entries")
+	}
+	expectedChain := "final -> PROXY_POOL -> test-node (远端断开: EOF)"
+	if entries[0].Chain != expectedChain {
+		t.Errorf("expected entry chain %q, got %q", expectedChain, entries[0].Chain)
+	}
+}
+
 

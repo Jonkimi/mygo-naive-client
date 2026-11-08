@@ -179,3 +179,31 @@ func TestQueryLogger_Deduplication(t *testing.T) {
 	}
 }
 
+// Tests that AnnotateLatestGatewayFailure correctly appends failure reason to the latest matching Gateway entry.
+func TestQueryLogger_AnnotateLatestGatewayFailure(t *testing.T) {
+	ql := NewQueryLogger(50)
+	ql.SetDedupWindow(0)
+
+	ql.RecordWithChain("example.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_POOL -> node-a")
+	ql.RecordWithChain("other.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_POOL -> node-b")
+	ql.RecordWithChain("example.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_POOL -> node-b")
+
+	// Annotate latest example.com with node-b
+	ok := ql.AnnotateLatestGatewayFailure("example.com", "node-b", "远端断开: EOF")
+	if !ok {
+		t.Fatalf("expected AnnotateLatestGatewayFailure to succeed")
+	}
+
+	entries := ql.GetEntries(10)
+	// Newest entry (example.com with node-b) should be annotated
+	if entries[0].Chain != "final -> PROXY_POOL -> node-b (远端断开: EOF)" {
+		t.Errorf("expected chain to be annotated, got %q", entries[0].Chain)
+	}
+
+	// Older entry (example.com with node-a) should NOT be annotated
+	if entries[2].Chain != "final -> PROXY_POOL -> node-a" {
+		t.Errorf("expected older entry chain to remain unchanged, got %q", entries[2].Chain)
+	}
+}
+
+

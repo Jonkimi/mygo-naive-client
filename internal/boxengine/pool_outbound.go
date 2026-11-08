@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -146,6 +148,41 @@ func (p *PoolOutbound) SelectCandidate(targetHost string) string {
 	return ordered[0]
 }
 
+func (p *PoolOutbound) resolveNodeName(candID string) string {
+	if np, ok := p.provider.(interface{ GetNodeName(string) string }); ok {
+		if name := np.GetNodeName(candID); name != "" {
+			return name
+		}
+	}
+	return candID
+}
+
+func formatConnectionError(err error) string {
+	if err == nil {
+		return ""
+	}
+	errStr := strings.ToLower(err.Error())
+	if errors.Is(err, errFirstPacketAborted) {
+		return "首包未响应中断"
+	}
+	if errors.Is(err, io.EOF) || strings.Contains(errStr, "unexpected eof") || strings.Contains(errStr, "eof") {
+		return "远端断开: EOF"
+	}
+	if strings.Contains(errStr, "connection reset") || strings.Contains(errStr, "reset by peer") {
+		return "连接重置: RST"
+	}
+	if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") {
+		return "连接超时"
+	}
+	if strings.Contains(errStr, "connection refused") {
+		return "拒绝连接"
+	}
+	if strings.Contains(errStr, "handshake") || strings.Contains(errStr, "tls") {
+		return "TLS握手失败"
+	}
+	return "连接失败"
+}
+
 func (p *PoolOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if p.provider == nil {
 		return nil, errors.New("node provider is nil")
@@ -202,6 +239,10 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 					p.tracker.RecordDial(candID, targetHost, rtt, err)
 				}
 			}
+			if p.blocker != nil && p.blocker.Logger() != nil {
+				nodeName := p.resolveNodeName(candID)
+				p.blocker.Logger().AnnotateLatestGatewayFailure(targetHost, nodeName, formatConnectionError(err))
+			}
 			lastErr = err
 			continue
 		}
@@ -217,6 +258,10 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, firstErr error) {
 				if p.tracker != nil {
 					p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
+				}
+				if firstErr != nil && p.blocker != nil && p.blocker.Logger() != nil {
+					nodeName := p.resolveNodeName(candID)
+					p.blocker.Logger().AnnotateLatestGatewayFailure(targetHost, nodeName, formatConnectionError(firstErr))
 				}
 				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
 					p.failureMonitor.Record(telemetry.FailureEvent{
