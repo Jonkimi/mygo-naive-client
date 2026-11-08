@@ -388,7 +388,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(80)
 				ui.Text(c, cat.InsightsColDuration()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
 				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(170)
-				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
+				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1).Shrink(1).MinWidth(0)
 				ui.Text(c, cat.InsightsColAction()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
 			})
 
@@ -452,13 +452,17 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 									chainText = chainText[:idx]
 								}
 							}
+							fullChain := chainText
 							if errText != "" {
-								ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(4).Children(func() {
-									ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).NoWrap()
-									ui.Text(c, "("+errText+")").FontSize(10).TextColor(p.red).NoWrap()
+								fullChain = chainText + " (" + errText + ")"
+							}
+							if errText != "" {
+								ui.Row(c).Grow(1).Shrink(1).MinWidth(0).AlignItems(ui.Center).Gap(4).Tooltip(fullChain).Children(func() {
+									ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+									ui.Text(c, "("+errText+")").FontSize(10).TextColor(p.red).SingleLine().Shrink(0)
 								})
 							} else {
-								ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).NoWrap()
+								ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(fullChain)
 							}
 
 							// Col 7: Action
