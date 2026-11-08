@@ -2189,7 +2189,12 @@ func TestRouting_TargetTagsMultiChips(t *testing.T) {
 	a.openCreateRuleDialog()
 	tt.Frame()
 
-	// Default tag is "AI", add "US" tag via comma or addTag
+	// Target tag should default to blank
+	if len(a.ruleEditor.tags) != 0 {
+		t.Fatalf("expected tags to default to blank, got %v", a.ruleEditor.tags)
+	}
+
+	addTag(&a.ruleEditor.tags, "AI")
 	addTag(&a.ruleEditor.tags, "US")
 	if len(a.ruleEditor.tags) != 2 {
 		t.Fatalf("expected 2 tags in editor, got %v", a.ruleEditor.tags)
@@ -2210,6 +2215,19 @@ func TestRouting_TargetTagsMultiChips(t *testing.T) {
 	known := a.allKnownServiceTags()
 	if len(known) != 3 {
 		t.Fatalf("expected 3 distinct service tags, got %v", known)
+	}
+
+	// Verify saving with blank tags preserves empty tags without injecting "AI"
+	a.openCreateRuleDialog()
+	tt.Frame()
+	a.ruleEditor.name = "Blank tag rule"
+	a.ruleEditor.domainsInput = "blank-tag.internal"
+	a.saveRuleEditor()
+	tt.Frame()
+
+	blankRule := a.state.RoutingRules[len(a.state.RoutingRules)-1]
+	if len(blankRule.Action.GetTags()) != 0 {
+		t.Fatalf("expected 0 tags on blank tag rule, got %v", blankRule.Action.GetTags())
 	}
 }
 

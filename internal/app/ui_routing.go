@@ -141,7 +141,7 @@ func (a *app) openCreateRuleDialog() {
 		ruleID:      fmt.Sprintf("rule-%d", len(a.state.RoutingRules)+1),
 		name:        fmt.Sprintf("分流规则 %d", len(a.state.RoutingRules)+1),
 		actionIndex: 0,
-		tags:        []string{"AI"},
+		tags:        nil,
 	}
 	if a.win != nil {
 		a.win.Invalidate()
@@ -167,9 +167,6 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 	}
 
 	tags := rule.Action.GetTags()
-	if len(tags) == 0 && rule.Action.Type == routing.ActionProxyTag {
-		tags = []string{"AI"}
-	}
 
 	a.ruleEditor = ruleEditorForm{
 		open:          true,
@@ -207,9 +204,6 @@ func (a *app) openEditFinalRuleDialog() {
 	}
 
 	tags := a.state.RoutingFinal.GetTags()
-	if len(tags) == 0 && a.state.RoutingFinal.Type == routing.ActionProxyTag {
-		tags = []string{"AI"}
-	}
 
 	a.ruleEditor = ruleEditorForm{
 		open:        true,
@@ -499,10 +493,11 @@ func (a *app) saveRuleEditor() {
 				addTag(&tags, pt)
 			}
 		}
-		if len(tags) == 0 {
-			tags = []string{"AI"}
+		var firstTag string
+		if len(tags) > 0 {
+			firstTag = tags[0]
 		}
-		act = routing.RouteAction{Type: routing.ActionProxyTag, Tag: tags[0], Tags: tags}
+		act = routing.RouteAction{Type: routing.ActionProxyTag, Tag: firstTag, Tags: tags}
 	case 1:
 		act = routing.RouteAction{Type: routing.ActionProxyPool}
 	case 2:
