@@ -570,6 +570,7 @@
   "insightsColTime": "Time",
   "insightsColSource": "Source",
   "insightsColVerdict": "Verdict",
+  "insightsColDuration": "Duration",
   "insightsColDomain": "Domain",
   "insightsColRule": "Chain / 链路",
   "insightsColAction": "Action",

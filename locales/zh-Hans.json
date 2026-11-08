@@ -554,6 +554,7 @@
   "insightsColTime": "时间",
   "insightsColSource": "来源",
   "insightsColVerdict": "裁决",
+  "insightsColDuration": "延迟",
   "insightsColDomain": "域名",
   "insightsColRule": "Chain / 链路",
   "insightsColAction": "操作",

@@ -383,12 +383,13 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 
 			// Table header
 			ui.Row(c).Padding(4, 6, 4, 6).Background(p.surface).Radius(4).AlignItems(ui.Center).Gap(8).Children(func() {
-				ui.Text(c, cat.InsightsColTime()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
-				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
-				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(96)
-				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(180)
+				ui.Text(c, cat.InsightsColTime()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
+				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
+				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(80)
+				ui.Text(c, cat.InsightsColDuration()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
+				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(170)
 				ui.Text(c, cat.InsightsColRule()).FontSize(10).FontWeight(600).TextColor(p.textDim).Grow(1)
-				ui.Text(c, cat.InsightsColAction()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(65)
+				ui.Text(c, cat.InsightsColAction()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
 			})
 
 			if len(filtered) == 0 {
@@ -416,22 +417,27 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 						Gap(8).
 						Children(func() {
 							// Col 1: Time
-							ui.Text(c, timeStr).FontSize(10).TextColor(p.textDim).Width(65)
+							ui.Text(c, timeStr).FontSize(10).TextColor(p.textDim).Width(55)
 
 							// Col 2: Source
-							ui.Row(c).Width(65).AlignItems(ui.Center).Children(func() {
+							ui.Row(c).Width(55).AlignItems(ui.Center).Children(func() {
 								tagPill(c, string(e.Source), p.textDim, p.surface)
 							})
 
 							// Col 3: Verdict
-							ui.Row(c).Width(96).AlignItems(ui.Center).Children(func() {
+							ui.Row(c).Width(80).AlignItems(ui.Center).Children(func() {
 								tagPill(c, string(e.Verdict), verdictFg, verdictBg)
 							})
 
-							// Col 4: Domain
-							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(180).NoWrap()
+							// Col 4: Duration
+							durStr := formatQueryDuration(e.Duration)
+							durColor := queryDurationColor(e.Duration, p)
+							ui.Text(c, durStr).FontSize(10).FontWeight(600).TextColor(durColor).Width(55).NoWrap()
 
-							// Col 5: Chain
+							// Col 5: Domain
+							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(170).NoWrap()
+
+							// Col 6: Chain
 							chainText := e.Chain
 							if chainText == "" {
 								chainText = e.Rule
@@ -455,8 +461,8 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 								ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).NoWrap()
 							}
 
-							// Col 6: Action
-							ui.Row(c).Width(65).AlignItems(ui.Center).Children(func() {
+							// Col 7: Action
+							ui.Row(c).Width(55).AlignItems(ui.Center).Children(func() {
 								if e.Verdict == blocker.VerdictBlocked {
 									btnW := ui.ButtonBase(c.Key("btn-log-whitelist-" + idStr)).
 										Label("btn-log-whitelist-" + dom).
@@ -778,4 +784,34 @@ func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
 					})
 			}
 		})
+}
+
+func formatQueryDuration(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	if d < 100*time.Millisecond {
+		ms := float64(d.Microseconds()) / 1000.0
+		return fmt.Sprintf("%.1fms", ms)
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.2fs", d.Seconds())
+}
+
+func queryDurationColor(d time.Duration, p palette) ui.Color {
+	if d <= 0 {
+		return p.textDim
+	}
+	if d < 200*time.Millisecond {
+		return p.green
+	}
+	if d < 800*time.Millisecond {
+		return p.amber
+	}
+	return p.red
 }

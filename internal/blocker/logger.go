@@ -97,17 +97,28 @@ func (l *QueryLogger) Record(domain string, source QuerySource, verdict Verdict,
 // RecordWithChain records a query event with routing chain information at current timestamp.
 // It returns the assigned entry ID, or 0 if suppressed by deduplication.
 func (l *QueryLogger) RecordWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string) int64 {
-	return l.RecordAtWithChain(domain, source, verdict, rule, chain, time.Now())
+	return l.RecordAtWithChainAndDuration(domain, source, verdict, rule, chain, 0, time.Now())
+}
+
+// RecordWithChainAndDuration records a query event with routing chain and duration at current timestamp.
+func (l *QueryLogger) RecordWithChainAndDuration(domain string, source QuerySource, verdict Verdict, rule string, chain string, d time.Duration) int64 {
+	return l.RecordAtWithChainAndDuration(domain, source, verdict, rule, chain, d, time.Now())
 }
 
 // RecordAt records a query event at a specific timestamp.
 func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdict, rule string, ts time.Time) {
-	l.RecordAtWithChain(domain, source, verdict, rule, "", ts)
+	l.RecordAtWithChainAndDuration(domain, source, verdict, rule, "", 0, ts)
 }
 
 // RecordAtWithChain records a query event with routing chain information at a specific timestamp.
 // It returns the assigned entry ID, or 0 if suppressed by deduplication.
 func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string, ts time.Time) int64 {
+	return l.RecordAtWithChainAndDuration(domain, source, verdict, rule, chain, 0, ts)
+}
+
+// RecordAtWithChainAndDuration records a query event with routing chain and duration at a specific timestamp.
+// It returns the assigned entry ID, or 0 if suppressed by deduplication.
+func (l *QueryLogger) RecordAtWithChainAndDuration(domain string, source QuerySource, verdict Verdict, rule string, chain string, d time.Duration, ts time.Time) int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -145,6 +156,7 @@ func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdi
 		Verdict:   verdict,
 		Rule:      rule,
 		Chain:     chain,
+		Duration:  d,
 	}
 
 	// Ring buffer insert
@@ -333,6 +345,27 @@ func (l *QueryLogger) UnbindSourceConn(source string) {
 
 // AnnotateBySource looks up the logID bound to source and annotates the entry with errReason in O(1) time.
 func (l *QueryLogger) AnnotateBySource(source string, errReason string) bool {
+	return l.AnnotateFailureBySource(source, errReason, 0)
+}
+
+// AnnotateDurationBySource sets the measured duration for the connection mapped to source and unbinds it.
+func (l *QueryLogger) AnnotateDurationBySource(source string, d time.Duration) bool {
+	if l == nil || source == "" {
+		return false
+	}
+	v, ok := l.sourceMap.LoadAndDelete(source)
+	if !ok {
+		return false
+	}
+	logID, ok := v.(int64)
+	if !ok || logID <= 0 {
+		return false
+	}
+	return l.SetDurationByLogID(logID, d)
+}
+
+// AnnotateFailureBySource sets both error reason and duration for the connection mapped to source and unbinds it.
+func (l *QueryLogger) AnnotateFailureBySource(source string, errReason string, d time.Duration) bool {
 	if l == nil || source == "" || errReason == "" {
 		return false
 	}
@@ -344,7 +377,38 @@ func (l *QueryLogger) AnnotateBySource(source string, errReason string) bool {
 	if !ok || logID <= 0 {
 		return false
 	}
+	if d > 0 {
+		l.SetDurationByLogID(logID, d)
+	}
 	return l.AnnotateByLogID(logID, errReason)
+}
+
+// SetDurationByLogID finds the entry by ID and records its duration.
+func (l *QueryLogger) SetDurationByLogID(id int64, d time.Duration) bool {
+	if l == nil || id <= 0 || d <= 0 {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	offset := int(l.nextID - id)
+	if offset >= 0 && offset < l.count {
+		idx := (l.start + l.count - 1 - offset + l.capacity) % l.capacity
+		entry := &l.entries[idx]
+		if entry.ID == id {
+			entry.Duration = d
+			return true
+		}
+	}
+
+	for i := 0; i < l.count; i++ {
+		idx := (l.start + i) % l.capacity
+		if l.entries[idx].ID == id {
+			l.entries[idx].Duration = d
+			return true
+		}
+	}
+	return false
 }
 
 // AnnotateByLogID finds the entry by ID and records the failure error reason.

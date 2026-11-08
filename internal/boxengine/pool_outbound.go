@@ -254,7 +254,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				}
 			}
 			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
+				p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(err), rtt)
 			}
 			lastErr = err
 			continue
@@ -273,9 +273,9 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 					p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
 				}
 				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(firstErr))
+					p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
 				} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					p.blocker.Logger().UnbindSourceConn(sourceKey)
+					p.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
 				}
 				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
 					p.failureMonitor.Record(telemetry.FailureEvent{
@@ -292,7 +292,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			})
 		} else {
 			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().UnbindSourceConn(sourceKey)
+				p.blocker.Logger().AnnotateDurationBySource(sourceKey, rtt)
 			}
 			if p.tracker != nil {
 				if isSidecar {

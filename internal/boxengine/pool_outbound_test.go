@@ -645,5 +645,79 @@ func TestPoolOutbound_NoActiveNodesAnnotatesFailure(t *testing.T) {
 	}
 }
 
+// Tests that on successful First RTT, PoolOutbound annotates the Gateway log entry with duration.
+func TestPoolOutbound_RecordsDurationOnLogEntry(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+
+	logID := bl.Logger().RecordWithChain("example.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> test-node")
+	bl.Logger().BindSourceConn("127.0.0.1:54321", logID)
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+		buf := make([]byte, 64)
+		_, _ = serverConn.Read(buf)
+		time.Sleep(10 * time.Millisecond)
+		_, _ = serverConn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"node-test"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"node-test": &customMockOutbound{
+				tag:  "node-test",
+				conn: clientConn,
+			},
+		},
+		sidecars: map[string]bool{
+			"node-test": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		PoolTag:      "PROXY_POOL",
+		NodeProvider: provider,
+		Blocker:      bl,
+	})
+
+	inboundCtx := &adapter.InboundContext{
+		Source: M.ParseSocksaddr("127.0.0.1:54321"),
+	}
+	ctx := adapter.WithContext(context.Background(), inboundCtx)
+	dest := M.ParseSocksaddr("example.com:80")
+	conn, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+
+	_, _ = conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	respBuf := make([]byte, 64)
+	n, readErr := conn.Read(respBuf)
+	if readErr != nil || n == 0 {
+		t.Fatalf("Read failed: %v", readErr)
+	}
+	<-done
+
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) == 0 {
+		t.Fatalf("expected log entries")
+	}
+	if entries[0].Duration <= 0 {
+		t.Errorf("expected positive duration on log entry, got %v", entries[0].Duration)
+	}
+	if entries[0].Error != "" {
+		t.Errorf("expected no error on log entry, got %q", entries[0].Error)
+	}
+}
+
 
 

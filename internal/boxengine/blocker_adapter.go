@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"naive-client/internal/blocker"
 	"naive-client/internal/telemetry"
@@ -77,15 +78,16 @@ func (t *blockerDNSTransport) Reset() {
 	t.underlying.Reset()
 }
 
-func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool) {
+func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool, int64) {
 	if t.blocker == nil {
-		return nil, false
+		return nil, false, 0
 	}
 	domain := strings.Trim(q.Name, ".")
 	blocked, rule, verdict := t.blocker.Evaluate(domain)
 	chain := formatDNSChain(t.underlying.Tag(), blocked, rule)
+	var logID int64
 	if t.blocker.Logger() != nil {
-		t.blocker.Logger().RecordWithChain(domain, blocker.SourceDNS, verdict, rule, chain)
+		logID = t.blocker.Logger().RecordWithChain(domain, blocker.SourceDNS, verdict, rule, chain)
 	}
 	if blocked {
 		var addrs []netip.Addr
@@ -94,19 +96,31 @@ func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool) {
 		} else {
 			addrs = []netip.Addr{netip.IPv4Unspecified()}
 		}
-		return boxDNS.FixedResponse(0, q, addrs, 60), true
+		return boxDNS.FixedResponse(0, q, addrs, 60), true, logID
 	}
-	return nil, false
+	return nil, false, logID
 }
 
 func (t *blockerDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	var logID int64
 	if len(message.Question) > 0 {
-		if resp, blocked := t.handleQuery(message.Question[0]); blocked {
+		var resp *mDNS.Msg
+		var blocked bool
+		resp, blocked, logID = t.handleQuery(message.Question[0])
+		if blocked {
 			resp.Id = message.Id
 			return resp, nil
 		}
 	}
+	start := time.Now()
 	resp, err := t.underlying.Exchange(ctx, message)
+	duration := time.Since(start)
+	if t.blocker != nil && t.blocker.Logger() != nil && logID > 0 {
+		t.blocker.Logger().SetDurationByLogID(logID, duration)
+		if err != nil {
+			t.blocker.Logger().AnnotateByLogID(logID, "DNS查询失败")
+		}
+	}
 	if err != nil && t.fm != nil && len(message.Question) > 0 {
 		domain := strings.Trim(message.Question[0].Name, ".")
 		t.fm.Record(telemetry.FailureEvent{
@@ -120,14 +134,26 @@ func (t *blockerDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (
 }
 
 func (t *blockerDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	var logID int64
 	if len(message.Question) > 0 {
-		if resp, blocked := t.handleQuery(message.Question[0]); blocked {
+		var resp *mDNS.Msg
+		var blocked bool
+		resp, blocked, logID = t.handleQuery(message.Question[0])
+		if blocked {
 			resp.Id = message.Id
 			callback(resp, nil)
 			return
 		}
 	}
+	start := time.Now()
 	t.underlying.ExchangeAsync(ctx, message, func(resp *mDNS.Msg, err error) {
+		duration := time.Since(start)
+		if t.blocker != nil && t.blocker.Logger() != nil && logID > 0 {
+			t.blocker.Logger().SetDurationByLogID(logID, duration)
+			if err != nil {
+				t.blocker.Logger().AnnotateByLogID(logID, "DNS查询失败")
+			}
+		}
 		if err != nil && t.fm != nil && len(message.Question) > 0 {
 			domain := strings.Trim(message.Question[0].Name, ".")
 			t.fm.Record(telemetry.FailureEvent{
@@ -158,15 +184,17 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 			return nil, syscall.EPERM
 		}
 	}
+	start := time.Now()
 	conn, err := o.Outbound.DialContext(ctx, network, destination)
+	rtt := time.Since(start)
 	if err != nil && !errors.Is(err, syscall.EPERM) {
 		host := destination.Fqdn
 		if host == "" && destination.Addr.IsValid() {
 			host = destination.Addr.String()
 		}
-		if o.blocker != nil && o.blocker.Logger() != nil {
+		if o.blocker != nil && o.blocker.Logger() != nil && o.Outbound.Tag() == "direct" {
 			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
-				o.blocker.Logger().AnnotateBySource(inboundCtx.Source.String(), formatConnectionError(err))
+				o.blocker.Logger().AnnotateFailureBySource(inboundCtx.Source.String(), formatConnectionError(err), rtt)
 			}
 		}
 		if o.fm != nil && o.Outbound.Tag() == "direct" {
@@ -177,6 +205,12 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 				OriginalAction: "direct",
 				Error:          err,
 			})
+		}
+	} else if err == nil && o.Outbound.Tag() == "direct" {
+		if o.blocker != nil && o.blocker.Logger() != nil {
+			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+				o.blocker.Logger().AnnotateDurationBySource(inboundCtx.Source.String(), rtt)
+			}
 		}
 	}
 	return conn, err

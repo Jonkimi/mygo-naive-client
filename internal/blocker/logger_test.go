@@ -220,5 +220,29 @@ func TestQueryLogger_AnnotateBySourcePort_ConcurrentExact(t *testing.T) {
 	}
 }
 
+// Tests that AnnotateDurationBySource sets the duration and unbinds the source port mapping.
+func TestQueryLogger_AnnotateDurationBySource(t *testing.T) {
+	ql := NewQueryLogger(50)
+	ql.SetDedupWindow(0)
+
+	id := ql.RecordWithChain("fast-page.com", SourceGateway, VerdictAllowed, "", "final -> direct")
+	ql.BindSourceConn("127.0.0.1:40001", id)
+
+	ok := ql.AnnotateDurationBySource("127.0.0.1:40001", 125*time.Millisecond)
+	if !ok {
+		t.Fatalf("expected AnnotateDurationBySource to succeed")
+	}
+
+	entries := ql.GetEntries(1)
+	if len(entries) == 0 || entries[0].Duration != 125*time.Millisecond {
+		t.Errorf("expected duration to be 125ms, got %v", entries[0].Duration)
+	}
+
+	// Second annotate must return false because mapping was consumed
+	if ql.AnnotateDurationBySource("127.0.0.1:40001", 200*time.Millisecond) {
+		t.Errorf("expected subsequent annotate to fail")
+	}
+}
+
 
 

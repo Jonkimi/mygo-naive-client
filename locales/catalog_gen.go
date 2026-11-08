@@ -4672,6 +4672,16 @@ func (msgs Messages) InsightsColVerdict() string {
 	return Catalog.Format(msgs.locale, "insightsColVerdict", nil)
 }
 
+// InsightsColDuration says "Duration"
+// in the language the app shows.
+func InsightsColDuration() string { return In(i18n.Locale()).InsightsColDuration() }
+
+// InsightsColDuration says "Duration"
+// in the language of msgs.
+func (msgs Messages) InsightsColDuration() string {
+	return Catalog.Format(msgs.locale, "insightsColDuration", nil)
+}
+
 // InsightsColDomain says "Domain"
 // in the language the app shows.
 func InsightsColDomain() string { return In(i18n.Locale()).InsightsColDomain() }
