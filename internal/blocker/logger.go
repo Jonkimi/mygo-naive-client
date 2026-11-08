@@ -58,6 +58,8 @@ type QueryLogger struct {
 	dirtyTop        bool
 	topBlockedCache []TopDomainItem
 	topAllowedCache []TopDomainItem
+
+	sourceMap sync.Map // source string (e.g. "127.0.0.1:port") -> int64 (log entry ID)
 }
 
 // NewQueryLogger creates an in-memory query logger with the given ring buffer capacity.
@@ -93,8 +95,9 @@ func (l *QueryLogger) Record(domain string, source QuerySource, verdict Verdict,
 }
 
 // RecordWithChain records a query event with routing chain information at current timestamp.
-func (l *QueryLogger) RecordWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string) {
-	l.RecordAtWithChain(domain, source, verdict, rule, chain, time.Now())
+// It returns the assigned entry ID, or 0 if suppressed by deduplication.
+func (l *QueryLogger) RecordWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string) int64 {
+	return l.RecordAtWithChain(domain, source, verdict, rule, chain, time.Now())
 }
 
 // RecordAt records a query event at a specific timestamp.
@@ -103,16 +106,19 @@ func (l *QueryLogger) RecordAt(domain string, source QuerySource, verdict Verdic
 }
 
 // RecordAtWithChain records a query event with routing chain information at a specific timestamp.
-func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string, ts time.Time) {
+// It returns the assigned entry ID, or 0 if suppressed by deduplication.
+func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdict Verdict, rule string, chain string, ts time.Time) int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.dedupWindow > 0 {
+	// Only deduplicate DNS queries (A and AAAA dual queries).
+	// Gateway TCP connections represent real OS sockets and are recorded faithfully.
+	if l.dedupWindow > 0 && source == SourceDNS {
 		k := recentKey{domain: domain, source: source, verdict: verdict}
 		if lastTs, exists := l.recentQueries[k]; exists {
 			diff := ts.Sub(lastTs)
 			if diff >= 0 && diff < l.dedupWindow {
-				return
+				return 0
 			}
 		}
 		l.recentQueries[k] = ts
@@ -185,6 +191,7 @@ func (l *QueryLogger) RecordAtWithChain(domain string, source QuerySource, verdi
 			}
 		}
 	}
+	return l.nextID
 }
 
 // GetEntries returns recent query log entries, sorted newest first.
@@ -308,41 +315,66 @@ func (l *QueryLogger) GetStatsSummary() (total int64, blocked int64) {
 	return l.totalQueries, l.totalBlocked
 }
 
-// AnnotateLatestGatewayFailure finds the most recent matching Gateway entry for domain
-// (and optional nodeName in chain) within the recent buffer and appends the failure annotation.
-func (l *QueryLogger) AnnotateLatestGatewayFailure(domain string, nodeName string, errReason string) bool {
-	if l == nil || errReason == "" {
+// BindSourceConn associates an inbound client source address (IP:Port) with a log entry ID.
+func (l *QueryLogger) BindSourceConn(source string, logID int64) {
+	if l == nil || source == "" || logID <= 0 {
+		return
+	}
+	l.sourceMap.Store(source, logID)
+}
+
+// UnbindSourceConn removes the association for an inbound client source address.
+func (l *QueryLogger) UnbindSourceConn(source string) {
+	if l == nil || source == "" {
+		return
+	}
+	l.sourceMap.Delete(source)
+}
+
+// AnnotateBySource looks up the logID bound to source and annotates the entry with errReason in O(1) time.
+func (l *QueryLogger) AnnotateBySource(source string, errReason string) bool {
+	if l == nil || source == "" || errReason == "" {
+		return false
+	}
+	v, ok := l.sourceMap.LoadAndDelete(source)
+	if !ok {
+		return false
+	}
+	logID, ok := v.(int64)
+	if !ok || logID <= 0 {
+		return false
+	}
+	return l.AnnotateByLogID(logID, errReason)
+}
+
+// AnnotateByLogID finds the entry by ID and records the failure error reason.
+func (l *QueryLogger) AnnotateByLogID(id int64, errReason string) bool {
+	if l == nil || id <= 0 || errReason == "" {
 		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
-
-	limit := 30
-	if limit > l.count {
-		limit = l.count
+	offset := int(l.nextID - id)
+	if offset >= 0 && offset < l.count {
+		idx := (l.start + l.count - 1 - offset + l.capacity) % l.capacity
+		entry := &l.entries[idx]
+		if entry.ID == id {
+			if entry.Error == "" {
+				entry.Error = errReason
+			}
+			return true
+		}
 	}
 
-	for i := 0; i < limit; i++ {
-		idx := (l.start + l.count - 1 - i + l.capacity) % l.capacity
-		entry := &l.entries[idx]
-		if entry.Source != SourceGateway {
-			continue
+	for i := 0; i < l.count; i++ {
+		idx := (l.start + i) % l.capacity
+		if l.entries[idx].ID == id {
+			if l.entries[idx].Error == "" {
+				l.entries[idx].Error = errReason
+			}
+			return true
 		}
-		cleanEntryDomain := strings.Trim(strings.ToLower(strings.TrimSpace(entry.Domain)), ".")
-		if domain != "" && cleanEntryDomain != domain {
-			continue
-		}
-		if nodeName != "" && !strings.Contains(entry.Chain, nodeName) {
-			continue
-		}
-		if strings.Contains(entry.Chain, "(") && strings.Contains(entry.Chain, ")") {
-			// Already annotated
-			return false
-		}
-		entry.Chain = entry.Chain + " (" + errReason + ")"
-		return true
 	}
 	return false
 }

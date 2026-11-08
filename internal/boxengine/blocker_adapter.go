@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"syscall"
 
 	"naive-client/internal/blocker"
@@ -158,18 +159,25 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 		}
 	}
 	conn, err := o.Outbound.DialContext(ctx, network, destination)
-	if err != nil && o.fm != nil && !errors.Is(err, syscall.EPERM) && o.Outbound.Tag() == "direct" {
+	if err != nil && !errors.Is(err, syscall.EPERM) {
 		host := destination.Fqdn
 		if host == "" && destination.Addr.IsValid() {
 			host = destination.Addr.String()
 		}
-		o.fm.Record(telemetry.FailureEvent{
-			Category:       telemetry.FailureDirect,
-			Target:         host,
-			Port:           destination.Port,
-			OriginalAction: "direct",
-			Error:          err,
-		})
+		if o.blocker != nil && o.blocker.Logger() != nil {
+			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+				o.blocker.Logger().AnnotateBySource(inboundCtx.Source.String(), formatConnectionError(err))
+			}
+		}
+		if o.fm != nil && o.Outbound.Tag() == "direct" {
+			o.fm.Record(telemetry.FailureEvent{
+				Category:       telemetry.FailureDirect,
+				Target:         host,
+				Port:           destination.Port,
+				OriginalAction: "direct",
+				Error:          err,
+			})
+		}
 	}
 	return conn, err
 }
@@ -231,6 +239,40 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 	}, nil
 }
 
+type sourceUnbindConn struct {
+	net.Conn
+	onClose func()
+	once    sync.Once
+}
+
+func (c *sourceUnbindConn) Close() error {
+	c.once.Do(func() {
+		if c.onClose != nil {
+			c.onClose()
+		}
+	})
+	return c.Conn.Close()
+}
+
+func (c *sourceUnbindConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (c *sourceUnbindConn) Upstream() any {
+	return c.Conn
+}
+
+func (c *sourceUnbindConn) ReaderReplaceable() bool {
+	return true
+}
+
+func (c *sourceUnbindConn) WriterReplaceable() bool {
+	return true
+}
+
 // BlockerConnectionTracker intercepts routed connections and logs/blocks based on blocker rules.
 type BlockerConnectionTracker struct {
 	blocker          *blocker.Engine
@@ -238,6 +280,11 @@ type BlockerConnectionTracker struct {
 }
 
 func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
+	blocked, _ := t.recordConnectionWithID(target, matchedRule, matchOutbound)
+	return blocked
+}
+
+func (t *BlockerConnectionTracker) recordConnectionWithID(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) (bool, int64) {
 	isBlockOutbound := matchOutbound != nil && matchOutbound.Tag() == "block"
 	blocked, rule, verdict := t.blocker.Evaluate(target)
 	if isBlockOutbound {
@@ -252,10 +299,11 @@ func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule a
 		}
 	}
 	chain := formatGatewayChain(target, matchedRule, matchOutbound, blocked, rule, t.nodeNameResolver)
+	var logID int64
 	if t.blocker.Logger() != nil {
-		t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
+		logID = t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
 	}
-	return blocked
+	return blocked, logID
 }
 
 func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
@@ -279,8 +327,20 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 	}
 
 	if target != "" {
-		if t.recordConnection(target, matchedRule, matchOutbound) {
+		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound)
+		if blocked {
 			_ = conn.Close()
+			return conn
+		}
+		if logID > 0 && metadata.Source.Port != 0 && t.blocker != nil && t.blocker.Logger() != nil {
+			sourceKey := metadata.Source.String()
+			t.blocker.Logger().BindSourceConn(sourceKey, logID)
+			conn = &sourceUnbindConn{
+				Conn: conn,
+				onClose: func() {
+					t.blocker.Logger().UnbindSourceConn(sourceKey)
+				},
+			}
 		}
 	}
 	return conn

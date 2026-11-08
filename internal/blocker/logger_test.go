@@ -179,31 +179,46 @@ func TestQueryLogger_Deduplication(t *testing.T) {
 	}
 }
 
-// Tests that AnnotateLatestGatewayFailure correctly appends failure reason to the latest matching Gateway entry.
-func TestQueryLogger_AnnotateLatestGatewayFailure(t *testing.T) {
+// Tests that multiple concurrent Gateway connections to the exact same domain are both recorded
+// (not suppressed by dedup), and AnnotateBySource maps precisely by SourcePort without cross-mislabeling.
+func TestQueryLogger_AnnotateBySourcePort_ConcurrentExact(t *testing.T) {
 	ql := NewQueryLogger(50)
-	ql.SetDedupWindow(0)
+	ql.SetDedupWindow(800 * time.Millisecond) // dedup active
 
-	ql.RecordWithChain("example.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_POOL -> node-a")
-	ql.RecordWithChain("other.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_POOL -> node-b")
-	ql.RecordWithChain("example.com", SourceGateway, VerdictAllowed, "", "final -> PROXY_POOL -> node-b")
+	now := time.Now()
+	// Two concurrent connections to the exact same domain within 10ms, with parentheses in chain
+	id1 := ql.RecordAtWithChain("same-domain.com", SourceGateway, VerdictAllowed, "", "domain_suffix(same-domain.com) -> PROXY_POOL -> node-1", now)
+	id2 := ql.RecordAtWithChain("same-domain.com", SourceGateway, VerdictAllowed, "", "domain_suffix(same-domain.com) -> PROXY_POOL -> node-2", now.Add(10*time.Millisecond))
 
-	// Annotate latest example.com with node-b
-	ok := ql.AnnotateLatestGatewayFailure("example.com", "node-b", "远端断开: EOF")
+	if id1 == 0 || id2 == 0 {
+		t.Fatalf("expected both Gateway connections to be recorded (not dropped by dedup), got id1=%d, id2=%d", id1, id2)
+	}
+
+	ql.BindSourceConn("127.0.0.1:50001", id1)
+	ql.BindSourceConn("127.0.0.1:50002", id2)
+
+	// Connection 2 fails
+	ok := ql.AnnotateBySource("127.0.0.1:50002", "远端断开: EOF")
 	if !ok {
-		t.Fatalf("expected AnnotateLatestGatewayFailure to succeed")
+		t.Fatalf("expected AnnotateBySource for 127.0.0.1:50002 to succeed")
 	}
 
 	entries := ql.GetEntries(10)
-	// Newest entry (example.com with node-b) should be annotated
-	if entries[0].Chain != "final -> PROXY_POOL -> node-b (远端断开: EOF)" {
-		t.Errorf("expected chain to be annotated, got %q", entries[0].Chain)
+	// entries[0] is id2 (newest)
+	if entries[0].ID != id2 || entries[0].Error != "远端断开: EOF" {
+		t.Errorf("expected id2 to be annotated with failure error, got %+v", entries[0])
 	}
 
-	// Older entry (example.com with node-a) should NOT be annotated
-	if entries[2].Chain != "final -> PROXY_POOL -> node-a" {
-		t.Errorf("expected older entry chain to remain unchanged, got %q", entries[2].Chain)
+	// entries[1] is id1 (older), must remain completely un-annotated!
+	if entries[1].ID != id1 || entries[1].Error != "" {
+		t.Errorf("expected id1 to remain untouched, got %+v", entries[1])
+	}
+
+	// Calling AnnotateBySource again for id2 must return false (already consumed/unbound)
+	if ql.AnnotateBySource("127.0.0.1:50002", "some-other-err") {
+		t.Errorf("expected second annotate for same source to return false")
 	}
 }
+
 
 

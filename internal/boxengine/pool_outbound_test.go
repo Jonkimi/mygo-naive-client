@@ -539,8 +539,9 @@ func TestPoolOutbound_AnnotatesFailureOnLogEntry(t *testing.T) {
 	bl := blocker.NewEngine(blocker.Options{})
 	bl.Logger().SetDedupWindow(0)
 
-	// Pre-record Gateway connection entry
-	bl.Logger().RecordWithChain("api.test.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> test-node")
+	// Pre-record Gateway connection entry and bind client source address
+	logID := bl.Logger().RecordWithChain("api.test.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> test-node")
+	bl.Logger().BindSourceConn("127.0.0.1:54321", logID)
 
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
@@ -567,7 +568,10 @@ func TestPoolOutbound_AnnotatesFailureOnLogEntry(t *testing.T) {
 		Blocker:      bl,
 	})
 
-	ctx := context.Background()
+	inboundCtx := &adapter.InboundContext{
+		Source: M.ParseSocksaddr("127.0.0.1:54321"),
+	}
+	ctx := adapter.WithContext(context.Background(), inboundCtx)
 	dest := M.ParseSocksaddr("api.test.com:443")
 	conn, err := poolOb.DialContext(ctx, "tcp", dest)
 	if err != nil {
@@ -595,10 +599,51 @@ func TestPoolOutbound_AnnotatesFailureOnLogEntry(t *testing.T) {
 	if len(entries) == 0 {
 		t.Fatalf("expected log entries")
 	}
-	expectedChain := "final -> PROXY_POOL -> test-node (远端断开: EOF)"
-	if entries[0].Chain != expectedChain {
-		t.Errorf("expected entry chain %q, got %q", expectedChain, entries[0].Chain)
+	if entries[0].Error != "远端断开: EOF" {
+		t.Errorf("expected entry error %q, got %q", "远端断开: EOF", entries[0].Error)
 	}
 }
+
+// Tests that when no nodes are active/running (candidates=0), the Gateway log entry is annotated with (节点未启动).
+func TestPoolOutbound_NoActiveNodesAnnotatesFailure(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+
+	logID := bl.Logger().RecordWithChain("unreachable.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "domain_suffix(unreachable.com) -> PROXY_POOL")
+	bl.Logger().BindSourceConn("127.0.0.1:56789", logID)
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": nil, // No running nodes!
+		},
+		nodes: make(map[string]adapter.Outbound),
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		PoolTag:      "PROXY_POOL",
+		NodeProvider: provider,
+		Blocker:      bl,
+	})
+
+	inboundCtx := &adapter.InboundContext{
+		Source: M.ParseSocksaddr("127.0.0.1:56789"),
+	}
+	ctx := adapter.WithContext(context.Background(), inboundCtx)
+	dest := M.ParseSocksaddr("unreachable.com:443")
+	_, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err == nil {
+		t.Fatalf("expected DialContext to return error when candidates=0")
+	}
+
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) == 0 {
+		t.Fatalf("expected log entries")
+	}
+	if entries[0].Error != "节点未启动" {
+		t.Errorf("expected entry error %q, got %q", "节点未启动", entries[0].Error)
+	}
+}
+
 
 

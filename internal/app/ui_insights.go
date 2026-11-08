@@ -439,12 +439,17 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							if chainText == "" {
 								chainText = "-"
 							}
-							if idx := strings.Index(chainText, " ("); idx > 0 && strings.HasSuffix(chainText, ")") {
-								baseChain := chainText[:idx]
-								errPart := chainText[idx+1:]
+							errText := e.Error
+							if errText == "" {
+								if idx := strings.LastIndex(chainText, " ("); idx > 0 && strings.HasSuffix(chainText, ")") {
+									errText = strings.TrimSuffix(chainText[idx+2:], ")")
+									chainText = chainText[:idx]
+								}
+							}
+							if errText != "" {
 								ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(4).Children(func() {
-									ui.Text(c, baseChain).FontSize(10).TextColor(p.textDim).NoWrap()
-									ui.Text(c, errPart).FontSize(10).TextColor(p.red).NoWrap()
+									ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).NoWrap()
+									ui.Text(c, "("+errText+")").FontSize(10).TextColor(p.red).NoWrap()
 								})
 							} else {
 								ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).NoWrap()

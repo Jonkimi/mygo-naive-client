@@ -162,6 +162,9 @@ func formatConnectionError(err error) string {
 		return ""
 	}
 	errStr := strings.ToLower(err.Error())
+	if strings.Contains(errStr, "no active proxy") || strings.Contains(errStr, "no candidates") {
+		return "节点未启动"
+	}
 	if errors.Is(err, errFirstPacketAborted) {
 		return "首包未响应中断"
 	}
@@ -188,6 +191,11 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		return nil, errors.New("node provider is nil")
 	}
 
+	sourceKey := ""
+	if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+		sourceKey = inboundCtx.Source.String()
+	}
+
 	tagKey := p.poolTag
 	if tagKey == "" {
 		tagKey = p.tag
@@ -201,6 +209,12 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 	}
 	if len(candidates) == 0 {
 		err := fmt.Errorf("no active proxy candidates available for pool %s", tagKey)
+		if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(sourceKey, "节点未启动")
+		}
+		if p.onTelemetryUpdate != nil {
+			p.onTelemetryUpdate()
+		}
 		if p.failureMonitor != nil {
 			p.failureMonitor.Record(telemetry.FailureEvent{
 				Category:       telemetry.FailureProxy,
@@ -239,9 +253,8 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 					p.tracker.RecordDial(candID, targetHost, rtt, err)
 				}
 			}
-			if p.blocker != nil && p.blocker.Logger() != nil {
-				nodeName := p.resolveNodeName(candID)
-				p.blocker.Logger().AnnotateLatestGatewayFailure(targetHost, nodeName, formatConnectionError(err))
+			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
 			}
 			lastErr = err
 			continue
@@ -259,9 +272,10 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				if p.tracker != nil {
 					p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
 				}
-				if firstErr != nil && p.blocker != nil && p.blocker.Logger() != nil {
-					nodeName := p.resolveNodeName(candID)
-					p.blocker.Logger().AnnotateLatestGatewayFailure(targetHost, nodeName, formatConnectionError(firstErr))
+				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+					p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(firstErr))
+				} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+					p.blocker.Logger().UnbindSourceConn(sourceKey)
 				}
 				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
 					p.failureMonitor.Record(telemetry.FailureEvent{
@@ -277,6 +291,9 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				}
 			})
 		} else {
+			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().UnbindSourceConn(sourceKey)
+			}
 			if p.tracker != nil {
 				if isSidecar {
 					p.tracker.RecordDial(candID, targetHost, 0, nil)
@@ -293,6 +310,13 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 
 	if lastErr == nil {
 		lastErr = errors.New("all candidates skipped")
+	}
+
+	if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+		p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(lastErr))
+	}
+	if p.onTelemetryUpdate != nil {
+		p.onTelemetryUpdate()
 	}
 
 	if p.failureMonitor != nil {
