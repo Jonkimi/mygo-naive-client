@@ -208,14 +208,14 @@ func DefaultService(id string, port int) Service {
 	}
 }
 
-// PrimaryListen returns the first non-empty listen URI, or the default "socks://127.0.0.1:1080".
+// PrimaryListen returns the first non-empty listen URI, or empty string if none.
 func (s Service) PrimaryListen() string {
 	for _, l := range s.Listens {
 		if trimmed := strings.TrimSpace(l); trimmed != "" {
 			return trimmed
 		}
 	}
-	return "socks://127.0.0.1:1080"
+	return ""
 }
 
 // PrimaryProxy returns the first non-empty proxy URI.

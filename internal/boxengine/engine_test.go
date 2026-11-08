@@ -504,6 +504,7 @@ func TestEngine_TUNConfigOptions(t *testing.T) {
 				Protocol: config.ProtoNaive,
 				Engine:   config.EngineSidecar,
 				Proxies:  []string{"https://user:pass@198.51.100.99:443"},
+				Listens:  []string{"socks://127.0.0.1:10801"},
 			},
 		},
 	}
@@ -1196,8 +1197,8 @@ func TestEngine_FinalRouteProxyTagAndNoStaleNodeConcatenation(t *testing.T) {
 			Tags: []string{"warp"},
 		},
 		Services: []config.Service{
-			{ID: "svc-opc2", Name: "naive_opc2", Engine: config.EngineSidecar},
-			{ID: "svc-warp", Name: "local_warp", Engine: config.EngineSidecar, Tags: []string{"warp"}},
+			{ID: "svc-opc2", Name: "naive_opc2", Engine: config.EngineSidecar, Listens: []string{"socks://127.0.0.1:10801"}},
+			{ID: "svc-warp", Name: "local_warp", Engine: config.EngineSidecar, Tags: []string{"warp"}, Listens: []string{"socks://127.0.0.1:10802"}},
 		},
 	}
 
@@ -1366,7 +1367,10 @@ func TestEngine_DecomposedConfigBuilders(t *testing.T) {
 		t.Errorf("expected finalOutbound PROXY_TAG:hk, got %s", finalOutbound)
 	}
 	allocatedPorts := map[string]int{"sidecar-1": 10810}
-	outbounds := buildOutboundsConfig(opts, finalOutbound, allocatedPorts)
+	outbounds, err := buildOutboundsConfig(opts, finalOutbound, allocatedPorts)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
 	var foundSidecar, foundNative, foundTagHK bool
 	for _, ob := range outbounds {
 		tag, _ := ob["tag"].(string)
@@ -1419,6 +1423,57 @@ func TestEngine_DecomposedConfigBuilders(t *testing.T) {
 		t.Fatalf("expected non-empty rules in route map")
 	}
 }
+
+// Regression: previously buildOutboundsConfig silently fell back to 1080 when
+// allocatedPorts was empty, causing sing-box to connect to 127.0.0.1:1080 instead of
+// the service's configured listen port (e.g. 1083), leading to connection reset by peer.
+func TestBuildOutboundsConfig_SidecarPortResolutionAndNoSilentFallback(t *testing.T) {
+	opts := EngineOptions{
+		Services: []config.Service{
+			{
+				ID:       "svc-bwg",
+				Name:     "naive-bwg",
+				Protocol: config.ProtoNaive,
+				Engine:   config.EngineSidecar,
+				Listens:  []string{"socks://127.0.0.1:1083"},
+			},
+		},
+	}
+
+	// 1. When allocatedPorts is empty, it must resolve to configured 1083, NEVER 1080.
+	outbounds, err := buildOutboundsConfig(opts, "direct", nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+	var found bool
+	for _, ob := range outbounds {
+		if ob["tag"] == "node-svc-bwg" {
+			found = true
+			if ob["server_port"] != 1083 {
+				t.Fatalf("expected server_port 1083, got %v (silent fallback to 1080 bug!)", ob["server_port"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("outbound node-svc-bwg not found")
+	}
+
+	// 2. When service has no listen port and no allocated port, it must fail fast with error.
+	badOpts := EngineOptions{
+		Services: []config.Service{
+			{
+				ID:       "svc-bad",
+				Name:     "naive-bad",
+				Protocol: config.ProtoNaive,
+				Engine:   config.EngineSidecar,
+			},
+		},
+	}
+	if _, err := buildOutboundsConfig(badOpts, "direct", nil); err == nil {
+		t.Fatalf("expected error for sidecar service without listen port, got nil")
+	}
+}
+
 
 
 

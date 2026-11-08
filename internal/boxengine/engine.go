@@ -641,7 +641,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 	return inbounds
 }
 
-func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPorts map[string]int) []map[string]any {
+func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPorts map[string]int) ([]map[string]any, error) {
 	outbounds := []map[string]any{
 		{
 			"type": "direct",
@@ -696,9 +696,16 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 	for _, svc := range opts.Services {
 		nodeTag := "node-" + svc.ID
 		if isSidecarService(svc) {
-			allocPort := 1080
+			allocPort := 0
 			if allocatedPorts != nil && allocatedPorts[svc.ID] > 0 {
 				allocPort = allocatedPorts[svc.ID]
+			} else if listen := svc.PrimaryListen(); listen != "" {
+				if ep, err := config.ParseListenURI(listen); err == nil && ep.Port > 0 {
+					allocPort = ep.Port
+				}
+			}
+			if allocPort <= 0 {
+				return nil, fmt.Errorf("sidecar 节点 %q (%s) 缺少有效的本地监听端口，请检查配置或启动状态", svc.Name, svc.ID)
 			}
 			outbounds = append(outbounds, map[string]any{
 				"type":        "socks",
@@ -710,7 +717,7 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 			outbounds = append(outbounds, buildNativeOutbound(svc))
 		}
 	}
-	return outbounds
+	return outbounds, nil
 }
 
 func buildEndpointsConfig(opts EngineOptions) []map[string]any {
@@ -1023,7 +1030,11 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	allBootstrapDomains := collectAllBootstrapDomains(opts)
 
 	configMap["inbounds"] = buildInboundsConfig(opts, host, port)
-	configMap["outbounds"] = buildOutboundsConfig(opts, finalOutbound, e.allocatedPorts)
+	outbounds, err := buildOutboundsConfig(opts, finalOutbound, e.allocatedPorts)
+	if err != nil {
+		return nil, fmt.Errorf("build outbounds: %w", err)
+	}
+	configMap["outbounds"] = outbounds
 	if endpoints := buildEndpointsConfig(opts); len(endpoints) > 0 {
 		configMap["endpoints"] = endpoints
 	}

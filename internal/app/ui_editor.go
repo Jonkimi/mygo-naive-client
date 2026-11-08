@@ -937,6 +937,7 @@ func (a *app) saveEditorService() {
 		}
 	}
 	a.saveState()
+	a.syncRouter()
 	a.rebuildTrayMenu()
 	a.editor.open = false
 	a.editor.errText = ""
@@ -1051,6 +1052,7 @@ func (a *app) confirmImportDialog() {
 	a.importDlg.errText = ""
 	a.importDlg.rawInput = ""
 	a.saveState()
+	a.syncRouter()
 	a.rebuildTrayMenu()
 
 	if len(svcs) == 1 {
@@ -1113,6 +1115,7 @@ func (a *app) confirmDeleteService() {
 	a.state.Services = filtered
 	delete(a.expandedLogs, id)
 	a.saveState()
+	a.syncRouter()
 	a.rebuildTrayMenu()
 	a.toast(a.catalog().ToastServiceDeleted(name))
 }

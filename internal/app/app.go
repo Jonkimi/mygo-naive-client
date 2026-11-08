@@ -1749,6 +1749,7 @@ func (a *app) gatewayConfigSignature() string {
 		Proxies     []string
 		ExternalURI string
 		Tags        []string
+		Listens     []string
 	}
 	svcs := make([]svcSig, len(a.state.Services))
 	for i, s := range a.state.Services {
@@ -1761,6 +1762,7 @@ func (a *app) gatewayConfigSignature() string {
 			Proxies:     s.Proxies,
 			ExternalURI: s.ExternalURI,
 			Tags:        s.Tags,
+			Listens:     s.Listens,
 		}
 	}
 	var allocPorts map[string]int
