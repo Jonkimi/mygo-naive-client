@@ -258,7 +258,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 	}
 
 	engine := config.EngineSingBox
-	if a.editor.engineIndex == 1 || proto == config.ProtoNaive {
+	if proto == config.ProtoNaive || a.editor.engineIndex == 1 {
 		engine = config.EngineSidecar
 	}
 

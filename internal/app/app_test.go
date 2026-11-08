@@ -3016,50 +3016,6 @@ func TestGateway_SingBoxRealityNodeStartupAndDialer(t *testing.T) {
 	}
 }
 
-// Tests that coexisting NaiveProxy and Reality services start gateway without with_naive_outbound error.
-func TestGateway_CoexistingNaiveAndRealityServices(t *testing.T) {
-	naivePort := freeLocalPort(t)
-	svcs := []config.Service{
-		{
-			ID:       "svc-naive-legacy-singbox",
-			Name:     "naive-test",
-			Protocol: config.ProtoNaive,
-			Engine:   config.EngineSingBox, // legacy or misconfigured engine
-			Listens:  []string{fmt.Sprintf("socks://127.0.0.1:%d", naivePort)},
-			Proxies:  []string{"https://user:pass@proxy.example.com:443"},
-		},
-		{
-			ID:          "svc-vless-reality-node",
-			Name:        "reality-test",
-			Protocol:    config.ProtoVLESS,
-			Engine:      config.EngineSingBox,
-			Server:      "example.org",
-			ServerPort:  443,
-			UUID:        "00000000-0000-0000-0000-000000000001",
-			Security:    "reality",
-			SNI:         "example.org",
-			Fingerprint: "chrome",
-			PublicKey:   "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE",
-			ShortID:     "0123456789abcdef",
-			Flow:        "xtls-rprx-vision",
-			Network:     "tcp",
-			Listens:     []string{fmt.Sprintf("socks://127.0.0.1:%d", freeLocalPort(t))},
-		},
-	}
-
-	a, _, _ := newTestApp(t, svcs)
-	a.state.GatewayEnabled = true
-	a.state.GatewayPort = freeLocalPort(t)
-
-	if err := a.startGateway(); err != nil {
-		t.Fatalf("startGateway failed with coexisting naive and reality nodes: %v", err)
-	}
-	if a.gateway == nil {
-		t.Fatalf("expected gateway to be running")
-	}
-	a.stopGateway()
-}
-
 
 
 

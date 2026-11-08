@@ -131,13 +131,17 @@ func (s Service) EffectiveProtocol() Protocol {
 }
 
 // EffectiveEngine returns the execution engine for this node.
-// ProtoNaive always uses EngineSidecar (official NaiveProxy binary); all other protocols default to EngineSingBox.
+// ProtoNaive always runs as EngineSidecar because embedded sing-box requires CGO (cronet-go)
+// for native naive outbounds, which is disabled in pure-Go desktop builds.
 func (s Service) EffectiveEngine() ExecutionEngine {
-	if s.EffectiveProtocol() == ProtoNaive {
+	if s.Protocol == ProtoNaive {
 		return EngineSidecar
 	}
 	if s.Engine != "" {
 		return s.Engine
+	}
+	if s.EffectiveProtocol() == ProtoNaive {
+		return EngineSidecar
 	}
 	return EngineSingBox
 }

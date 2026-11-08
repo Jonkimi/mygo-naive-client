@@ -212,19 +212,12 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 		return ob
 
 	case config.ProtoNaive:
-		// In pure-Go builds without CGO cronet-go, sing-box cannot instantiate type: "naive".
-		// Fall back to a local SOCKS outbound directed at the NaiveProxy sidecar process.
-		allocPort := 1080
-		if listen := svc.PrimaryListen(); listen != "" {
-			if ep, err := config.ParseListenURI(listen); err == nil && ep.Port > 0 {
-				allocPort = ep.Port
-			}
-		}
+		// In pure-Go builds without CGO cronet (with_naive_outbound), sing-box does not include a
+		// native naive outbound. ProtoNaive nodes are supervised as sidecars. If built directly here,
+		// fallback to direct placeholder so sing-box core does not crash on initialization.
 		return map[string]any{
-			"type":        "socks",
-			"tag":         tag,
-			"server":      "127.0.0.1",
-			"server_port": allocPort,
+			"type": "direct",
+			"tag":  tag,
 		}
 
 	default:

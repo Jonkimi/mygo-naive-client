@@ -1474,6 +1474,29 @@ func TestBuildOutboundsConfig_SidecarPortResolutionAndNoSilentFallback(t *testin
 	}
 }
 
+// Tests that a ProtoNaive node configured with EngineSingBox starts cleanly as sidecar without with_naive_outbound sing-box crash.
+func TestEngine_ProtoNaiveWithSingBoxEngineDoesNotCrash(t *testing.T) {
+	svc := config.Service{
+		ID:       "naive-singbox-misconfigured",
+		Name:     "naive-test",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSingBox,
+		Listens:  []string{"socks://127.0.0.1:1089"},
+		Proxies:  []string{"https://user:pass@example.com:443"},
+	}
+	eng, err := New(EngineOptions{
+		ListenAddr: "127.0.0.1:0",
+		Services:   []config.Service{svc},
+	})
+	if err != nil {
+		t.Fatalf("expected New not to fail with missing with_naive_outbound, got: %v", err)
+	}
+	defer eng.Close()
+	if !eng.IsSidecar(svc.ID) {
+		t.Errorf("expected IsSidecar to be true for ProtoNaive node")
+	}
+}
+
 
 
 

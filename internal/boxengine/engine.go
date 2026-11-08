@@ -290,12 +290,10 @@ func isSidecarService(svc config.Service) bool {
 	if svc.EffectiveKind() == config.KindExternalProxy {
 		return false
 	}
-	if svc.Engine == config.EngineSidecar {
+	if svc.Protocol == config.ProtoNaive {
 		return true
 	}
-	// NaiveProxy services must run as sidecars because pure-Go sing-box builds
-	// exclude the CGO-based cronet-go naive outbound.
-	if svc.Protocol == config.ProtoNaive || len(svc.Proxies) > 0 {
+	if svc.Engine == config.EngineSidecar {
 		return true
 	}
 	if svc.Engine == "" && svc.EffectiveProtocol() == config.ProtoNaive {

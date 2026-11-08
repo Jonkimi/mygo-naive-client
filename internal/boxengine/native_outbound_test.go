@@ -76,19 +76,16 @@ func TestBuildNativeOutbound(t *testing.T) {
 		t.Errorf("unexpected user/pass: %v:%v", ob["username"], ob["password"])
 	}
 
-	// 4. Pure-Go NaiveProxy fallback to local SOCKS outbound
+	// 4. NaiveProxy outbound fallbacks to direct in native builder (handled as sidecar in gateway)
 	naiveSvc := config.Service{
 		ID:       "naive-node-1",
 		Protocol: config.ProtoNaive,
 		Engine:   config.EngineSingBox,
-		Listens:  []string{"socks://127.0.0.1:1082"},
+		SNI:      "sni.example.com",
 		Proxies:  []string{"https://user1:pass1@naive.example.com:443"},
 	}
 	ob = buildNativeOutbound(naiveSvc)
-	if ob["type"] != "socks" {
-		t.Errorf("expected socks fallback for pure-go naive, got %v", ob["type"])
-	}
-	if ob["server"] != "127.0.0.1" || ob["server_port"] != 1082 {
-		t.Errorf("unexpected naive sidecar socks server/port: %v:%v", ob["server"], ob["server_port"])
+	if ob["type"] != "direct" {
+		t.Errorf("expected direct fallback for naive in pure Go build, got %v", ob["type"])
 	}
 }

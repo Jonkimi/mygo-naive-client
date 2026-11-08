@@ -17,6 +17,17 @@ func TestProtocolDefaultEngines(t *testing.T) {
 		t.Errorf("naive EffectiveEngine() = %v, want %v", naiveSvc.EffectiveEngine(), EngineSidecar)
 	}
 
+	// Regression: ProtoNaive with EngineSingBox set in config must still resolve to EngineSidecar
+	// because embedded sing-box does not support naive without CGO with_naive_outbound.
+	naiveWithSingBoxEngine := Service{
+		Name:     "Naive SingBox Configured",
+		Protocol: ProtoNaive,
+		Engine:   EngineSingBox,
+	}
+	if naiveWithSingBoxEngine.EffectiveEngine() != EngineSidecar {
+		t.Errorf("naive with EngineSingBox EffectiveEngine() = %v, want %v", naiveWithSingBoxEngine.EffectiveEngine(), EngineSidecar)
+	}
+
 	// Legacy service with empty protocol should default to ProtoNaive and EngineSidecar
 	legacySvc := Service{
 		Name:    "Legacy Node",
