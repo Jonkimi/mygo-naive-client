@@ -25,22 +25,26 @@ const DefaultDownloadURL = "https://speed.cloudflare.com/__down?bytes=10000000"
 // Probe measures the round-trip latency through a local ListenEndpoint (socks or http)
 // to targetURL. If targetURL is empty, DefaultProbeURL is used.
 func Probe(ctx context.Context, ep config.ListenEndpoint, targetURL string) (time.Duration, error) {
-	if targetURL == "" {
-		targetURL = DefaultProbeURL
-	}
-	localAddr := ep.DialAddr()
-	start := time.Now()
-
 	transport, err := ProxyTransport(ep)
 	if err != nil {
 		// For redir protocol, fall back to a TCP handshake check on the local port.
-		conn, dialErr := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", localAddr)
+		start := time.Now()
+		conn, dialErr := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", ep.DialAddr())
 		if dialErr != nil {
 			return 0, dialErr
 		}
 		_ = conn.Close()
 		return time.Since(start), nil
 	}
+	return ProbeWithTransport(ctx, transport, targetURL)
+}
+
+// ProbeWithTransport measures the round-trip latency using a custom HTTP transport.
+func ProbeWithTransport(ctx context.Context, transport *http.Transport, targetURL string) (time.Duration, error) {
+	if targetURL == "" {
+		targetURL = DefaultProbeURL
+	}
+	start := time.Now()
 	defer transport.CloseIdleConnections()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, targetURL, nil)
@@ -69,12 +73,17 @@ func Probe(ctx context.Context, ep config.ListenEndpoint, targetURL string) (tim
 // MeasureDownloadSpeed downloads payload through the local ListenEndpoint (socks or http)
 // and returns the measured throughput in bytes/second.
 func MeasureDownloadSpeed(ctx context.Context, ep config.ListenEndpoint, targetURL string, onSample func(bytesPerSec float64)) (float64, error) {
-	if targetURL == "" {
-		targetURL = DefaultDownloadURL
-	}
 	transport, err := ProxyTransport(ep)
 	if err != nil {
 		return 0, err
+	}
+	return MeasureDownloadSpeedWithTransport(ctx, transport, targetURL, onSample)
+}
+
+// MeasureDownloadSpeedWithTransport measures download throughput using a custom HTTP transport.
+func MeasureDownloadSpeedWithTransport(ctx context.Context, transport *http.Transport, targetURL string, onSample func(bytesPerSec float64)) (float64, error) {
+	if targetURL == "" {
+		targetURL = DefaultDownloadURL
 	}
 	defer transport.CloseIdleConnections()
 

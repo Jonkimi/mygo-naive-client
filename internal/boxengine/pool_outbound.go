@@ -7,8 +7,10 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 
+	"naive-client/internal/blocker"
 	"naive-client/internal/telemetry"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -30,6 +32,7 @@ type PoolOutboundOptions struct {
 	FailureMonitor    *telemetry.FailureMonitor
 	NodeProvider      NodeProvider
 	OnTelemetryUpdate func()
+	Blocker           *blocker.Engine
 }
 
 // PoolOutbound implements sing-box adapter.Outbound to dynamically route traffic across node pools.
@@ -40,6 +43,7 @@ type PoolOutbound struct {
 	failureMonitor    *telemetry.FailureMonitor
 	provider          NodeProvider
 	onTelemetryUpdate func()
+	blocker           *blocker.Engine
 	mu                sync.RWMutex
 }
 
@@ -52,6 +56,7 @@ func NewPoolOutbound(opts PoolOutboundOptions) *PoolOutbound {
 		failureMonitor:    opts.FailureMonitor,
 		provider:          opts.NodeProvider,
 		onTelemetryUpdate: opts.OnTelemetryUpdate,
+		blocker:           opts.Blocker,
 	}
 }
 
@@ -154,6 +159,9 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 	candidates := p.provider.GetCandidates(tagKey)
 
 	targetHost := extractTargetHost(ctx, destination)
+	if p.blocker != nil && targetHost != "" && p.blocker.ShouldBlock(targetHost) {
+		return nil, syscall.EPERM
+	}
 	if len(candidates) == 0 {
 		err := fmt.Errorf("no active proxy candidates available for pool %s", tagKey)
 		if p.failureMonitor != nil {
@@ -268,6 +276,9 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	candidates := p.provider.GetCandidates(tagKey)
 
 	targetHost := extractTargetHost(ctx, destination)
+	if p.blocker != nil && targetHost != "" && p.blocker.ShouldBlock(targetHost) {
+		return nil, syscall.EPERM
+	}
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no active proxy candidates for UDP packet in pool %s", tagKey)
 	}

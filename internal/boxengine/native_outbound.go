@@ -1,6 +1,7 @@
 package boxengine
 
 import (
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -12,6 +13,14 @@ var buildNativeOutbound = BuildNativeOutbound
 
 // BuildNativeOutbound converts a config.Service into sing-box native outbound options.
 func BuildNativeOutbound(svc config.Service) map[string]any {
+	ob := buildNativeOutboundInner(svc)
+	if srv, ok := ob["server"].(string); ok && srv != "" && net.ParseIP(srv) == nil {
+		ob["domain_resolver"] = "bootstrap-dns"
+	}
+	return ob
+}
+
+func buildNativeOutboundInner(svc config.Service) map[string]any {
 	tag := "node-" + svc.ID
 
 	// Handle ExternalURI (e.g. socks5://user:pass@host:port or http://host:port)

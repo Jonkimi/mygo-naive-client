@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -65,9 +66,10 @@ type ruleEditorForm struct {
 	actionIndex   int // 0: PROXY_TAG, 1: PROXY_POOL, 2: DIRECT, 3: BLOCK
 	tag           string
 	tags          []string
-	tagQuery      string
-	domainsInput  string
-	cidrsInput    string
+	tagQuery         string
+	domainsInput     string
+	fullDomainsInput string
+	cidrsInput       string
 	keywordsInput string
 	geosites      []string
 	geoips        []string
@@ -351,6 +353,12 @@ func (a *app) initSubsystems() {
 			a.rebuildTrayMenu()
 		})
 	})
+	a.mgr.ServiceDialer = func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error) {
+		if a.gateway == nil {
+			return nil, errors.New("gateway engine is not running")
+		}
+		return a.gateway.DialNode(ctx, svc.ID, network, addr)
+	}
 	a.mgr.OnLog = func(id string) {
 		if a.win != nil {
 			a.win.Update(func() {
@@ -1229,6 +1237,7 @@ func (a *app) startGateway() error {
 		Tracker:               a.tracker,
 		FailureMonitor:        a.failureMonitor,
 		Blocker:               a.blocker,
+		BootstrapDomains:      a.collectBootstrapDomains(),
 		BootstrapDNS:          parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS),
 		DomesticDoH:           parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH),
 		RemoteDoH:             parseDNSList(a.effectiveRemoteDNS(), boxengine.DefaultRemoteDoH),
@@ -1318,6 +1327,9 @@ func (a *app) collectBootstrapDomains() []string {
 	}
 
 	for _, svc := range a.state.Services {
+		if svc.Server != "" {
+			add(svc.Server)
+		}
 		for _, p := range svc.Proxies {
 			if u, err := url.Parse(p); err == nil && u.Hostname() != "" {
 				add(u.Hostname())
@@ -1751,32 +1763,40 @@ func (a *app) gatewayConfigSignature() string {
 			Tags:        s.Tags,
 		}
 	}
+	var allocPorts map[string]int
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+	}
 	sigObj := struct {
-		Port        int
-		TrafficMode string
-		Svcs        []svcSig
-		Rules       []routing.Rule
-		Final       routing.RouteAction
-		HasSiteDB   bool
-		HasIPDB     bool
-		GeoTag      string
-		Bootstrap   string
-		Domestic    string
-		Remote      string
-		PreferIPv4  bool
+		Port           int
+		TrafficMode    string
+		Svcs           []svcSig
+		AllocatedPorts map[string]int
+		Rules          []routing.Rule
+		Final          routing.RouteAction
+		HasSiteDB      bool
+		HasIPDB        bool
+		GeoTag         string
+		BootstrapDomains []string
+		Bootstrap        string
+		Domestic       string
+		Remote         string
+		PreferIPv4     bool
 	}{
-		Port:        a.state.GatewayPort,
-		TrafficMode: a.state.TrafficMode,
-		Svcs:        svcs,
-		Rules:       a.state.RoutingRules,
-		Final:       a.state.RoutingFinal,
-		HasSiteDB:   a.cachedSiteDB != nil,
-		HasIPDB:     a.cachedIPDB != nil,
-		GeoTag:      a.localGeodataVersion,
-		Bootstrap:   a.state.BootstrapDNS,
-		Domestic:    a.effectiveDomesticDNS(),
-		Remote:      a.effectiveRemoteDNS(),
-		PreferIPv4:  a.state.PreferIPv4,
+		Port:           a.state.GatewayPort,
+		TrafficMode:    a.state.TrafficMode,
+		Svcs:           svcs,
+		AllocatedPorts: allocPorts,
+		Rules:          a.state.RoutingRules,
+		Final:          a.state.RoutingFinal,
+		HasSiteDB:      a.cachedSiteDB != nil,
+		HasIPDB:        a.cachedIPDB != nil,
+		GeoTag:         a.localGeodataVersion,
+		BootstrapDomains: a.collectBootstrapDomains(),
+		Bootstrap:        a.state.BootstrapDNS,
+		Domestic:       a.effectiveDomesticDNS(),
+		Remote:         a.effectiveRemoteDNS(),
+		PreferIPv4:     a.state.PreferIPv4,
 	}
 	return fmt.Sprintf("%#v", sigObj)
 }
@@ -1798,172 +1818,10 @@ func (a *app) syncRouter() {
 	}
 }
 
-func (a *app) dialThroughPool(ctx context.Context, target string) (net.Conn, string, error) {
-	host, _, err := net.SplitHostPort(target)
-	if err != nil {
-		host = target
-	}
 
-	// 1. Evaluate routing rules
-	var action routing.RouteAction
-	if a.router != nil {
-		act, _ := a.router.Match(target)
-		action = act
-	} else {
-		action = routing.RouteAction{Type: routing.ActionProxyPool}
-	}
 
-	// 2. Dispatch according to RouteAction
-	switch action.Type {
-	case routing.ActionBlock:
-		return nil, "", fmt.Errorf("connection to %s blocked by routing rules", target)
 
-	case routing.ActionDirect:
-		var d net.Dialer
-		network := "tcp"
-		if a.state.PreferIPv4 {
-			h, _, err := net.SplitHostPort(target)
-			if err != nil {
-				h = target
-			}
-			ip := net.ParseIP(h)
-			if ip == nil || ip.To4() != nil {
-				network = "tcp4"
-			}
-		}
-		conn, err := d.DialContext(ctx, network, target)
-		return conn, "direct", err
 
-	case routing.ActionProxyService:
-		if a.mgr != nil && action.ServiceID != "" {
-			for _, svc := range a.state.Services {
-				if svc.ID == action.ServiceID {
-					if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-						ep, err := svc.OutboundEndpoint()
-						if err != nil {
-							return nil, svc.ID, err
-						}
-						conn, err := runner.DialEndpoint(ctx, ep, target)
-						return conn, svc.ID, err
-					}
-					return nil, "", fmt.Errorf("proxy service %s is not running for %s", action.ServiceID, target)
-				}
-			}
-			return nil, "", fmt.Errorf("proxy service %s not found for %s", action.ServiceID, target)
-		}
-		return nil, "", fmt.Errorf("no proxy service specified for %s", target)
-
-	case routing.ActionProxyTag:
-		tags := action.GetTags()
-		if a.mgr != nil && len(tags) > 0 {
-			var tagSvcs []config.Service
-			var tagIDs []string
-			var stoppedTagSvcs []config.Service
-
-			for _, svc := range a.state.Services {
-				hasTag := false
-				for _, t := range svc.Tags {
-					for _, targetTag := range tags {
-						if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(targetTag)) {
-							hasTag = true
-							break
-						}
-					}
-					if hasTag {
-						break
-					}
-				}
-				if hasTag {
-					if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-						tagSvcs = append(tagSvcs, svc)
-						tagIDs = append(tagIDs, svc.ID)
-					} else {
-						stoppedTagSvcs = append(stoppedTagSvcs, svc)
-					}
-				}
-			}
-
-			// Decision 5 in ADR-0002: If no node under this tag is running, automatically launch on-demand
-			if len(tagSvcs) == 0 && len(stoppedTagSvcs) > 0 {
-				launchSvc := stoppedTagSvcs[0]
-				if err := a.mgr.Start(launchSvc); err == nil {
-					for retry := 0; retry < 20; retry++ {
-						if a.mgr.StatusOf(launchSvc.ID).State == runner.StateRunning {
-							tagSvcs = append(tagSvcs, launchSvc)
-							tagIDs = append(tagIDs, launchSvc.ID)
-							break
-						}
-						time.Sleep(50 * time.Millisecond)
-					}
-				}
-			}
-
-			if len(tagSvcs) > 0 {
-				bestID := tagIDs[0]
-				if a.tracker != nil {
-					if sel, ok := a.tracker.SelectBest(tagIDs, host); ok {
-						bestID = sel
-					}
-				}
-				for _, svc := range tagSvcs {
-					if svc.ID == bestID {
-						ep, err := svc.OutboundEndpoint()
-						if err != nil {
-							return nil, svc.ID, err
-						}
-						conn, err := runner.DialEndpoint(ctx, ep, target)
-						return conn, svc.ID, err
-					}
-				}
-			}
-			return nil, "", fmt.Errorf("no active proxy available for tag(s) %s for %s", strings.Join(tags, ","), target)
-		}
-		return nil, "", fmt.Errorf("no tag specified for proxy tag route for %s", target)
-	}
-
-	// 3. Fallback: Global active ProxyPool
-	var runningSvcs []config.Service
-	var runningIDs []string
-	if a.mgr != nil {
-		for _, svc := range a.state.Services {
-			st := a.mgr.StatusOf(svc.ID)
-			if st.State == runner.StateRunning {
-				runningSvcs = append(runningSvcs, svc)
-				runningIDs = append(runningIDs, svc.ID)
-			}
-		}
-	}
-
-	if len(runningSvcs) == 0 {
-		return nil, "", fmt.Errorf("no active proxy available in pool for %s", target)
-	}
-
-	bestID := runningIDs[0]
-	if a.tracker != nil {
-		if sel, ok := a.tracker.SelectBest(runningIDs, host); ok {
-			bestID = sel
-		}
-	}
-
-	var bestSvc *config.Service
-	for i := range runningSvcs {
-		if runningSvcs[i].ID == bestID {
-			bestSvc = &runningSvcs[i]
-			break
-		}
-	}
-	if bestSvc == nil {
-		bestSvc = &runningSvcs[0]
-	}
-
-	ep, err := bestSvc.OutboundEndpoint()
-	if err != nil {
-		return nil, bestSvc.ID, err
-	}
-
-	conn, err := runner.DialEndpoint(ctx, ep, target)
-	return conn, bestSvc.ID, err
-}
 
 func (a *app) blockerAsDNS() blocker.Blocker {
 	if a.blocker != nil {

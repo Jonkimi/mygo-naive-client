@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -405,7 +406,7 @@ func TestEngine_SidecarRouting(t *testing.T) {
 		t.Fatalf("read body failed: %v", err)
 	}
 	if string(body) != "served through sidecar" {
-		t.Errorf("unexpected body: %s", string(body))
+		t.Errorf("status: %s, unexpected body: %q", resp.Status, string(body))
 	}
 }
 
@@ -1235,6 +1236,190 @@ func TestEngine_FinalRouteProxyTagAndNoStaleNodeConcatenation(t *testing.T) {
 		t.Errorf("expected entry chain %q, got %q", "final -> PROXY_TAG:warp -> local_warp", entries[0].Chain)
 	}
 }
+
+// Tests that custom routing rules are prioritized ahead of preset rules in sing-box config.
+func TestEngine_RulePriorityCustomBeforePreset(t *testing.T) {
+	eng := &Engine{}
+	ctx := createBoxContext(context.Background(), eng)
+
+	opts := EngineOptions{
+		Rules: []routing.Rule{
+			// Preset rule placed first in slice
+			{
+				ID:           "preset-lan-direct",
+				Name:         "局域网直连",
+				Enabled:      true,
+				DomainSuffix: []string{"lan", "local"},
+				Action:       routing.RouteAction{Type: routing.ActionDirect},
+			},
+			{
+				ID:      "preset-cn-direct",
+				Name:    "大陆直连",
+				Enabled: true,
+				GeoSite: []string{"cn"},
+				Action:  routing.RouteAction{Type: routing.ActionDirect},
+			},
+			// Custom rule placed after preset rules
+			{
+				ID:           "custom-override-rule",
+				Name:         "Custom Rule Override",
+				Enabled:      true,
+				DomainSuffix: []string{"special.cn"},
+				DomainFull:   []string{"exact.special.cn"},
+				Action:       routing.RouteAction{Type: routing.ActionProxyPool},
+			},
+		},
+		FinalAction: "direct",
+	}
+
+	boxOpts, err := eng.buildConfig(ctx, opts, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+
+	if boxOpts.Route == nil {
+		t.Fatalf("expected Route options")
+	}
+
+	// Verify route rules: custom rule must appear before preset rules
+	var customIdx = -1
+	var presetIdx = -1
+	for i, r := range boxOpts.Route.Rules {
+		if slices.Contains(r.DefaultOptions.DomainSuffix, "special.cn") {
+			customIdx = i
+		}
+		if slices.Contains(r.DefaultOptions.DomainSuffix, "lan") {
+			presetIdx = i
+		}
+	}
+
+	if customIdx == -1 {
+		t.Fatalf("custom rule with special.cn not found in route rules")
+	}
+	if presetIdx == -1 {
+		t.Fatalf("preset rule with lan not found in route rules")
+	}
+	if customIdx >= presetIdx {
+		t.Fatalf("expected custom rule (index %d) before preset rule (index %d)", customIdx, presetIdx)
+	}
+
+	// Verify DomainFull is correctly included in the custom rule
+	rule := boxOpts.Route.Rules[customIdx]
+	if !slices.Contains(rule.DefaultOptions.Domain, "exact.special.cn") {
+		t.Fatalf("expected DomainFull 'exact.special.cn' in rule domain: %v", rule.DefaultOptions.Domain)
+	}
+}
+
+// Tests isolated sub-builders extracted from buildConfig (Item 13).
+func TestEngine_DecomposedConfigBuilders(t *testing.T) {
+	opts := EngineOptions{
+		TrafficMode: "tun",
+		TunAddresses: []string{"172.19.0.1/30"},
+		TunMTU: 1500,
+		Services: []config.Service{
+			{
+				ID: "sidecar-1",
+				Engine: config.EngineSidecar,
+				Tags: []string{"us", "fast"},
+				Server: "node1.example.com",
+			},
+			{
+				ID: "native-1",
+				Engine: config.EngineSingBox,
+				Tags: []string{"hk"},
+				Server: "node2.example.com",
+			},
+		},
+		BootstrapDNS: []string{"1.1.1.1"},
+		DomesticDoH:  []string{"https://dns.alidns.com/dns-query"},
+		RemoteDoH:    []string{"https://1.1.1.1/dns-query"},
+		Rules: []routing.Rule{
+			{
+				ID: "r1",
+				Enabled: true,
+				DomainSuffix: []string{"cn"},
+				Action: routing.RouteAction{Type: routing.ActionDirect},
+			},
+		},
+		FinalAction: "PROXY_TAG:hk",
+		TailnetMode: tailnet.ModeEmbedded,
+		TailnetConfig: &tailnet.Config{
+			AuthKey: "tskey-auth-xxx",
+			Hostname: "my-node",
+			ExposeMixedPort: true,
+		},
+		PreferIPv4: true,
+	}
+
+	// 1. Inbounds
+	inbounds := buildInboundsConfig(opts, "127.0.0.1", 10809)
+	if len(inbounds) < 3 { // mixed-in, tailnet-mixed-in, tun-in
+		t.Fatalf("expected at least 3 inbounds, got %d", len(inbounds))
+	}
+	if inbounds[0]["tag"] != "mixed-in" || inbounds[1]["tag"] != "tailnet-mixed-in" || inbounds[2]["tag"] != "tun-in" {
+		t.Errorf("unexpected inbound tags: %v", inbounds)
+	}
+
+	// 2. Outbounds
+	finalOutbound := resolveFinalOutbound(opts)
+	if finalOutbound != "PROXY_TAG:hk" {
+		t.Errorf("expected finalOutbound PROXY_TAG:hk, got %s", finalOutbound)
+	}
+	allocatedPorts := map[string]int{"sidecar-1": 10810}
+	outbounds := buildOutboundsConfig(opts, finalOutbound, allocatedPorts)
+	var foundSidecar, foundNative, foundTagHK bool
+	for _, ob := range outbounds {
+		tag, _ := ob["tag"].(string)
+		if tag == "node-sidecar-1" {
+			foundSidecar = true
+			if ob["server_port"] != 10810 {
+				t.Errorf("expected sidecar port 10810, got %v", ob["server_port"])
+			}
+		}
+		if tag == "node-native-1" {
+			foundNative = true
+		}
+		if tag == "PROXY_TAG:hk" {
+			foundTagHK = true
+		}
+	}
+	if !foundSidecar || !foundNative || !foundTagHK {
+		t.Errorf("missing outbounds: sidecar=%v, native=%v, tagHK=%v", foundSidecar, foundNative, foundTagHK)
+	}
+
+	// 3. Endpoints
+	endpoints := buildEndpointsConfig(opts)
+	if len(endpoints) != 1 || endpoints[0]["tag"] != "tailscale-ep" {
+		t.Fatalf("expected tailscale-ep endpoint, got: %v", endpoints)
+	}
+	if endpoints[0]["domain_resolver"] != "bootstrap-dns" {
+		t.Errorf("expected domain_resolver bootstrap-dns, got: %v", endpoints[0]["domain_resolver"])
+	}
+
+	// 4. DNS
+	allBootstrapDomains := collectAllBootstrapDomains(opts)
+	if !slices.Contains(allBootstrapDomains, "node1.example.com") || !slices.Contains(allBootstrapDomains, "node2.example.com") {
+		t.Errorf("missing node server in bootstrap domains: %v", allBootstrapDomains)
+	}
+	dnsMap := buildDNSConfig(opts, finalOutbound, allBootstrapDomains)
+	if dnsMap["strategy"] != "prefer_ipv4" {
+		t.Errorf("expected prefer_ipv4 strategy, got %v", dnsMap["strategy"])
+	}
+	if dnsMap["final"] != "remote-doh" {
+		t.Errorf("expected dns final remote-doh, got %v", dnsMap["final"])
+	}
+
+	// 5. Route
+	routeMap := buildRouteConfig(opts, finalOutbound, allBootstrapDomains)
+	if routeMap["final"] != "PROXY_TAG:hk" {
+		t.Errorf("expected route final PROXY_TAG:hk, got %v", routeMap["final"])
+	}
+	rules, ok := routeMap["rules"].([]map[string]any)
+	if !ok || len(rules) == 0 {
+		t.Fatalf("expected non-empty rules in route map")
+	}
+}
+
 
 
 

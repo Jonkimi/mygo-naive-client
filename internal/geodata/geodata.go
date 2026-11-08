@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"regexp"
 	"strings"
 )
 
@@ -108,6 +109,7 @@ type siteTagIndex struct {
 	exact    map[string]struct{}
 	suffix   map[string]struct{}
 	keywords []string
+	regexes  []string
 }
 
 type GeoSiteDB struct {
@@ -183,17 +185,28 @@ func (db *GeoSiteDB) TagRuleCount(tag string) int {
 	if !ok {
 		return 0
 	}
-	return len(idx.exact) + len(idx.suffix) + len(idx.keywords)
+	return len(idx.exact) + len(idx.suffix) + len(idx.keywords) + len(idx.regexes)
 }
+
+// DomainType classifies the rule matching behavior per V2Ray/Loyalsoldier proto3 spec.
+type DomainType int
+
+const (
+	DomainTypePlain  DomainType = 0 // Plain / Keyword (proto3 default when field 1 is omitted)
+	DomainTypeRegex  DomainType = 1 // Regular expression
+	DomainTypeSuffix DomainType = 2 // Domain suffix / Root domain
+	DomainTypeFull   DomainType = 3 // Full / Exact match
+)
 
 // DomainTagEntry represents a domain entry extracted from GeoSite database.
 type DomainTagEntry struct {
 	Value  string
+	Type   DomainType
 	IsFull bool
 }
 
 // ForEachTagEntry iterates over all domain entries for the specified tag/category without slice allocation.
-func (db *GeoSiteDB) ForEachTagEntry(tag string, fn func(val string, isFull bool)) {
+func (db *GeoSiteDB) ForEachTagEntry(tag string, fn func(val string, typ DomainType)) {
 	if db == nil || fn == nil {
 		return
 	}
@@ -202,13 +215,16 @@ func (db *GeoSiteDB) ForEachTagEntry(tag string, fn func(val string, isFull bool
 		return
 	}
 	for d := range idx.exact {
-		fn(d, true)
+		fn(d, DomainTypeFull)
 	}
 	for d := range idx.suffix {
-		fn(d, false)
+		fn(d, DomainTypeSuffix)
 	}
 	for _, kw := range idx.keywords {
-		fn(kw, false)
+		fn(kw, DomainTypePlain)
+	}
+	for _, rg := range idx.regexes {
+		fn(rg, DomainTypeRegex)
 	}
 }
 
@@ -221,15 +237,18 @@ func (db *GeoSiteDB) TagEntries(tag string) []DomainTagEntry {
 	if !ok {
 		return nil
 	}
-	res := make([]DomainTagEntry, 0, len(idx.exact)+len(idx.suffix)+len(idx.keywords))
+	res := make([]DomainTagEntry, 0, len(idx.exact)+len(idx.suffix)+len(idx.keywords)+len(idx.regexes))
 	for d := range idx.exact {
-		res = append(res, DomainTagEntry{Value: d, IsFull: true})
+		res = append(res, DomainTagEntry{Value: d, Type: DomainTypeFull, IsFull: true})
 	}
 	for d := range idx.suffix {
-		res = append(res, DomainTagEntry{Value: d, IsFull: false})
+		res = append(res, DomainTagEntry{Value: d, Type: DomainTypeSuffix, IsFull: false})
 	}
 	for _, kw := range idx.keywords {
-		res = append(res, DomainTagEntry{Value: kw, IsFull: false})
+		res = append(res, DomainTagEntry{Value: kw, Type: DomainTypePlain, IsFull: false})
+	}
+	for _, rg := range idx.regexes {
+		res = append(res, DomainTagEntry{Value: rg, Type: DomainTypeRegex, IsFull: false})
 	}
 	return res
 }
@@ -266,6 +285,13 @@ func (db *GeoSiteDB) MatchDomain(tag string, domain string) bool {
 	// 3. Keyword match
 	for _, kw := range idx.keywords {
 		if strings.Contains(domain, kw) {
+			return true
+		}
+	}
+
+	// 4. Regex match
+	for _, rg := range idx.regexes {
+		if matched, _ := regexp.MatchString(rg, domain); matched {
 			return true
 		}
 	}
@@ -783,7 +809,7 @@ func LoadGeoSite(r io.Reader, requestedTags []string) (*GeoSiteDB, error) {
 }
 
 func inspectDomainMessage(b []byte) (typ int, val []byte) {
-	typ = 2 // default domain suffix
+	typ = 0 // Protobuf3 default for enum field 1 (Type) is Plain (0). Wire format omits field when 0.
 	offset := 0
 	for offset < len(b) {
 		header, err := readVarint(b, &offset)
@@ -817,7 +843,7 @@ func inspectDomainMessage(b []byte) (typ int, val []byte) {
 
 func parseGeoSiteEntry(countryCode string, b []byte, filter map[string]bool, db *GeoSiteDB) {
 	// Pass 1: count domain types and total string bytes for single-slab string arena + exact-sized maps
-	var exactCount, suffixCount, kwCount, totalStrBytes int
+	var exactCount, suffixCount, kwCount, regexCount, totalStrBytes int
 	offset := 0
 	for offset < len(b) {
 		header, err := readVarint(b, &offset)
@@ -848,6 +874,10 @@ func parseGeoSiteEntry(countryCode string, b []byte, filter map[string]bool, db 
 				switch typ {
 				case 3:
 					exactCount++
+				case 2:
+					suffixCount++
+				case 1:
+					regexCount++
 				case 0:
 					kwCount++
 				default:
@@ -861,7 +891,7 @@ func parseGeoSiteEntry(countryCode string, b []byte, filter map[string]bool, db 
 		}
 	}
 
-	if countryCode == "" || (len(filter) > 0 && !filter[countryCode]) || (exactCount+suffixCount+kwCount) == 0 {
+	if countryCode == "" || (len(filter) > 0 && !filter[countryCode]) || (exactCount+suffixCount+kwCount+regexCount) == 0 {
 		return
 	}
 
@@ -899,6 +929,7 @@ func parseGeoSiteEntry(countryCode string, b []byte, filter map[string]bool, db 
 			exact:    make(map[string]struct{}, exactCount),
 			suffix:   make(map[string]struct{}, suffixCount),
 			keywords: make([]string, 0, kwCount),
+			regexes:  make([]string, 0, regexCount),
 		}
 	}
 
@@ -924,6 +955,10 @@ func parseGeoSiteEntry(countryCode string, b []byte, filter map[string]bool, db 
 				switch typ {
 				case 3:
 					idx.exact[dom] = struct{}{}
+				case 2:
+					idx.suffix[dom] = struct{}{}
+				case 1:
+					idx.regexes = append(idx.regexes, dom)
 				case 0:
 					idx.keywords = append(idx.keywords, dom)
 				default:

@@ -266,6 +266,15 @@ func (e *Engine) Match(domain string) (blocked bool, rule string) {
 	return blocked, rule
 }
 
+// ShouldBlock reports whether the domain matches any blocking rule.
+func (e *Engine) ShouldBlock(domain string) bool {
+	if e == nil {
+		return false
+	}
+	blocked, _ := e.Match(domain)
+	return blocked
+}
+
 // Evaluate evaluates a domain and returns (blocked, rule, verdict).
 func (e *Engine) Evaluate(domain string) (blocked bool, rule string, verdict Verdict) {
 	d := normalizeDomain(domain)

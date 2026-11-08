@@ -23,7 +23,7 @@ func BuildRuleSets(siteDB *GeoSiteDB, ipDB *GeoIPDB, siteTags []string, ipTags [
 		seenSite[clean] = true
 		tagKey := "geosite-" + strings.ToLower(clean)
 
-		var exactList, suffixList, keywordList []string
+		var exactList, suffixList, keywordList, regexList []string
 		if siteDB != nil {
 			if idx, ok := siteDB.indices[clean]; ok && idx != nil {
 				for k := range idx.exact {
@@ -40,17 +40,23 @@ func BuildRuleSets(siteDB *GeoSiteDB, ipDB *GeoIPDB, siteTags []string, ipTags [
 					keywordList = append(keywordList, idx.keywords...)
 					sort.Strings(keywordList)
 				}
+
+				if len(idx.regexes) > 0 {
+					regexList = append(regexList, idx.regexes...)
+					sort.Strings(regexList)
+				}
 			}
 		}
 
 		var headlessRules []option.HeadlessRule
-		if len(exactList) > 0 || len(suffixList) > 0 || len(keywordList) > 0 {
+		if len(exactList) > 0 || len(suffixList) > 0 || len(keywordList) > 0 || len(regexList) > 0 {
 			headlessRules = append(headlessRules, option.HeadlessRule{
 				Type: C.RuleTypeDefault,
 				DefaultOptions: option.DefaultHeadlessRule{
 					Domain:        badoption.Listable[string](exactList),
 					DomainSuffix:  badoption.Listable[string](suffixList),
 					DomainKeyword: badoption.Listable[string](keywordList),
+					DomainRegex:   badoption.Listable[string](regexList),
 				},
 			})
 		} else {

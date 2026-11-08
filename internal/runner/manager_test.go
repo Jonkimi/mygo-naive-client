@@ -263,3 +263,94 @@ func TestManager_OnServiceStartedAndProbeCallbacks(t *testing.T) {
 	}
 	failedMu.Unlock()
 }
+
+// Tests that EngineSingBox services run without child processes and delegate probing/download tests to ServiceDialer.
+func TestManager_EngineSingBoxLifecycleAndProbing(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	testServerURL := fmt.Sprintf("http://127.0.0.1:%d/probe", ln.Addr().(*net.TCPAddr).Port)
+	downloadServerURL := fmt.Sprintf("http://127.0.0.1:%d/download", ln.Addr().(*net.TCPAddr).Port)
+
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 1024)
+				n, _ := conn.Read(buf)
+				reqStr := string(buf[:n])
+				if strings.Contains(reqStr, "HEAD /probe") {
+					_, _ = conn.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))
+				} else if strings.Contains(reqStr, "GET /download") {
+					payload := strings.Repeat("0123456789abcdef", 8192) // 128KB
+					resp := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(payload), payload)
+					_, _ = conn.Write([]byte(resp))
+				}
+			}(c)
+		}
+	}()
+
+	dir := t.TempDir()
+	mgr := NewManager("/nonexistent/bin/naive", dir, nil)
+
+	svc := config.Service{
+		ID:         "singbox-node-1",
+		Name:       "SingBox VLESS Node",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSingBox,
+		Server:     "vless.example.com",
+		ServerPort: 443,
+		UUID:       "00000000-0000-0000-0000-000000000001",
+	}
+
+	// 1. Start: should immediately be running without needing any external binary
+	if err := mgr.Start(svc); err != nil {
+		t.Fatalf("Start EngineSingBox failed: %v", err)
+	}
+	if mgr.StatusOf(svc.ID).State != StateRunning {
+		t.Fatalf("expected StateRunning, got %v", mgr.StatusOf(svc.ID).State)
+	}
+
+	// 2. Setup ServiceDialer
+	dialerCalled := false
+	mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		if s.ID == svc.ID {
+			dialerCalled = true
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", ln.Addr().String())
+	}
+
+	// 3. ProbeServiceCtx delegates to ServiceDialer
+	rtt, err := mgr.ProbeServiceCtx(context.Background(), svc, testServerURL)
+	if err != nil {
+		t.Fatalf("ProbeServiceCtx failed: %v", err)
+	}
+	if !dialerCalled || rtt <= 0 {
+		t.Fatalf("expected dialer called and positive rtt, got dialerCalled=%v, rtt=%v", dialerCalled, rtt)
+	}
+
+	// 4. DownloadTestServiceCtx delegates to ServiceDialer
+	bps, err := mgr.DownloadTestServiceCtx(context.Background(), svc, downloadServerURL)
+	if err != nil {
+		t.Fatalf("DownloadTestServiceCtx failed: %v", err)
+	}
+	if bps <= 0 {
+		t.Fatalf("expected positive bps, got %v", bps)
+	}
+
+	// 5. Stop
+	if err := mgr.Stop(svc.ID); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if mgr.StatusOf(svc.ID).State != StateStopped {
+		t.Fatalf("expected StateStopped, got %v", mgr.StatusOf(svc.ID).State)
+	}
+}

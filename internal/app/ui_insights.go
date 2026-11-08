@@ -106,7 +106,10 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 				// 3. Top-10 Blocked & Allowed Rankings
 				a.renderInsightsTopDomains(c, p)
 
-				// 4. Live Query Log
+				// 4. Failed Requests (FailureMonitor)
+				a.renderInsightsFailures(c, p)
+
+				// 5. Live Query Log
 				a.renderInsightsQueryLogs(c, p)
 			})
 		})
@@ -669,4 +672,96 @@ func ternaryColor(cond bool, a, b ui.Color) ui.Color {
 		return a
 	}
 	return b
+}
+
+func (a *app) openCreateRuleDialogWithTarget(target string, recommendedAction string) {
+	actionIdx := 1 // PROXY_POOL by default
+	if recommendedAction == "DIRECT" {
+		actionIdx = 2
+	} else if recommendedAction == "BLOCK" {
+		actionIdx = 3
+	}
+	a.activeTab = TabRouting
+	a.ruleEditor = ruleEditorForm{
+		open:         true,
+		isNew:        true,
+		ruleID:       fmt.Sprintf("rule-%d", len(a.state.RoutingRules)+1),
+		name:         "分流修复: " + target,
+		actionIndex:  actionIdx,
+		domainsInput: target,
+		tab:          1, // Custom domains tab
+	}
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+}
+
+func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
+	if a.failureMonitor == nil {
+		return
+	}
+	failures := a.failureMonitor.List()
+	if len(failures) == 0 {
+		return
+	}
+	white := ui.RGB(255, 255, 255)
+
+	ui.Column(c.Key("insights-failures-card")).
+		Padding(12, 14, 12, 14).Radius(8).
+		Background(p.card).Border(1, p.borderSubtle).Gap(8).
+		Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Text(c, "异常连接与分流诊断").FontSize(12).FontWeight(600).TextColor(p.text)
+					tagPill(c, fmt.Sprintf("%d 项异常", len(failures)), p.red, p.redBg)
+				})
+			})
+
+			for _, f := range failures {
+				item := f
+				ui.Row(c.Key("failure-item-" + item.Target)).
+					AlignItems(ui.Center).Justify(ui.SpaceBetween).
+					Padding(6, 8, 6, 8).Radius(6).
+					Background(p.surface).Border(1, p.borderSubtle).
+					Children(func() {
+						ui.Column(c).Gap(2).Grow(1).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+								ui.Text(c, item.Target).FontSize(11).FontWeight(600).TextColor(p.text)
+								tagPill(c, string(item.Category), p.amber, p.amberBg)
+								ui.Text(c, fmt.Sprintf("失败 %d 次", item.FailCount)).FontSize(10).TextColor(p.textDim)
+							})
+							if item.LastError != "" {
+								ui.Text(c, item.LastError).FontSize(10).TextColor(p.textDim).NoWrap()
+							}
+						})
+
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+							btnFix := ui.ButtonBase(c.Key("btn-fix-" + item.Target)).
+								Label("btn-fix-" + item.Target).
+								Padding(4, 8, 4, 8).Radius(4).
+								Background(p.accent).
+								Children(func() {
+									ui.Text(c, "快速分流").FontSize(10).FontWeight(600).TextColor(white)
+								})
+							if btnFix.Clicked() {
+								a.openCreateRuleDialogWithTarget(item.Target, item.RecommendedAction)
+							}
+
+							btnResolve := ui.ButtonBase(c.Key("btn-resolve-" + item.Target)).
+								Label("btn-resolve-" + item.Target).
+								Padding(4, 8, 4, 8).Radius(4).
+								Background(p.elevated).Border(1, p.borderSubtle).
+								Children(func() {
+									ui.Text(c, "忽略").FontSize(10).TextColor(p.textDim)
+								})
+							if btnResolve.Clicked() {
+								a.failureMonitor.Resolve(item.Target)
+								if a.win != nil {
+									a.win.Invalidate()
+								}
+							}
+						})
+					})
+			}
+		})
 }

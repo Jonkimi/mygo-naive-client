@@ -264,6 +264,20 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 								})
 							}
 
+							// Domain Full
+							if len(targetRule.DomainFull) > 0 {
+								hasAnyCriteria = true
+								ui.Column(c).Gap(4).Children(func() {
+									ui.Text(c, fmt.Sprintf("完整域名 (%d)", len(targetRule.DomainFull))).
+										FontSize(12).FontWeight(600).TextColor(p.text)
+									ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+										for _, d := range targetRule.DomainFull {
+											tagPill(c, d, p.textMuted, p.surface)
+										}
+									})
+								})
+							}
+
 							// Domain Suffix
 							if len(targetRule.DomainSuffix) > 0 {
 								hasAnyCriteria = true

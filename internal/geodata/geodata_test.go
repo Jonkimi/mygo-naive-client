@@ -182,3 +182,108 @@ func TestLoadGeoData_EmptyRequestedTagsLoadsNothing(t *testing.T) {
 		t.Fatalf("expected empty requestedTags to load no GeoSite entries")
 	}
 }
+
+// Tests that GeoSite correctly decodes Plain (keyword with omitted proto3 type field 1), Regex (type 1),
+// Suffix (type 2), and Full (type 3), and verifies sing-box RuleSet bridge output.
+func TestGeoSite_DomainTypesAndProtobufOmission(t *testing.T) {
+	// Rule 1: Plain / Keyword (type = 0). In proto3, field 1 is omitted when value is 0!
+	var plainMsg []byte
+	plainMsg = append(plainMsg, encodeBytesField(2, []byte("keyword-target"))...) // field 1 omitted!
+
+	// Rule 2: Regex (type = 1).
+	var regexMsg []byte
+	regexMsg = append(regexMsg, encodeVarintField(1, 1)...)
+	regexMsg = append(regexMsg, encodeBytesField(2, []byte(`^ad[sx]?[0-9]*\.example\.com$`))...)
+
+	// Rule 3: RootDomain / Suffix (type = 2).
+	var suffixMsg []byte
+	suffixMsg = append(suffixMsg, encodeVarintField(1, 2)...)
+	suffixMsg = append(suffixMsg, encodeBytesField(2, []byte("suffix.org"))...)
+
+	// Rule 4: Full (type = 3).
+	var fullMsg []byte
+	fullMsg = append(fullMsg, encodeVarintField(1, 3)...)
+	fullMsg = append(fullMsg, encodeBytesField(2, []byte("exact.full.net"))...)
+
+	var entryTest []byte
+	entryTest = append(entryTest, encodeBytesField(1, []byte("TEST-TAG"))...)
+	entryTest = append(entryTest, encodeBytesField(2, plainMsg)...)
+	entryTest = append(entryTest, encodeBytesField(2, regexMsg)...)
+	entryTest = append(entryTest, encodeBytesField(2, suffixMsg)...)
+	entryTest = append(entryTest, encodeBytesField(2, fullMsg)...)
+
+	geoSiteList := encodeBytesField(1, entryTest)
+
+	db, err := LoadGeoSite(bytes.NewReader(geoSiteList), []string{"TEST-TAG"})
+	if err != nil {
+		t.Fatalf("LoadGeoSite: %v", err)
+	}
+
+	// 1. Plain match
+	if !db.MatchDomain("TEST-TAG", "foo.my-keyword-target-domain.com") {
+		t.Errorf("expected plain keyword match for omitted field 1")
+	}
+	// 2. Regex match
+	if !db.MatchDomain("TEST-TAG", "ads123.example.com") {
+		t.Errorf("expected regex match for ads123.example.com")
+	}
+	if db.MatchDomain("TEST-TAG", "not-ad.example.com") {
+		t.Errorf("regex should not match not-ad.example.com")
+	}
+	// 3. Suffix match
+	if !db.MatchDomain("TEST-TAG", "sub.suffix.org") {
+		t.Errorf("expected suffix match for sub.suffix.org")
+	}
+	// 4. Full match
+	if !db.MatchDomain("TEST-TAG", "exact.full.net") {
+		t.Errorf("expected full match for exact.full.net")
+	}
+	if db.MatchDomain("TEST-TAG", "sub.exact.full.net") {
+		t.Errorf("full match should not match subdomains")
+	}
+
+	// 5. Test TagEntries & ForEachTagEntry
+	entries := db.TagEntries("TEST-TAG")
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 entries, got %d", len(entries))
+	}
+	typeCount := make(map[DomainType]int)
+	for _, e := range entries {
+		typeCount[e.Type]++
+	}
+	if typeCount[DomainTypePlain] != 1 {
+		t.Errorf("expected 1 Plain entry, got %d", typeCount[DomainTypePlain])
+	}
+	if typeCount[DomainTypeRegex] != 1 {
+		t.Errorf("expected 1 Regex entry, got %d", typeCount[DomainTypeRegex])
+	}
+	if typeCount[DomainTypeSuffix] != 1 {
+		t.Errorf("expected 1 Suffix entry, got %d", typeCount[DomainTypeSuffix])
+	}
+	if typeCount[DomainTypeFull] != 1 {
+		t.Errorf("expected 1 Full entry, got %d", typeCount[DomainTypeFull])
+	}
+
+	// 6. Test BuildRuleSets sing-box bridge
+	rsets := BuildRuleSets(db, nil, []string{"TEST-TAG"}, nil)
+	if len(rsets) != 1 {
+		t.Fatalf("expected 1 RuleSet, got %d", len(rsets))
+	}
+	plainRules := rsets[0].InlineOptions.Rules
+	if len(plainRules) != 1 {
+		t.Fatalf("expected 1 HeadlessRule, got %d", len(plainRules))
+	}
+	def := plainRules[0].DefaultOptions
+	if len(def.DomainKeyword) != 1 || def.DomainKeyword[0] != "keyword-target" {
+		t.Errorf("DomainKeyword mismatch: %v", def.DomainKeyword)
+	}
+	if len(def.DomainRegex) != 1 || def.DomainRegex[0] != `^ad[sx]?[0-9]*\.example\.com$` {
+		t.Errorf("DomainRegex mismatch: %v", def.DomainRegex)
+	}
+	if len(def.DomainSuffix) != 1 || def.DomainSuffix[0] != "suffix.org" {
+		t.Errorf("DomainSuffix mismatch: %v", def.DomainSuffix)
+	}
+	if len(def.Domain) != 1 || def.Domain[0] != "exact.full.net" {
+		t.Errorf("Domain mismatch: %v", def.Domain)
+	}
+}

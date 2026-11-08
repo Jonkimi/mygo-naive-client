@@ -69,11 +69,9 @@ func (r *Router) SetGeoData(ipDB *geodata.GeoIPDB, siteDB *geodata.GeoSiteDB) {
 	r.geoSite = siteDB
 }
 
-func NewRouter(rules []Rule, finalAction RouteAction) *Router {
-	if finalAction.Type == "" {
-		finalAction = RouteAction{Type: ActionProxyPool}
-	}
-	// Custom rules evaluate with higher priority before preset rules
+// PrioritizedRules returns a slice of rules where custom rules (non-preset) are ordered
+// before preset rules, ensuring custom rules evaluate with higher priority across all engines.
+func PrioritizedRules(rules []Rule) []Rule {
 	var ordered []Rule
 	for _, r := range rules {
 		if !strings.HasPrefix(r.ID, "preset-") {
@@ -85,6 +83,14 @@ func NewRouter(rules []Rule, finalAction RouteAction) *Router {
 			ordered = append(ordered, r)
 		}
 	}
+	return ordered
+}
+
+func NewRouter(rules []Rule, finalAction RouteAction) *Router {
+	if finalAction.Type == "" {
+		finalAction = RouteAction{Type: ActionProxyPool}
+	}
+	ordered := PrioritizedRules(rules)
 	r := &Router{
 		rules:       ordered,
 		finalAction: finalAction,

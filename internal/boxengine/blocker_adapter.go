@@ -1,21 +1,22 @@
 package boxengine
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"strings"
-	"sync"
+	"syscall"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/telemetry"
 
 	mDNS "github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/sniff"
 	boxDNS "github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-tun"
+	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 )
@@ -23,6 +24,7 @@ import (
 type blockerTransportRegistry struct {
 	underlying adapter.DNSTransportRegistry
 	blocker    *blocker.Engine
+	fm         *telemetry.FailureMonitor
 }
 
 func (r *blockerTransportRegistry) OptionTypes() []string {
@@ -38,18 +40,20 @@ func (r *blockerTransportRegistry) CreateDNSTransport(ctx context.Context, logge
 	if err != nil {
 		return nil, err
 	}
-	if r.blocker == nil {
+	if r.blocker == nil && r.fm == nil {
 		return tr, nil
 	}
 	return &blockerDNSTransport{
 		underlying: tr,
 		blocker:    r.blocker,
+		fm:         r.fm,
 	}, nil
 }
 
 type blockerDNSTransport struct {
 	underlying adapter.DNSTransport
 	blocker    *blocker.Engine
+	fm         *telemetry.FailureMonitor
 }
 
 func (t *blockerDNSTransport) Type() string {
@@ -101,7 +105,17 @@ func (t *blockerDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (
 			return resp, nil
 		}
 	}
-	return t.underlying.Exchange(ctx, message)
+	resp, err := t.underlying.Exchange(ctx, message)
+	if err != nil && t.fm != nil && len(message.Question) > 0 {
+		domain := strings.Trim(message.Question[0].Name, ".")
+		t.fm.Record(telemetry.FailureEvent{
+			Category:       telemetry.FailureDNS,
+			Target:         domain,
+			OriginalAction: "dns",
+			Error:          err,
+		})
+	}
+	return resp, err
 }
 
 func (t *blockerDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
@@ -112,7 +126,109 @@ func (t *blockerDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.M
 			return
 		}
 	}
-	t.underlying.ExchangeAsync(ctx, message, callback)
+	t.underlying.ExchangeAsync(ctx, message, func(resp *mDNS.Msg, err error) {
+		if err != nil && t.fm != nil && len(message.Question) > 0 {
+			domain := strings.Trim(message.Question[0].Name, ".")
+			t.fm.Record(telemetry.FailureEvent{
+				Category:       telemetry.FailureDNS,
+				Target:         domain,
+				OriginalAction: "dns",
+				Error:          err,
+			})
+		}
+		callback(resp, err)
+	})
+}
+
+// blockerOutbound wraps an outbound to intercept blocked connections before dialing remote.
+type blockerOutbound struct {
+	adapter.Outbound
+	blocker *blocker.Engine
+	fm      *telemetry.FailureMonitor
+}
+
+func (o *blockerOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if o.blocker != nil {
+		host := destination.Fqdn
+		if host == "" && destination.Addr.IsValid() {
+			host = destination.Addr.String()
+		}
+		if host != "" && o.blocker.ShouldBlock(host) {
+			return nil, syscall.EPERM
+		}
+	}
+	conn, err := o.Outbound.DialContext(ctx, network, destination)
+	if err != nil && o.fm != nil && !errors.Is(err, syscall.EPERM) && o.Outbound.Tag() == "direct" {
+		host := destination.Fqdn
+		if host == "" && destination.Addr.IsValid() {
+			host = destination.Addr.String()
+		}
+		o.fm.Record(telemetry.FailureEvent{
+			Category:       telemetry.FailureDirect,
+			Target:         host,
+			Port:           destination.Port,
+			OriginalAction: "direct",
+			Error:          err,
+		})
+	}
+	return conn, err
+}
+
+func (o *blockerOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if o.blocker != nil {
+		host := destination.Fqdn
+		if host == "" && destination.Addr.IsValid() {
+			host = destination.Addr.String()
+		}
+		if host != "" && o.blocker.ShouldBlock(host) {
+			return nil, syscall.EPERM
+		}
+	}
+	return o.Outbound.ListenPacket(ctx, destination)
+}
+
+type rejectOutbound struct {
+	adapter.Outbound
+}
+
+func (o *rejectOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return nil, syscall.ECONNREFUSED
+}
+
+func (o *rejectOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, syscall.ECONNREFUSED
+}
+
+type blockerOutboundRegistry struct {
+	underlying adapter.OutboundRegistry
+	blocker    *blocker.Engine
+	fm         *telemetry.FailureMonitor
+}
+
+func (r *blockerOutboundRegistry) OptionTypes() []string {
+	return r.underlying.OptionTypes()
+}
+
+func (r *blockerOutboundRegistry) CreateOptions(outboundType string) (any, bool) {
+	return r.underlying.CreateOptions(outboundType)
+}
+
+func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) (adapter.Outbound, error) {
+	ob, err := r.underlying.CreateOutbound(ctx, router, logger, tag, outboundType, options)
+	if err != nil {
+		return nil, err
+	}
+	if tag == "block" || outboundType == "block" {
+		return &rejectOutbound{Outbound: ob}, nil
+	}
+	if r.blocker == nil && r.fm == nil {
+		return ob, nil
+	}
+	return &blockerOutbound{
+		Outbound: ob,
+		blocker:  r.blocker,
+		fm:       r.fm,
+	}, nil
 }
 
 // BlockerConnectionTracker intercepts routed connections and logs/blocks based on blocker rules.
@@ -122,7 +238,19 @@ type BlockerConnectionTracker struct {
 }
 
 func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
+	isBlockOutbound := matchOutbound != nil && matchOutbound.Tag() == "block"
 	blocked, rule, verdict := t.blocker.Evaluate(target)
+	if isBlockOutbound {
+		blocked = true
+		verdict = blocker.VerdictBlocked
+		if rule == "" {
+			if matchedRule != nil {
+				rule = formatRouteRule(matchedRule)
+			} else {
+				rule = "routing:block"
+			}
+		}
+	}
 	chain := formatGatewayChain(target, matchedRule, matchOutbound, blocked, rule, t.nodeNameResolver)
 	if t.blocker.Logger() != nil {
 		t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
@@ -130,97 +258,32 @@ func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule a
 	return blocked
 }
 
-type sniffingConn struct {
-	net.Conn
-	tracker       *BlockerConnectionTracker
-	matchedRule   adapter.Rule
-	matchOutbound adapter.Outbound
-	fallbackAddr  string
-	once          sync.Once
-}
-
-func (c *sniffingConn) Read(p []byte) (int, error) {
-	n, err := c.Conn.Read(p)
-	if n > 0 {
-		c.once.Do(func() {
-			var meta adapter.InboundContext
-			// 1. Try sniffing TLS ClientHello for SNI domain
-			if sErr := sniff.TLSClientHello(context.Background(), &meta, bytes.NewReader(p[:n])); sErr == nil && meta.Domain != "" {
-				target := strings.Trim(strings.ToLower(meta.Domain), ".")
-				if c.tracker.recordConnection(target, c.matchedRule, c.matchOutbound) {
-					_ = c.Conn.Close()
-				}
-				return
-			}
-			// 2. Try sniffing HTTP Host
-			if sErr := sniff.HTTPHost(context.Background(), &meta, bytes.NewReader(p[:n])); sErr == nil && meta.Domain != "" {
-				target := strings.Trim(strings.ToLower(meta.Domain), ".")
-				if c.tracker.recordConnection(target, c.matchedRule, c.matchOutbound) {
-					_ = c.Conn.Close()
-				}
-				return
-			}
-			// 3. Fallback to destination IP address
-			if c.fallbackAddr != "" {
-				if c.tracker.recordConnection(c.fallbackAddr, c.matchedRule, c.matchOutbound) {
-					_ = c.Conn.Close()
-				}
-			}
-		})
-	}
-	return n, err
-}
-
-func (c *sniffingConn) Close() error {
-	c.once.Do(func() {
-		if c.fallbackAddr != "" {
-			c.tracker.recordConnection(c.fallbackAddr, c.matchedRule, c.matchOutbound)
-		}
-	})
-	return c.Conn.Close()
-}
-
 func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
 	if t.blocker == nil {
 		return conn
 	}
-	// 1. If domain is already present in metadata (e.g. SOCKS5 domain, HTTP CONNECT domain, or TUN sniffed domain)
 	target := extractDomainFromMetadata(metadata)
+	if target == "" && metadata.Destination.Addr.IsValid() {
+		if dnsRouter := service.FromContext[adapter.DNSRouter](ctx); dnsRouter != nil {
+			if rev, ok := dnsRouter.LookupReverseMapping(metadata.Destination.Addr); ok && rev != "" {
+				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
+			}
+		}
+	}
+	if target == "" {
+		if metadata.Destination.Addr.IsValid() {
+			target = metadata.Destination.Addr.String()
+		} else if metadata.Destination.Fqdn != "" {
+			target = metadata.Destination.Fqdn
+		}
+	}
+
 	if target != "" {
 		if t.recordConnection(target, matchedRule, matchOutbound) {
 			_ = conn.Close()
 		}
-		return conn
 	}
-
-	// 2. Check if DNS reverse mapping has the domain for this destination IP
-	if metadata.Destination.Addr.IsValid() {
-		if dnsRouter := service.FromContext[adapter.DNSRouter](ctx); dnsRouter != nil {
-			if rev, ok := dnsRouter.LookupReverseMapping(metadata.Destination.Addr); ok && rev != "" {
-				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
-				if t.recordConnection(target, matchedRule, matchOutbound) {
-					_ = conn.Close()
-				}
-				return conn
-			}
-		}
-	}
-
-	// 3. Neither metadata nor reverse mapping has the domain (e.g. curl -x socks5:// IP):
-	// Wrap conn to sniff TLS SNI / HTTP Host upon the first read, falling back to destination IP
-	var fallback string
-	if metadata.Destination.Addr.IsValid() {
-		fallback = metadata.Destination.Addr.String()
-	} else if metadata.Destination.Fqdn != "" {
-		fallback = metadata.Destination.Fqdn
-	}
-	return &sniffingConn{
-		Conn:          conn,
-		tracker:       t,
-		matchedRule:   matchedRule,
-		matchOutbound: matchOutbound,
-		fallbackAddr:  fallback,
-	}
+	return conn
 }
 
 func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) N.PacketConn {
@@ -234,15 +297,18 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 				target = strings.Trim(strings.ToLower(strings.TrimSpace(rev)), ".")
 			}
 		}
-		if target == "" {
-			target = metadata.Destination.Addr.String()
-		}
 	}
 	if target == "" {
-		return conn
+		if metadata.Destination.Addr.IsValid() {
+			target = metadata.Destination.Addr.String()
+		} else if metadata.Destination.Fqdn != "" {
+			target = metadata.Destination.Fqdn
+		}
 	}
-	if t.recordConnection(target, matchedRule, matchOutbound) {
-		_ = conn.Close()
+	if target != "" {
+		if t.recordConnection(target, matchedRule, matchOutbound) {
+			_ = conn.Close()
+		}
 	}
 	return conn
 }
@@ -304,7 +370,15 @@ func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound a
 		}
 	}
 	chain := rulePart + " -> " + outboundPart
-	if pool, ok := matchOutbound.(*PoolOutbound); ok {
+	current := matchOutbound
+	for {
+		if bo, ok := current.(*blockerOutbound); ok {
+			current = bo.Outbound
+			continue
+		}
+		break
+	}
+	if pool, ok := current.(*PoolOutbound); ok {
 		if candID := pool.SelectCandidate(target); candID != "" {
 			nodeName := candID
 			if nodeNameResolver != nil {

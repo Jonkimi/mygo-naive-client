@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,6 +80,9 @@ type instance struct {
 	done       chan struct{}
 }
 
+// ServiceDialerFunc dials network connection for embedded engine services (e.g. EngineSingBox).
+type ServiceDialerFunc func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error)
+
 // Manager supervises multiple independent local NaiveProxy service processes.
 type Manager struct {
 	mu             sync.RWMutex
@@ -91,6 +95,7 @@ type Manager struct {
 	OnProbeSuccess   func(id string, rtt time.Duration)
 	OnProbeFailure   func(id string, err error)
 	OnServiceStarted func(svc config.Service)
+	ServiceDialer    ServiceDialerFunc
 	BackoffMin     time.Duration // overridable in tests
 }
 
@@ -293,7 +298,7 @@ func (m *Manager) Start(svc config.Service) error {
 	// Stop existing run of this service if any
 	_ = m.Stop(svc.ID)
 
-	if svc.EffectiveKind() == config.KindExternalProxy {
+	if svc.EffectiveKind() == config.KindExternalProxy || svc.EffectiveEngine() == config.EngineSingBox {
 		m.mu.Lock()
 		inst := m.ensureInstanceLocked(svc.ID)
 		inst.svc = svc
@@ -305,7 +310,11 @@ func (m *Manager) Start(svc config.Service) error {
 			State:     StateRunning,
 			StartedAt: time.Now(),
 		}
-		inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已启用: %s", time.Now().Format("15:04:05"), svc.RedactedProxy()))
+		if svc.EffectiveEngine() == config.EngineSingBox {
+			inst.logs.AppendLine(fmt.Sprintf("[%s] 原生节点已就绪: %s", time.Now().Format("15:04:05"), svc.Name))
+		} else {
+			inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已启用: %s", time.Now().Format("15:04:05"), svc.RedactedProxy()))
+		}
 		startedCb := m.OnServiceStarted
 		m.mu.Unlock()
 		m.onChange()
@@ -598,11 +607,15 @@ func (m *Manager) Stop(id string) error {
 		return nil
 	}
 
-	if inst.svc.EffectiveKind() == config.KindExternalProxy {
+	if inst.svc.EffectiveKind() == config.KindExternalProxy || inst.svc.EffectiveEngine() == config.EngineSingBox {
 		inst.status.State = StateStopped
 		inst.status.PID = 0
 		inst.status.StartedAt = time.Time{}
-		inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已停止", time.Now().Format("15:04:05")))
+		if inst.svc.EffectiveEngine() == config.EngineSingBox {
+			inst.logs.AppendLine(fmt.Sprintf("[%s] 原生节点已停止", time.Now().Format("15:04:05")))
+		} else {
+			inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已停止", time.Now().Format("15:04:05")))
+		}
 		m.mu.Unlock()
 		m.onChange()
 		return nil
@@ -669,12 +682,25 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 	m.mu.Unlock()
 	m.onChange()
 
-	ep, err := svc.OutboundEndpoint()
 	var rtt time.Duration
-	if err == nil {
+	var err error
+	if svc.EffectiveEngine() == config.EngineSingBox && m.ServiceDialer != nil {
 		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		rtt, err = Probe(probeCtx, ep, probeURL)
+		tr := &http.Transport{
+			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
+				return m.ServiceDialer(c, svc, network, addr)
+			},
+		}
+		rtt, err = ProbeWithTransport(probeCtx, tr, probeURL)
 		cancel()
+	} else {
+		var ep config.ListenEndpoint
+		ep, err = svc.OutboundEndpoint()
+		if err == nil {
+			probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+			rtt, err = Probe(probeCtx, ep, probeURL)
+			cancel()
+		}
 	}
 
 	m.mu.Lock()
@@ -729,17 +755,35 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 	m.mu.Unlock()
 	m.onChange()
 
-	ep, err := svc.OutboundEndpoint()
 	var bps float64
-	if err == nil {
+	var err error
+	if svc.EffectiveEngine() == config.EngineSingBox && m.ServiceDialer != nil {
 		speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-		bps, err = MeasureDownloadSpeed(speedCtx, ep, downloadURL, func(sample float64) {
+		tr := &http.Transport{
+			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
+				return m.ServiceDialer(c, svc, network, addr)
+			},
+		}
+		bps, err = MeasureDownloadSpeedWithTransport(speedCtx, tr, downloadURL, func(sample float64) {
 			m.mu.Lock()
 			inst.status.DownloadSpeed = sample
 			m.mu.Unlock()
 			m.onChange()
 		})
 		cancel()
+	} else {
+		var ep config.ListenEndpoint
+		ep, err = svc.OutboundEndpoint()
+		if err == nil {
+			speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			bps, err = MeasureDownloadSpeed(speedCtx, ep, downloadURL, func(sample float64) {
+				m.mu.Lock()
+				inst.status.DownloadSpeed = sample
+				m.mu.Unlock()
+				m.onChange()
+			})
+			cancel()
+		}
 	}
 
 	m.mu.Lock()

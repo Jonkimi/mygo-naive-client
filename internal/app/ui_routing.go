@@ -179,8 +179,9 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 		desc:          a.localizedRuleDescription(rule),
 		actionIndex:   actionIdx,
 		tags:          tags,
-		domainsInput:  strings.Join(rule.DomainSuffix, "\n"),
-		cidrsInput:    strings.Join(rule.IPCidr, "\n"),
+		domainsInput:     strings.Join(rule.DomainSuffix, "\n"),
+		fullDomainsInput: strings.Join(rule.DomainFull, "\n"),
+		cidrsInput:       strings.Join(rule.IPCidr, "\n"),
 		keywordsInput: strings.Join(rule.DomainKeyword, ", "),
 		geosites:      append([]string(nil), rule.GeoSite...),
 		geoips:        append([]string(nil), rule.GeoIP...),
@@ -529,6 +530,7 @@ func (a *app) saveRuleEditor() {
 	}
 
 	domains := parseLines(a.ruleEditor.domainsInput)
+	fullDomains := parseLines(a.ruleEditor.fullDomainsInput)
 	cidrs := parseLines(a.ruleEditor.cidrsInput)
 	keywords := parseCommaOrLines(a.ruleEditor.keywordsInput)
 
@@ -546,7 +548,7 @@ func (a *app) saveRuleEditor() {
 		}
 	}
 
-	if len(domains) == 0 && len(cidrs) == 0 && len(keywords) == 0 && len(geosites) == 0 && len(geoips) == 0 {
+	if len(domains) == 0 && len(fullDomains) == 0 && len(cidrs) == 0 && len(keywords) == 0 && len(geosites) == 0 && len(geoips) == 0 {
 		a.ruleEditor.errText = a.catalog().RuleCriteriaRequired()
 		return
 	}
@@ -558,6 +560,7 @@ func (a *app) saveRuleEditor() {
 			Description:   strings.TrimSpace(a.ruleEditor.desc),
 			Enabled:       true,
 			DomainSuffix:  domains,
+			DomainFull:    fullDomains,
 			IPCidr:        cidrs,
 			DomainKeyword: keywords,
 			GeoSite:       geosites,
@@ -571,6 +574,7 @@ func (a *app) saveRuleEditor() {
 				a.state.RoutingRules[i].Name = name
 				a.state.RoutingRules[i].Description = strings.TrimSpace(a.ruleEditor.desc)
 				a.state.RoutingRules[i].DomainSuffix = domains
+				a.state.RoutingRules[i].DomainFull = fullDomains
 				a.state.RoutingRules[i].IPCidr = cidrs
 				a.state.RoutingRules[i].DomainKeyword = keywords
 				a.state.RoutingRules[i].GeoSite = geosites
@@ -1056,6 +1060,9 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 					} else {
 						// Domain suffixes
 						labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
+
+						// Full domains
+						labeledTextArea(c, p, "rule-set-full-domains", "完整域名 (精确匹配)", &a.ruleEditor.fullDomainsInput, "每行一个完整域名，例如：api.example.com", 2, 3)
 
 						// IP-CIDRs
 						labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)

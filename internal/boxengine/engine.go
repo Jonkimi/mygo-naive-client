@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
+	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
 )
 
@@ -47,8 +49,9 @@ type EngineOptions struct {
 	GeoIPDB        *geodata.GeoIPDB
 	Tracker        *telemetry.Tracker
 	FailureMonitor *telemetry.FailureMonitor
-	Blocker        *blocker.Engine
-	BootstrapDNS   []string
+	Blocker               *blocker.Engine
+	BootstrapDomains      []string
+	BootstrapDNS          []string
 	DomesticDoH    []string
 	RemoteDoH      []string
 	PreferIPv4        bool
@@ -180,11 +183,13 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 		var fm *telemetry.FailureMonitor
 		var np NodeProvider
 		var telemetryUpdate func()
+		var bl *blocker.Engine
 		if eng != nil {
 			tracker = eng.tracker
 			fm = eng.failureMonitor
 			np = eng
 			telemetryUpdate = eng.onTelemetryUpdate
+			bl = eng.blocker
 		}
 		return NewPoolOutbound(PoolOutboundOptions{
 			Tag:               tag,
@@ -193,22 +198,33 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			FailureMonitor:    fm,
 			NodeProvider:      np,
 			OnTelemetryUpdate: telemetryUpdate,
+			Blocker:           bl,
 		}), nil
 	})
 
+	var finalOutboundReg adapter.OutboundRegistry = outboundReg
+	if eng != nil && (eng.blocker != nil || eng.failureMonitor != nil) {
+		finalOutboundReg = &blockerOutboundRegistry{
+			underlying: outboundReg,
+			blocker:    eng.blocker,
+			fm:         eng.failureMonitor,
+		}
+	}
+
 	dnsReg := include.DNSTransportRegistry()
 	var finalDNSReg adapter.DNSTransportRegistry = dnsReg
-	if eng != nil && eng.blocker != nil {
+	if eng != nil && (eng.blocker != nil || eng.failureMonitor != nil) {
 		finalDNSReg = &blockerTransportRegistry{
 			underlying: dnsReg,
 			blocker:    eng.blocker,
+			fm:         eng.failureMonitor,
 		}
 	}
 
 	return box.Context(
 		ctx,
 		include.InboundRegistry(),
-		outboundReg,
+		finalOutboundReg,
 		include.EndpointRegistry(),
 		finalDNSReg,
 		include.ServiceRegistry(),
@@ -394,7 +410,28 @@ func (e *Engine) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 	if e.box == nil {
 		return nil, false
 	}
-	return e.box.Outbound().Outbound("node-" + nodeID)
+	if ob, ok := e.box.Outbound().Outbound("node-" + nodeID); ok {
+		return ob, true
+	}
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	if ob, ok := e.box.Outbound().Outbound("node-" + cleanID); ok {
+		return ob, true
+	}
+	return e.box.Outbound().Outbound(nodeID)
+}
+
+// DialNode dials a destination address through the specified node outbound.
+func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr string) (net.Conn, error) {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	ob, ok := e.GetOutbound(cleanID)
+	if !ok {
+		return nil, fmt.Errorf("outbound not found for node %s", cleanID)
+	}
+	dest := M.ParseSocksaddr(addr)
+	if !dest.IsValid() {
+		return nil, fmt.Errorf("invalid destination addr %q", addr)
+	}
+	return ob.DialContext(ctx, network, dest)
 }
 
 // IsSidecar implements NodeProvider.
@@ -484,14 +521,68 @@ func extractSidecarExcludeAddresses(services []config.Service, resolver func(hos
 	return results
 }
 
-func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host string, port int) (*option.Options, error) {
-	configMap := make(map[string]any)
-
-	configMap["log"] = map[string]any{
-		"level": "warn",
+func resolveFinalOutbound(opts EngineOptions) string {
+	if opts.FinalRoute.Type != "" {
+		return resolveRouteOutbound(opts.FinalRoute, opts.TailnetMode)
 	}
+	if opts.FinalAction != "" {
+		fa := strings.TrimSpace(opts.FinalAction)
+		if strings.HasPrefix(strings.ToUpper(fa), "PROXY_TAG:") {
+			tag := strings.TrimSpace(fa[len("PROXY_TAG:"):])
+			if tag != "" {
+				return "PROXY_TAG:" + tag
+			}
+			return "PROXY_POOL"
+		} else if strings.HasPrefix(fa, "node-") {
+			return fa
+		} else if strings.EqualFold(fa, "proxy") || strings.EqualFold(fa, "proxy_pool") || strings.EqualFold(fa, "proxy_tag") || strings.EqualFold(fa, "proxy_service") {
+			return "PROXY_POOL"
+		} else if strings.EqualFold(fa, "block") {
+			return "block"
+		}
+	}
+	return "direct"
+}
 
-	// 1. Inbounds: mixed (HTTP + SOCKS5) and optional tun inbound
+func collectAllBootstrapDomains(opts EngineOptions) []string {
+	bootstrapDomainSet := make(map[string]bool)
+	for _, d := range opts.BootstrapDomains {
+		d = strings.TrimSpace(d)
+		if d != "" && net.ParseIP(d) == nil {
+			bootstrapDomainSet[d] = true
+		}
+	}
+	for _, svc := range opts.Services {
+		if svc.Server != "" && net.ParseIP(svc.Server) == nil {
+			bootstrapDomainSet[svc.Server] = true
+		}
+	}
+	var allBootstrapDomains []string
+	for d := range bootstrapDomainSet {
+		allBootstrapDomains = append(allBootstrapDomains, d)
+	}
+	sort.Strings(allBootstrapDomains)
+	return allBootstrapDomains
+}
+
+func collectRuleSetTags(opts EngineOptions) (siteTags, ipTags []string) {
+	for _, r := range opts.Rules {
+		if !r.Enabled {
+			continue
+		}
+		for _, gs := range r.GeoSite {
+			cleanGS := strings.ToLower(strings.TrimSpace(gs))
+			if opts.Blocker != nil && cleanGS == "category-ads-all" {
+				continue
+			}
+			siteTags = append(siteTags, gs)
+		}
+		ipTags = append(ipTags, r.GeoIP...)
+	}
+	return siteTags, ipTags
+}
+
+func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string]any {
 	inbounds := []map[string]any{
 		{
 			"type":        "mixed",
@@ -547,9 +638,10 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		}
 		inbounds = append(inbounds, tunIn)
 	}
-	configMap["inbounds"] = inbounds
+	return inbounds
+}
 
-	// 2. Outbounds: direct, block, node outbounds, and pool outbounds
+func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPorts map[string]int) []map[string]any {
 	outbounds := []map[string]any{
 		{
 			"type": "direct",
@@ -565,7 +657,6 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		},
 	}
 
-	// Pool outbounds for tags
 	tagSet := make(map[string]bool)
 	ensurePoolTag := func(t string) {
 		t = strings.TrimSpace(t)
@@ -597,27 +688,6 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	if joined := joinCleanTags(opts.FinalRoute.GetTags()); joined != "" {
 		ensurePoolTag(joined)
 	}
-
-	finalOutbound := "direct"
-	if opts.FinalRoute.Type != "" {
-		finalOutbound = resolveRouteOutbound(opts.FinalRoute, opts.TailnetMode)
-	} else if opts.FinalAction != "" {
-		fa := strings.TrimSpace(opts.FinalAction)
-		if strings.HasPrefix(strings.ToUpper(fa), "PROXY_TAG:") {
-			tag := strings.TrimSpace(fa[len("PROXY_TAG:"):])
-			if tag != "" {
-				finalOutbound = "PROXY_TAG:" + tag
-			} else {
-				finalOutbound = "PROXY_POOL"
-			}
-		} else if strings.HasPrefix(fa, "node-") {
-			finalOutbound = fa
-		} else if strings.EqualFold(fa, "proxy") || strings.EqualFold(fa, "proxy_pool") || strings.EqualFold(fa, "proxy_tag") || strings.EqualFold(fa, "proxy_service") {
-			finalOutbound = "PROXY_POOL"
-		} else if strings.EqualFold(fa, "block") {
-			finalOutbound = "block"
-		}
-	}
 	if strings.HasPrefix(finalOutbound, "PROXY_TAG:") {
 		ensurePoolTag(strings.TrimPrefix(finalOutbound, "PROXY_TAG:"))
 	}
@@ -626,9 +696,9 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	for _, svc := range opts.Services {
 		nodeTag := "node-" + svc.ID
 		if isSidecarService(svc) {
-			allocPort := e.allocatedPorts[svc.ID]
-			if allocPort <= 0 {
-				allocPort = 1080 // fallback
+			allocPort := 1080
+			if allocatedPorts != nil && allocatedPorts[svc.ID] > 0 {
+				allocPort = allocatedPorts[svc.ID]
 			}
 			outbounds = append(outbounds, map[string]any{
 				"type":        "socks",
@@ -637,51 +707,53 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 				"server_port": allocPort,
 			})
 		} else {
-			// EngineSingBox native outbounds
 			outbounds = append(outbounds, buildNativeOutbound(svc))
 		}
 	}
-	configMap["outbounds"] = outbounds
+	return outbounds
+}
 
-	// 2.1 Endpoints: Tailscale embedded endpoint (ADR-0007)
-	if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
-		stateDir := opts.StateDir
-		if stateDir == "" {
-			stateDir = "tsnet-state"
-		} else {
-			stateDir = filepath.Join(stateDir, "tsnet-state")
-		}
-		tsEp := map[string]any{
-			"type":            "tailscale",
-			"tag":             "tailscale-ep",
-			"state_directory": stateDir,
-			"domain_resolver": "bootstrap-dns",
-		}
-		if opts.TailnetConfig.AuthKey != "" {
-			tsEp["auth_key"] = opts.TailnetConfig.AuthKey
-		}
-		if opts.TailnetConfig.ControlURL != "" {
-			tsEp["control_url"] = opts.TailnetConfig.ControlURL
-		}
-		if opts.TailnetConfig.Hostname != "" {
-			tsEp["hostname"] = opts.TailnetConfig.Hostname
-		}
-		if opts.TailnetConfig.AcceptRoutes {
-			tsEp["accept_routes"] = true
-		}
-		if opts.TailnetConfig.ExitNode != "" {
-			tsEp["exit_node"] = opts.TailnetConfig.ExitNode
-		}
-		if opts.TailnetConfig.AdvertiseExitNode {
-			tsEp["advertise_exit_node"] = true
-		}
-		if len(opts.TailnetConfig.AdvertiseRoutes) > 0 {
-			tsEp["advertise_routes"] = opts.TailnetConfig.AdvertiseRoutes
-		}
-		configMap["endpoints"] = []map[string]any{tsEp}
+func buildEndpointsConfig(opts EngineOptions) []map[string]any {
+	if opts.TailnetMode != tailnet.ModeEmbedded || opts.TailnetConfig == nil {
+		return nil
 	}
+	stateDir := opts.StateDir
+	if stateDir == "" {
+		stateDir = "tsnet-state"
+	} else {
+		stateDir = filepath.Join(stateDir, "tsnet-state")
+	}
+	tsEp := map[string]any{
+		"type":            "tailscale",
+		"tag":             "tailscale-ep",
+		"state_directory": stateDir,
+		"domain_resolver": "bootstrap-dns",
+	}
+	if opts.TailnetConfig.AuthKey != "" {
+		tsEp["auth_key"] = opts.TailnetConfig.AuthKey
+	}
+	if opts.TailnetConfig.ControlURL != "" {
+		tsEp["control_url"] = opts.TailnetConfig.ControlURL
+	}
+	if opts.TailnetConfig.Hostname != "" {
+		tsEp["hostname"] = opts.TailnetConfig.Hostname
+	}
+	if opts.TailnetConfig.AcceptRoutes {
+		tsEp["accept_routes"] = true
+	}
+	if opts.TailnetConfig.ExitNode != "" {
+		tsEp["exit_node"] = opts.TailnetConfig.ExitNode
+	}
+	if opts.TailnetConfig.AdvertiseExitNode {
+		tsEp["advertise_exit_node"] = true
+	}
+	if len(opts.TailnetConfig.AdvertiseRoutes) > 0 {
+		tsEp["advertise_routes"] = opts.TailnetConfig.AdvertiseRoutes
+	}
+	return []map[string]any{tsEp}
+}
 
-	// 3. DNS Configuration (ADR-0003, ADR-0007)
+func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomains []string) map[string]any {
 	bootstrapDNS := opts.BootstrapDNS
 	if len(bootstrapDNS) == 0 {
 		bootstrapDNS = DefaultBootstrapDNS
@@ -701,12 +773,18 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 	}
 
 	dnsServers := []map[string]any{
-		buildDNSServerMap("bootstrap-dns", bootstrapDNS[0], ""),
-		buildDNSServerMap("domestic-doh", domesticDoH[0], ""),
-		buildDNSServerMap("remote-doh", remoteDoH[0], remoteDoHDetour),
+		buildDNSServerMap("bootstrap-dns", bootstrapDNS[0], "", ""),
+		buildDNSServerMap("domestic-doh", domesticDoH[0], "", "bootstrap-dns"),
+		buildDNSServerMap("remote-doh", remoteDoH[0], remoteDoHDetour, "bootstrap-dns"),
 	}
 
 	var dnsRules []map[string]any
+	if len(allBootstrapDomains) > 0 {
+		dnsRules = append(dnsRules, map[string]any{
+			"domain": allBootstrapDomains,
+			"server": "bootstrap-dns",
+		})
+	}
 	if opts.TailnetMode == tailnet.ModeHost {
 		dnsServers = append(dnsServers, map[string]any{
 			"type":        "udp",
@@ -738,24 +816,10 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		})
 	}
 
-	// 4. Routing configuration
-	var siteTags, ipTags []string
-	for _, r := range opts.Rules {
-		if !r.Enabled {
-			continue
-		}
-		siteTags = append(siteTags, r.GeoSite...)
-		ipTags = append(ipTags, r.GeoIP...)
-	}
-
-	ruleSets := geodata.BuildRuleSets(opts.GeoSiteDB, opts.GeoIPDB, siteTags, ipTags)
-
 	// Build DNS rules aligned with user routing rules (ADR-0003, ADR-0007).
-	// Domains matching DIRECT rules resolve via domestic-doh (detour: direct)
-	// to ensure optimal local CDN routing and intranet resolution.
-	// Domains matching PROXY rules resolve via remote-doh (detour: PROXY_POOL)
-	// through proxy tunnel to prevent local DNS pollution.
-	for _, r := range opts.Rules {
+	// Custom rules are prioritized before preset rules.
+	prioritizedUserRules := routing.PrioritizedRules(opts.Rules)
+	for _, r := range prioritizedUserRules {
 		if !r.Enabled {
 			continue
 		}
@@ -778,7 +842,6 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			continue
 		}
 
-		// 1. Direct domain / Suffix / Keyword matching rule
 		if len(r.DomainFull) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 {
 			dr := map[string]any{"server": targetDNSServer}
 			if len(r.DomainFull) > 0 {
@@ -793,11 +856,14 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 			dnsRules = append(dnsRules, dr)
 		}
 
-		// 2. RuleSet / GeoSite matching rule
 		if len(r.GeoSite) > 0 {
 			var rsets []string
 			for _, gs := range r.GeoSite {
-				rsets = append(rsets, "geosite-"+strings.ToLower(strings.TrimSpace(gs)))
+				cleanGS := strings.ToLower(strings.TrimSpace(gs))
+				if opts.Blocker != nil && cleanGS == "category-ads-all" {
+					continue
+				}
+				rsets = append(rsets, "geosite-"+cleanGS)
 			}
 			if len(rsets) > 0 {
 				dnsRules = append(dnsRules, map[string]any{
@@ -817,14 +883,31 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		"servers": dnsServers,
 		"final":   dnsFinal,
 	}
+	if opts.PreferIPv4 {
+		dnsMap["strategy"] = "prefer_ipv4"
+	}
 	if len(dnsRules) > 0 {
 		dnsMap["rules"] = dnsRules
 	}
-	configMap["dns"] = dnsMap
+	return dnsMap
+}
 
+func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDomains []string) map[string]any {
 	var singRules []map[string]any
 
-	// 0. DNS hijacking (ADR-0003, ADR-0004)
+	// 0. Packet sniffing (ADR-0003, Item 8)
+	if opts.TrafficMode == "tun" {
+		singRules = append(singRules, map[string]any{
+			"inbound": []string{"tun-in"},
+			"action":  "sniff",
+		})
+	}
+	singRules = append(singRules, map[string]any{
+		"ip_cidr": []string{"0.0.0.0/0", "::/0"},
+		"action":  "sniff",
+	})
+
+	// 0.1 DNS hijacking (ADR-0003, ADR-0004)
 	singRules = append(singRules, map[string]any{
 		"protocol": "dns",
 		"action":   "hijack-dns",
@@ -833,10 +916,12 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		"port":   []int{53},
 		"action": "hijack-dns",
 	})
-	if opts.TrafficMode == "tun" {
+
+	// 0.2 Bootstrap domains routing directly to avoid TUN/proxy deadlocks (Item 6)
+	if len(allBootstrapDomains) > 0 {
 		singRules = append(singRules, map[string]any{
-			"inbound": []string{"tun-in"},
-			"action":  "sniff",
+			"domain":   allBootstrapDomains,
+			"outbound": "direct",
 		})
 	}
 
@@ -871,8 +956,9 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		})
 	}
 
-	// 4.2 User rules
-	for _, r := range opts.Rules {
+	// 4.2 User rules (custom rules prioritized before preset rules)
+	prioritizedUserRules := routing.PrioritizedRules(opts.Rules)
+	for _, r := range prioritizedUserRules {
 		if !r.Enabled {
 			continue
 		}
@@ -901,7 +987,11 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		if len(r.GeoSite) > 0 || len(r.GeoIP) > 0 {
 			var rsets []string
 			for _, gs := range r.GeoSite {
-				rsets = append(rsets, "geosite-"+strings.ToLower(strings.TrimSpace(gs)))
+				cleanGS := strings.ToLower(strings.TrimSpace(gs))
+				if opts.Blocker != nil && cleanGS == "category-ads-all" {
+					continue
+				}
+				rsets = append(rsets, "geosite-"+cleanGS)
 			}
 			for _, gi := range r.GeoIP {
 				rsets = append(rsets, "geoip-"+strings.ToLower(strings.TrimSpace(gi)))
@@ -915,14 +1005,34 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 		}
 	}
 
-	routeMap := map[string]any{
+	return map[string]any{
 		"rules":                 singRules,
 		"final":                 finalOutbound,
 		"auto_detect_interface": true,
 	}
+}
 
-	// Encode ruleSets into JSON for unmarshaling
-	configMap["route"] = routeMap
+func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host string, port int) (*option.Options, error) {
+	configMap := make(map[string]any)
+
+	configMap["log"] = map[string]any{
+		"level": "warn",
+	}
+
+	finalOutbound := resolveFinalOutbound(opts)
+	allBootstrapDomains := collectAllBootstrapDomains(opts)
+
+	configMap["inbounds"] = buildInboundsConfig(opts, host, port)
+	configMap["outbounds"] = buildOutboundsConfig(opts, finalOutbound, e.allocatedPorts)
+	if endpoints := buildEndpointsConfig(opts); len(endpoints) > 0 {
+		configMap["endpoints"] = endpoints
+	}
+	configMap["dns"] = buildDNSConfig(opts, finalOutbound, allBootstrapDomains)
+	configMap["route"] = buildRouteConfig(opts, finalOutbound, allBootstrapDomains)
+
+	// Build RuleSets
+	siteTags, ipTags := collectRuleSetTags(opts)
+	ruleSets := geodata.BuildRuleSets(opts.GeoSiteDB, opts.GeoIPDB, siteTags, ipTags)
 
 	rawJSON, err := json.Marshal(configMap)
 	if err != nil {
@@ -974,7 +1084,7 @@ func (e *Engine) ClearDNSCache() {
 	}
 }
 
-func buildDNSServerMap(tag string, rawAddr string, detour string) map[string]any {
+func buildDNSServerMap(tag string, rawAddr string, detour string, domainResolver string) map[string]any {
 	rawAddr = strings.TrimSpace(rawAddr)
 	if strings.HasPrefix(rawAddr, "https://") || strings.HasPrefix(rawAddr, "http://") {
 		u, err := url.Parse(rawAddr)
@@ -1002,6 +1112,9 @@ func buildDNSServerMap(tag string, rawAddr string, detour string) map[string]any
 			if detour != "" {
 				m["detour"] = detour
 			}
+			if domainResolver != "" {
+				m["domain_resolver"] = domainResolver
+			}
 			return m
 		}
 	}
@@ -1024,6 +1137,23 @@ func buildDNSServerMap(tag string, rawAddr string, detour string) map[string]any
 	if detour != "" {
 		m["detour"] = detour
 	}
+	if domainResolver != "" {
+		m["domain_resolver"] = domainResolver
+	}
 	return m
+}
+
+func isCategoryAdsRule(r routing.Rule) bool {
+	if r.ID == "preset-block-ads" {
+		return true
+	}
+	if r.Action.Type == routing.ActionBlock {
+		for _, gs := range r.GeoSite {
+			if strings.EqualFold(strings.TrimSpace(gs), "category-ads-all") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
