@@ -252,8 +252,8 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 							AlignItems(ui.Center).Justify(ui.SpaceBetween).
 							PaddingY(3).
 							Children(func() {
-								ui.Text(c, dom).FontSize(11).TextColor(p.text).NoWrap()
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+								ui.Text(c, dom).FontSize(11).TextColor(p.text).Grow(1).SingleLine().Ellipsis("…").Tooltip(dom)
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
 									ui.Text(c, fmt.Sprintf("%d", cnt)).FontSize(11).FontWeight(600).TextColor(p.red)
 									btnAllow := ui.ButtonBase(c.Key("btn-quick-whitelist-"+dom)).
 										Label("btn-quick-whitelist-"+dom).
@@ -296,8 +296,8 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 							AlignItems(ui.Center).Justify(ui.SpaceBetween).
 							PaddingY(3).
 							Children(func() {
-								ui.Text(c, dom).FontSize(11).TextColor(p.text).NoWrap()
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+								ui.Text(c, dom).FontSize(11).TextColor(p.text).Grow(1).SingleLine().Ellipsis("…").Tooltip(dom)
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
 									ui.Text(c, fmt.Sprintf("%d", cnt)).FontSize(11).FontWeight(600).TextColor(p.green)
 									btnDeny := ui.ButtonBase(c.Key("btn-quick-denylist-"+dom)).
 										Label("btn-quick-denylist-"+dom).
@@ -435,7 +435,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							ui.Text(c, durStr).FontSize(10).FontWeight(600).TextColor(durColor).Width(55).NoWrap()
 
 							// Col 5: Domain
-							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(170).NoWrap()
+							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(170).SingleLine().Ellipsis("…").Tooltip(dom)
 
 							// Col 6: Chain
 							chainText := e.Chain
