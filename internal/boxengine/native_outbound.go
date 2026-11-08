@@ -212,36 +212,20 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 		return ob
 
 	case config.ProtoNaive:
-		// sing-box native naive outbound
-		server := svc.Server
-		port := svc.ServerPort
-		user := ""
-		pass := ""
-		if len(svc.Proxies) > 0 {
-			if u, err := url.Parse(svc.Proxies[0]); err == nil {
-				server = u.Hostname()
-				if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
-					port = p
-				}
-				user = u.User.Username()
-				pass, _ = u.User.Password()
+		// In pure-Go builds without CGO cronet-go, sing-box cannot instantiate type: "naive".
+		// Fall back to a local SOCKS outbound directed at the NaiveProxy sidecar process.
+		allocPort := 1080
+		if listen := svc.PrimaryListen(); listen != "" {
+			if ep, err := config.ParseListenURI(listen); err == nil && ep.Port > 0 {
+				allocPort = ep.Port
 			}
 		}
-		ob := map[string]any{
-			"type":        "naive",
+		return map[string]any{
+			"type":        "socks",
 			"tag":         tag,
-			"server":      server,
-			"server_port": port,
-			"username":    user,
-			"password":    pass,
-			"tls": map[string]any{
-				"enabled": true,
-			},
+			"server":      "127.0.0.1",
+			"server_port": allocPort,
 		}
-		if svc.SNI != "" {
-			ob["tls"].(map[string]any)["server_name"] = svc.SNI
-		}
-		return ob
 
 	default:
 		// Fallback to direct placeholder

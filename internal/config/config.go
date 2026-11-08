@@ -131,13 +131,13 @@ func (s Service) EffectiveProtocol() Protocol {
 }
 
 // EffectiveEngine returns the execution engine for this node.
-// ProtoNaive defaults to EngineSidecar; all other protocols default to EngineSingBox.
+// ProtoNaive always uses EngineSidecar (official NaiveProxy binary); all other protocols default to EngineSingBox.
 func (s Service) EffectiveEngine() ExecutionEngine {
-	if s.Engine != "" {
-		return s.Engine
-	}
 	if s.EffectiveProtocol() == ProtoNaive {
 		return EngineSidecar
+	}
+	if s.Engine != "" {
+		return s.Engine
 	}
 	return EngineSingBox
 }

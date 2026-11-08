@@ -258,7 +258,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 	}
 
 	engine := config.EngineSingBox
-	if a.editor.engineIndex == 1 {
+	if a.editor.engineIndex == 1 || proto == config.ProtoNaive {
 		engine = config.EngineSidecar
 	}
 
@@ -561,21 +561,7 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
 					ui.Text(c, cat.CoreNaiveDesc()).FontSize(11).TextColor(p.textMuted)
 				})
-				// 0: SingBox, 1: Sidecar
-				engineIdx := 0
-				if a.editor.engineIndex == 1 {
-					engineIdx = 1
-				}
-				if segmentedControl(c.Key("editor-naive-engine"), p, &engineIdx, []string{
-					cat.EngineSingBox(),
-					cat.EngineSidecarNaive(),
-				}) {
-					if engineIdx == 1 {
-						a.editor.engineIndex = 1
-					} else {
-						a.editor.engineIndex = 0
-					}
-				}
+				tagPill(c, cat.EngineSidecarNaive(), p.accentText, p.accentBg)
 			})
 		case config.ProtoVLESS, config.ProtoVMess, config.ProtoTrojan, config.ProtoShadowsocks:
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
