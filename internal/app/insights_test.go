@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"naive-client/internal/blocker"
 	"naive-client/internal/config"
+	"naive-client/internal/telemetry"
 	"naive-client/locales"
 )
 
@@ -180,6 +182,67 @@ func TestInsights_TopPanelsEqualHeight(t *testing.T) {
 	if rectBlocked.H != rectAllowed.H {
 		t.Fatalf("expected top blocked and allowed panels to be equal height, got blocked=%.1f allowed=%.1f",
 			rectBlocked.H, rectAllowed.H)
+	}
+}
+
+// Tests that abnormal connection failure cards display up to maxInsightsFailures, show total counts,
+// and that individual ignore and resolve-all buttons resolve failures and remove them from the view.
+// Regression: renderInsightsFailures previously rendered all failures (including resolved ones) causing screen flood
+// and making the ignore button appear unresponsive.
+func TestInsights_FailuresIgnoreAndResolveAll(t *testing.T) {
+	a, tt, _ := newTestApp(t, []config.Service{})
+	a.activeTab = TabInsights
+	tt.Frame()
+
+	// 1. Record 7 failures into failureMonitor
+	for i := 1; i <= 7; i++ {
+		a.failureMonitor.Record(telemetry.FailureEvent{
+			Category:       telemetry.FailureProxy,
+			Target:         fmt.Sprintf("host%d.example.com", i),
+			Port:           443,
+			OriginalAction: "PROXY_POOL",
+			Error:          errors.New("connection timeout"),
+		})
+	}
+	tt.Frame()
+
+	// Total count 7 should be displayed, and the first 5 items rendered
+	if !tt.HasText("共 7 项异常") {
+		t.Fatalf("expected '共 7 项异常', got texts: %v", tt.Texts())
+	}
+	if !tt.HasText("已显示前 5 项，还有 2 项异常") {
+		t.Fatalf("expected overflow text '已显示前 5 项，还有 2 项异常'")
+	}
+	if !tt.HasText("host7.example.com") {
+		t.Fatalf("expected newest failure host7.example.com to be rendered")
+	}
+
+	// 2. Click ignore button for the newest item (host7.example.com)
+	if err := tt.Click("btn-resolve-host7.example.com"); err != nil {
+		t.Fatalf("failed to click btn-resolve-host7.example.com: %v", err)
+	}
+	tt.Frame()
+
+	// host7 should now be resolved and removed from the active failures
+	if tt.HasText("host7.example.com") {
+		t.Fatalf("expected host7.example.com to disappear after being ignored")
+	}
+	if !tt.HasText("共 6 项异常") {
+		t.Fatalf("expected '共 6 项异常' after resolving 1 item")
+	}
+
+	// 3. Click resolve-all button
+	if err := tt.Click("btn-resolve-all-failures"); err != nil {
+		t.Fatalf("failed to click btn-resolve-all-failures: %v", err)
+	}
+	tt.Frame()
+
+	// All failures should be resolved and the entire card hidden
+	if tt.HasText("异常连接与分流诊断") {
+		t.Fatalf("expected failure diagnostics card to disappear after resolve-all")
+	}
+	if a.failureMonitor.UnresolvedCount() != 0 {
+		t.Fatalf("expected 0 unresolved count, got %d", a.failureMonitor.UnresolvedCount())
 	}
 }
 

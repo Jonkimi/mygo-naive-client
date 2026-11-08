@@ -163,7 +163,25 @@ func (fm *FailureMonitor) List() []AggregatedFailure {
 	return result
 }
 
-// Resolve marks all failure entries matching target as resolved.
+// ListUnresolved returns a snapshot of all unresolved failures, sorted from newest to oldest.
+func (fm *FailureMonitor) ListUnresolved() []AggregatedFailure {
+	if fm == nil {
+		return nil
+	}
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+
+	result := make([]AggregatedFailure, 0, fm.unresolved)
+	for i := len(fm.order) - 1; i >= 0; i-- {
+		k := fm.order[i]
+		if it, ok := fm.items[k]; ok && !it.Resolved {
+			result = append(result, *it)
+		}
+	}
+	return result
+}
+
+// Resolve marks failure entries matching target (or its root domain if target is a root domain) as resolved.
 func (fm *FailureMonitor) Resolve(target string) {
 	if fm == nil {
 		return
@@ -172,16 +190,35 @@ func (fm *FailureMonitor) Resolve(target string) {
 	defer fm.mu.Unlock()
 
 	clean := cleanTarget(target)
-	root := ExtractRootDomain(clean)
+	if clean == "" {
+		return
+	}
 
 	for _, item := range fm.items {
 		if !item.Resolved {
-			if item.Target == clean || (root != "" && item.RootDomain == root) {
+			if item.Target == clean || clean == item.RootDomain {
 				item.Resolved = true
 				fm.unresolved--
 			}
 		}
 	}
+	if fm.unresolved < 0 {
+		fm.unresolved = 0
+	}
+}
+
+// ResolveAll marks all failure entries as resolved.
+func (fm *FailureMonitor) ResolveAll() {
+	if fm == nil {
+		return
+	}
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	for _, item := range fm.items {
+		item.Resolved = true
+	}
+	fm.unresolved = 0
 }
 
 // UnresolvedCount returns the count of unresolved unique failures.

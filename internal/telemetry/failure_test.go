@@ -124,3 +124,73 @@ func TestFailureMonitor_Recommendations(t *testing.T) {
 		}
 	}
 }
+
+// Tests that ListUnresolved filters out resolved failures and ResolveAll resolves all items.
+func TestFailureMonitor_ResolveAllAndListUnresolved(t *testing.T) {
+	fm := NewFailureMonitor(10)
+
+	fm.Record(FailureEvent{
+		Category:       FailureDirect,
+		Target:         "site1.com",
+		OriginalAction: "DIRECT",
+		Error:          errors.New("timeout"),
+	})
+	fm.Record(FailureEvent{
+		Category:       FailureProxy,
+		Target:         "site2.com",
+		OriginalAction: "PROXY_POOL",
+		Error:          errors.New("connection reset"),
+	})
+
+	if len(fm.ListUnresolved()) != 2 {
+		t.Fatalf("expected 2 unresolved items, got %d", len(fm.ListUnresolved()))
+	}
+
+	// Resolve individual target
+	fm.Resolve("site1.com")
+	unresolved := fm.ListUnresolved()
+	if len(unresolved) != 1 {
+		t.Fatalf("expected 1 unresolved item after resolving site1.com, got %d", len(unresolved))
+	}
+	if unresolved[0].Target != "site2.com" {
+		t.Fatalf("expected remaining unresolved target site2.com, got %s", unresolved[0].Target)
+	}
+	// List() still returns all items for telemetry history
+	if len(fm.List()) != 2 {
+		t.Fatalf("expected List() to retain all 2 items, got %d", len(fm.List()))
+	}
+
+	// Resolve all
+	fm.ResolveAll()
+	if fm.UnresolvedCount() != 0 {
+		t.Fatalf("expected 0 unresolved count after ResolveAll, got %d", fm.UnresolvedCount())
+	}
+	if len(fm.ListUnresolved()) != 0 {
+		t.Fatalf("expected 0 items from ListUnresolved after ResolveAll, got %d", len(fm.ListUnresolved()))
+	}
+
+	// Test resolving by root domain vs specific subdomain
+	fm.Clear()
+	fm.Record(FailureEvent{
+		Category:       FailureProxy,
+		Target:         "api.github.com",
+		OriginalAction: "PROXY_POOL",
+		Error:          errors.New("timeout"),
+	})
+	fm.Record(FailureEvent{
+		Category:       FailureProxy,
+		Target:         "copilot.github.com",
+		OriginalAction: "PROXY_POOL",
+		Error:          errors.New("timeout"),
+	})
+	// Resolving api.github.com should NOT resolve copilot.github.com
+	fm.Resolve("api.github.com")
+	if fm.UnresolvedCount() != 1 {
+		t.Fatalf("expected 1 unresolved after resolving api.github.com, got %d", fm.UnresolvedCount())
+	}
+	// Resolving root domain github.com should resolve all remaining subdomains
+	fm.Resolve("github.com")
+	if fm.UnresolvedCount() != 0 {
+		t.Fatalf("expected 0 unresolved after resolving root domain github.com, got %d", fm.UnresolvedCount())
+	}
+}

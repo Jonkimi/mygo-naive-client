@@ -720,15 +720,23 @@ func (a *app) openCreateRuleDialogWithTarget(target string, recommendedAction st
 	}
 }
 
+const maxInsightsFailures = 5
+
 func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
 	if a.failureMonitor == nil {
 		return
 	}
-	failures := a.failureMonitor.List()
-	if len(failures) == 0 {
+	failures := a.failureMonitor.ListUnresolved()
+	totalCount := len(failures)
+	if totalCount == 0 {
 		return
 	}
 	white := ui.RGB(255, 255, 255)
+
+	displayList := failures
+	if len(displayList) > maxInsightsFailures {
+		displayList = displayList[:maxInsightsFailures]
+	}
 
 	ui.Column(c.Key("insights-failures-card")).
 		Padding(12, 14, 12, 14).Radius(8).
@@ -737,13 +745,31 @@ func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, "异常连接与分流诊断").FontSize(12).FontWeight(600).TextColor(p.text)
-					tagPill(c, fmt.Sprintf("%d 项异常", len(failures)), p.red, p.redBg)
+					tagPill(c, fmt.Sprintf("共 %d 项异常", totalCount), p.red, p.redBg)
 				})
+
+				btnResolveAll := ui.ButtonBase(c.Key("btn-resolve-all-failures")).
+					Label("btn-resolve-all-failures").
+					Padding(3, 8, 3, 8).Radius(4).
+					Background(p.elevated).Border(1, p.borderSubtle)
+				if btnResolveAll.Hovered() {
+					btnResolveAll.Background(p.cardHover)
+				}
+				btnResolveAll.Children(func() {
+					ui.Text(c, "全部忽略").FontSize(10).TextColor(p.textDim)
+				})
+				if btnResolveAll.Clicked() {
+					a.failureMonitor.ResolveAll()
+					if a.win != nil {
+						a.win.Invalidate()
+					}
+				}
 			})
 
-			for _, f := range failures {
+			for idx, f := range displayList {
 				item := f
-				ui.Row(c.Key("failure-item-" + item.Target)).
+				itemKey := fmt.Sprintf("%s-%d", item.Target, idx)
+				ui.Row(c.Key("failure-item-" + itemKey)).
 					AlignItems(ui.Center).Justify(ui.SpaceBetween).
 					Padding(6, 8, 6, 8).Radius(6).
 					Background(p.surface).Border(1, p.borderSubtle).
@@ -760,24 +786,30 @@ func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
 						})
 
 						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							btnFix := ui.ButtonBase(c.Key("btn-fix-" + item.Target)).
+							btnFix := ui.ButtonBase(c.Key("btn-fix-" + itemKey)).
 								Label("btn-fix-" + item.Target).
 								Padding(4, 8, 4, 8).Radius(4).
-								Background(p.accent).
-								Children(func() {
-									ui.Text(c, "快速分流").FontSize(10).FontWeight(600).TextColor(white)
-								})
+								Background(p.accent)
+							if btnFix.Hovered() {
+								btnFix.Background(p.accent.Alpha(0.88))
+							}
+							btnFix.Children(func() {
+								ui.Text(c, "快速分流").FontSize(10).FontWeight(600).TextColor(white)
+							})
 							if btnFix.Clicked() {
 								a.openCreateRuleDialogWithTarget(item.Target, item.RecommendedAction)
 							}
 
-							btnResolve := ui.ButtonBase(c.Key("btn-resolve-" + item.Target)).
+							btnResolve := ui.ButtonBase(c.Key("btn-resolve-" + itemKey)).
 								Label("btn-resolve-" + item.Target).
 								Padding(4, 8, 4, 8).Radius(4).
-								Background(p.elevated).Border(1, p.borderSubtle).
-								Children(func() {
-									ui.Text(c, "忽略").FontSize(10).TextColor(p.textDim)
-								})
+								Background(p.elevated).Border(1, p.borderSubtle)
+							if btnResolve.Hovered() {
+								btnResolve.Background(p.cardHover)
+							}
+							btnResolve.Children(func() {
+								ui.Text(c, "忽略").FontSize(10).TextColor(p.textDim)
+							})
 							if btnResolve.Clicked() {
 								a.failureMonitor.Resolve(item.Target)
 								if a.win != nil {
@@ -786,6 +818,13 @@ func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
 							}
 						})
 					})
+			}
+
+			if totalCount > len(displayList) {
+				ui.Row(c).Justify(ui.Center).PaddingY(2).Children(func() {
+					ui.Text(c, fmt.Sprintf("已显示前 %d 项，还有 %d 项异常", len(displayList), totalCount-len(displayList))).
+						FontSize(10).TextColor(p.textDim)
+				})
 			}
 		})
 }
