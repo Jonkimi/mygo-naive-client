@@ -92,6 +92,7 @@ type app struct {
 	tracker        *telemetry.Tracker
 	failureMonitor *telemetry.FailureMonitor
 	gateway        *boxengine.Engine
+	lastGatewayErr error
 	lastGatewaySig string
 	sysproxy       *sysproxy.Sysproxy
 	router         *routing.Router
@@ -353,9 +354,29 @@ func (a *app) initSubsystems() {
 			a.rebuildTrayMenu()
 		})
 	})
+	a.mgr.PreStartChecker = func(svc config.Service) error {
+		if svc.EffectiveEngine() == config.EngineSingBox {
+			if a.gateway == nil {
+				if a.state.GatewayEnabled {
+					if err := a.startGateway(); err != nil {
+						return fmt.Errorf("网关内核启动失败: %w", err)
+					}
+				} else {
+					return errors.New("网关功能未开启，请先在设置中启用网关")
+				}
+			}
+		}
+		return nil
+	}
 	a.mgr.ServiceDialer = func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error) {
 		if a.gateway == nil {
-			return nil, errors.New("gateway engine is not running")
+			if a.state.GatewayEnabled {
+				if err := a.startGateway(); err != nil {
+					return nil, fmt.Errorf("网关内核启动失败: %w", err)
+				}
+			} else {
+				return nil, errors.New("gateway engine is not running")
+			}
 		}
 		return a.gateway.DialNode(ctx, svc.ID, network, addr)
 	}
@@ -1157,6 +1178,7 @@ func (a *app) startGateway() error {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
+		a.lastGatewayErr = nil
 		a.lastGatewaySig = ""
 	}
 	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
@@ -1255,12 +1277,15 @@ func (a *app) startGateway() error {
 		},
 	})
 	if err != nil {
+		a.lastGatewayErr = err
 		return err
 	}
 	if err := eng.Start(); err != nil {
+		a.lastGatewayErr = err
 		return err
 	}
 	a.gateway = eng
+	a.lastGatewayErr = nil
 	a.lastGatewaySig = a.gatewayConfigSignature()
 
 	if a.tailnetMgr != nil {
@@ -1365,6 +1390,7 @@ func (a *app) stopGateway() {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
+		a.lastGatewayErr = nil
 		a.lastGatewaySig = ""
 	}
 	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -352,5 +353,44 @@ func TestManager_EngineSingBoxLifecycleAndProbing(t *testing.T) {
 	}
 	if mgr.StatusOf(svc.ID).State != StateStopped {
 		t.Fatalf("expected StateStopped, got %v", mgr.StatusOf(svc.ID).State)
+	}
+}
+
+// Tests that PreStartChecker rejects service startup before transitioning to running state.
+func TestManager_PreStartCheckerRejection(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager("/nonexistent/bin/naive", dir, nil)
+	mgr.PreStartChecker = func(svc config.Service) error {
+		return errors.New("gateway engine startup failed")
+	}
+
+	startedCalled := false
+	mgr.OnServiceStarted = func(svc config.Service) {
+		startedCalled = true
+	}
+
+	svc := config.Service{
+		ID:         "singbox-node-2",
+		Name:       "SingBox Node",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSingBox,
+		Server:     "vless.example.com",
+		ServerPort: 443,
+		UUID:       "00000000-0000-0000-0000-000000000002",
+	}
+
+	err := mgr.Start(svc)
+	if err == nil || !strings.Contains(err.Error(), "gateway engine startup failed") {
+		t.Fatalf("expected PreStartChecker error, got %v", err)
+	}
+	if startedCalled {
+		t.Fatalf("expected OnServiceStarted not to be called on failure")
+	}
+	st := mgr.StatusOf(svc.ID)
+	if st.State == StateRunning {
+		t.Fatalf("expected State not to be StateRunning, got %v", st.State)
+	}
+	if !strings.Contains(st.LastError, "gateway engine startup failed") {
+		t.Fatalf("expected LastError to record PreStartChecker failure, got %q", st.LastError)
 	}
 }

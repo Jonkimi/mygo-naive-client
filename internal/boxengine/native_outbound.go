@@ -227,14 +227,21 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 				pass, _ = u.User.Password()
 			}
 		}
-		return map[string]any{
+		ob := map[string]any{
 			"type":        "naive",
 			"tag":         tag,
 			"server":      server,
 			"server_port": port,
 			"username":    user,
 			"password":    pass,
+			"tls": map[string]any{
+				"enabled": true,
+			},
 		}
+		if svc.SNI != "" {
+			ob["tls"].(map[string]any)["server_name"] = svc.SNI
+		}
+		return ob
 
 	default:
 		// Fallback to direct placeholder

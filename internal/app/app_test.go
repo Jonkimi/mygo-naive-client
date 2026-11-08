@@ -2966,5 +2966,55 @@ func TestRouting_DnsAndSmartPoolCardsWithPopover(t *testing.T) {
 	}
 }
 
+// Tests that EngineSingBox Reality node starts and verifies gateway lifecycle with PreStartChecker.
+func TestGateway_SingBoxRealityNodeStartupAndDialer(t *testing.T) {
+	svc := config.Service{
+		ID:          "svc-vless-reality-mock",
+		Name:        "mock-reality-test",
+		Protocol:    config.ProtoVLESS,
+		Engine:      config.EngineSingBox,
+		Server:      "example.org",
+		ServerPort:  443,
+		UUID:        "00000000-0000-0000-0000-000000000001",
+		Security:    "reality",
+		SNI:         "example.org",
+		Fingerprint: "chrome",
+		PublicKey:   "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE",
+		ShortID:     "0123456789abcdef",
+		Flow:        "xtls-rprx-vision",
+		Network:     "tcp",
+		Listens:     []string{"socks://127.0.0.1:1088"},
+	}
+
+	a, _, _ := newTestApp(t, []config.Service{svc})
+	a.state.GatewayEnabled = true
+
+	// 1. Starting gateway with reality node should succeed when with_utls is enabled
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway failed for reality node: %v", err)
+	}
+	if a.gateway == nil {
+		t.Fatalf("expected gateway to be running")
+	}
+
+	// 2. Starting service should pass PreStartChecker when gateway is running
+	if err := a.mgr.Start(svc); err != nil {
+		t.Fatalf("mgr.Start failed for singbox reality service: %v", err)
+	}
+	if st := a.mgr.StatusOf(svc.ID); st.State != runner.StateRunning {
+		t.Fatalf("expected StateRunning, got %v", st.State)
+	}
+
+	// 3. Stopping gateway and starting another service without gateway auto-recovery should fail
+	a.stopGateway()
+	a.state.GatewayEnabled = false
+	svc2 := svc
+	svc2.ID = "svc-vless-reality-2"
+	if err := a.mgr.Start(svc2); err == nil {
+		t.Fatalf("expected Start to fail when gateway is disabled and stopped")
+	}
+}
+
+
 
 

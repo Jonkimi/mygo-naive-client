@@ -83,6 +83,9 @@ type instance struct {
 // ServiceDialerFunc dials network connection for embedded engine services (e.g. EngineSingBox).
 type ServiceDialerFunc func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error)
 
+// PreStartCheckerFunc validates preconditions before starting a service.
+type PreStartCheckerFunc func(svc config.Service) error
+
 // Manager supervises multiple independent local NaiveProxy service processes.
 type Manager struct {
 	mu             sync.RWMutex
@@ -96,6 +99,7 @@ type Manager struct {
 	OnProbeFailure   func(id string, err error)
 	OnServiceStarted func(svc config.Service)
 	ServiceDialer    ServiceDialerFunc
+	PreStartChecker  PreStartCheckerFunc
 	BackoffMin     time.Duration // overridable in tests
 }
 
@@ -294,6 +298,12 @@ func CheckPortsAvailable(svc config.Service) error {
 func (m *Manager) Start(svc config.Service) error {
 	if err := svc.Validate(); err != nil {
 		return err
+	}
+	if m.PreStartChecker != nil {
+		if err := m.PreStartChecker(svc); err != nil {
+			m.setError(svc.ID, err.Error())
+			return err
+		}
 	}
 	// Stop existing run of this service if any
 	_ = m.Stop(svc.ID)

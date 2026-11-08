@@ -156,6 +156,18 @@ func New(opts EngineOptions) (*Engine, error) {
 		if strings.Contains(err.Error(), "with_tailscale") {
 			return nil, fmt.Errorf("内嵌 Tailscale 节点需要添加编译标签 (-tags with_tailscale,with_gvisor): %w", err)
 		}
+		if strings.Contains(err.Error(), "with_utls") {
+			return nil, fmt.Errorf("Reality / uTLS 节点需要添加编译标签 (-tags with_utls): %w", err)
+		}
+		if strings.Contains(err.Error(), "with_quic") {
+			return nil, fmt.Errorf("Hysteria2 / TUIC 节点需要添加编译标签 (-tags with_quic): %w", err)
+		}
+		if strings.Contains(err.Error(), "with_naive_outbound") {
+			return nil, fmt.Errorf("NaiveProxy 原生节点需要添加编译标签 (-tags with_naive_outbound): %w", err)
+		}
+		if strings.Contains(err.Error(), "with_wireguard") {
+			return nil, fmt.Errorf("WireGuard 节点需要添加编译标签 (-tags with_wireguard): %w", err)
+		}
 		return nil, fmt.Errorf("create sing-box core: %w", err)
 	}
 

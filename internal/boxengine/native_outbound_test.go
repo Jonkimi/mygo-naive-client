@@ -75,4 +75,27 @@ func TestBuildNativeOutbound(t *testing.T) {
 	if ob["username"] != "user" || ob["password"] != "pass" {
 		t.Errorf("unexpected user/pass: %v:%v", ob["username"], ob["password"])
 	}
+
+	// 4. Native NaiveProxy outbound (must have TLS enabled for sing-box)
+	naiveSvc := config.Service{
+		ID:         "naive-node-1",
+		Protocol:   config.ProtoNaive,
+		Engine:     config.EngineSingBox,
+		SNI:        "sni.example.com",
+		Proxies:    []string{"https://user1:pass1@naive.example.com:443"},
+	}
+	ob = buildNativeOutbound(naiveSvc)
+	if ob["type"] != "naive" {
+		t.Errorf("expected naive, got %v", ob["type"])
+	}
+	if ob["server"] != "naive.example.com" || ob["server_port"] != 443 {
+		t.Errorf("unexpected naive server/port: %v:%v", ob["server"], ob["server_port"])
+	}
+	if ob["username"] != "user1" || ob["password"] != "pass1" {
+		t.Errorf("unexpected naive credentials: %v:%v", ob["username"], ob["password"])
+	}
+	naiveTLS, ok := ob["tls"].(map[string]any)
+	if !ok || naiveTLS["enabled"] != true || naiveTLS["server_name"] != "sni.example.com" {
+		t.Errorf("expected TLS enabled with server_name on naive outbound, got %v", ob["tls"])
+	}
 }
