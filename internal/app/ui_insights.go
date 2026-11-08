@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/blocker"
+	"naive-client/locales"
 )
 
 func (a *app) renderInsightsPage(c *ui.Context, p palette) {
@@ -159,15 +160,18 @@ func (a *app) renderInsightsTrendChart(c *ui.Context, p palette) {
 		return
 	}
 	cat := a.catalog()
+	isEn := locales.ResolveLocale(a.state.Language) == locales.LangEn
 
 	now := time.Now()
 	buckets := a.blocker.Logger().Get24HourlyBuckets(now)
 
 	var maxVal int64 = 1
+	var total24h int64 = 0
 	for _, b := range buckets {
 		if b.Total > maxVal {
 			maxVal = b.Total
 		}
+		total24h += b.Total
 	}
 
 	ui.Column(c.Key("insights-chart-card")).
@@ -175,8 +179,17 @@ func (a *app) renderInsightsTrendChart(c *ui.Context, p palette) {
 		Background(p.card).Border(1, p.borderSubtle).Gap(8).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Text(c, cat.InsightsTrendTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Text(c, cat.InsightsTrendTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+					if total24h > 0 {
+						peakText := fmt.Sprintf("峰值: %d/时", maxVal)
+						if isEn {
+							peakText = fmt.Sprintf("Peak: %d/h", maxVal)
+						}
+						tagPill(c, peakText, p.accentText, p.accentBg)
+					}
+				})
+				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(8, 8).Radius(2).Background(p.accent)
 						ui.Text(c, cat.InsightsTrendTotal()).FontSize(10).TextColor(p.textDim)
@@ -189,33 +202,75 @@ func (a *app) renderInsightsTrendChart(c *ui.Context, p palette) {
 			})
 
 			// Bar chart container
+			const chartHeight float32 = 64
+			const maxBarHeight float32 = 56
+
 			ui.Row(c.Key("trend-bars-container")).
-				Height(60).AlignItems(ui.End).Gap(3).
-				Padding(4, 0, 4, 0).
+				Height(chartHeight).AlignItems(ui.End).Gap(2).
+				Padding(4, 0, 0, 0).
 				Children(func() {
 					for idx, b := range buckets {
 						bucket := b
-						totalHeight := float32(bucket.Total) / float32(maxVal) * 50.0
-						if totalHeight < 2 {
-							totalHeight = 2
-						}
-						blockedHeight := float32(bucket.Blocked) / float32(maxVal) * 50.0
-
 						tip := cat.InsightsTrendTooltip(bucket.Hour.Format("15:04"), int(bucket.Total), int(bucket.Blocked))
 
 						barCol := ui.Column(c.Key(fmt.Sprintf("bar-%d", idx))).
-							Grow(1).Height(totalHeight).Radius(2).
-							Background(p.elevated).Clip().
+							Grow(1).Height(chartHeight).AlignItems(ui.Center).Justify(ui.End).
+							Radius(3).Padding(2, 1, 2, 1).Clip().
 							Tooltip(tip)
 
+						if barCol.Hovered() {
+							barCol.Background(p.elevated)
+						}
+
 						barCol.Children(func() {
-							ui.Box(c).Grow(1)
-							if blockedHeight > 0 {
-								ui.Box(c).Height(blockedHeight).Background(p.red)
+							if bucket.Total == 0 {
+								ui.Box(c).Fill().Height(2).Radius(1).Background(p.borderSubtle)
+								return
 							}
+
+							totalHeight := float32(bucket.Total) / float32(maxVal) * maxBarHeight
+							if totalHeight < 3 {
+								totalHeight = 3
+							}
+
+							blockedHeight := float32(bucket.Blocked) / float32(maxVal) * maxBarHeight
+							if bucket.Blocked > 0 && blockedHeight < 2 {
+								blockedHeight = 2
+							}
+							if blockedHeight > totalHeight {
+								blockedHeight = totalHeight
+							}
+
+							allowedHeight := totalHeight - blockedHeight
+							if bucket.Total > bucket.Blocked && allowedHeight < 2 {
+								allowedHeight = 2
+								totalHeight = allowedHeight + blockedHeight
+							}
+
+							ui.Column(c).Fill().Height(totalHeight).Radius(2).Clip().Children(func() {
+								if allowedHeight > 0 {
+									ui.Box(c).Fill().Height(allowedHeight).Background(p.accent)
+								}
+								if blockedHeight > 0 {
+									ui.Box(c).Fill().Height(blockedHeight).Background(p.red)
+								}
+							})
 						})
 					}
 				})
+
+			// X-Axis Time Labels
+			nowLabel := "现在"
+			if isEn {
+				nowLabel = "Now"
+			}
+			ui.Row(c.Key("trend-x-axis")).Justify(ui.SpaceBetween).Padding(2, 2, 0, 2).Children(func() {
+				ui.Text(c, buckets[0].Hour.Format("15:04")).FontSize(10).TextColor(p.textDim)
+				ui.Text(c, buckets[6].Hour.Format("15:04")).FontSize(10).TextColor(p.textDim)
+				ui.Text(c, buckets[12].Hour.Format("15:04")).FontSize(10).TextColor(p.textDim)
+				ui.Text(c, buckets[18].Hour.Format("15:04")).FontSize(10).TextColor(p.textDim)
+				ui.Text(c, nowLabel).FontSize(10).TextColor(p.textDim)
+			})
 		})
 }
 

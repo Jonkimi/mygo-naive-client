@@ -374,3 +374,43 @@ func TestInsights_I18nLanguageSwitching(t *testing.T) {
 	}
 }
 
+// Tests that the 24-hour activity trend chart displays X-axis timestamps, current hour label,
+// and shows peak query metrics when queries are recorded.
+// Regression: renderInsightsTrendChart previously lacked X-axis time labels, lacked peak scale indication,
+// and had mismatched legend colors.
+func TestInsights_TrendChartLayoutAndXAxis(t *testing.T) {
+	a, tt, _ := newTestApp(t, []config.Service{})
+	a.activeTab = TabInsights
+	tt.Frame()
+
+	// Initial state with 0 queries should render X-axis labels with "现在"
+	if !tt.HasText("现在") {
+		t.Fatalf("expected X-axis to contain '现在', got texts: %v", tt.Texts())
+	}
+
+	// Record queries in current hour
+	now := time.Now()
+	a.blocker.Logger().RecordAt("ad.test.com", blocker.SourceDNS, blocker.VerdictBlocked, "ad-rule", now)
+	a.blocker.Logger().RecordAt("api.test.com", blocker.SourceGateway, blocker.VerdictAllowed, "", now)
+	a.blocker.Logger().RecordAt("cdn.test.com", blocker.SourceGateway, blocker.VerdictAllowed, "", now)
+	tt.Frame()
+
+	// Peak indicator should now be displayed
+	if !tt.HasText("峰值: 3/时") {
+		t.Fatalf("expected peak tag '峰值: 3/时', got texts: %v", tt.Texts())
+	}
+
+	// Switch to English and verify peak and Now labels
+	a.state.Language = locales.LangEn
+	a.applyLanguagePolicy()
+	tt.Frame()
+
+	if !tt.HasText("Peak: 3/h") {
+		t.Fatalf("expected 'Peak: 3/h' in English, got texts: %v", tt.Texts())
+	}
+	if !tt.HasText("Now") {
+		t.Fatalf("expected 'Now' on X-axis in English, got texts: %v", tt.Texts())
+	}
+}
+
+
