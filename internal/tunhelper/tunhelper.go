@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"syscall"
 )
 
 // ReceivedDevice represents a TUN device file descriptor received from the privileged helper.
@@ -22,7 +21,7 @@ type ReceivedDevice struct {
 // Close closes the underlying TUN file descriptor.
 func (r *ReceivedDevice) Close() error {
 	if r.FD > 0 {
-		err := syscall.Close(r.FD)
+		err := closeFD(r.FD)
 		r.FD = -1
 		return err
 	}

@@ -106,3 +106,8 @@ func ListenForFD(ctx context.Context, sockPath string) (*ReceivedDevice, error) 
 		SockPath: sockPath,
 	}, nil
 }
+
+func closeFD(fd int) error {
+	return syscall.Close(fd)
+}
+
