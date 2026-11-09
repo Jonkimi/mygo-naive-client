@@ -719,5 +719,256 @@ func TestPoolOutbound_RecordsDurationOnLogEntry(t *testing.T) {
 	}
 }
 
+// Regression test: when remote proxy blackholes/hangs, firstRTTConn times out within
+// firstPacketTimeout, annotates the query log with elapsed duration and "连接超时",
+// and records the dial failure in the tracker instead of hanging for 30s-120s.
+func TestPoolOutbound_FirstPacketTimeout_FastFail(t *testing.T) {
+	origTimeout := firstPacketTimeout
+	origStall := firstPacketStall
+	firstPacketTimeout = 60 * time.Millisecond
+	firstPacketStall = 30 * time.Millisecond
+	defer func() {
+		firstPacketTimeout = origTimeout
+		firstPacketStall = origStall
+	}()
 
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+	tr := telemetry.NewTracker()
+
+	logID := bl.Logger().RecordWithChain("timeout.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> node-blackhole")
+	bl.Logger().BindSourceConn("127.0.0.1:58888", logID)
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = serverConn.Read(buf)
+		// Server intentionally does not reply to simulate remote blackhole
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"node-blackhole"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"node-blackhole": &customMockOutbound{
+				tag:  "node-blackhole",
+				conn: clientConn,
+			},
+		},
+		sidecars: map[string]bool{
+			"node-blackhole": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+		Blocker:      bl,
+	})
+
+	inboundCtx := &adapter.InboundContext{
+		Source: M.ParseSocksaddr("127.0.0.1:58888"),
+	}
+	ctx := adapter.WithContext(context.Background(), inboundCtx)
+	dest := M.ParseSocksaddr("timeout.com:80")
+
+	conn, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Client sends HTTP request
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Server does NOT send any response data. Read must time out around 60ms.
+	buf := make([]byte, 64)
+	n, readErr := conn.Read(buf)
+	if readErr == nil {
+		t.Fatalf("expected read error due to deadline, got n=%d", n)
+	}
+
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) == 0 {
+		t.Fatalf("expected log entries")
+	}
+	if entries[0].Duration <= 0 {
+		t.Errorf("expected positive duration on timed-out log entry, got %v", entries[0].Duration)
+	}
+	if entries[0].Error != "连接超时" {
+		t.Errorf("expected error to be '连接超时', got %q", entries[0].Error)
+	}
+
+	sc := tr.GetScore("node-blackhole")
+	if sc.ConsecutiveFailures == 0 {
+		t.Errorf("expected consecutive failures >= 1, got %d", sc.ConsecutiveFailures)
+	}
+}
+
+// Regression test: when a connection hangs for longer than firstPacketStall,
+// RecordStall immediately evicts domain affinity so subsequent requests do not
+// continue being funneled into the blackholed node while waiting for full timeout.
+func TestPoolOutbound_InFlightStallEvictsAffinity(t *testing.T) {
+	origTimeout := firstPacketTimeout
+	origStall := firstPacketStall
+	firstPacketTimeout = 200 * time.Millisecond
+	firstPacketStall = 30 * time.Millisecond
+	defer func() {
+		firstPacketTimeout = origTimeout
+		firstPacketStall = origStall
+	}()
+
+	tr := telemetry.NewTracker()
+	// Pre-seed affinity for target domain to node-bad
+	_, _ = tr.SelectBest([]string{"node-bad", "node-good"}, "example.com")
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = serverConn.Read(buf)
+		// Server intentionally does not reply to simulate remote blackhole
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"node-bad", "node-good"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"node-bad": &customMockOutbound{
+				tag:  "node-bad",
+				conn: clientConn,
+			},
+			"node-good": &customMockOutbound{
+				tag: "node-good",
+			},
+		},
+		sidecars: map[string]bool{
+			"node-bad":  true,
+			"node-good": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+	})
+
+	ctx := context.Background()
+	dest := M.ParseSocksaddr("example.com:80")
+
+	conn, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Write request to arm stall timer
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Wait for stall timer (30ms) to trigger
+	time.Sleep(50 * time.Millisecond)
+
+	// Subsequent request for example.com must NOT pick node-bad
+	nextCand := poolOb.SelectCandidate("example.com")
+	if nextCand == "node-bad" {
+		t.Errorf("expected affinity to be evicted after in-flight stall, but got %q", nextCand)
+	}
+	if nextCand != "node-good" {
+		t.Errorf("expected next candidate to be node-good, got %q", nextCand)
+	}
+}
+
+// Regression test: when client aborts/closes the connection before receiving the first response byte,
+// firstRTTConn must record the elapsed duration instead of 0, correctly annotating "首包未响应中断".
+func TestPoolOutbound_ClientPrematureCloseRecordsDurationAndError(t *testing.T) {
+	origTimeout := firstPacketTimeout
+	origStall := firstPacketStall
+	firstPacketTimeout = 500 * time.Millisecond
+	firstPacketStall = 500 * time.Millisecond
+	defer func() {
+		firstPacketTimeout = origTimeout
+		firstPacketStall = origStall
+	}()
+
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+	tr := telemetry.NewTracker()
+
+	logID := bl.Logger().RecordWithChain("abort.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> node-abort")
+	bl.Logger().BindSourceConn("127.0.0.1:59999", logID)
+
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = serverConn.Read(buf)
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"node-abort"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"node-abort": &customMockOutbound{
+				tag:  "node-abort",
+				conn: clientConn,
+			},
+		},
+		sidecars: map[string]bool{
+			"node-abort": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+		Blocker:      bl,
+	})
+
+	inboundCtx := &adapter.InboundContext{
+		Source: M.ParseSocksaddr("127.0.0.1:59999"),
+	}
+	ctx := adapter.WithContext(context.Background(), inboundCtx)
+	dest := M.ParseSocksaddr("abort.com:80")
+
+	conn, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	time.Sleep(15 * time.Millisecond)
+
+	// Client closes prematurely
+	_ = conn.Close()
+
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) == 0 {
+		t.Fatalf("expected log entries")
+	}
+	if entries[0].Duration <= 0 {
+		t.Errorf("expected positive duration on prematurely aborted log entry, got %v", entries[0].Duration)
+	}
+	if entries[0].Error != "首包未响应中断" {
+		t.Errorf("expected error to be '首包未响应中断', got %q", entries[0].Error)
+	}
+}
 

@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/netip"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -273,40 +272,6 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 	}, nil
 }
 
-type sourceUnbindConn struct {
-	net.Conn
-	onClose func()
-	once    sync.Once
-}
-
-func (c *sourceUnbindConn) Close() error {
-	c.once.Do(func() {
-		if c.onClose != nil {
-			c.onClose()
-		}
-	})
-	return c.Conn.Close()
-}
-
-func (c *sourceUnbindConn) CloseWrite() error {
-	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
-}
-
-func (c *sourceUnbindConn) Upstream() any {
-	return c.Conn
-}
-
-func (c *sourceUnbindConn) ReaderReplaceable() bool {
-	return true
-}
-
-func (c *sourceUnbindConn) WriterReplaceable() bool {
-	return true
-}
-
 // BlockerConnectionTracker intercepts routed connections and logs/blocks based on blocker rules.
 type BlockerConnectionTracker struct {
 	blocker          *blocker.Engine
@@ -367,14 +332,7 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 			return conn
 		}
 		if logID > 0 && metadata.Source.Port != 0 && t.blocker != nil && t.blocker.Logger() != nil {
-			sourceKey := metadata.Source.String()
-			t.blocker.Logger().BindSourceConn(sourceKey, logID)
-			conn = &sourceUnbindConn{
-				Conn: conn,
-				onClose: func() {
-					t.blocker.Logger().UnbindSourceConn(sourceKey)
-				},
-			}
+			t.blocker.Logger().BindSourceConn(metadata.Source.String(), logID)
 		}
 	}
 	return conn

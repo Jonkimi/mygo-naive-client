@@ -294,6 +294,27 @@ func (t *Tracker) RecordProbeFailure(nodeID string) {
 	st.checkAndTripCircuit()
 }
 
+// RecordStall records an in-flight stall when a connection takes longer than severePacketLossRTT
+// to receive its first response byte. It immediately evicts sticky domain affinity and penalizes
+// the node so subsequent concurrent requests are not funneled into the blackhole.
+func (t *Tracker) RecordStall(nodeID string, targetHost string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	root := ExtractRootDomain(targetHost)
+	t.recordDomainFailureLocked(root, nodeID)
+
+	st, exists := t.nodes[nodeID]
+	if !exists {
+		st = &NodeStats{}
+		t.nodes[nodeID] = st
+	}
+	st.recordWindowSample(false)
+	st.ConsecutiveFailures++
+	st.ConsecutiveSuccesses = 0
+	st.checkAndTripCircuit()
+}
+
 func isNodeBrokenLocked(st *NodeStats) bool {
 	if st == nil || st.circuitTrippedAt.IsZero() {
 		return false

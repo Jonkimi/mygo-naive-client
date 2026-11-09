@@ -327,12 +327,39 @@ func (l *QueryLogger) GetStatsSummary() (total int64, blocked int64) {
 	return l.totalQueries, l.totalBlocked
 }
 
+type sourceBinding struct {
+	logID int64
+	ts    time.Time
+}
+
+func extractLogID(v any) int64 {
+	switch val := v.(type) {
+	case sourceBinding:
+		return val.logID
+	case int64:
+		return val
+	default:
+		return 0
+	}
+}
+
 // BindSourceConn associates an inbound client source address (IP:Port) with a log entry ID.
 func (l *QueryLogger) BindSourceConn(source string, logID int64) {
 	if l == nil || source == "" || logID <= 0 {
 		return
 	}
-	l.sourceMap.Store(source, logID)
+	l.sourceMap.Store(source, sourceBinding{logID: logID, ts: time.Now()})
+
+	// Opportunistic passive TTL cleanup of abandoned bindings (e.g. connections dropped before dial)
+	if logID%64 == 0 {
+		cutoff := time.Now().Add(-30 * time.Second)
+		l.sourceMap.Range(func(key, value any) bool {
+			if b, ok := value.(sourceBinding); ok && b.ts.Before(cutoff) {
+				l.sourceMap.Delete(key)
+			}
+			return true
+		})
+	}
 }
 
 // UnbindSourceConn removes the association for an inbound client source address.
@@ -357,8 +384,8 @@ func (l *QueryLogger) AnnotateDurationBySource(source string, d time.Duration) b
 	if !ok {
 		return false
 	}
-	logID, ok := v.(int64)
-	if !ok || logID <= 0 {
+	logID := extractLogID(v)
+	if logID <= 0 {
 		return false
 	}
 	return l.SetDurationByLogID(logID, d)
@@ -373,8 +400,8 @@ func (l *QueryLogger) AnnotateFailureBySource(source string, errReason string, d
 	if !ok {
 		return false
 	}
-	logID, ok := v.(int64)
-	if !ok || logID <= 0 {
+	logID := extractLogID(v)
+	if logID <= 0 {
 		return false
 	}
 	if d > 0 {

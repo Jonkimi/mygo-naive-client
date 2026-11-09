@@ -268,9 +268,12 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			destPort := destination.Port
 			poolTag := p.tag
 			singleCandidate := len(ordered) == 1
+			var wasStalled bool
 			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, firstErr error) {
 				if p.tracker != nil {
-					p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
+					if !wasStalled || firstErr == nil {
+						p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
+					}
 				}
 				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 					p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
@@ -285,6 +288,14 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 						OriginalAction: poolTag,
 						Error:          firstErr,
 					})
+				}
+				if p.onTelemetryUpdate != nil {
+					p.onTelemetryUpdate()
+				}
+			}, func() {
+				wasStalled = true
+				if p.tracker != nil {
+					p.tracker.RecordStall(candID, targetHost)
 				}
 				if p.onTelemetryUpdate != nil {
 					p.onTelemetryUpdate()
@@ -379,24 +390,37 @@ const (
 	maxValidFirstRTT = 10 * time.Second
 )
 
+var (
+	firstPacketTimeout = 8 * time.Second
+	firstPacketStall   = 3500 * time.Millisecond
+)
+
 var errFirstPacketAborted = errors.New("connection closed before receiving first response byte")
 
 type firstRTTConn struct {
 	net.Conn
 	onResult   func(rtt time.Duration, err error)
+	onStall    func()
 	writeTime  time.Time
 	hasWritten bool
 	done       bool
+	stalled    bool
+	stallTimer *time.Timer
 	mu         sync.Mutex
 }
 
-func wrapFirstRTTConn(conn net.Conn, onResult func(rtt time.Duration, err error)) net.Conn {
+func wrapFirstRTTConn(conn net.Conn, onResult func(rtt time.Duration, err error), onStall ...func()) net.Conn {
 	if conn == nil {
 		return nil
+	}
+	var stallFn func()
+	if len(onStall) > 0 {
+		stallFn = onStall[0]
 	}
 	return &firstRTTConn{
 		Conn:     conn,
 		onResult: onResult,
+		onStall:  stallFn,
 	}
 }
 
@@ -406,6 +430,23 @@ func (c *firstRTTConn) Write(b []byte) (int, error) {
 		if !c.hasWritten {
 			c.hasWritten = true
 			c.writeTime = time.Now()
+			if firstPacketTimeout > 0 {
+				_ = c.Conn.SetReadDeadline(time.Now().Add(firstPacketTimeout))
+			}
+			if c.onStall != nil && firstPacketStall > 0 {
+				c.stallTimer = time.AfterFunc(firstPacketStall, func() {
+					c.mu.Lock()
+					if !c.done && c.hasWritten && !c.stalled {
+						c.stalled = true
+						c.mu.Unlock()
+						if c.onStall != nil {
+							c.onStall()
+						}
+						return
+					}
+					c.mu.Unlock()
+				})
+			}
 		}
 		c.mu.Unlock()
 	}
@@ -414,9 +455,17 @@ func (c *firstRTTConn) Write(b []byte) (int, error) {
 		c.mu.Lock()
 		if !c.done && c.hasWritten {
 			c.done = true
+			if c.stallTimer != nil {
+				c.stallTimer.Stop()
+			}
+			_ = c.Conn.SetReadDeadline(time.Time{})
+			var elapsed time.Duration
+			if !c.writeTime.IsZero() {
+				elapsed = time.Since(c.writeTime)
+			}
 			c.mu.Unlock()
 			if c.onResult != nil {
-				c.onResult(0, err)
+				c.onResult(elapsed, err)
 			}
 			return n, err
 		}
@@ -431,6 +480,10 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 		c.mu.Lock()
 		if !c.done && c.hasWritten && !c.writeTime.IsZero() {
 			c.done = true
+			if c.stallTimer != nil {
+				c.stallTimer.Stop()
+			}
+			_ = c.Conn.SetReadDeadline(time.Time{})
 			rtt := time.Since(c.writeTime)
 			c.mu.Unlock()
 			if c.onResult != nil {
@@ -451,9 +504,17 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 		c.mu.Lock()
 		if !c.done && c.hasWritten {
 			c.done = true
+			if c.stallTimer != nil {
+				c.stallTimer.Stop()
+			}
+			_ = c.Conn.SetReadDeadline(time.Time{})
+			var elapsed time.Duration
+			if !c.writeTime.IsZero() {
+				elapsed = time.Since(c.writeTime)
+			}
 			c.mu.Unlock()
 			if c.onResult != nil {
-				c.onResult(0, err)
+				c.onResult(elapsed, err)
 			}
 			return n, err
 		}
@@ -464,11 +525,19 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 
 func (c *firstRTTConn) Close() error {
 	c.mu.Lock()
+	if c.stallTimer != nil {
+		c.stallTimer.Stop()
+	}
+	_ = c.Conn.SetReadDeadline(time.Time{})
 	if !c.done && c.hasWritten {
 		c.done = true
+		var elapsed time.Duration
+		if !c.writeTime.IsZero() {
+			elapsed = time.Since(c.writeTime)
+		}
 		c.mu.Unlock()
 		if c.onResult != nil {
-			c.onResult(0, errFirstPacketAborted)
+			c.onResult(elapsed, errFirstPacketAborted)
 		}
 	} else {
 		c.mu.Unlock()
