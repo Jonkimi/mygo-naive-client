@@ -4,6 +4,7 @@ package tunhelper
 
 import (
 	"fmt"
+	"os/exec"
 
 	"golang.org/x/sys/unix"
 )
@@ -39,6 +40,15 @@ func OpenPlatformTUN() (int, string, error) {
 		_ = unix.Close(tunFd)
 		return 0, "", fmt.Errorf("getsockopt utun_opt_ifname: %w", err)
 	}
+
+	// Configure utun interface with IP addresses while running with root privileges
+	cmd := exec.Command("ifconfig", name, "172.19.0.1", "172.19.0.2", "netmask", "255.255.255.252", "up")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = unix.Close(tunFd)
+		return 0, "", fmt.Errorf("configure utun ipv4 (%s): %w: %s", name, err, string(out))
+	}
+	cmd6 := exec.Command("ifconfig", name, "inet6", "fdfe:dcba:9876::1", "prefixlen", "126", "up")
+	_ = cmd6.Run()
 
 	return tunFd, name, nil
 }

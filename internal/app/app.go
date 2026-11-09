@@ -1162,16 +1162,17 @@ func (a *app) requestTunDevice() (*tunhelper.ReceivedDevice, error) {
 	if a.mockTunDevice != nil {
 		return a.mockTunDevice()
 	}
-	binPath := a.resolveBinaryPath()
-	if binPath == "" {
-		if exe, err := os.Executable(); err == nil {
-			binPath = exe
-		}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve current executable: %w", err)
+	}
+	if realPath, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = realPath
 	}
 	client := tunhelper.NewClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return client.RequestDevice(ctx, binPath)
+	return client.RequestDevice(ctx, exe)
 }
 
 func (a *app) startGateway() error {
@@ -1450,6 +1451,7 @@ func (a *app) setTrafficMode(mode string) error {
 			_ = a.sysproxy.Unset()
 		}
 		if err := a.startGateway(); err != nil {
+			_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
 			a.state.TrafficMode = "port"
 			_ = a.startGateway()
 			a.toast("TUN Mode error: " + err.Error())

@@ -466,53 +466,42 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			AlignItems(ui.Center).
 			Children(func() {
 				// Row 1: Positional 3-bar mode capsule (Left: Port, Center: SysProxy, Right: TUN)
-				modeBtn := ui.ButtonBase(c.Key("collapsed-mode-lamp")).
-					Label(cat.TailnetModeLabel()).
+				ui.Row(c.Key("collapsed-mode-row")).
 					Size(28, 22).Radius(4).
 					Background(ui.Transparent).
-					AlignItems(ui.Center).Justify(ui.Center).
+					AlignItems(ui.Center).Justify(ui.Center).Gap(2).
 					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {
-							activeBarColor := p.navActiveColor()
-							inactiveBarColor := p.borderSubtle
+						renderCollapsedModeBtn := func(modeID, label string) {
+							isSelected := activeMode == modeID
+							barColor := p.borderSubtle
 							if p.dark {
-								inactiveBarColor = p.textDim
+								barColor = p.textDim
+							}
+							if isSelected {
+								barColor = p.navActiveColor()
 							}
 
-							// Left: Port
-							c1 := inactiveBarColor
-							if activeMode == "port" {
-								c1 = activeBarColor
+							btn := ui.ButtonBase(c.Key("collapsed-mode-btn-" + modeID)).
+								Label(label).
+								Size(8, 20).Radius(3).
+								Background(ui.Transparent).
+								AlignItems(ui.Center).Justify(ui.Center).
+								Tooltip(label).
+								Children(func() {
+									ui.Box(c).Width(6).Height(10).Radius(2).Background(barColor)
+								})
+							if btn.Hovered() {
+								btn.Background(p.cardHover)
 							}
-							ui.Box(c).Width(7).Height(10).Radius(2.5).Background(c1)
+							if btn.Clicked() {
+								_ = a.setTrafficMode(modeID)
+							}
+						}
 
-							// Center: SysProxy
-							c2 := inactiveBarColor
-							if activeMode == "sysproxy" {
-								c2 = activeBarColor
-							}
-							ui.Box(c).Width(7).Height(10).Radius(2.5).Background(c2)
-
-							// Right: TUN
-							c3 := inactiveBarColor
-							if activeMode == "tun" {
-								c3 = activeBarColor
-							}
-							ui.Box(c).Width(7).Height(10).Radius(2.5).Background(c3)
-						})
+						renderCollapsedModeBtn("port", cat.ModePortOnly())
+						renderCollapsedModeBtn("sysproxy", cat.ModeSysProxy())
+						renderCollapsedModeBtn("tun", cat.ModeTun())
 					})
-				if modeBtn.Hovered() {
-					modeBtn.Background(p.cardHover)
-				}
-				if modeBtn.Clicked() {
-					nextMode := "sysproxy"
-					if activeMode == "sysproxy" {
-						nextMode = "tun"
-					} else if activeMode == "tun" {
-						nextMode = "port"
-					}
-					_ = a.setTrafficMode(nextMode)
-				}
 
 				// Row 2: Gateway status dot
 				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
@@ -578,7 +567,8 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 							weight = 600
 						}
 
-						btn := ui.Row(c.Key("btn-mode-" + modeID)).
+						btn := ui.ButtonBase(c.Key("btn-mode-" + modeID)).
+							Label(label).
 							Grow(1).Justify(ui.Center).AlignItems(ui.Center).
 							Height(22).Radius(4).
 							Background(bg).

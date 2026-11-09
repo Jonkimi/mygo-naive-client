@@ -1399,6 +1399,23 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 	if a.sysproxy != nil && a.sysproxy.IsActive() {
 		t.Fatalf("expected sysproxy deactivated after clicking port pill")
 	}
+
+	// Collapse the sidebar and test direct switching from collapsed 3-bar mode capsule
+	a.state.SidebarCollapsed = true
+	tt.Frame()
+
+	// Direct click on TUN in collapsed mode should switch straight to TUN (not cycling to sysproxy)
+	if err := tt.Click(a.catalog().ModeTun()); err != nil {
+		t.Fatalf("click ModeTun in collapsed sidebar: %v", err)
+	}
+	tt.Frame()
+
+	if a.state.TrafficMode != "tun" {
+		t.Fatalf("expected trafficMode 'tun' after clicking ModeTun in collapsed sidebar, got %q", a.state.TrafficMode)
+	}
+	if a.tunDevice == nil {
+		t.Fatalf("expected tunDevice to be active after clicking ModeTun in collapsed sidebar")
+	}
 }
 
 // Tests that requests entering the Unified Gateway are dispatched through the running node pool
