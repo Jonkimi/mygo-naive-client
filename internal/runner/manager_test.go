@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -394,3 +396,88 @@ func TestManager_PreStartCheckerRejection(t *testing.T) {
 		t.Fatalf("expected LastError to record PreStartChecker failure, got %q", st.LastError)
 	}
 }
+
+// Regression test: stale sidecar processes from previous app runs or crashes are cleaned up
+// on NewManager initialization via PID tracking and orphan scanning.
+func TestManager_PIDFileLifecycleAndStaleCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping process signal test on windows")
+	}
+	dir := t.TempDir()
+	bin := writeFakeNaiveScript(t, dir, false)
+
+	// 1. Simulate an orphaned background process from a previous run
+	dummyCmd := exec.Command("/bin/sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 0.05; done")
+	if err := dummyCmd.Start(); err != nil {
+		t.Fatalf("failed to start dummy process: %v", err)
+	}
+	orphanPid := dummyCmd.Process.Pid
+	reaped := make(chan struct{})
+	go func() {
+		_ = dummyCmd.Wait()
+		close(reaped)
+	}()
+	defer func() {
+		_ = dummyCmd.Process.Kill()
+	}()
+
+	// Write stale PID file
+	stalePidPath := filepath.Join(dir, "service-orphan.pid")
+	if err := os.WriteFile(stalePidPath, []byte(fmt.Sprintf("%d", orphanPid)), 0o600); err != nil {
+		t.Fatalf("failed to write stale pid file: %v", err)
+	}
+
+	// 2. Initializing NewManager must detect and terminate the stale orphan process
+	mgr := NewManager(bin, dir, nil)
+
+	select {
+	case <-reaped:
+		// Orphan was killed and reaped successfully
+	case <-time.After(1 * time.Second):
+		t.Fatalf("expected orphaned process %d to be killed by NewManager, but it did not exit", orphanPid)
+	}
+
+	// PID file should be removed
+	if _, err := os.Stat(stalePidPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale PID file to be deleted, err=%v", err)
+	}
+
+	// 3. Test active service PID file lifecycle
+	port := freePort(t)
+	svc := config.DefaultService("active-1", port)
+	if err := mgr.Start(svc); err != nil {
+		t.Fatalf("Start service failed: %v", err)
+	}
+
+	activePidPath := filepath.Join(dir, fmt.Sprintf("service-%s.pid", svc.ID))
+	// Wait for PID file to be written
+	var activePID int
+	for i := 0; i < 20; i++ {
+		if data, err := os.ReadFile(activePidPath); err == nil {
+			var p int
+			if _, err := fmt.Sscanf(string(data), "%d", &p); err == nil && p > 0 {
+				activePID = p
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if activePID <= 0 {
+		t.Fatalf("expected valid PID in %s, got %d", activePidPath, activePID)
+	}
+
+	// 4. Stopping service must kill process and remove PID file
+	if err := mgr.Stop(svc.ID); err != nil {
+		t.Fatalf("Stop service failed: %v", err)
+	}
+
+	if _, err := os.Stat(activePidPath); !os.IsNotExist(err) {
+		t.Fatalf("expected PID file to be deleted after Stop, err=%v", err)
+	}
+
+	// Ensure process is indeed terminated
+	if err := syscall.Kill(activePID, 0); err == nil {
+		t.Fatalf("expected active service process %d to be dead after Stop, but it is still alive", activePID)
+	}
+}
+

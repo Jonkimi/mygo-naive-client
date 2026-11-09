@@ -8,10 +8,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -261,7 +264,9 @@ func Run() error {
 		a.showMainWindow()
 	})
 	mygo.App.OnWindowAllClosed(func() {
-		// Keep running in system tray
+		if a.tray == nil && runtime.GOOS != "darwin" {
+			mygo.App.Quit()
+		}
 	})
 	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
 		a.quitting = true
@@ -278,12 +283,43 @@ func Run() error {
 		if a.tailnetMgr != nil {
 			a.tailnetMgr.Close()
 		}
-		a.stopGateway()
+		var wg sync.WaitGroup
 		if a.mgr != nil {
-			_ = a.mgr.StopAll()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = a.mgr.StopAll()
+			}()
 		}
+		a.stopGateway()
+		wg.Wait()
 		a.destroyTray()
 	})
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		select {
+		case <-sigCh:
+			a.quitting = true
+			if a.batchCancel != nil {
+				a.batchCancel()
+			}
+			var wg sync.WaitGroup
+			if a.mgr != nil {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_ = a.mgr.StopAll()
+				}()
+			}
+			a.stopGateway()
+			wg.Wait()
+			mygo.App.Quit()
+		case <-a.quitCh:
+			return
+		}
+	}()
 
 	mygo.App.WhenReady(func() {
 		a.loadState()
@@ -300,10 +336,14 @@ func Run() error {
 			Content:         ui.View(a.view),
 		})
 		a.win.OnClose(func(e *mygo.CloseEvent) {
-			if a.quitting || a.state.AppIcon == appIconDock {
+			if a.quitting {
 				return
 			}
 			e.PreventDefault()
+			if a.state.AppIcon == appIconDock && runtime.GOOS != "darwin" {
+				mygo.App.Quit()
+				return
+			}
 			a.win.Hide()
 		})
 

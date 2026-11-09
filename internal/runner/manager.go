@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
@@ -108,6 +107,8 @@ func NewManager(binPath, workDir string, onChange func()) *Manager {
 	if onChange == nil {
 		onChange = func() {}
 	}
+	cleanStaleOrphans(workDir)
+	cleanPIDFiles(workDir)
 	return &Manager{
 		binPath:    binPath,
 		workDir:    workDir,
@@ -307,6 +308,7 @@ func (m *Manager) Start(svc config.Service) error {
 	}
 	// Stop existing run of this service if any
 	_ = m.Stop(svc.ID)
+	cleanServicePID(m.workDir, svc.ID)
 
 	if svc.EffectiveKind() == config.KindExternalProxy || svc.EffectiveEngine() == config.EngineSingBox {
 		m.mu.Lock()
@@ -495,7 +497,7 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 		cmd := exec.Command(bin, args...)
 		cmd.Stdout = inst.logs
 		cmd.Stderr = inst.logs
-		hideWindow(cmd)
+		prepareProcess(cmd)
 
 		if err := cmd.Start(); err != nil {
 			m.mu.Lock()
@@ -511,6 +513,8 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 		}
 
 		pid := cmd.Process.Pid
+		attachProcess(cmd.Process)
+		writePIDFile(m.workDir, inst.svc.ID, pid)
 		startedAt := time.Now()
 		m.mu.Lock()
 		inst.cmd = cmd
@@ -535,15 +539,17 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 		var waitErr error
 		select {
 		case <-ctx.Done():
-			terminateProcess(cmd.Process)
+			terminateProcess(cmd)
 			select {
 			case waitErr = <-waitDone:
-			case <-time.After(2 * time.Second):
-				_ = cmd.Process.Kill()
+			case <-time.After(500 * time.Millisecond):
+				killProcessGroup(cmd)
 				waitErr = <-waitDone
 			}
 		case waitErr = <-waitDone:
 		}
+
+		removePIDFile(m.workDir, inst.svc.ID)
 
 		m.mu.Lock()
 		stopping := inst.stopping || ctx.Err() != nil
@@ -642,7 +648,7 @@ func (m *Manager) Stop(id string) error {
 	if done != nil {
 		select {
 		case <-done:
-		case <-time.After(4 * time.Second):
+		case <-time.After(1 * time.Second):
 		}
 	}
 	return nil
@@ -841,15 +847,4 @@ func (m *Manager) FirstRunningEndpoint() (config.ListenEndpoint, bool) {
 		}
 	}
 	return config.ListenEndpoint{}, false
-}
-
-func terminateProcess(p *os.Process) {
-	if p == nil {
-		return
-	}
-	if runtime.GOOS == "windows" {
-		_ = p.Kill()
-		return
-	}
-	_ = p.Signal(os.Interrupt)
 }
