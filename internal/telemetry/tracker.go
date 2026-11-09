@@ -1,6 +1,8 @@
 package telemetry
 
 import (
+	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -17,14 +19,25 @@ const (
 	defaultInitialRTT            = 150 * time.Millisecond
 	maxTrackerDomains            = 2000
 
-	recentWindowSize    = 50
-	severePacketLossRTT = 3000 * time.Millisecond
-	highLossMinSamples  = 5
-	highLossSuccessRate = 0.60
+	recentWindowSize             = 50
+	severePacketLossRTT          = 3000 * time.Millisecond
+	highLossMinSamples           = 5
+	highLossSuccessRate          = 0.60
+	multiDomainCorrelationWindow = 5 * time.Second
+	multiDomainVetoThreshold     = 2
+	probeHistorySize             = 5
 )
+
+type slowDomainRecord struct {
+	root string
+	at   time.Time
+}
 
 type NodeStats struct {
 	EWMA                 time.Duration
+	PassiveEWMA          time.Duration
+	ProbeRTT             time.Duration
+	MaxProbeRTT          time.Duration
 	ConsecutiveFailures  int
 	ConsecutiveSuccesses int
 	TotalDials           int
@@ -32,10 +45,69 @@ type NodeStats struct {
 	LastFailure          time.Time
 	circuitTrippedAt     time.Time
 	samplesSinceRecovery int
+	recentSlow           []slowDomainRecord
+	probeHistory         [probeHistorySize]time.Duration
+	probeCursor          int
+	probeCount           int
 
 	window    [recentWindowSize]bool
 	winCursor int
 	winCount  int
+}
+
+// recordProbeSample tracks probe latency in a 5-sample ring buffer and updates MaxProbeRTT jitter.
+func (st *NodeStats) recordProbeSample(rtt time.Duration) {
+	st.ProbeRTT = rtt
+	st.probeHistory[st.probeCursor] = rtt
+	st.probeCursor = (st.probeCursor + 1) % probeHistorySize
+	if st.probeCount < probeHistorySize {
+		st.probeCount++
+	}
+	var maxRTT time.Duration
+	for i := 0; i < st.probeCount; i++ {
+		if st.probeHistory[i] > maxRTT {
+			maxRTT = st.probeHistory[i]
+		}
+	}
+	st.MaxProbeRTT = maxRTT
+}
+
+// recordSlowDomain tracks stalled root domains in a 5s window and returns the count of unique stalled roots.
+func (st *NodeStats) recordSlowDomain(root string, now time.Time) int {
+	if root == "" {
+		return 1
+	}
+	cutoff := now.Add(-multiDomainCorrelationWindow)
+	n := 0
+	for _, rec := range st.recentSlow {
+		if rec.at.After(cutoff) {
+			st.recentSlow[n] = rec
+			n++
+		}
+	}
+	st.recentSlow = append(st.recentSlow[:n], slowDomainRecord{root: root, at: now})
+
+	unique := make(map[string]struct{}, len(st.recentSlow))
+	for _, rec := range st.recentSlow {
+		unique[rec.root] = struct{}{}
+	}
+	return len(unique)
+}
+
+// updateEffectiveEWMA synthesizes effective RTT from passive telemetry and active probe baseline.
+// It implements pure Asymmetric Certainty without magic numbers:
+// 1. Passive traffic naturally reflects the true distance to the current target cluster.
+// 2. Active probe acts as a physical floor and executes an instant one-vote veto when degraded.
+func (st *NodeStats) updateEffectiveEWMA() {
+	if st.ProbeRTT == 0 {
+		st.EWMA = st.PassiveEWMA
+		return
+	}
+	if st.PassiveEWMA == 0 {
+		st.EWMA = st.ProbeRTT
+		return
+	}
+	st.EWMA = max(st.PassiveEWMA, st.ProbeRTT)
 }
 
 func (st *NodeStats) recordWindowSample(success bool) {
@@ -86,6 +158,9 @@ func (st *NodeStats) clearCircuit() {
 
 type QualityScore struct {
 	EWMA                time.Duration
+	PassiveEWMA         time.Duration
+	ProbeRTT            time.Duration
+	MaxProbeRTT         time.Duration
 	SuccessRate         float64
 	Score               float64
 	IsBroken            bool
@@ -93,6 +168,60 @@ type QualityScore struct {
 	SuccessfulDials     int
 	ConsecutiveFailures int
 	CircuitPenalty      float64
+}
+
+// SiteFault represents an error caused by the remote target website rather than the proxy node.
+type SiteFault interface {
+	IsSiteFault() bool
+}
+
+type siteFaultWrapper struct {
+	error
+}
+
+func (w *siteFaultWrapper) Unwrap() error { return w.error }
+func (w *siteFaultWrapper) IsSiteFault() bool { return true }
+
+// MarkSiteFault wraps an error indicating it was caused by the destination site rather than proxy failure.
+func MarkSiteFault(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &siteFaultWrapper{error: err}
+}
+
+// IsClientCanceled reports whether an error was caused by client cancellation (e.g. browser refresh or closed tab).
+func IsClientCanceled(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "context canceled") || strings.Contains(errStr, "operation was canceled")
+}
+
+// IsSiteFault reports whether an error is attributable to the destination server rather than the proxy.
+func IsSiteFault(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sf SiteFault
+	if errors.As(err, &sf) && sf.IsSiteFault() {
+		return true
+	}
+	errStr := strings.ToLower(err.Error())
+	// Target site certificate issues (e.g. expired, self-signed, host mismatch)
+	if strings.Contains(errStr, "x509:") ||
+		strings.Contains(errStr, "certificate is not trusted") ||
+		strings.Contains(errStr, "bad certificate") ||
+		strings.Contains(errStr, "tls: unknown authority") ||
+		strings.Contains(errStr, "remote connection refused") ||
+		strings.Contains(errStr, "site closed connection") {
+		return true
+	}
+	return false
 }
 
 type Tracker struct {
@@ -134,6 +263,11 @@ func ExtractRootDomain(host string) string {
 }
 
 func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration, err error) {
+	if IsClientCanceled(err) {
+		// Client canceled connection (browser refresh, tab closed). Ignore completely to prevent F5 false-tripping.
+		return
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -145,6 +279,13 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	}
 
 	if err != nil {
+		// Site-level errors do not penalize node's global success rate or trip circuit breaker
+		if IsSiteFault(err) {
+			t.recordDomainFailureLocked(root, nodeID)
+			return
+		}
+
+		st.recordSlowDomain(root, time.Now())
 		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
 		st.ConsecutiveSuccesses = 0
@@ -154,20 +295,31 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	}
 
 	if rtt > 0 {
-		if st.EWMA == 0 {
-			st.EWMA = rtt
+		if st.PassiveEWMA == 0 {
+			st.PassiveEWMA = rtt
 		} else {
-			st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
+			st.PassiveEWMA = time.Duration((1.0-ewmaAlpha)*float64(st.PassiveEWMA) + ewmaAlpha*float64(rtt))
 		}
+		st.updateEffectiveEWMA()
 	}
 
 	// Connections that took >= severePacketLossRTT (3000ms) suffered multi-RTO packet loss stalls.
-	// Treat them as degraded attempts: increment ConsecutiveFailures, evict sticky affinity, and check circuit breaker.
 	if rtt >= severePacketLossRTT {
-		st.recordWindowSample(false)
-		st.ConsecutiveFailures++
-		st.ConsecutiveSuccesses = 0
-		st.checkAndTripCircuit()
+		uniqueSlowRoots := st.recordSlowDomain(root, time.Now())
+		hasRecentProbeSpike := st.MaxProbeRTT >= 1000*time.Millisecond
+		if uniqueSlowRoots >= multiDomainVetoThreshold || hasRecentProbeSpike {
+			// Multi-domain correlation collapse OR recent probe jitter spike:
+			// Strip single-domain immunity and hold the node accountable!
+			st.recordWindowSample(false)
+			st.ConsecutiveFailures++
+			st.ConsecutiveSuccesses = 0
+			st.checkAndTripCircuit()
+			t.recordDomainFailureLocked(root, nodeID)
+			return
+		}
+
+		// Single domain stall on a jitter-free line: isolate to domain level.
+		// Evict affinity so the domain can test alternative nodes, but isolate from global node failure.
 		t.recordDomainFailureLocked(root, nodeID)
 		return
 	}
@@ -216,7 +368,11 @@ func (t *Tracker) recordDomainFailureLocked(root string, nodeID string) {
 		t.domainErrors[root] = make(map[string]int)
 	}
 	t.domainErrors[root][nodeID]++
-	if t.affinity[root] == nodeID {
+	// Only evict affinity if we haven't exhausted alternative nodes for this domain.
+	// If the domain has already stalled or failed across multiple distinct nodes (>= 2 nodes),
+	// the origin server itself is inherently slow across the entire pool ("全池皆慢").
+	// Stop evicting affinity to preserve session IP stickiness and prevent login dropouts!
+	if t.affinity[root] == nodeID && len(t.domainErrors[root]) < 2 {
 		delete(t.affinity, root)
 	}
 }
@@ -245,11 +401,8 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
-	if st.EWMA == 0 {
-		st.EWMA = rtt
-	} else {
-		st.EWMA = time.Duration((1.0-ewmaAlpha)*float64(st.EWMA) + ewmaAlpha*float64(rtt))
-	}
+	st.recordProbeSample(rtt)
+	st.updateEffectiveEWMA()
 	if rtt >= severePacketLossRTT {
 		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
@@ -288,6 +441,7 @@ func (t *Tracker) RecordProbeFailure(nodeID string) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
+	st.recordProbeSample(severePacketLossRTT)
 	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
 	st.ConsecutiveSuccesses = 0
@@ -309,6 +463,7 @@ func (t *Tracker) RecordStall(nodeID string, targetHost string) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
+	st.recordProbeSample(severePacketLossRTT)
 	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
 	st.ConsecutiveSuccesses = 0
@@ -375,6 +530,9 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 
 	return QualityScore{
 		EWMA:                st.EWMA,
+		PassiveEWMA:         st.PassiveEWMA,
+		ProbeRTT:            st.ProbeRTT,
+		MaxProbeRTT:         st.MaxProbeRTT,
 		SuccessRate:         sr,
 		Score:               score,
 		IsBroken:            isBroken,
@@ -459,10 +617,23 @@ func (t *Tracker) peekBestLocked(candidates []string, targetHost string) (string
 		currScore := t.getScoreLocked(currentAffinity)
 		delta := currScore.Score - minScore
 		deltaDur := time.Duration(delta) * time.Millisecond
-		ratio := delta / currScore.Score
 
-		// Only switch if faster by > 30ms and > 20%
-		if deltaDur > hysteresisRTTDelta && ratio > hysteresisRatioDelta {
+		// In survival "比烂" mode (when all candidates in pool are broken / degraded):
+		// 1. Strip the identical artificial circuit penalty (10000ms) so ratio reflects real network margin.
+		// 2. Raise the switching threshold from 20% to 40% (ratio > 0.40) to suppress pointless thrashing.
+		currBaseline := currScore.Score
+		reqRatio := hysteresisRatioDelta
+		if len(healthy) == 0 {
+			reqRatio = 0.40
+			currBaseline = currScore.Score - currScore.CircuitPenalty
+			if currBaseline <= 0 {
+				currBaseline = 1.0
+			}
+		}
+		ratio := delta / currBaseline
+
+		// Only switch if faster by > 30ms and > reqRatio
+		if deltaDur > hysteresisRTTDelta && ratio > reqRatio {
 			return bestID, bestScore, true
 		}
 		return currentAffinity, currScore, true

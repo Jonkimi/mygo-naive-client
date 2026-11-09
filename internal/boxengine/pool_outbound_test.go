@@ -972,3 +972,24 @@ func TestPoolOutbound_ClientPrematureCloseRecordsDurationAndError(t *testing.T) 
 	}
 }
 
+// Tests that firstRTTConn accurately detects TLS ClientHello records to measure pure 1-RTT TLS handshake.
+func TestPoolOutbound_TLSClientHelloSniffing(t *testing.T) {
+	// Standard TLS 1.2/1.3 ClientHello packet header (0x16 0x03 0x01 ... 0x01)
+	clientHello := []byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00}
+	if !isTLSClientHello(clientHello) {
+		t.Fatalf("expected isTLSClientHello to return true for standard ClientHello")
+	}
+
+	// Plaintext HTTP request
+	httpReq := []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	if isTLSClientHello(httpReq) {
+		t.Fatalf("expected isTLSClientHello to return false for plaintext HTTP")
+	}
+
+	// Truncated packet
+	truncated := []byte{0x16, 0x03}
+	if isTLSClientHello(truncated) {
+		t.Fatalf("expected isTLSClientHello to return false for truncated buffer")
+	}
+}
+

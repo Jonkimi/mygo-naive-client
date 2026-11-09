@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -315,6 +316,273 @@ func TestTracker_HighPacketLossAndSevereRTOStallCircuitBreaker(t *testing.T) {
 	scReset := tr.GetScore(node)
 	if scReset.TotalDials != 0 || scReset.EWMA != 0 || scReset.IsBroken {
 		t.Fatalf("expected clean state after ResetNode, got %+v", scReset)
+	}
+}
+
+// Tests that active probe RTT sets the physical floor and executes an instant one-vote veto,
+// while letting genuine trans-oceanic business latency dictate selection without artificial truncation.
+func TestTracker_ActiveProbeBaselineAnchoring(t *testing.T) {
+	tr := NewTracker()
+	node := "node-anchor"
+
+	// 1. Hong Kong node: local Anycast Google 204 probe is 35ms
+	tr.RecordProbe(node, 35*time.Millisecond)
+	sc1 := tr.GetScore(node)
+	if sc1.EWMA != 35*time.Millisecond || sc1.ProbeRTT != 35*time.Millisecond {
+		t.Fatalf("expected initial probe baseline 35ms, got EWMA=%v", sc1.EWMA)
+	}
+
+	// 2. Real user visits South America or US West origin: physical trans-oceanic latency is 180ms
+	// max(180ms, 35ms) = 180ms. The genuine distance is respected without being crushed by magic numbers.
+	tr.RecordDial(node, "south-america.org", 180*time.Millisecond, nil)
+	sc2 := tr.GetScore(node)
+	if sc2.PassiveEWMA != 180*time.Millisecond {
+		t.Fatalf("expected PassiveEWMA = 180ms, got %v", sc2.PassiveEWMA)
+	}
+	if sc2.EWMA != 180*time.Millisecond {
+		t.Fatalf("expected pure max EWMA = 180ms, got %v", sc2.EWMA)
+	}
+
+	// 3. Probe degradation (e.g. 1199ms in screenshot):
+	// Instantly executes one-vote veto: max(180ms, 1199ms) = 1199ms!
+	tr.RecordProbe(node, 1199*time.Millisecond)
+	sc3 := tr.GetScore(node)
+	if sc3.EWMA != 1199*time.Millisecond {
+		t.Fatalf("expected one-vote veto to take probe 1199ms, got %v", sc3.EWMA)
+	}
+}
+
+// Tests that client-side cancellation (e.g. user refreshed or closed tab)
+// is completely ignored: no penalty, no dials counted, no domain error pollution.
+func TestTracker_ClientCancellationIgnored(t *testing.T) {
+	tr := NewTracker()
+	node := "node-client-cancel"
+
+	// Initial healthy dial: 100ms
+	tr.RecordDial(node, "example.com", 100*time.Millisecond, nil)
+	scInitial := tr.GetScore(node)
+	if scInitial.TotalDials != 1 || scInitial.SuccessfulDials != 1 {
+		t.Fatalf("expected 1/1 dials initially, got %+v", scInitial)
+	}
+
+	// User mashes F5 (refresh) or rapidly switches tabs, producing 10 context.Canceled errors
+	for i := 0; i < 10; i++ {
+		tr.RecordDial(node, "example.com", 0, context.Canceled)
+	}
+
+	scAfter := tr.GetScore(node)
+	// Stats must be completely untouched:
+	if scAfter.TotalDials != 1 || scAfter.SuccessfulDials != 1 {
+		t.Fatalf("expected total dials untouched after client cancellations, got %d/%d", scAfter.SuccessfulDials, scAfter.TotalDials)
+	}
+	if scAfter.ConsecutiveFailures != 0 {
+		t.Fatalf("expected 0 consecutive failures after client cancellations, got %d", scAfter.ConsecutiveFailures)
+	}
+	if scAfter.IsBroken {
+		t.Fatalf("expected node not broken by client cancellations")
+	}
+
+	// Must NOT record in domain errors
+	tr.mu.RLock()
+	domainErrs := tr.domainErrors["example.com"][node]
+	tr.mu.RUnlock()
+	if domainErrs != 0 {
+		t.Fatalf("expected 0 domain errors for client cancellations, got %d", domainErrs)
+	}
+}
+
+// Tests that destination site faults (e.g. expired TLS certificate or site refusal)
+// do not penalize node's global success rate or trigger circuit breaker.
+func TestTracker_SiteFaultIsolationDoesNotTripCircuit(t *testing.T) {
+	tr := NewTracker()
+	node := "node-sitefault"
+
+	// Initial healthy dial: 100ms
+	tr.RecordDial(node, "good.com", 100*time.Millisecond, nil)
+	scInitial := tr.GetScore(node)
+	if scInitial.TotalDials != 1 || scInitial.SuccessfulDials != 1 {
+		t.Fatalf("expected 1/1 dials initially, got %+v", scInitial)
+	}
+
+	// 3 consecutive failures caused by a broken target website's TLS certificate
+	certErr := errors.New("remote error: tls: bad certificate (x509: certificate signed by unknown authority)")
+	for i := 0; i < 3; i++ {
+		tr.RecordDial(node, "broken-cert.com", 0, certErr)
+	}
+
+	scAfter := tr.GetScore(node)
+	// Global stats must NOT be penalized:
+	if scAfter.ConsecutiveFailures != 0 {
+		t.Fatalf("expected 0 consecutive failures for site faults, got %d", scAfter.ConsecutiveFailures)
+	}
+	if scAfter.IsBroken {
+		t.Fatalf("expected node NOT broken by remote site faults")
+	}
+	if scAfter.TotalDials != 1 || scAfter.SuccessfulDials != 1 {
+		t.Fatalf("expected total dials unchanged by isolated site faults, got %d/%d", scAfter.SuccessfulDials, scAfter.TotalDials)
+	}
+
+	// But broken-cert.com must still be recorded in domain errors to evict affinity
+	tr.mu.RLock()
+	errCount := tr.domainErrors["broken-cert.com"][node]
+	tr.mu.RUnlock()
+	if errCount != 3 {
+		t.Fatalf("expected 3 domain errors recorded for broken-cert.com, got %d", errCount)
+	}
+}
+
+// Tests that single slow cold-site (e.g. 3500ms stall on same root domain)
+// isolates penalty to domain level and does NOT penalize node's global consecutive failures or trip circuit breaker.
+func TestTracker_SingleSlowDomainIsolationDoesNotTripNode(t *testing.T) {
+	tr := NewTracker()
+	node := "node-stable"
+
+	// Initial healthy dial: 100ms
+	tr.RecordDial(node, "healthy.com", 100*time.Millisecond, nil)
+
+	// User opens a very slow cold forum: 5 concurrent requests all take 3500ms
+	for i := 0; i < 5; i++ {
+		tr.RecordDial(node, "slow-cold-site.org", 3500*time.Millisecond, nil)
+	}
+
+	sc := tr.GetScore(node)
+	if sc.ConsecutiveFailures != 0 {
+		t.Fatalf("expected 0 consecutive failures for isolated single slow root domain, got %d", sc.ConsecutiveFailures)
+	}
+	if sc.IsBroken {
+		t.Fatalf("expected node NOT broken by single slow cold site")
+	}
+}
+
+// Tests that when multiple distinct root domains stall within correlation window (5s),
+// the system breaks through probe time-lag blindness and trips circuit breaker.
+func TestTracker_MultiDomainCorrelationBreaksProbeLagBlindness(t *testing.T) {
+	tr := NewTracker()
+	node := "node-qos-stall"
+
+	// Initial healthy probe: 100ms
+	tr.RecordProbe(node, 100*time.Millisecond)
+
+	// Suddenly node gets throttled/QoS blocked: 2 different domains stall in rapid succession
+	tr.RecordDial(node, "site-a.com", 3500*time.Millisecond, nil)
+	tr.RecordDial(node, "site-b.com", 3500*time.Millisecond, nil)
+
+	sc := tr.GetScore(node)
+	if sc.ConsecutiveFailures < 1 {
+		t.Fatalf("expected multi-domain stall to increment consecutive failures, got %d", sc.ConsecutiveFailures)
+	}
+}
+
+// Tests that when all candidate nodes stall on the same slow forum ("全池皆慢"),
+// affinity eviction stops to preserve session IP stickiness and prevent login dropouts.
+func TestTracker_AllNodesSlowStopsAffinityEviction(t *testing.T) {
+	tr := NewTracker()
+	nodeA := "node-a"
+	nodeB := "node-b"
+	root := "slow-forum.com"
+
+	// 1. Initially assign affinity to nodeA
+	_, _ = tr.SelectBest([]string{nodeA, nodeB}, root)
+	tr.mu.RLock()
+	aff1 := tr.affinity[root]
+	tr.mu.RUnlock()
+	if aff1 != nodeA {
+		t.Fatalf("expected initial affinity to node-a, got %v", aff1)
+	}
+
+	// 2. First failure on nodeA: evicts affinity so domain can try nodeB
+	tr.RecordDial(nodeA, root, 3500*time.Millisecond, nil)
+	tr.mu.RLock()
+	_, ok := tr.affinity[root]
+	tr.mu.RUnlock()
+	if ok {
+		t.Fatalf("expected affinity evicted on first failure to test alternative node")
+	}
+
+	// 3. User switches to nodeB and establishes affinity to nodeB
+	_, _ = tr.SelectBest([]string{nodeB}, root)
+
+	// 4. Second failure on nodeB ("全池皆慢"): domain now has failed on both nodeA and nodeB
+	// Must NOT evict affinity anymore to preserve session IP stickiness!
+	tr.RecordDial(nodeB, root, 3500*time.Millisecond, nil)
+	tr.mu.RLock()
+	aff2, ok2 := tr.affinity[root]
+	tr.mu.RUnlock()
+	if !ok2 || aff2 != nodeB {
+		t.Fatalf("expected affinity to stay sticky on node-b after all nodes slow, got %v (ok=%v)", aff2, ok2)
+	}
+}
+
+// Tests that probe jitter spikes (e.g. 1600ms packet loss spike among 180ms samples)
+// strip the single-domain isolation immunity and penalize the node.
+func TestTracker_ProbeJitterSpikeStripsSingleDomainImmunity(t *testing.T) {
+	tr := NewTracker()
+	node := "node-jitter"
+
+	// 5 probes: 180ms, 190ms, 1600ms (spike), 185ms, 190ms
+	tr.RecordProbe(node, 180*time.Millisecond)
+	tr.RecordProbe(node, 190*time.Millisecond)
+	tr.RecordProbe(node, 1600*time.Millisecond)
+	tr.RecordProbe(node, 185*time.Millisecond)
+	tr.RecordProbe(node, 190*time.Millisecond)
+
+	sc := tr.GetScore(node)
+	if sc.ProbeRTT != 190*time.Millisecond {
+		t.Fatalf("expected latest probe to report 190ms, got %v", sc.ProbeRTT)
+	}
+	if sc.MaxProbeRTT != 1600*time.Millisecond {
+		t.Fatalf("expected MaxProbeRTT = 1600ms, got %v", sc.MaxProbeRTT)
+	}
+
+	// Now a single domain stalls at 3500ms
+	// Because of the recent 1600ms jitter spike, single-domain immunity is stripped!
+	tr.RecordDial(node, "single-site.com", 3500*time.Millisecond, nil)
+
+	scAfter := tr.GetScore(node)
+	if scAfter.ConsecutiveFailures != 1 {
+		t.Fatalf("expected jitter spike to strip immunity and increment consecutive failures=1, got %d", scAfter.ConsecutiveFailures)
+	}
+}
+
+// Tests that in survival mode (all candidates broken/degraded),
+// switching hysteresis threshold is raised to 40% to suppress pointless thrashing.
+func TestTracker_AllNodesDegradedSurvivalHysteresis(t *testing.T) {
+	tr := NewTracker()
+	nodeA := "node-a"
+	nodeB := "node-b"
+	root := "work-app.com"
+
+	// Trip both nodes into circuit breaker (both broken)
+	for i := 0; i < 3; i++ {
+		tr.RecordDial(nodeA, "dummy.com", 0, errors.New("timeout"))
+		tr.RecordDial(nodeB, "dummy.com", 0, errors.New("timeout"))
+	}
+	if !tr.IsBroken(nodeA) || !tr.IsBroken(nodeB) {
+		t.Fatalf("expected both nodes broken")
+	}
+
+	// Establish affinity to nodeA
+	tr.mu.Lock()
+	tr.affinity[root] = nodeA
+	// Set nodeA EWMA = 400ms, nodeB EWMA = 310ms (nodeB is ~22.5% faster, < 40% survival threshold)
+	tr.nodes[nodeA].EWMA = 400 * time.Millisecond
+	tr.nodes[nodeB].EWMA = 310 * time.Millisecond
+	tr.mu.Unlock()
+
+	// In survival mode, 22.5% advantage should NOT switch
+	best1, _ := tr.SelectBest([]string{nodeA, nodeB}, root)
+	if best1 != nodeA {
+		t.Fatalf("expected survival mode to suppress switch for 22.5%% margin, retained %v", best1)
+	}
+
+	// If nodeB becomes 50% faster (e.g. 200ms vs 400ms > 40%), it should switch
+	tr.mu.Lock()
+	tr.nodes[nodeB].EWMA = 200 * time.Millisecond
+	tr.mu.Unlock()
+
+	best2, _ := tr.SelectBest([]string{nodeA, nodeB}, root)
+	if best2 != nodeB {
+		t.Fatalf("expected survival mode to switch when margin exceeds 40%%, got %v", best2)
 	}
 }
 

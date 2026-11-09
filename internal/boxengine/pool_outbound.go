@@ -403,10 +403,20 @@ type firstRTTConn struct {
 	onStall    func()
 	writeTime  time.Time
 	hasWritten bool
+	isTLS      bool
 	done       bool
 	stalled    bool
 	stallTimer *time.Timer
 	mu         sync.Mutex
+}
+
+// isTLSClientHello checks if the payload starts with a TLS ClientHello record.
+func isTLSClientHello(b []byte) bool {
+	// TLS Record Layer:
+	// b[0] == 0x16 (ContentType: Handshake)
+	// b[1] == 0x03 (TLS protocol major version 3: SSLv3, TLS 1.0, 1.1, 1.2, 1.3)
+	// b[5] == 0x01 (HandshakeType: ClientHello)
+	return len(b) >= 6 && b[0] == 0x16 && b[1] == 0x03 && b[5] == 0x01
 }
 
 func wrapFirstRTTConn(conn net.Conn, onResult func(rtt time.Duration, err error), onStall ...func()) net.Conn {
@@ -429,6 +439,7 @@ func (c *firstRTTConn) Write(b []byte) (int, error) {
 		c.mu.Lock()
 		if !c.hasWritten {
 			c.hasWritten = true
+			c.isTLS = isTLSClientHello(b)
 			c.writeTime = time.Now()
 			if firstPacketTimeout > 0 {
 				_ = c.Conn.SetReadDeadline(time.Now().Add(firstPacketTimeout))
