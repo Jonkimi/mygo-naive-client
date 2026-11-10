@@ -269,10 +269,19 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			poolTag := p.tag
 			singleCandidate := len(ordered) == 1
 			var wasStalled bool
-			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, firstErr error) {
+			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
 				if p.tracker != nil {
 					if !wasStalled || firstErr == nil {
-						p.tracker.RecordDial(candID, targetHost, realRTT, firstErr)
+						trackerRTT := realRTT
+						if !isTLS && firstErr == nil && realRTT >= telemetry.SeverePacketLossRTT {
+							// For non-TLS traffic, latencies >= SeverePacketLossRTT (3000ms) typically reflect
+							// backend application computation (e.g. AI inference, slow search, report export)
+							// rather than network RTO packet loss.
+							// Pass trackerRTT = 0 to record a successful dial and maintain domain affinity
+							// without contaminating network EWMA or triggering false packet-loss stalls.
+							trackerRTT = 0
+						}
+						p.tracker.RecordDial(candID, targetHost, trackerRTT, firstErr)
 					}
 				}
 				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
@@ -391,15 +400,16 @@ const (
 )
 
 var (
-	firstPacketTimeout = 8 * time.Second
-	firstPacketStall   = 3500 * time.Millisecond
+	firstPacketTimeout       = 8 * time.Second
+	firstPacketStall         = 3500 * time.Millisecond
+	nonTLSFirstPacketTimeout = 60 * time.Second
 )
 
 var errFirstPacketAborted = errors.New("connection closed before receiving first response byte")
 
 type firstRTTConn struct {
 	net.Conn
-	onResult   func(rtt time.Duration, err error)
+	onResult   func(rtt time.Duration, isTLS bool, err error)
 	onStall    func()
 	writeTime  time.Time
 	hasWritten bool
@@ -419,7 +429,7 @@ func isTLSClientHello(b []byte) bool {
 	return len(b) >= 6 && b[0] == 0x16 && b[1] == 0x03 && b[5] == 0x01
 }
 
-func wrapFirstRTTConn(conn net.Conn, onResult func(rtt time.Duration, err error), onStall ...func()) net.Conn {
+func wrapFirstRTTConn(conn net.Conn, onResult func(rtt time.Duration, isTLS bool, err error), onStall ...func()) net.Conn {
 	if conn == nil {
 		return nil
 	}
@@ -441,22 +451,32 @@ func (c *firstRTTConn) Write(b []byte) (int, error) {
 			c.hasWritten = true
 			c.isTLS = isTLSClientHello(b)
 			c.writeTime = time.Now()
-			if firstPacketTimeout > 0 {
-				_ = c.Conn.SetReadDeadline(time.Now().Add(firstPacketTimeout))
-			}
-			if c.onStall != nil && firstPacketStall > 0 {
-				c.stallTimer = time.AfterFunc(firstPacketStall, func() {
-					c.mu.Lock()
-					if !c.done && c.hasWritten && !c.stalled {
-						c.stalled = true
-						c.mu.Unlock()
-						if c.onStall != nil {
-							c.onStall()
+			if c.isTLS {
+				if firstPacketTimeout > 0 {
+					_ = c.Conn.SetReadDeadline(time.Now().Add(firstPacketTimeout))
+				}
+				if c.onStall != nil && firstPacketStall > 0 {
+					c.stallTimer = time.AfterFunc(firstPacketStall, func() {
+						c.mu.Lock()
+						if !c.done && c.hasWritten && !c.stalled {
+							c.stalled = true
+							c.mu.Unlock()
+							if c.onStall != nil {
+								c.onStall()
+							}
+							return
 						}
-						return
-					}
-					c.mu.Unlock()
-				})
+						c.mu.Unlock()
+					})
+				}
+			} else {
+				// Non-TLS traffic (plaintext HTTP, arbitrary TCP):
+				// Response latency includes server application computation time (e.g. AI inference, slow search).
+				// 1. Do not arm aggressive 3.5s in-flight stall timer to avoid false degradation / affinity eviction.
+				// 2. Apply relaxed deadline (default 60s) instead of 8s to prevent aborting slow endpoints.
+				if nonTLSFirstPacketTimeout > 0 {
+					_ = c.Conn.SetReadDeadline(time.Now().Add(nonTLSFirstPacketTimeout))
+				}
 			}
 		}
 		c.mu.Unlock()
@@ -474,9 +494,10 @@ func (c *firstRTTConn) Write(b []byte) (int, error) {
 			if !c.writeTime.IsZero() {
 				elapsed = time.Since(c.writeTime)
 			}
+			isTLS := c.isTLS
 			c.mu.Unlock()
 			if c.onResult != nil {
-				c.onResult(elapsed, err)
+				c.onResult(elapsed, isTLS, err)
 			}
 			return n, err
 		}
@@ -496,6 +517,7 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 			}
 			_ = c.Conn.SetReadDeadline(time.Time{})
 			rtt := time.Since(c.writeTime)
+			isTLS := c.isTLS
 			c.mu.Unlock()
 			if c.onResult != nil {
 				sampleRTT := rtt
@@ -504,7 +526,7 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 				} else if sampleRTT > maxValidFirstRTT {
 					sampleRTT = maxValidFirstRTT
 				}
-				c.onResult(sampleRTT, nil)
+				c.onResult(sampleRTT, isTLS, nil)
 			}
 		} else {
 			c.mu.Unlock()
@@ -523,9 +545,10 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 			if !c.writeTime.IsZero() {
 				elapsed = time.Since(c.writeTime)
 			}
+			isTLS := c.isTLS
 			c.mu.Unlock()
 			if c.onResult != nil {
-				c.onResult(elapsed, err)
+				c.onResult(elapsed, isTLS, err)
 			}
 			return n, err
 		}
@@ -546,9 +569,10 @@ func (c *firstRTTConn) Close() error {
 		if !c.writeTime.IsZero() {
 			elapsed = time.Since(c.writeTime)
 		}
+		isTLS := c.isTLS
 		c.mu.Unlock()
 		if c.onResult != nil {
-			c.onResult(elapsed, errFirstPacketAborted)
+			c.onResult(elapsed, isTLS, errFirstPacketAborted)
 		}
 	} else {
 		c.mu.Unlock()

@@ -237,7 +237,7 @@ func TestFirstRTTConn_SingBufioCopyRealTCP(t *testing.T) {
 	}
 	defer clientConn.Close()
 
-	wrapped := wrapFirstRTTConn(clientConn, func(rtt time.Duration, _ error) {
+	wrapped := wrapFirstRTTConn(clientConn, func(rtt time.Duration, _ bool, _ error) {
 		rttMu.Lock()
 		rttReported = rtt
 		rttMu.Unlock()
@@ -783,8 +783,9 @@ func TestPoolOutbound_FirstPacketTimeout_FastFail(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Client sends HTTP request
-	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+	// Client sends TLS ClientHello
+	tlsClientHello := []byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00}
+	if _, err := conn.Write(tlsClientHello); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 
@@ -873,8 +874,9 @@ func TestPoolOutbound_InFlightStallEvictsAffinity(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Write request to arm stall timer
-	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+	// Write TLS ClientHello to arm stall timer
+	tlsClientHello := []byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00}
+	if _, err := conn.Write(tlsClientHello); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 
@@ -990,6 +992,167 @@ func TestPoolOutbound_TLSClientHelloSniffing(t *testing.T) {
 	truncated := []byte{0x16, 0x03}
 	if isTLSClientHello(truncated) {
 		t.Fatalf("expected isTLSClientHello to return false for truncated buffer")
+	}
+}
+
+// Tests that non-TLS traffic (e.g. plaintext HTTP AI model inference / slow APIs)
+// does not trigger 3.5s in-flight stall penalties or evict domain affinity,
+// and does not pollute network PassiveEWMA or trip packet-loss circuit breaker when response is slow.
+func TestPoolOutbound_NonTLS_SlowAI_NoStallAndCleanEWMA(t *testing.T) {
+	origTimeout := firstPacketTimeout
+	origStall := firstPacketStall
+	origNonTLSTimeout := nonTLSFirstPacketTimeout
+	firstPacketTimeout = 200 * time.Millisecond
+	firstPacketStall = 30 * time.Millisecond
+	nonTLSFirstPacketTimeout = 300 * time.Millisecond
+	defer func() {
+		firstPacketTimeout = origTimeout
+		firstPacketStall = origStall
+		nonTLSFirstPacketTimeout = origNonTLSTimeout
+	}()
+
+	tr := telemetry.NewTracker()
+	// Initial healthy probe baseline so node has low EWMA (e.g. 30ms)
+	tr.RecordProbe("node-ai", 30*time.Millisecond)
+	// Seed affinity for api.openai.com
+	_, _ = tr.SelectBest([]string{"node-ai", "node-backup"}, "api.openai.com")
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	// Server goroutine: simulates AI model processing for 60ms (longer than firstPacketStall=30ms)
+	// and then returning HTTP response
+	go func() {
+		buf := make([]byte, 128)
+		_, _ = serverConn.Read(buf)
+		time.Sleep(60 * time.Millisecond)
+		_, _ = serverConn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"))
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"node-ai", "node-backup"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"node-ai": &customMockOutbound{
+				tag:  "node-ai",
+				conn: clientConn,
+			},
+			"node-backup": &customMockOutbound{
+				tag: "node-backup",
+			},
+		},
+		sidecars: map[string]bool{
+			"node-ai":     true,
+			"node-backup": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+	})
+
+	ctx := context.Background()
+	dest := M.ParseSocksaddr("api.openai.com:80")
+
+	conn, err := poolOb.DialContext(ctx, "tcp", dest)
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Non-TLS plaintext HTTP request payload
+	if _, err := conn.Write([]byte("POST /v1/chat/completions HTTP/1.1\r\n\r\n")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Wait 40ms (> 30ms stall timer) but before server finishes at 60ms
+	time.Sleep(40 * time.Millisecond)
+
+	// In-flight stall timer must NOT have evicted affinity because this is non-TLS!
+	cand := poolOb.SelectCandidate("api.openai.com")
+	if cand != "node-ai" {
+		t.Fatalf("expected sticky affinity to remain on node-ai for non-TLS request, got %q", cand)
+	}
+
+	// Read HTTP response
+	resp := make([]byte, 64)
+	n, readErr := conn.Read(resp)
+	if readErr != nil || n == 0 {
+		t.Fatalf("expected successful response read, got n=%d, err=%v", n, readErr)
+	}
+
+	sc := tr.GetScore("node-ai")
+	// Dial must be counted as successful
+	if sc.ConsecutiveFailures != 0 {
+		t.Fatalf("expected 0 consecutive failures, got %d", sc.ConsecutiveFailures)
+	}
+	if sc.IsBroken {
+		t.Fatalf("expected node-ai not broken")
+	}
+}
+
+// Tests that non-TLS traffic uses relaxed nonTLSFirstPacketTimeout instead of firstPacketTimeout.
+func TestPoolOutbound_NonTLS_RelaxedTimeout(t *testing.T) {
+	origTimeout := firstPacketTimeout
+	origNonTLSTimeout := nonTLSFirstPacketTimeout
+	firstPacketTimeout = 30 * time.Millisecond
+	nonTLSFirstPacketTimeout = 200 * time.Millisecond
+	defer func() {
+		firstPacketTimeout = origTimeout
+		nonTLSFirstPacketTimeout = origNonTLSTimeout
+	}()
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	// Server replies after 60ms (> firstPacketTimeout 30ms, but < nonTLSFirstPacketTimeout 200ms)
+	go func() {
+		buf := make([]byte, 128)
+		_, _ = serverConn.Read(buf)
+		time.Sleep(60 * time.Millisecond)
+		_, _ = serverConn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{
+			"PROXY_POOL": {"node-ai"},
+		},
+		nodes: map[string]adapter.Outbound{
+			"node-ai": &customMockOutbound{
+				tag:  "node-ai",
+				conn: clientConn,
+			},
+		},
+		sidecars: map[string]bool{
+			"node-ai": true,
+		},
+	}
+
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+	})
+
+	conn, err := poolOb.DialContext(context.Background(), "tcp", M.ParseSocksaddr("slow-api.org:80"))
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write([]byte("GET /slow HTTP/1.1\r\n\r\n")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Must NOT fail at 30ms because it's non-TLS. Reads successfully after 60ms.
+	resp := make([]byte, 64)
+	n, readErr := conn.Read(resp)
+	if readErr != nil || n == 0 {
+		t.Fatalf("expected successful response, got n=%d, err=%v", n, readErr)
 	}
 }
 

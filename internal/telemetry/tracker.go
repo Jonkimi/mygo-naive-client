@@ -21,7 +21,8 @@ const (
 	maxTrackerDomains            = 2000
 
 	recentWindowSize             = 50
-	severePacketLossRTT          = 3000 * time.Millisecond
+	SeverePacketLossRTT          = 3000 * time.Millisecond
+	severePacketLossRTT          = SeverePacketLossRTT
 	highLossMinSamples           = 5
 	highLossSuccessRate          = 0.60
 	multiDomainCorrelationWindow = 5 * time.Second
