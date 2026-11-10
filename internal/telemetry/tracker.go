@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -26,6 +27,11 @@ const (
 	multiDomainCorrelationWindow = 5 * time.Second
 	multiDomainVetoThreshold     = 2
 	probeHistorySize             = 5
+
+	defaultProbeInterval  = 5 * time.Minute
+	defaultIdleThreshold  = 60 * time.Second
+	healthyProbeMaxRTT    = 300 * time.Millisecond
+	idleWashFailuresCount = 2
 )
 
 type slowDomainRecord struct {
@@ -43,6 +49,7 @@ type NodeStats struct {
 	TotalDials           int
 	SuccessfulDials      int
 	LastFailure          time.Time
+	LastPassiveDial      time.Time
 	circuitTrippedAt     time.Time
 	samplesSinceRecovery int
 	recentSlow           []slowDomainRecord
@@ -110,6 +117,55 @@ func (st *NodeStats) updateEffectiveEWMA() {
 	st.EWMA = max(st.PassiveEWMA, st.ProbeRTT)
 }
 
+// decayStalePassiveLocked pulls stale PassiveEWMA towards current healthy probe RTT when the node has been idle.
+// It applies exponential decay proportional to the elapsed idle time relative to the probe interval.
+func (st *NodeStats) decayStalePassiveLocked(rtt time.Duration, probeInterval time.Duration, elapsed time.Duration) {
+	if st.PassiveEWMA == 0 || st.PassiveEWMA <= rtt {
+		return
+	}
+	if probeInterval <= 0 {
+		probeInterval = defaultProbeInterval
+	}
+	decayRatio := 0.5
+	if elapsed > probeInterval {
+		intervals := float64(elapsed) / float64(probeInterval)
+		decayRatio = 1.0 - math.Pow(0.5, intervals)
+		if decayRatio < 0.5 {
+			decayRatio = 0.5
+		} else if decayRatio > 0.95 {
+			decayRatio = 0.95
+		}
+	}
+	delta := st.PassiveEWMA - rtt
+	decayed := st.PassiveEWMA - time.Duration(float64(delta)*decayRatio)
+	if decayed < rtt {
+		decayed = rtt
+	}
+	st.PassiveEWMA = decayed
+}
+
+// washHistoricalFailures heals up to count oldest failures (false) in the sliding window to true,
+// representing gradual recovery of past transient faults during healthy idle probes.
+func (st *NodeStats) washHistoricalFailures(count int) int {
+	if count <= 0 || st.SuccessfulDials >= st.TotalDials || st.winCount == 0 {
+		return 0
+	}
+	fixed := 0
+	start := 0
+	if st.winCount == recentWindowSize {
+		start = st.winCursor
+	}
+	for i := 0; i < st.winCount && fixed < count; i++ {
+		idx := (start + i) % recentWindowSize
+		if !st.window[idx] {
+			st.window[idx] = true
+			st.SuccessfulDials++
+			fixed++
+		}
+	}
+	return fixed
+}
+
 func (st *NodeStats) recordWindowSample(success bool) {
 	st.samplesSinceRecovery++
 	if st.winCount < recentWindowSize {
@@ -168,6 +224,7 @@ type QualityScore struct {
 	SuccessfulDials     int
 	ConsecutiveFailures int
 	CircuitPenalty      float64
+	LastPassiveDial     time.Time
 }
 
 // SiteFault represents an error caused by the remote target website rather than the proxy node.
@@ -225,18 +282,62 @@ func IsSiteFault(err error) bool {
 }
 
 type Tracker struct {
-	mu           sync.RWMutex
-	nodes        map[string]*NodeStats
-	affinity     map[string]string            // rootDomain -> nodeID
-	domainErrors map[string]map[string]int     // rootDomain -> nodeID -> count
+	mu            sync.RWMutex
+	nodes         map[string]*NodeStats
+	affinity      map[string]string         // rootDomain -> nodeID
+	domainErrors  map[string]map[string]int // rootDomain -> nodeID -> count
+	probeInterval time.Duration             // configurable active probe interval, default 5m
+	idleThreshold time.Duration             // passive idle threshold, default 60s
 }
 
 func NewTracker() *Tracker {
 	return &Tracker{
-		nodes:        make(map[string]*NodeStats),
-		affinity:     make(map[string]string),
-		domainErrors: make(map[string]map[string]int),
+		nodes:         make(map[string]*NodeStats),
+		affinity:      make(map[string]string),
+		domainErrors:  make(map[string]map[string]int),
+		probeInterval: defaultProbeInterval,
+		idleThreshold: defaultIdleThreshold,
 	}
+}
+
+// SetProbeInterval updates the configured active probe interval (e.g. from app settings).
+func (t *Tracker) SetProbeInterval(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.probeInterval = d
+}
+
+// ProbeInterval returns the currently configured probe interval (or default 5m).
+func (t *Tracker) ProbeInterval() time.Duration {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.probeInterval <= 0 {
+		return defaultProbeInterval
+	}
+	return t.probeInterval
+}
+
+// SetIdleThreshold updates the idle duration threshold for passive traffic (default 60s).
+func (t *Tracker) SetIdleThreshold(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.idleThreshold = d
+}
+
+// IdleThreshold returns the currently configured idle threshold.
+func (t *Tracker) IdleThreshold() time.Duration {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.idleThreshold <= 0 {
+		return defaultIdleThreshold
+	}
+	return t.idleThreshold
 }
 
 // ExtractRootDomain extracts the effective root domain (eTLD+1 heuristic) from a host/domain.
@@ -277,6 +378,7 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
+	st.LastPassiveDial = time.Now()
 
 	if err != nil {
 		// Site-level errors do not penalize node's global success rate or trip circuit breaker
@@ -402,15 +504,51 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		t.nodes[nodeID] = st
 	}
 	st.recordProbeSample(rtt)
-	st.updateEffectiveEWMA()
+
+	now := time.Now()
+	idleThresh := t.idleThreshold
+	if idleThresh <= 0 {
+		idleThresh = defaultIdleThreshold
+	}
+	isIdle := st.LastPassiveDial.IsZero() || now.Sub(st.LastPassiveDial) >= idleThresh
+
+	probeInterval := t.probeInterval
+	if probeInterval <= 0 {
+		probeInterval = defaultProbeInterval
+	}
+
 	if rtt >= severePacketLossRTT {
+		st.updateEffectiveEWMA()
 		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
 		st.ConsecutiveSuccesses = 0
 		st.checkAndTripCircuit()
 		return
 	}
+
+	// Healthy active probe:
+	// 1. If the node is idle and was burdened by a stale high-latency passive EWMA,
+	// decay PassiveEWMA towards current probe ground-truth RTT.
+	if isIdle {
+		var elapsed time.Duration
+		if !st.LastPassiveDial.IsZero() {
+			elapsed = now.Sub(st.LastPassiveDial)
+		} else {
+			elapsed = probeInterval
+		}
+		st.decayStalePassiveLocked(rtt, probeInterval, elapsed)
+	}
+	st.updateEffectiveEWMA()
+
+	// 2. Push successful probe sample into sliding window.
 	st.recordWindowSample(true)
+
+	// 3. If the node is idle and probe result is genuinely healthy (rtt <= 300ms),
+	// fast-wash up to 2 oldest historical failure records to accelerate recovery.
+	if isIdle && rtt <= healthyProbeMaxRTT {
+		st.washHistoricalFailures(idleWashFailuresCount)
+	}
+
 	st.ConsecutiveFailures = 0
 	st.ConsecutiveSuccesses++
 	st.clearCircuit()
@@ -463,6 +601,7 @@ func (t *Tracker) RecordStall(nodeID string, targetHost string) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
+	st.LastPassiveDial = time.Now()
 	st.recordProbeSample(severePacketLossRTT)
 	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
@@ -540,6 +679,7 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 		SuccessfulDials:     st.SuccessfulDials,
 		ConsecutiveFailures: st.ConsecutiveFailures,
 		CircuitPenalty:      circuitPenalty,
+		LastPassiveDial:     st.LastPassiveDial,
 	}
 }
 

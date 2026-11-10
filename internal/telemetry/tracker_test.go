@@ -586,3 +586,154 @@ func TestTracker_AllNodesDegradedSurvivalHysteresis(t *testing.T) {
 	}
 }
 
+// Tests that idle nodes with stale high-latency passive EWMA decay towards healthy probe RTT.
+func TestTracker_IdleNodePassiveEWMADecay(t *testing.T) {
+	tr := NewTracker()
+	node := "node-decay"
+
+	// 1. Node previously served trans-oceanic requests, building up a 600ms passive EWMA
+	tr.RecordDial(node, "south-america.org", 600*time.Millisecond, nil)
+	sc1 := tr.GetScore(node)
+	if sc1.PassiveEWMA != 600*time.Millisecond || sc1.EWMA != 600*time.Millisecond {
+		t.Fatalf("expected initial passive EWMA = 600ms, got %v", sc1.EWMA)
+	}
+
+	// 2. Active business traffic (< 60s ago): probe must NOT decay passive EWMA
+	tr.RecordProbe(node, 30*time.Millisecond)
+	scActive := tr.GetScore(node)
+	if scActive.PassiveEWMA != 600*time.Millisecond {
+		t.Fatalf("expected active business traffic to preserve 600ms passive EWMA, got %v", scActive.PassiveEWMA)
+	}
+
+	// 3. Node enters idle standby (e.g. 5 minutes without passive traffic)
+	tr.mu.Lock()
+	tr.nodes[node].LastPassiveDial = time.Now().Add(-5 * time.Minute)
+	tr.mu.Unlock()
+
+	// 4. Healthy probe arrives (30ms): passive EWMA decays towards probe baseline
+	tr.RecordProbe(node, 30*time.Millisecond)
+	scDecayed1 := tr.GetScore(node)
+	if scDecayed1.PassiveEWMA >= 600*time.Millisecond {
+		t.Fatalf("expected idle probe to decay passive EWMA, still %v", scDecayed1.PassiveEWMA)
+	}
+	if scDecayed1.PassiveEWMA > 350*time.Millisecond {
+		t.Fatalf("expected passive EWMA to decay by ~50%%, got %v", scDecayed1.PassiveEWMA)
+	}
+	if scDecayed1.EWMA != scDecayed1.PassiveEWMA {
+		t.Fatalf("expected effective EWMA to reflect decayed passive EWMA, got %v", scDecayed1.EWMA)
+	}
+
+	// 5. Subsequent probe after further idle time (15 mins total) converges close to probe RTT
+	tr.mu.Lock()
+	tr.nodes[node].LastPassiveDial = time.Now().Add(-15 * time.Minute)
+	tr.mu.Unlock()
+
+	tr.RecordProbe(node, 30*time.Millisecond)
+	scDecayed2 := tr.GetScore(node)
+	if scDecayed2.PassiveEWMA > 100*time.Millisecond {
+		t.Fatalf("expected passive EWMA after extended idle to converge towards 30ms, got %v", scDecayed2.PassiveEWMA)
+	}
+}
+
+// Tests that healthy active probes on idle nodes fast-wash historical failures in the sliding window.
+func TestTracker_IdleNodeFastWashHistoricalFailures(t *testing.T) {
+	tr := NewTracker()
+	node := "node-wash"
+
+	// 1. Produce 5 consecutive failures
+	for i := 0; i < 5; i++ {
+		tr.RecordDial(node, "flaky.com", 0, errors.New("timeout"))
+	}
+	scInitial := tr.GetScore(node)
+	if scInitial.TotalDials != 5 || scInitial.SuccessfulDials != 0 {
+		t.Fatalf("expected 0/5 successful dials initially, got %+v", scInitial)
+	}
+
+	// 2. Active business traffic (< 60s ago): healthy probe only pushes 1 sample, no fast-wash
+	tr.RecordProbe(node, 50*time.Millisecond)
+	scActive := tr.GetScore(node)
+	// 5 failures + 1 probe success = 6 dials, 1 success
+	if scActive.TotalDials != 6 || scActive.SuccessfulDials != 1 {
+		t.Fatalf("expected active probe to only record 1 success without fast-wash, got %d/%d",
+			scActive.SuccessfulDials, scActive.TotalDials)
+	}
+
+	// 3. Mark node as idle (5 minutes ago)
+	tr.mu.Lock()
+	tr.nodes[node].LastPassiveDial = time.Now().Add(-5 * time.Minute)
+	tr.mu.Unlock()
+
+	// 4. An UNHEALTHY probe (e.g. 500ms > 300ms) should NOT trigger fast-wash
+	tr.RecordProbe(node, 500*time.Millisecond)
+	scUnhealthy := tr.GetScore(node)
+	// Pushes 1 probe success (now 7 dials, 2 successes), 0 washed
+	if scUnhealthy.SuccessfulDials != 2 {
+		t.Fatalf("expected unhealthy probe to not fast-wash, got %d successes", scUnhealthy.SuccessfulDials)
+	}
+
+	// 5. A genuinely HEALTHY probe (50ms <= 300ms) on idle node triggers fast-wash of up to 2 historical failures
+	tr.RecordProbe(node, 50*time.Millisecond)
+	scHealthy := tr.GetScore(node)
+	// 1 success from probe sample + 2 failures washed to success = 3 additional successes (total 2 + 3 = 5 successes out of 8)
+	if scHealthy.SuccessfulDials != 5 {
+		t.Fatalf("expected healthy idle probe to wash 2 failures + 1 sample, got %d successes out of %d",
+			scHealthy.SuccessfulDials, scHealthy.TotalDials)
+	}
+
+	// 6. Another healthy idle probe washes 2 more failures (total 4 washed, 1 remaining)
+	tr.RecordProbe(node, 50*time.Millisecond)
+	scWash2 := tr.GetScore(node)
+	if scWash2.SuccessfulDials != 8 || scWash2.TotalDials != 9 {
+		t.Fatalf("expected second healthy idle probe to reach 8/9, got %d/%d",
+			scWash2.SuccessfulDials, scWash2.TotalDials)
+	}
+
+	// 7. Third healthy idle probe washes the last failure -> 100% full recovery
+	tr.RecordProbe(node, 50*time.Millisecond)
+	scRecovered := tr.GetScore(node)
+	if scRecovered.SuccessfulDials != scRecovered.TotalDials || scRecovered.TotalDials != 10 {
+		t.Fatalf("expected full recovery after third healthy idle probe, got %d/%d",
+			scRecovered.SuccessfulDials, scRecovered.TotalDials)
+	}
+}
+
+// Tests that the configurable active probe interval proportionally scales the idle passive decay rate.
+func TestTracker_ConfigurableProbeIntervalAffectsDecay(t *testing.T) {
+	tr1 := NewTracker()
+	tr1.SetProbeInterval(1 * time.Minute)
+	if tr1.ProbeInterval() != 1*time.Minute {
+		t.Fatalf("expected ProbeInterval = 1m, got %v", tr1.ProbeInterval())
+	}
+
+	tr5 := NewTracker()
+	tr5.SetProbeInterval(10 * time.Minute)
+
+	node := "node-interval-test"
+	tr1.RecordDial(node, "target.com", 500*time.Millisecond, nil)
+	tr5.RecordDial(node, "target.com", 500*time.Millisecond, nil)
+
+	// Simulate both nodes being idle for 2 minutes
+	idleTime := time.Now().Add(-2 * time.Minute)
+	tr1.mu.Lock()
+	tr1.nodes[node].LastPassiveDial = idleTime
+	tr1.mu.Unlock()
+
+	tr5.mu.Lock()
+	tr5.nodes[node].LastPassiveDial = idleTime
+	tr5.mu.Unlock()
+
+	// Probe both with 50ms
+	tr1.RecordProbe(node, 50*time.Millisecond)
+	tr5.RecordProbe(node, 50*time.Millisecond)
+
+	sc1 := tr1.GetScore(node)
+	sc5 := tr5.GetScore(node)
+
+	// For tr1 (1m interval), 2 minutes is 2 probe intervals -> decayRatio = 75%
+	// For tr5 (10m interval), 2 minutes is 0.2 probe intervals -> decayRatio = 50%
+	if sc1.PassiveEWMA >= sc5.PassiveEWMA {
+		t.Fatalf("expected 1m probe interval to decay faster than 10m interval, got tr1=%v, tr5=%v",
+			sc1.PassiveEWMA, sc5.PassiveEWMA)
+	}
+}
+

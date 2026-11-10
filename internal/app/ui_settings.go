@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -384,6 +385,9 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					if labeledInput(c, p, "page-set-probe-interval", cat.AutoProbeIntervalLabel(), &a.autoProbeIntervalInput, "5").Changed() {
 						if parsed, err := strconv.Atoi(strings.TrimSpace(a.autoProbeIntervalInput)); err == nil && parsed >= 1 && parsed <= 1440 {
 							a.state.AutoProbeInterval = parsed
+							if a.tracker != nil {
+								a.tracker.SetProbeInterval(time.Duration(parsed) * time.Minute)
+							}
 							a.saveState()
 						}
 					}

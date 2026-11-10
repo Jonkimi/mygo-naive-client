@@ -379,11 +379,17 @@ func newApp(dataDir string) *app {
 		tailnetMgr:     tnMgr,
 		quitCh:         make(chan struct{}),
 	}
+	if st.AutoProbeInterval > 0 {
+		a.tracker.SetProbeInterval(time.Duration(st.AutoProbeInterval) * time.Minute)
+	}
 	a.refreshGeoDataStatus()
 	return a
 }
 
 func (a *app) initSubsystems() {
+	if a.tracker != nil && a.state.AutoProbeInterval > 0 {
+		a.tracker.SetProbeInterval(time.Duration(a.state.AutoProbeInterval) * time.Minute)
+	}
 	binPath := a.resolveBinaryPath()
 	cfgDir := filepath.Join(a.userDataDir(), "configs")
 	a.mgr = runner.NewManager(binPath, cfgDir, func() {
@@ -563,6 +569,9 @@ func (a *app) startPeriodicProbe() {
 				intervalMin = 5
 			}
 			interval := time.Duration(intervalMin) * time.Minute
+			if a.tracker != nil {
+				a.tracker.SetProbeInterval(interval)
+			}
 			if !lastProbe.IsZero() && time.Since(lastProbe) < interval {
 				continue
 			}
