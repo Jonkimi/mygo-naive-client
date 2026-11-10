@@ -1221,8 +1221,43 @@ func (a *app) requestTunDevice() (*tunhelper.ReceivedDevice, error) {
 	client := tunhelper.NewClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return client.RequestDevice(ctx, exe)
+	excludeIPs := a.collectNodeServerIPs()
+	return client.RequestDevice(ctx, exe, excludeIPs...)
 }
+
+func (a *app) collectNodeServerIPs() []string {
+	var ips []string
+	seen := make(map[string]bool)
+	add := func(host string) {
+		host = strings.TrimSpace(host)
+		host = strings.TrimPrefix(host, "[")
+		host = strings.TrimSuffix(host, "]")
+		if ip := net.ParseIP(host); ip != nil {
+			s := ip.String()
+			if !seen[s] {
+				seen[s] = true
+				ips = append(ips, s)
+			}
+		}
+	}
+	for _, svc := range a.state.Services {
+		if svc.Server != "" {
+			add(svc.Server)
+		}
+		for _, proxyURI := range svc.Proxies {
+			if u, err := url.Parse(proxyURI); err == nil && u.Hostname() != "" {
+				add(u.Hostname())
+			}
+		}
+		if svc.ExternalURI != "" {
+			if u, err := url.Parse(svc.ExternalURI); err == nil && u.Hostname() != "" {
+				add(u.Hostname())
+			}
+		}
+	}
+	return ips
+}
+
 
 func (a *app) startGateway() error {
 	if a.gateway != nil {
@@ -1252,16 +1287,36 @@ func (a *app) startGateway() error {
 	var tunFD int
 	var tunName string
 	if a.state.TrafficMode == "tun" {
-		if a.tunDevice == nil {
-			dev, err := a.requestTunDevice()
-			if err != nil {
-				return fmt.Errorf("request TUN device: %w", err)
+		if runtime.GOOS == "windows" {
+			if a.mockTunDevice != nil {
+				dev, err := a.mockTunDevice()
+				if err != nil {
+					return fmt.Errorf("request TUN device: %w", err)
+				}
+				a.tunDevice = dev
+				if dev != nil {
+					tunFD = dev.FD
+					tunName = dev.Name
+				}
+			} else {
+				// On Windows, Wintun runs in-process via wintun.dll with TunFD == 0.
+				// It requires the client process to be running with Administrator privileges.
+				if !tunhelper.IsElevated() {
+					return errors.New("TUN 模式在 Windows 上需要以管理员身份运行客户端")
+				}
 			}
-			a.tunDevice = dev
-		}
-		if a.tunDevice != nil {
-			tunFD = a.tunDevice.FD
-			tunName = a.tunDevice.Name
+		} else {
+			if a.tunDevice == nil {
+				dev, err := a.requestTunDevice()
+				if err != nil {
+					return fmt.Errorf("request TUN device: %w", err)
+				}
+				a.tunDevice = dev
+			}
+			if a.tunDevice != nil {
+				tunFD = a.tunDevice.FD
+				tunName = a.tunDevice.Name
+			}
 		}
 	} else {
 		if a.tunDevice != nil {

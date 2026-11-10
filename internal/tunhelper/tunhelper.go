@@ -5,10 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"syscall"
 )
 
 // ReceivedDevice represents a TUN device file descriptor received from the privileged helper.
@@ -16,14 +20,26 @@ type ReceivedDevice struct {
 	FD       int
 	Name     string
 	SockPath string
+	Conn     io.Closer
 }
 
-// Close closes the underlying TUN file descriptor.
+// Close closes the underlying TUN file descriptor and signals the helper to teardown routes and exit.
 func (r *ReceivedDevice) Close() error {
+	var errs []error
+	if r.Conn != nil {
+		if err := r.Conn.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		r.Conn = nil
+	}
 	if r.FD > 0 {
-		err := closeFD(r.FD)
+		if err := closeFD(r.FD); err != nil {
+			errs = append(errs, err)
+		}
 		r.FD = -1
-		return err
+	}
+	if len(errs) > 0 {
+		return errs[0]
 	}
 	return nil
 }
@@ -39,19 +55,28 @@ func IsHelper(args []string) bool {
 }
 
 // BuildPrivilegedCommand returns the command and arguments needed to spawn the helper with privileges.
-func BuildPrivilegedCommand(helperBin string, sockPath string, isRoot bool) (string, []string) {
+func BuildPrivilegedCommand(helperBin string, sockPath string, isRoot bool, excludeIPs ...string) (string, []string) {
+	var args []string
+	if len(excludeIPs) > 0 {
+		args = []string{"--tun-helper", "--sock", sockPath, "--exclude-ips", strings.Join(excludeIPs, ",")}
+	} else {
+		args = []string{"--tun-helper", "--sock", sockPath}
+	}
 	if isRoot {
-		return helperBin, []string{"--tun-helper", "--sock", sockPath}
+		return helperBin, args
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		cmdStr := fmt.Sprintf("%q --tun-helper --sock %q", helperBin, sockPath)
+		cmdStr := helperBin
+		for _, a := range args {
+			cmdStr += fmt.Sprintf(" %q", a)
+		}
 		script := fmt.Sprintf("do shell script %q with administrator privileges", cmdStr)
 		return "osascript", []string{"-e", script}
 	case "linux":
-		return "pkexec", []string{helperBin, "--tun-helper", "--sock", sockPath}
+		return "pkexec", append([]string{helperBin}, args...)
 	default:
-		return helperBin, []string{"--tun-helper", "--sock", sockPath}
+		return helperBin, args
 	}
 }
 
@@ -78,7 +103,7 @@ func NewClient() *HelperClient {
 }
 
 // RequestDevice starts a socket, spawns the helper, and returns the passed TUN device.
-func (c *HelperClient) RequestDevice(ctx context.Context, helperBin string) (*ReceivedDevice, error) {
+func (c *HelperClient) RequestDevice(ctx context.Context, helperBin string, excludeIPs ...string) (*ReceivedDevice, error) {
 	tempDir := os.TempDir()
 	sockPath := filepath.Join(tempDir, fmt.Sprintf("naive-tun-%d-%d.sock", os.Getpid(), os.Getuid()))
 
@@ -94,10 +119,11 @@ func (c *HelperClient) RequestDevice(ctx context.Context, helperBin string) (*Re
 		devCh <- dev
 	}()
 
-	cmdName, cmdArgs := BuildPrivilegedCommand(helperBin, sockPath, c.IsRoot)
+	cmdName, cmdArgs := BuildPrivilegedCommand(helperBin, sockPath, c.IsRoot, excludeIPs...)
 	execErrCh := make(chan error, 1)
 	go func() {
-		execErrCh <- c.Executor(ctx, cmdName, cmdArgs...)
+		// Use Background context so the privileged helper is not killed when the handshake ctx completes.
+		execErrCh <- c.Executor(context.Background(), cmdName, cmdArgs...)
 	}()
 
 	select {
@@ -124,10 +150,12 @@ func (c *HelperClient) RequestDevice(ctx context.Context, helperBin string) (*Re
 	}
 }
 
-// RunHelper executes the privileged helper logic: opens TUN and sends FD over Unix socket.
+// RunHelper executes the privileged helper logic: opens TUN, installs routes,
+// transmits FD over Unix socket, and stays alive to clean up routes upon exit.
 func RunHelper(args []string) error {
 	fs := flag.NewFlagSet("tun-helper", flag.ContinueOnError)
 	sockPath := fs.String("sock", "", "Path to unix domain socket")
+	excludeIPsStr := fs.String("exclude-ips", "", "Comma-separated IPs to exclude from TUN")
 	_ = fs.Bool("tun-helper", true, "Helper mode")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -137,10 +165,41 @@ func RunHelper(args []string) error {
 		return errors.New("missing required --sock parameter")
 	}
 
+	var excludeIPs []string
+	if *excludeIPsStr != "" {
+		for _, ip := range strings.Split(*excludeIPsStr, ",") {
+			ip = strings.TrimSpace(ip)
+			if ip != "" {
+				excludeIPs = append(excludeIPs, ip)
+			}
+		}
+	}
+
 	fd, name, err := OpenPlatformTUN()
 	if err != nil {
 		return fmt.Errorf("open platform tun: %w", err)
 	}
+	defer func() {
+		_ = closeFD(fd)
+	}()
 
-	return SendFD(*sockPath, fd, name)
+	if err := SetupRoutes(name, excludeIPs); err != nil {
+		_ = TeardownRoutes(name, excludeIPs)
+		return fmt.Errorf("setup routes: %w", err)
+	}
+	defer func() {
+		_ = TeardownRoutes(name, excludeIPs)
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-sigCh
+		_ = TeardownRoutes(name, excludeIPs)
+		_ = closeFD(fd)
+		os.Exit(0)
+	}()
+
+	return SendFDAndServe(*sockPath, fd, name)
 }
+

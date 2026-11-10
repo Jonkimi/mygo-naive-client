@@ -4,7 +4,9 @@ package tunhelper
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -51,4 +53,91 @@ func OpenPlatformTUN() (int, string, error) {
 	_ = cmd6.Run()
 
 	return tunFd, name, nil
+}
+
+// SetupRoutes configures system routes (0/1 and 128/1) pointing to the utun interface on macOS,
+// and installs direct host routes for excludeIPs to bypass the TUN interface.
+func SetupRoutes(name string, excludeIPs []string) error {
+	_ = TeardownRoutes(name, excludeIPs)
+
+	gw, iface := getDefaultGateway()
+
+	// 1. Install specific host routes for node IPs to bypass TUN directly via physical gateway
+	for _, ipStr := range excludeIPs {
+		ip := net.ParseIP(strings.TrimSpace(ipStr))
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			if gw != "" {
+				_ = exec.Command("route", "-q", "-n", "add", "-host", ip.String(), gw).Run()
+			} else if iface != "" {
+				_ = exec.Command("route", "-q", "-n", "add", "-host", ip.String(), "-interface", iface).Run()
+			}
+		} else {
+			if iface != "" {
+				_ = exec.Command("route", "-q", "-n", "add", "-inet6", ip.String()+"/128", "-interface", iface).Run()
+			}
+		}
+	}
+
+	// 2. Install default 0/1 and 128/1 routes pointing to utun
+	routes := [][]string{
+		{"route", "-q", "-n", "add", "-net", "0.0.0.0/1", "-interface", name},
+		{"route", "-q", "-n", "add", "-net", "128.0.0.0/1", "-interface", name},
+		{"route", "-q", "-n", "add", "-inet6", "::/1", "-interface", name},
+		{"route", "-q", "-n", "add", "-inet6", "8000::/1", "-interface", name},
+	}
+	for _, r := range routes {
+		_ = exec.Command(r[0], r[1:]...).Run()
+	}
+	_ = exec.Command("dscacheutil", "-flushcache").Run()
+	return nil
+}
+
+// TeardownRoutes removes the 0/1 and 128/1 routes and node host routes on macOS.
+func TeardownRoutes(name string, excludeIPs []string) error {
+	for _, ipStr := range excludeIPs {
+		ip := net.ParseIP(strings.TrimSpace(ipStr))
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			_ = exec.Command("route", "-q", "-n", "delete", "-host", ip.String()).Run()
+		} else {
+			_ = exec.Command("route", "-q", "-n", "delete", "-inet6", ip.String()+"/128").Run()
+		}
+	}
+
+	routes := [][]string{
+		{"route", "-q", "-n", "delete", "-net", "0.0.0.0/1", "-interface", name},
+		{"route", "-q", "-n", "delete", "-net", "128.0.0.0/1", "-interface", name},
+		{"route", "-q", "-n", "delete", "-inet6", "::/1", "-interface", name},
+		{"route", "-q", "-n", "delete", "-inet6", "8000::/1", "-interface", name},
+	}
+	for _, r := range routes {
+		_ = exec.Command(r[0], r[1:]...).Run()
+	}
+	_ = exec.Command("dscacheutil", "-flushcache").Run()
+	return nil
+}
+
+func getDefaultGateway() (string, string) {
+	out, err := exec.Command("route", "-n", "get", "default").Output()
+	if err != nil {
+		return "", ""
+	}
+	var gw, iface string
+	lines := strings.Split(string(out), "\n")
+	for _, l := range lines {
+		fields := strings.Fields(l)
+		if len(fields) >= 2 {
+			if fields[0] == "gateway:" {
+				gw = fields[1]
+			} else if fields[0] == "interface:" {
+				iface = fields[1]
+			}
+		}
+	}
+	return gw, iface
 }

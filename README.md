@@ -14,7 +14,6 @@
   <img src="https://img.shields.io/badge/GUI-MyGo%20(Pure%20Go%20GPU)-blue" alt="GUI Framework" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-green" alt="Platforms" />
   <img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License" />
-  <img src="https://img.shields.io/badge/Memory-70MB~%20Idle-brightgreen" alt="Memory Footprint" />
 </p>
 
 ---
@@ -23,7 +22,7 @@
 
 ### 🚀 极轻量原生 GPU 渲染体验
 - **Pure Go 原生渲染**：基于 `egoist/mygo` 纯 Go 图形栈，直连操作系统底层现代图形 API（macOS Metal、Windows Direct3D、Linux OpenGL/Wayland）。
-- **零 Web 运行时开销**：摒弃 Electron、Chromium 或 WebKit 等庞大浏览器运行时，日常空闲内存仅 **70MB~**，启动秒开且帧率稳定流畅。
+- **零 Web 运行时开销**：摒弃 Electron、Chromium 或 WebKit 等庞大浏览器运行时，轻量纯粹，启动秒开且帧率稳定流畅。
 
 ### 🌐 系统级 TUN 全局接管与网络助手
 - **透明流量接管**：跨平台系统级 TUN 虚拟网卡模式，全面透明接管本机所有进程网络流量，支持免代理环境应用平滑上网。
@@ -60,12 +59,12 @@
 
 ### 🛡️ 高性能广告拦截与 24 小时洞察看板
 - **Pi-hole 后缀树算法**：基于 Suffix Trie 的超轻量广告与追踪域名阻断，零拷贝毫秒级极速阻断广告与追踪域名。
-- **共享 Geodata 数据库**：与分流规则共享 Geosite 广告数据库，并在禁用时自动释放缓存内存。
+- **共享 Geodata 数据库**：与分流规则共享 Geosite 广告数据库，并在禁用时自动释放缓存。
 - **「洞察 (Insights)」数据看板**：全新重构 24 小时实时拦截比例、折线趋势图、精确查询耗时、端到端落地节点标记（Chain 链路追踪）与失败高亮。
 
-### 🗄️ 流式 Geodata 规则库与极致内存优化
-- **流式 Protobuf 解析**：采用流式增量解析与标签缓存技术加载 `geoip.dat` 与 `geosite.dat`，大幅消除小对象内存分配与堆碎片。
-- **增量标签差量加载**：规则启停按需差量加载 Tag，未激活的规则不占用额外内存。
+### 🗄️ 流式 Geodata 规则库与高性能优化
+- **流式 Protobuf 解析**：采用流式增量解析与标签缓存技术加载 `geoip.dat` 与 `geosite.dat`，大幅消除小对象频繁分配与堆碎片。
+- **增量标签差量加载**：规则启停按需差量加载 Tag，未激活的规则不占用额外资源。
 - **规则库在线更新**：支持一键在线更新规则库，支持自定义配置直连或跟随代理通道下载。
 
 ### 🎨 现代工作台交互与全应用国际化

@@ -478,9 +478,9 @@ func (e *Engine) GetNodeName(nodeID string) string {
 	return cleanID
 }
 
-// extractSidecarExcludeAddresses extracts IP addresses from sidecar nodes as CIDR strings
-// to populate route_exclude_address, preventing sidecar loops through sing-tun.
-func extractSidecarExcludeAddresses(services []config.Service, resolver func(host string) []net.IP) []string {
+// extractNodeExcludeAddresses extracts IP addresses from ALL nodes (both native and sidecar) as CIDR strings
+// to populate route_exclude_address, preventing node routing loops through sing-tun.
+func extractNodeExcludeAddresses(services []config.Service, resolver func(host string) []net.IP) []string {
 	var results []string
 	seen := make(map[string]bool)
 
@@ -516,9 +516,6 @@ func extractSidecarExcludeAddresses(services []config.Service, resolver func(hos
 	}
 
 	for _, svc := range services {
-		if !isSidecarService(svc) {
-			continue
-		}
 		if svc.Server != "" {
 			addHost(svc.Server)
 		}
@@ -535,6 +532,7 @@ func extractSidecarExcludeAddresses(services []config.Service, resolver func(hos
 	}
 	return results
 }
+
 
 func resolveFinalOutbound(opts EngineOptions) string {
 	if opts.FinalRoute.Type != "" {
@@ -637,7 +635,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		if opts.TunInterface != "" {
 			tunIn["interface_name"] = opts.TunInterface
 		}
-		excludes := extractSidecarExcludeAddresses(opts.Services, nil)
+		excludes := extractNodeExcludeAddresses(opts.Services, nil)
 		if opts.TailnetMode == tailnet.ModeHost {
 			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)

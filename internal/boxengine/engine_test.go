@@ -432,7 +432,7 @@ func TestExtractSidecarExcludeAddresses(t *testing.T) {
 			Proxies:  []string{"https://user:pass@[2001:db8::1]:443"},
 		},
 		{
-			// Native sing-box node should not be in sidecar route exclusion
+			// Native sing-box node must also be in route exclusion to prevent routing loops
 			ID:       "native-vless",
 			Protocol: config.ProtoVLESS,
 			Engine:   config.EngineSingBox,
@@ -440,11 +440,12 @@ func TestExtractSidecarExcludeAddresses(t *testing.T) {
 		},
 	}
 
-	excludes := extractSidecarExcludeAddresses(services, nil)
+	excludes := extractNodeExcludeAddresses(services, nil)
 	expected := map[string]bool{
 		"198.51.100.1/32": true,
 		"203.0.113.5/32":  true,
 		"2001:db8::1/128": true,
+		"192.0.2.1/32":    true,
 	}
 
 	if len(excludes) != len(expected) {

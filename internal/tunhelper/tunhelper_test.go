@@ -130,6 +130,19 @@ func TestBuildPrivilegedCommand(t *testing.T) {
 	if len(directArgs) < 3 || directArgs[0] != "--tun-helper" || directArgs[2] != "/tmp/tun.sock" {
 		t.Errorf("unexpected direct args: %v", directArgs)
 	}
+
+	// With excludeIPs
+	_, excludeArgs := BuildPrivilegedCommand("/opt/naive-client", "/tmp/tun.sock", true, "150.230.61.225", "1.1.1.1")
+	foundExclude := false
+	for i := 0; i < len(excludeArgs)-1; i++ {
+		if excludeArgs[i] == "--exclude-ips" && excludeArgs[i+1] == "150.230.61.225,1.1.1.1" {
+			foundExclude = true
+			break
+		}
+	}
+	if !foundExclude {
+		t.Errorf("expected --exclude-ips in args, got: %v", excludeArgs)
+	}
 }
 
 // Tests HelperClient coordinates socket listening, executor invocation, and device retrieval.
@@ -176,4 +189,47 @@ func TestHelperClient_RequestDevice(t *testing.T) {
 		t.Errorf("expected name utun88, got %q", dev.Name)
 	}
 }
+
+type dummyCloser struct {
+	closed bool
+}
+
+func (d *dummyCloser) Close() error {
+	d.closed = true
+	return nil
+}
+
+// Tests ReceivedDevice.Close properly closes both Conn and FD.
+func TestReceivedDevice_Close(t *testing.T) {
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	defer rPipe.Close()
+
+	dummy := &dummyCloser{}
+	dev := &ReceivedDevice{
+		FD:       int(wPipe.Fd()),
+		Name:     "utun77",
+		SockPath: "/tmp/fake.sock",
+		Conn:     dummy,
+	}
+
+	if err := dev.Close(); err != nil {
+		t.Fatalf("dev.Close failed: %v", err)
+	}
+
+	if !dummy.closed {
+		t.Errorf("expected dummy closer to be closed")
+	}
+	if dev.FD != -1 {
+		t.Errorf("expected dev.FD to be reset to -1, got %d", dev.FD)
+	}
+
+	// Idempotent close
+	if err := dev.Close(); err != nil {
+		t.Errorf("second Close should be a no-op, got: %v", err)
+	}
+}
+
 
