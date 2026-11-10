@@ -15,10 +15,23 @@ import (
 	"syscall"
 )
 
-// DNSAddress is the in-TUN DNS address (peer of the default 172.19.0.1/30 TUN
-// address). The sing-box tun inbound hijacks it, and the macOS DynamicStore
-// DNS entry points at it; both must use this single value.
-const DNSAddress = "172.19.0.2"
+// Single source of truth for the TUN addressing. The sing-box tun inbound, the privileged
+// helper (ifconfig / ip addr) and the macOS DynamicStore DNS entry must all derive from these.
+const (
+	// TunIPv4 is the local TUN address and TunIPv4Peer its point-to-point peer in the /30.
+	TunIPv4     = "172.19.0.1"
+	TunIPv4Peer = "172.19.0.2"
+	// TunIPv4Netmask is the dotted form of TunIPv4Prefix's /30.
+	TunIPv4Netmask = "255.255.255.252"
+	TunIPv4Prefix  = TunIPv4 + "/30"
+
+	TunIPv6       = "fdfe:dcba:9876::1"
+	TunIPv6Prefix = TunIPv6 + "/126"
+
+	// DNSAddress is the in-TUN DNS address. The sing-box tun inbound hijacks it, and the
+	// macOS DynamicStore DNS entry points at it.
+	DNSAddress = TunIPv4Peer
+)
 
 // ReceivedDevice represents a TUN device file descriptor received from the privileged helper.
 type ReceivedDevice struct {
@@ -184,7 +197,6 @@ func RunHelper(args []string) error {
 	fs := flag.NewFlagSet("tun-helper", flag.ContinueOnError)
 	sockPath := fs.String("sock", "", "Path to unix domain socket")
 	excludeIPsStr := fs.String("exclude-ips", "", "Comma-separated IPs to exclude from TUN")
-	searchDomain := fs.String("search-domain", "", "Search domain for DNS resolution")
 	_ = fs.Bool("tun-helper", true, "Helper mode")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -212,7 +224,7 @@ func RunHelper(args []string) error {
 		_ = closeFD(fd)
 	}()
 
-	if err := SetupRoutes(name, excludeIPs, *searchDomain); err != nil {
+	if err := SetupRoutes(name, excludeIPs); err != nil {
 		_ = TeardownRoutes(name, excludeIPs)
 		return fmt.Errorf("setup routes: %w", err)
 	}

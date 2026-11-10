@@ -104,6 +104,7 @@ type app struct {
 	tunDevice      *tunhelper.ReceivedDevice
 	mockTunDevice  func() (*tunhelper.ReceivedDevice, error)
 	mockTunCreator func(options tun.Options) (tun.Tun, error)
+	mockNodeResolver func(host string) []net.IP
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -1232,7 +1233,27 @@ func (a *app) collectNodeServerIPs() []string {
 		host = strings.TrimSpace(host)
 		host = strings.TrimPrefix(host, "[")
 		host = strings.TrimSuffix(host, "]")
+		if host == "" {
+			return
+		}
 		if ip := net.ParseIP(host); ip != nil {
+			s := ip.String()
+			if !seen[s] {
+				seen[s] = true
+				ips = append(ips, s)
+			}
+			return
+		}
+		// Resolve domain names to IP addresses so bypass routes can be established
+		var resolved []net.IP
+		if a != nil && a.mockNodeResolver != nil {
+			resolved = a.mockNodeResolver(host)
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			defer cancel()
+			resolved, _ = net.DefaultResolver.LookupIP(ctx, "ip", host)
+		}
+		for _, ip := range resolved {
 			s := ip.String()
 			if !seen[s] {
 				seen[s] = true
@@ -1370,6 +1391,7 @@ func (a *app) startGateway() error {
 		TunInterface:          tunName,
 		TunAddresses:          tunAddrs,
 		TunCreator:            a.mockTunCreator,
+		NodeIPResolver:        a.mockNodeResolver,
 		Services:              a.state.Services,
 		AllocatedPorts:        allocPorts,
 		ActiveIDs:             activeIDs,

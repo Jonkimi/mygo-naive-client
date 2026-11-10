@@ -456,6 +456,60 @@ func TestExtractSidecarExcludeAddresses(t *testing.T) {
 			t.Errorf("unexpected exclude address %q", ex)
 		}
 	}
+
+	// Test with domain name and custom resolver
+	domainServices := []config.Service{
+		{
+			ID:       "naive-domain",
+			Protocol: config.ProtoNaive,
+			Engine:   config.EngineSidecar,
+			Proxies:  []string{"https://user:pass@proxy.example.com:443"},
+		},
+	}
+	mockResolver := func(host string) []net.IP {
+		if host == "proxy.example.com" {
+			return []net.IP{net.ParseIP("198.51.100.99")}
+		}
+		return nil
+	}
+	resolvedExcludes := extractNodeExcludeAddresses(domainServices, mockResolver)
+	if len(resolvedExcludes) != 1 || resolvedExcludes[0] != "198.51.100.99/32" {
+		t.Fatalf("expected [198.51.100.99/32], got %v", resolvedExcludes)
+	}
+}
+
+// Tests that collectAllBootstrapDomains extracts domains from Proxies, ExternalURI and DoH endpoints.
+func TestCollectAllBootstrapDomains(t *testing.T) {
+	opts := EngineOptions{
+		Services: []config.Service{
+			{
+				ID:      "naive-1",
+				Proxies: []string{"https://user:pass@naive.example.com:443"},
+			},
+			{
+				ID:          "external-1",
+				ExternalURI: "socks5://ext.example.com:1080",
+			},
+		},
+		DomesticDoH:  []string{"https://doh.pub/dns-query"},
+		BootstrapDNS: []string{"https://dns.alidns.com/dns-query", "223.5.5.5:53"},
+	}
+	domains := collectAllBootstrapDomains(opts)
+	expected := map[string]bool{
+		"naive.example.com":  true,
+		"ext.example.com":    true,
+		"doh.pub":            true,
+		"dns.alidns.com":     true,
+	}
+	for _, d := range domains {
+		if !expected[d] {
+			t.Errorf("unexpected bootstrap domain %q", d)
+		}
+		delete(expected, d)
+	}
+	if len(expected) > 0 {
+		t.Errorf("missing expected bootstrap domains: %v", expected)
+	}
 }
 
 // Tests that TunPlatform injects TunFD and TunName into tun.Options.

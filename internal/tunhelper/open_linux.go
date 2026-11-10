@@ -33,16 +33,16 @@ func OpenPlatformTUN() (int, string, error) {
 	name := unix.ByteSliceToString(ifr[:16])
 
 	// Configure IP addresses
-	_ = exec.Command("ip", "addr", "add", "172.19.0.1/30", "dev", name).Run()
+	_ = exec.Command("ip", "addr", "add", TunIPv4Prefix, "dev", name).Run()
 	_ = exec.Command("ip", "link", "set", "dev", name, "up").Run()
-	_ = exec.Command("ip", "-6", "addr", "add", "fdfe:dcba:9876::1/126", "dev", name).Run()
+	_ = exec.Command("ip", "-6", "addr", "add", TunIPv6Prefix, "dev", name).Run()
 
 	return fd, name, nil
 }
 
 // SetupRoutes installs default 0/1 and 128/1 routes on Linux pointing to the TUN interface,
 // and installs specific direct routes for excludeIPs.
-func SetupRoutes(name string, excludeIPs []string, searchDomain ...string) error {
+func SetupRoutes(name string, excludeIPs []string) error {
 	_ = TeardownRoutes(name, excludeIPs)
 
 	for _, ipStr := range excludeIPs {

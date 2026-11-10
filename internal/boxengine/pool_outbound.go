@@ -572,7 +572,7 @@ func (c *firstRTTConn) Close() error {
 		c.stallTimer.Stop()
 	}
 	_ = c.Conn.SetReadDeadline(time.Time{})
-	if !c.done && c.hasWritten {
+	if !c.done {
 		c.done = true
 		var elapsed time.Duration
 		if !c.writeTime.IsZero() {

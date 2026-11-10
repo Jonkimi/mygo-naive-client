@@ -358,8 +358,13 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 		}
 	}
 	if target != "" {
-		if t.recordConnection(target, matchedRule, matchOutbound) {
+		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound)
+		if blocked {
 			_ = conn.Close()
+			return conn
+		}
+		if logID > 0 && metadata.Source.Port != 0 && t.blocker != nil && t.blocker.Logger() != nil {
+			t.blocker.Logger().BindSourceConn(metadata.Source.String(), logID)
 		}
 	}
 	return conn

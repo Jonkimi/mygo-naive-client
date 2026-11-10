@@ -45,12 +45,12 @@ func OpenPlatformTUN() (int, string, error) {
 	}
 
 	// Configure utun interface with IP addresses while running with root privileges
-	cmd := exec.Command("ifconfig", name, "172.19.0.1", "172.19.0.2", "netmask", "255.255.255.252", "up")
+	cmd := exec.Command("ifconfig", name, TunIPv4, TunIPv4Peer, "netmask", TunIPv4Netmask, "up")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = unix.Close(tunFd)
 		return 0, "", fmt.Errorf("configure utun ipv4 (%s): %w: %s", name, err, string(out))
 	}
-	cmd6 := exec.Command("ifconfig", name, "inet6", "fdfe:dcba:9876::1", "prefixlen", "126", "up")
+	cmd6 := exec.Command("ifconfig", name, "inet6", TunIPv6, "prefixlen", "126", "up")
 	_ = cmd6.Run()
 
 	return tunFd, name, nil
@@ -59,7 +59,7 @@ func OpenPlatformTUN() (int, string, error) {
 // SetupRoutes configures system routes (0/1 and 128/1) pointing to the utun interface on macOS,
 // installs direct host routes for excludeIPs to bypass the TUN interface,
 // and installs a high-priority DynamicStore DNS entry for Split DNS hijacking.
-func SetupRoutes(name string, excludeIPs []string, searchDomain ...string) error {
+func SetupRoutes(name string, excludeIPs []string) error {
 	_ = TeardownRoutes(name, excludeIPs)
 
 	gw, iface := getDefaultGateway()
@@ -99,11 +99,7 @@ func SetupRoutes(name string, excludeIPs []string, searchDomain ...string) error
 	}
 
 	// 3. Configure macOS DynamicStore DNS so utun intercepts all DNS requests with highest priority
-	var sDomain string
-	if len(searchDomain) > 0 {
-		sDomain = searchDomain[0]
-	}
-	setupDarwinDNS(name, sDomain)
+	setupDarwinDNS(name)
 
 	_ = exec.Command("dscacheutil", "-flushcache").Run()
 	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
@@ -140,10 +136,9 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 	return nil
 }
 
-func setupDarwinDNS(ifName string, searchDomain string) {
-	if searchDomain == "" {
-		searchDomain = getSearchDomainFromResolvConf()
-	}
+func setupDarwinDNS(ifName string) {
+	cleanupStaleDarwinDNS()
+	searchDomain := getSearchDomainFromResolvConf()
 	var sb strings.Builder
 	sb.WriteString("d.init\n")
 	sb.WriteString("d.add ServerAddresses * "+DNSAddress+"\n")
@@ -162,6 +157,42 @@ func setupDarwinDNS(ifName string, searchDomain string) {
 	cmd := exec.Command("scutil")
 	cmd.Stdin = strings.NewReader(sb.String())
 	_ = cmd.Run()
+}
+
+// cleanupStaleDarwinDNS removes DynamicStore DNS entries left behind by a previous helper that
+// was killed before it could tear down (SIGKILL, crash). Such an entry points at the TUN DNS
+// address of a dead interface and breaks system-wide DNS. Only entries whose ServerAddresses
+// contain DNSAddress are touched, so DNS entries owned by other VPNs are left alone.
+func cleanupStaleDarwinDNS() {
+	list := exec.Command("scutil")
+	list.Stdin = strings.NewReader("list State:/Network/Service/utun[0-9]+/DNS\nquit\n")
+	out, err := list.Output()
+	if err != nil {
+		return
+	}
+	for _, key := range parseScutilKeys(string(out)) {
+		show := exec.Command("scutil")
+		show.Stdin = strings.NewReader("show " + key + "\nquit\n")
+		body, err := show.Output()
+		if err != nil || !strings.Contains(string(body), DNSAddress) {
+			continue
+		}
+		rm := exec.Command("scutil")
+		rm.Stdin = strings.NewReader("remove " + key + "\nquit\n")
+		_ = rm.Run()
+	}
+}
+
+// parseScutilKeys extracts keys from `scutil` "list" output lines like
+// "  subKey [0] = State:/Network/Service/utun5/DNS".
+func parseScutilKeys(out string) []string {
+	var keys []string
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, " = State:/"); i >= 0 {
+			keys = append(keys, strings.TrimSpace(line[i+3:]))
+		}
+	}
+	return keys
 }
 
 func teardownDarwinDNS(ifName string) {

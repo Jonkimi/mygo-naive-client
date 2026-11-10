@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"naive-client/internal/blocker"
 	"naive-client/internal/config"
@@ -55,6 +56,7 @@ type EngineOptions struct {
 	BootstrapDNS          []string
 	DomesticDoH    []string
 	RemoteDoH      []string
+	NodeIPResolver func(host string) []net.IP
 	PreferIPv4        bool
 	ActiveIDs         map[string]bool
 	OnDemandStart     func(poolTag string)
@@ -560,32 +562,43 @@ func resolveFinalOutbound(opts EngineOptions) string {
 
 func collectAllBootstrapDomains(opts EngineOptions) []string {
 	bootstrapDomainSet := make(map[string]bool)
-	for _, d := range opts.BootstrapDomains {
-		d = strings.TrimSpace(d)
-		if d != "" && net.ParseIP(d) == nil {
-			bootstrapDomainSet[d] = true
+	addDomain := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+			raw = u.Hostname()
+		} else if host, _, err := net.SplitHostPort(raw); err == nil {
+			raw = host
+		}
+		raw = strings.TrimPrefix(raw, "[")
+		raw = strings.TrimSuffix(raw, "]")
+		raw = strings.ToLower(raw)
+		if raw != "" && net.ParseIP(raw) == nil {
+			bootstrapDomainSet[raw] = true
 		}
 	}
+
+	for _, d := range opts.BootstrapDomains {
+		addDomain(d)
+	}
 	for _, svc := range opts.Services {
-		if svc.Server != "" && net.ParseIP(svc.Server) == nil {
-			bootstrapDomainSet[svc.Server] = true
+		if svc.Server != "" {
+			addDomain(svc.Server)
+		}
+		for _, proxyURI := range svc.Proxies {
+			addDomain(proxyURI)
+		}
+		if svc.ExternalURI != "" {
+			addDomain(svc.ExternalURI)
 		}
 	}
 	for _, ep := range opts.DomesticDoH {
-		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
-			if net.ParseIP(u.Hostname()) == nil {
-				bootstrapDomainSet[u.Hostname()] = true
-			}
-		}
+		addDomain(ep)
 	}
 	for _, ep := range opts.BootstrapDNS {
-		if host, _, err := net.SplitHostPort(ep); err == nil {
-			ep = host
-		}
-		ep = strings.TrimSpace(ep)
-		if ep != "" && net.ParseIP(ep) == nil {
-			bootstrapDomainSet[ep] = true
-		}
+		addDomain(ep)
 	}
 	var allBootstrapDomains []string
 	for d := range bootstrapDomainSet {
@@ -634,7 +647,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 	if opts.TrafficMode == "tun" {
 		tunAddrs := opts.TunAddresses
 		if len(tunAddrs) == 0 {
-			tunAddrs = []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"}
+			tunAddrs = []string{tunhelper.TunIPv4Prefix, tunhelper.TunIPv6Prefix}
 		}
 		mtu := opts.TunMTU
 		if mtu <= 0 {
@@ -648,12 +661,23 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			"auto_route":   true,
 			"strict_route": true,
 			"stack":        "system",
-			"dns_address":  []string{tunhelper.DNSAddress},
 		}
+		// Leaving dns_address unset allows sing-box to automatically derive the peer DNS
+		// address (tunhelper.DNSAddress == 172.19.0.2) and populate its internal dnsHijackAddress,
+		// ensuring both UDP and TCP DNS queries are properly hijacked.
 		if opts.TunInterface != "" {
 			tunIn["interface_name"] = opts.TunInterface
 		}
-		excludes := extractNodeExcludeAddresses(opts.Services, nil)
+		resolver := opts.NodeIPResolver
+		if resolver == nil {
+			resolver = func(h string) []net.IP {
+				ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+				defer cancel()
+				ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", h)
+				return ips
+			}
+		}
+		excludes := extractNodeExcludeAddresses(opts.Services, resolver)
 		if opts.TailnetMode == tailnet.ModeHost {
 			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
@@ -840,7 +864,7 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 			"server": "bootstrap-dns",
 		})
 	}
-	if opts.TailnetMode == tailnet.ModeHost || (opts.TailnetMode == "" && opts.TailnetMagicDNSSuffix != "") {
+	if opts.TailnetMode == tailnet.ModeHost {
 		dnsServers = append(dnsServers, map[string]any{
 			"type":        "udp",
 			"tag":         "tailscale-host-dns",
@@ -1018,7 +1042,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 	}
 
 	// 4.1 Tailnet highest-priority routing & Pi-hole Blocker bypass
-	if opts.TailnetMode == tailnet.ModeHost || (opts.TailnetMode == "" && opts.TailnetMagicDNSSuffix != "") {
+	if opts.TailnetMode == tailnet.ModeHost {
 		var tailnetCIDRs []string
 		for _, c := range append(tailnet.DefaultTailnetSubnets, opts.TailnetHostExcludes...) {
 			c = strings.TrimSpace(c)

@@ -3033,6 +3033,54 @@ func TestGateway_SingBoxRealityNodeStartupAndDialer(t *testing.T) {
 	}
 }
 
+// Regression: When nodes use domain names (e.g. NaiveProxy Proxies or Xray Server),
+// collectNodeServerIPs previously failed to resolve them, omitting node server IPs from
+// bypass routes and causing routing loops in TUN mode.
+func TestCollectNodeServerIPs_ResolvesDomains(t *testing.T) {
+	services := []config.Service{
+		{
+			ID:       "naive-domain",
+			Protocol: config.ProtoNaive,
+			Engine:   config.EngineSidecar,
+			Proxies:  []string{"https://user:pass@proxy.example.com:443"},
+		},
+		{
+			ID:       "xray-domain",
+			Protocol: config.ProtoVLESS,
+			Engine:   config.EngineSidecar,
+			Server:   "node.example.org",
+		},
+		{
+			ID:       "ip-node",
+			Protocol: config.ProtoVLESS,
+			Server:   "198.51.100.1",
+		},
+	}
+	a, _, _ := newTestApp(t, services)
+	a.mockNodeResolver = func(host string) []net.IP {
+		switch host {
+		case "proxy.example.com":
+			return []net.IP{net.ParseIP("203.0.113.10")}
+		case "node.example.org":
+			return []net.IP{net.ParseIP("203.0.113.20")}
+		default:
+			return nil
+		}
+	}
+
+	ips := a.collectNodeServerIPs()
+	ipMap := make(map[string]bool)
+	for _, ip := range ips {
+		ipMap[ip] = true
+	}
+
+	for _, want := range []string{"203.0.113.10", "203.0.113.20", "198.51.100.1"} {
+		if !ipMap[want] {
+			t.Errorf("collectNodeServerIPs() missing IP %s, got: %v", want, ips)
+		}
+	}
+}
+
 
 
 
