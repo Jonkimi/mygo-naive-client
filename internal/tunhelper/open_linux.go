@@ -83,12 +83,21 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 		}
 	}
 
-	routes := [][]string{
-		{"ip", "route", "del", "0.0.0.0/1", "dev", name},
-		{"ip", "route", "del", "128.0.0.0/1", "dev", name},
-		{"ip", "-6", "route", "del", "::/1", "dev", name},
-		{"ip", "-6", "route", "del", "8000::/1", "dev", name},
+	var routes [][]string
+	if name != "" {
+		routes = append(routes,
+			[]string{"ip", "route", "del", "0.0.0.0/1", "dev", name},
+			[]string{"ip", "route", "del", "128.0.0.0/1", "dev", name},
+			[]string{"ip", "-6", "route", "del", "::/1", "dev", name},
+			[]string{"ip", "-6", "route", "del", "8000::/1", "dev", name},
+		)
 	}
+	routes = append(routes,
+		[]string{"ip", "route", "del", "0.0.0.0/1"},
+		[]string{"ip", "route", "del", "128.0.0.0/1"},
+		[]string{"ip", "-6", "route", "del", "::/1"},
+		[]string{"ip", "-6", "route", "del", "8000::/1"},
+	)
 	for _, r := range routes {
 		_ = exec.Command(r[0], r[1:]...).Run()
 	}

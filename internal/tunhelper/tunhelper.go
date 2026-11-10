@@ -197,10 +197,14 @@ func RunHelper(args []string) error {
 	fs := flag.NewFlagSet("tun-helper", flag.ContinueOnError)
 	sockPath := fs.String("sock", "", "Path to unix domain socket")
 	excludeIPsStr := fs.String("exclude-ips", "", "Comma-separated IPs to exclude from TUN")
+	cleanup := fs.Bool("cleanup", false, "Clean up stale TUN routes and DNS entries and exit")
 	_ = fs.Bool("tun-helper", true, "Helper mode")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
+	}
+	if *cleanup {
+		return TeardownRoutes("", nil)
 	}
 	if *sockPath == "" {
 		return errors.New("missing required --sock parameter")

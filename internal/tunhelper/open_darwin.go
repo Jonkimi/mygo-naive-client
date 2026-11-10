@@ -108,7 +108,10 @@ func SetupRoutes(name string, excludeIPs []string) error {
 
 // TeardownRoutes removes the 0/1 and 128/1 routes, node host routes, and DynamicStore DNS on macOS.
 func TeardownRoutes(name string, excludeIPs []string) error {
-	teardownDarwinDNS(name)
+	if name != "" {
+		teardownDarwinDNS(name)
+	}
+	cleanupStaleDarwinDNS()
 
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
@@ -122,12 +125,22 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 		}
 	}
 
-	routes := [][]string{
-		{"route", "-q", "-n", "delete", "-net", "0.0.0.0/1", "-interface", name},
-		{"route", "-q", "-n", "delete", "-net", "128.0.0.0/1", "-interface", name},
-		{"route", "-q", "-n", "delete", "-inet6", "::/1", "-interface", name},
-		{"route", "-q", "-n", "delete", "-inet6", "8000::/1", "-interface", name},
+	var routes [][]string
+	if name != "" {
+		routes = append(routes,
+			[]string{"route", "-q", "-n", "delete", "-net", "0.0.0.0/1", "-interface", name},
+			[]string{"route", "-q", "-n", "delete", "-net", "128.0.0.0/1", "-interface", name},
+			[]string{"route", "-q", "-n", "delete", "-inet6", "::/1", "-interface", name},
+			[]string{"route", "-q", "-n", "delete", "-inet6", "8000::/1", "-interface", name},
+		)
 	}
+	// Also clean without interface constraint in case interface was deleted or changed across restarts
+	routes = append(routes,
+		[]string{"route", "-q", "-n", "delete", "-net", "0.0.0.0/1"},
+		[]string{"route", "-q", "-n", "delete", "-net", "128.0.0.0/1"},
+		[]string{"route", "-q", "-n", "delete", "-inet6", "::/1"},
+		[]string{"route", "-q", "-n", "delete", "-inet6", "8000::/1"},
+	)
 	for _, r := range routes {
 		_ = exec.Command(r[0], r[1:]...).Run()
 	}
