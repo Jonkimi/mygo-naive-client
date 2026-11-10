@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -233,3 +234,23 @@ func TestReceivedDevice_Close(t *testing.T) {
 }
 
 
+
+// Regression: the helper path inside "Naive Client.app/Contents/MacOS/Naive Client" contains
+// spaces; it was left unquoted in the osascript shell command, so sh split it and exited 127.
+func TestShellCommandKeepsPathWithSpaces(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Naive Client.app", "it's")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "Naive Client")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s|' \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "-c", shellCommand(bin, []string{"--tun-helper", "--sock", "/tmp/a b.sock"})).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sh failed: %v: %s", err, out)
+	}
+	if string(out) != "--tun-helper|--sock|/tmp/a b.sock|" {
+		t.Errorf("unexpected args: %q", out)
+	}
+}

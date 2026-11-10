@@ -67,11 +67,7 @@ func BuildPrivilegedCommand(helperBin string, sockPath string, isRoot bool, excl
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		cmdStr := helperBin
-		for _, a := range args {
-			cmdStr += fmt.Sprintf(" %q", a)
-		}
-		script := fmt.Sprintf("do shell script %q with administrator privileges", cmdStr)
+		script := fmt.Sprintf("do shell script \"%s\" with administrator privileges", appleScriptEscape(shellCommand(helperBin, args)))
 		return "osascript", []string{"-e", script}
 	case "linux":
 		return "pkexec", append([]string{helperBin}, args...)
@@ -80,12 +76,39 @@ func BuildPrivilegedCommand(helperBin string, sockPath string, isRoot bool, excl
 	}
 }
 
+// shellQuote wraps s in single quotes so sh treats it as one literal word (paths may contain spaces).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shellCommand joins the binary and args into a single sh command line with every word quoted.
+func shellCommand(bin string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, shellQuote(bin))
+	for _, a := range args {
+		parts = append(parts, shellQuote(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+// appleScriptEscape escapes s for use inside a double-quoted AppleScript string literal.
+func appleScriptEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
+}
+
 // CommandExecutor is used to spawn privileged helper processes.
 type CommandExecutor func(ctx context.Context, name string, args ...string) error
 
 func defaultCommandExecutor(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // HelperClient coordinates launching the privileged helper and receiving the TUN FD.
