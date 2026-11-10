@@ -124,8 +124,8 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 				pfx := ps.AllowedIPs.At(i)
 				pfxStr := pfx.String()
 				allowedIPs = append(allowedIPs, pfxStr)
-				// Subnet routes (non-single host CIDRs)
-				if !pfx.IsSingleIP() {
+				// Subnet routes (non-single host CIDRs, excluding default quad-zero routes)
+				if !pfx.IsSingleIP() && pfx.Bits() > 0 {
 					subnetRoutes = append(subnetRoutes, pfxStr)
 				}
 			}

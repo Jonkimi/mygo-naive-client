@@ -616,6 +616,12 @@ func TestEngine_TailnetHostMode_ConfigAndRouting(t *testing.T) {
 	if !strings.Contains(rawStr, "tailscale-host-dns") {
 		t.Error("expected tailscale-host-dns in dns configuration")
 	}
+	if !strings.Contains(rawStr, "^[^.]+$") {
+		t.Error("expected short name domain_regex ^[^.]+$ in dns/route configuration")
+	}
+	if !strings.Contains(rawStr, "my-tailnet.ts.net") {
+		t.Error("expected my-tailnet.ts.net in dns rules")
+	}
 	if !strings.Contains(rawStr, "100.64.0.0/10") {
 		t.Error("expected 100.64.0.0/10 in route rules")
 	}
@@ -1412,6 +1418,14 @@ func TestEngine_DecomposedConfigBuilders(t *testing.T) {
 	}
 	if dnsMap["final"] != "remote-doh" {
 		t.Errorf("expected dns final remote-doh, got %v", dnsMap["final"])
+	}
+	// Regression: DNS servers detouring to the bare "direct" outbound make sing-box fail
+	// every lookup ("detour to an empty direct outbound makes no sense").
+	servers, _ := dnsMap["servers"].([]map[string]any)
+	for _, s := range servers {
+		if s["detour"] == "direct" {
+			t.Errorf("DNS server %v must not detour to the empty direct outbound", s["tag"])
+		}
 	}
 
 	// 5. Route

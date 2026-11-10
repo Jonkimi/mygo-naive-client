@@ -5,6 +5,7 @@ package tunhelper
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -56,8 +57,9 @@ func OpenPlatformTUN() (int, string, error) {
 }
 
 // SetupRoutes configures system routes (0/1 and 128/1) pointing to the utun interface on macOS,
-// and installs direct host routes for excludeIPs to bypass the TUN interface.
-func SetupRoutes(name string, excludeIPs []string) error {
+// installs direct host routes for excludeIPs to bypass the TUN interface,
+// and installs a high-priority DynamicStore DNS entry for Split DNS hijacking.
+func SetupRoutes(name string, excludeIPs []string, searchDomain ...string) error {
 	_ = TeardownRoutes(name, excludeIPs)
 
 	gw, iface := getDefaultGateway()
@@ -85,18 +87,33 @@ func SetupRoutes(name string, excludeIPs []string) error {
 	routes := [][]string{
 		{"route", "-q", "-n", "add", "-net", "0.0.0.0/1", "-interface", name},
 		{"route", "-q", "-n", "add", "-net", "128.0.0.0/1", "-interface", name},
-		{"route", "-q", "-n", "add", "-inet6", "::/1", "-interface", name},
-		{"route", "-q", "-n", "add", "-inet6", "8000::/1", "-interface", name},
+	}
+	if checkDarwinIPv6() {
+		routes = append(routes,
+			[]string{"route", "-q", "-n", "add", "-inet6", "::/1", "-interface", name},
+			[]string{"route", "-q", "-n", "add", "-inet6", "8000::/1", "-interface", name},
+		)
 	}
 	for _, r := range routes {
 		_ = exec.Command(r[0], r[1:]...).Run()
 	}
+
+	// 3. Configure macOS DynamicStore DNS so utun intercepts all DNS requests with highest priority
+	var sDomain string
+	if len(searchDomain) > 0 {
+		sDomain = searchDomain[0]
+	}
+	setupDarwinDNS(name, sDomain)
+
 	_ = exec.Command("dscacheutil", "-flushcache").Run()
+	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
 	return nil
 }
 
-// TeardownRoutes removes the 0/1 and 128/1 routes and node host routes on macOS.
+// TeardownRoutes removes the 0/1 and 128/1 routes, node host routes, and DynamicStore DNS on macOS.
 func TeardownRoutes(name string, excludeIPs []string) error {
+	teardownDarwinDNS(name)
+
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
 		if ip == nil {
@@ -119,7 +136,62 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 		_ = exec.Command(r[0], r[1:]...).Run()
 	}
 	_ = exec.Command("dscacheutil", "-flushcache").Run()
+	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
 	return nil
+}
+
+func setupDarwinDNS(ifName string, searchDomain string) {
+	if searchDomain == "" {
+		searchDomain = getSearchDomainFromResolvConf()
+	}
+	var sb strings.Builder
+	sb.WriteString("d.init\n")
+	sb.WriteString("d.add ServerAddresses * "+DNSAddress+"\n")
+	sb.WriteString("d.add SearchOrder 50000\n")
+	sb.WriteString(fmt.Sprintf("d.add InterfaceName %s\n", ifName))
+	if searchDomain != "" {
+		cleanDomain := strings.Trim(searchDomain, ".")
+		sb.WriteString(fmt.Sprintf("d.add SearchDomains * %s\n", cleanDomain))
+		sb.WriteString(fmt.Sprintf("d.add SupplementalMatchDomains * \"\" %s.\n", cleanDomain))
+	} else {
+		sb.WriteString("d.add SupplementalMatchDomains * \"\"\n")
+	}
+	sb.WriteString(fmt.Sprintf("set State:/Network/Service/%s/DNS\n", ifName))
+	sb.WriteString("quit\n")
+
+	cmd := exec.Command("scutil")
+	cmd.Stdin = strings.NewReader(sb.String())
+	_ = cmd.Run()
+}
+
+func teardownDarwinDNS(ifName string) {
+	cmd := exec.Command("scutil")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("remove State:/Network/Service/%s/DNS\nquit\n", ifName))
+	_ = cmd.Run()
+}
+
+func getSearchDomainFromResolvConf() string {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, l := range lines {
+		fields := strings.Fields(l)
+		if len(fields) >= 2 && fields[0] == "search" {
+			return fields[1]
+		}
+	}
+	return ""
+}
+
+func checkDarwinIPv6() bool {
+	out, err := exec.Command("route", "-n", "get", "-inet6", "default").Output()
+	if err != nil {
+		return false
+	}
+	s := string(out)
+	return strings.Contains(s, "interface:") && !strings.Contains(s, "not in table")
 }
 
 func getDefaultGateway() (string, string) {
@@ -135,7 +207,10 @@ func getDefaultGateway() (string, string) {
 			if fields[0] == "gateway:" {
 				gw = fields[1]
 			} else if fields[0] == "interface:" {
-				iface = fields[1]
+				cand := fields[1]
+				if !strings.HasPrefix(cand, "utun") && !strings.HasPrefix(cand, "tun") && !strings.HasPrefix(cand, "lo") {
+					iface = cand
+				}
 			}
 		}
 	}

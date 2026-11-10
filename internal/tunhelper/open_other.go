@@ -8,7 +8,7 @@ func OpenPlatformTUN() (int, string, error) {
 	return 0, "", errors.New("TUN helper not supported on this platform")
 }
 
-func SetupRoutes(name string, excludeIPs []string) error {
+func SetupRoutes(name string, excludeIPs []string, searchDomain ...string) error {
 	return nil
 }
 

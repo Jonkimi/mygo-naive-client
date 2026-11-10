@@ -17,8 +17,12 @@ func (s *platformInterfaceStub) Initialize(networkManager adapter.NetworkManager
 	return nil
 }
 
+// UsePlatformAutoDetectInterfaceControl must be false: AutoDetectInterfaceControl
+// below is a no-op, so delegating to it would leave outbound sockets unbound and
+// let them follow the 0/1 TUN routes back into the TUN (routing loop, log flood).
+// Returning false makes sing-box bind sockets to the default interface itself.
 func (s *platformInterfaceStub) UsePlatformAutoDetectInterfaceControl() bool {
-	return true
+	return false
 }
 
 func (s *platformInterfaceStub) AutoDetectInterfaceControl(fd int) error {

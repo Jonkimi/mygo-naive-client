@@ -15,6 +15,11 @@ import (
 	"syscall"
 )
 
+// DNSAddress is the in-TUN DNS address (peer of the default 172.19.0.1/30 TUN
+// address). The sing-box tun inbound hijacks it, and the macOS DynamicStore
+// DNS entry points at it; both must use this single value.
+const DNSAddress = "172.19.0.2"
+
 // ReceivedDevice represents a TUN device file descriptor received from the privileged helper.
 type ReceivedDevice struct {
 	FD       int
@@ -179,6 +184,7 @@ func RunHelper(args []string) error {
 	fs := flag.NewFlagSet("tun-helper", flag.ContinueOnError)
 	sockPath := fs.String("sock", "", "Path to unix domain socket")
 	excludeIPsStr := fs.String("exclude-ips", "", "Comma-separated IPs to exclude from TUN")
+	searchDomain := fs.String("search-domain", "", "Search domain for DNS resolution")
 	_ = fs.Bool("tun-helper", true, "Helper mode")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -206,7 +212,7 @@ func RunHelper(args []string) error {
 		_ = closeFD(fd)
 	}()
 
-	if err := SetupRoutes(name, excludeIPs); err != nil {
+	if err := SetupRoutes(name, excludeIPs, *searchDomain); err != nil {
 		_ = TeardownRoutes(name, excludeIPs)
 		return fmt.Errorf("setup routes: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +129,10 @@ func (m *Manager) GetHostExcludeAddresses() []string {
 	}
 
 	for _, sub := range m.status.SubnetRoutes {
+		sub = strings.TrimSpace(sub)
+		if sub == "" || sub == "0.0.0.0/0" || sub == "::/0" {
+			continue
+		}
 		if !seen[sub] {
 			seen[sub] = true
 			excludes = append(excludes, sub)

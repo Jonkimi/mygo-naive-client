@@ -42,7 +42,7 @@ func OpenPlatformTUN() (int, string, error) {
 
 // SetupRoutes installs default 0/1 and 128/1 routes on Linux pointing to the TUN interface,
 // and installs specific direct routes for excludeIPs.
-func SetupRoutes(name string, excludeIPs []string) error {
+func SetupRoutes(name string, excludeIPs []string, searchDomain ...string) error {
 	_ = TeardownRoutes(name, excludeIPs)
 
 	for _, ipStr := range excludeIPs {

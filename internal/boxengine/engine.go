@@ -16,6 +16,7 @@ import (
 	"naive-client/internal/blocker"
 	"naive-client/internal/config"
 	"naive-client/internal/geodata"
+	"naive-client/internal/tunhelper"
 	"naive-client/internal/routing"
 	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
@@ -570,6 +571,22 @@ func collectAllBootstrapDomains(opts EngineOptions) []string {
 			bootstrapDomainSet[svc.Server] = true
 		}
 	}
+	for _, ep := range opts.DomesticDoH {
+		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
+			if net.ParseIP(u.Hostname()) == nil {
+				bootstrapDomainSet[u.Hostname()] = true
+			}
+		}
+	}
+	for _, ep := range opts.BootstrapDNS {
+		if host, _, err := net.SplitHostPort(ep); err == nil {
+			ep = host
+		}
+		ep = strings.TrimSpace(ep)
+		if ep != "" && net.ParseIP(ep) == nil {
+			bootstrapDomainSet[ep] = true
+		}
+	}
 	var allBootstrapDomains []string
 	for d := range bootstrapDomainSet {
 		allBootstrapDomains = append(allBootstrapDomains, d)
@@ -631,6 +648,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			"auto_route":   true,
 			"strict_route": true,
 			"stack":        "system",
+			"dns_address":  []string{tunhelper.DNSAddress},
 		}
 		if opts.TunInterface != "" {
 			tunIn["interface_name"] = opts.TunInterface
@@ -641,7 +659,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
 			for _, te := range tailnetExcludes {
 				te = strings.TrimSpace(te)
-				if te != "" {
+				if te != "" && te != "0.0.0.0/0" && te != "::/0" {
 					excludes = append(excludes, te)
 				}
 			}
@@ -655,11 +673,24 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 }
 
 func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPorts map[string]int) ([]map[string]any, error) {
+	// Outbound interface selection is left to route.auto_detect_interface, which
+	// follows network changes (Wi-Fi/Ethernet switch, wake) instead of a stale bind.
+	directOut := map[string]any{
+		"type": "direct",
+		"tag":  "direct",
+	}
+
+	tailnetDirectOut := map[string]any{
+		"type": "direct",
+		"tag":  "tailnet-direct",
+		// A non-zero dial option keeps this outbound from being "empty", otherwise it
+		// cannot be used as a DNS server detour (tailscale-host-dns).
+		"connect_timeout": "10s",
+	}
+
 	outbounds := []map[string]any{
-		{
-			"type": "direct",
-			"tag":  "direct",
-		},
+		directOut,
+		tailnetDirectOut,
 		{
 			"type": "block",
 			"tag":  "block",
@@ -792,6 +823,10 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		remoteDoHDetour = finalOutbound
 	}
 
+	// bootstrap-dns and domestic-doh intentionally have no detour: they use the default
+	// dialer, which route.auto_detect_interface binds to the physical NIC. A detour to a
+	// bare "direct" outbound is rejected by sing-box ("detour to an empty direct outbound
+	// makes no sense"), which silently breaks every DNS lookup.
 	dnsServers := []map[string]any{
 		buildDNSServerMap("bootstrap-dns", bootstrapDNS[0], "", ""),
 		buildDNSServerMap("domestic-doh", domesticDoH[0], "", "bootstrap-dns"),
@@ -805,12 +840,13 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 			"server": "bootstrap-dns",
 		})
 	}
-	if opts.TailnetMode == tailnet.ModeHost {
+	if opts.TailnetMode == tailnet.ModeHost || (opts.TailnetMode == "" && opts.TailnetMagicDNSSuffix != "") {
 		dnsServers = append(dnsServers, map[string]any{
 			"type":        "udp",
 			"tag":         "tailscale-host-dns",
 			"server":      "100.100.100.100",
 			"server_port": 53,
+			"detour":      "tailnet-direct",
 		})
 		suffixes := []string{"ts.net"}
 		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
@@ -818,6 +854,11 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		}
 		dnsRules = append(dnsRules, map[string]any{
 			"domain_suffix": suffixes,
+			"server":        "tailscale-host-dns",
+		})
+		// Match short names (single-label domain without dots, e.g. "nas", "debian") to MagicDNS
+		dnsRules = append(dnsRules, map[string]any{
+			"domain_regex":  []string{`^[^.]+$`},
 			"server":        "tailscale-host-dns",
 		})
 	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
@@ -832,6 +873,10 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		}
 		dnsRules = append(dnsRules, map[string]any{
 			"domain_suffix": suffixes,
+			"server":        "tailscale-dns",
+		})
+		dnsRules = append(dnsRules, map[string]any{
+			"domain_regex":  []string{`^[^.]+$`},
 			"server":        "tailscale-dns",
 		})
 	}
@@ -937,29 +982,67 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"action": "hijack-dns",
 	})
 
-	// 0.2 Bootstrap domains routing directly to avoid TUN/proxy deadlocks (Item 6)
+	// 0.2 Bootstrap domains & IPs routing directly to avoid TUN/proxy deadlocks (Item 6)
 	if len(allBootstrapDomains) > 0 {
 		singRules = append(singRules, map[string]any{
 			"domain":   allBootstrapDomains,
 			"outbound": "direct",
 		})
 	}
-
-	// 4.1 Tailnet highest-priority routing & Pi-hole Blocker bypass
-	if opts.TailnetMode == tailnet.ModeHost {
-		tailnetCIDRs := append([]string{}, tailnet.DefaultTailnetSubnets...)
-		tailnetCIDRs = append(tailnetCIDRs, opts.TailnetHostExcludes...)
+	var bootstrapIPs []string
+	bootstrapList := opts.BootstrapDNS
+	if len(bootstrapList) == 0 {
+		bootstrapList = DefaultBootstrapDNS
+	}
+	for _, raw := range bootstrapList {
+		raw = strings.TrimSpace(raw)
+		if host, _, err := net.SplitHostPort(raw); err == nil {
+			raw = host
+		}
+		if ip := net.ParseIP(raw); ip != nil {
+			bootstrapIPs = append(bootstrapIPs, ip.String())
+		}
+	}
+	for _, doh := range opts.DomesticDoH {
+		if u, err := url.Parse(doh); err == nil && u.Hostname() != "" {
+			if ip := net.ParseIP(u.Hostname()); ip != nil {
+				bootstrapIPs = append(bootstrapIPs, ip.String())
+			}
+		}
+	}
+	if len(bootstrapIPs) > 0 {
 		singRules = append(singRules, map[string]any{
-			"ip_cidr":  tailnetCIDRs,
+			"ip_cidr":  bootstrapIPs,
 			"outbound": "direct",
 		})
+	}
+
+	// 4.1 Tailnet highest-priority routing & Pi-hole Blocker bypass
+	if opts.TailnetMode == tailnet.ModeHost || (opts.TailnetMode == "" && opts.TailnetMagicDNSSuffix != "") {
+		var tailnetCIDRs []string
+		for _, c := range append(tailnet.DefaultTailnetSubnets, opts.TailnetHostExcludes...) {
+			c = strings.TrimSpace(c)
+			if c != "" && c != "0.0.0.0/0" && c != "::/0" {
+				tailnetCIDRs = append(tailnetCIDRs, c)
+			}
+		}
+		if len(tailnetCIDRs) > 0 {
+			singRules = append(singRules, map[string]any{
+				"ip_cidr":  tailnetCIDRs,
+				"outbound": "tailnet-direct",
+			})
+		}
 		suffixes := []string{"ts.net"}
 		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
 			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
 		}
 		singRules = append(singRules, map[string]any{
 			"domain_suffix": suffixes,
-			"outbound":      "direct",
+			"outbound":      "tailnet-direct",
+		})
+		singRules = append(singRules, map[string]any{
+			"domain_regex":  []string{`^[^.]+$`},
+			"outbound":      "tailnet-direct",
 		})
 	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
 		suffixes := []string{"ts.net"}
@@ -968,6 +1051,10 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		}
 		singRules = append(singRules, map[string]any{
 			"domain_suffix": suffixes,
+			"outbound":      "tailscale-ep",
+		})
+		singRules = append(singRules, map[string]any{
+			"domain_regex":  []string{`^[^.]+$`},
 			"outbound":      "tailscale-ep",
 		})
 		singRules = append(singRules, map[string]any{

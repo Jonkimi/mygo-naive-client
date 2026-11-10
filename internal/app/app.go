@@ -1255,6 +1255,23 @@ func (a *app) collectNodeServerIPs() []string {
 			}
 		}
 	}
+	// Exclude bootstrap DNS & domestic DoH IPs from TUN routing to prevent routing deadlocks
+	for _, b := range parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS) {
+		if host, _, err := net.SplitHostPort(b); err == nil {
+			b = host
+		}
+		add(b)
+	}
+	for _, d := range parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH) {
+		if u, err := url.Parse(d); err == nil && u.Hostname() != "" {
+			add(u.Hostname())
+		} else {
+			if host, _, err := net.SplitHostPort(d); err == nil {
+				d = host
+			}
+			add(d)
+		}
+	}
 	return ips
 }
 

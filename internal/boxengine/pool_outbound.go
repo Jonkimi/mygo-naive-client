@@ -183,6 +183,15 @@ func formatConnectionError(err error) string {
 	if strings.Contains(errStr, "handshake") || strings.Contains(errStr, "tls") {
 		return "TLS握手失败"
 	}
+	if strings.Contains(errStr, "no route to host") {
+		return "无可用路由"
+	}
+	if strings.Contains(errStr, "network is unreachable") {
+		return "网络不可达"
+	}
+	if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "operation not permitted") {
+		return "权限拒绝"
+	}
 	return "连接失败"
 }
 
