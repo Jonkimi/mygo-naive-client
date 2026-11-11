@@ -91,6 +91,24 @@ type PersistedState struct {
 	TailnetExposeMixedPort bool     `json:"tailnetExposeMixedPort"`
 	TailnetAdvertiseExit   bool     `json:"tailnetAdvertiseExit"`
 	TailnetAdvertiseRoutes []string `json:"tailnetAdvertiseRoutes,omitempty"`
+
+	// Engine diagnostic log level ("debug", "info", "warn", "error")
+	LogLevel string `json:"logLevel,omitempty"`
+}
+
+func normalizeLogLevel(lvl string) string {
+	switch strings.ToLower(strings.TrimSpace(lvl)) {
+	case "debug":
+		return "debug"
+	case "info":
+		return "info"
+	case "warn", "warning":
+		return "warn"
+	case "error":
+		return "error"
+	default:
+		return "warn"
+	}
 }
 
 func defaultPersistedState() PersistedState {
@@ -126,6 +144,7 @@ func defaultPersistedState() PersistedState {
 		TailnetExposeMixedPort:  false,
 		TailnetAdvertiseExit:    false,
 		TailnetAdvertiseRoutes:  []string{},
+		LogLevel:                "warn",
 	}
 }
 
@@ -277,6 +296,7 @@ func (a *app) loadState() {
 	if st.TrafficMode == "" {
 		st.TrafficMode = "port"
 	}
+	st.LogLevel = normalizeLogLevel(st.LogLevel)
 	if len(st.RoutingRules) == 0 {
 		st.RoutingRules = routing.DefaultPresets()
 	} else {

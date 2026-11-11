@@ -23,6 +23,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
@@ -512,6 +513,44 @@ func TestCollectAllBootstrapDomains(t *testing.T) {
 		t.Errorf("missing expected bootstrap domains: %v", expected)
 	}
 }
+
+func TestBoxPlatformWriter_LevelFilterAndCleanMessage(t *testing.T) {
+	var captured []string
+	_, warnLvl := parseSingBoxLogLevel("warn")
+	pw := newBoxPlatformWriter(warnLvl, func(level, msg string) {
+		captured = append(captured, level+":"+msg)
+	})
+
+	// Debug and Info should be filtered out when maxLevel is Warn
+	pw.WriteMessage(log.LevelDebug, "\x1b[37mDEBUG\x1b[0m[0001] verbose packet trace")
+	pw.WriteMessage(log.LevelInfo, "\x1b[36mINFO\x1b[0m[0002] inbound/mixed: connection accepted")
+	if len(captured) != 0 {
+		t.Fatalf("expected debug/info to be filtered at warn threshold, got %v", captured)
+	}
+
+	// Warn and Error should pass through with ANSI and prefix stripped
+	pw.WriteMessage(log.LevelWarn, "\x1b[33mWARN\x1b[0m[0012] dns: exchange failed for example.com")
+	pw.WriteMessage(log.LevelError, "\x1b[31mERROR\x1b[0m[0015] outbound/pool: dial timeout")
+
+	if len(captured) != 2 {
+		t.Fatalf("expected 2 captured messages, got %v", captured)
+	}
+	if captured[0] != "WARN:dns: exchange failed for example.com" {
+		t.Fatalf("unexpected formatted warn message: %q", captured[0])
+	}
+	if captured[1] != "ERROR:outbound/pool: dial timeout" {
+		t.Fatalf("unexpected formatted error message: %q", captured[1])
+	}
+
+	// Raise threshold to Debug dynamically and verify Info is now captured
+	_, debugLvl := parseSingBoxLogLevel("debug")
+	pw.maxLevel.Store(uint32(debugLvl))
+	pw.WriteMessage(log.LevelInfo, "INFO[0020] router: started")
+	if len(captured) != 3 || captured[2] != "INFO:router: started" {
+		t.Fatalf("expected info message after raising threshold, got %v", captured)
+	}
+}
+
 
 // Regression: User rules containing both domain criteria and IP CIDR criteria were previously
 // combined into a single sing-box rule. Because sing-box evaluates fields within a rule with

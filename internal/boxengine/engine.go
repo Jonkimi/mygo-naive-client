@@ -8,11 +8,13 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"naive-client/internal/blocker"
@@ -69,6 +71,70 @@ type EngineOptions struct {
 	TailnetHostExcludes   []string
 	TailnetMagicDNSSuffix string
 	StateDir              string
+
+	// Logging configuration
+	LogLevel string
+	OnLog    func(level, message string)
+}
+
+var (
+	ansiEscapeRegex   = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	singBoxPrefixExpr = regexp.MustCompile(`^(?:PANIC|FATAL|ERROR|WARN|INFO|DEBUG|TRACE)\[\d+\]\s*`)
+)
+
+func parseSingBoxLogLevel(level string) (string, log.Level) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug", "trace":
+		return "debug", log.LevelDebug
+	case "info":
+		return "info", log.LevelInfo
+	case "warn", "warning", "":
+		return "warn", log.LevelWarn
+	case "error", "fatal", "panic":
+		return "error", log.LevelError
+	default:
+		return "warn", log.LevelWarn
+	}
+}
+
+func cleanSingBoxLogMessage(msg string) string {
+	clean := ansiEscapeRegex.ReplaceAllString(msg, "")
+	clean = strings.TrimSpace(clean)
+	clean = singBoxPrefixExpr.ReplaceAllString(clean, "")
+	return strings.TrimSpace(clean)
+}
+
+type boxPlatformWriter struct {
+	maxLevel atomic.Uint32
+	onLog    func(level, message string)
+}
+
+func newBoxPlatformWriter(maxLevel log.Level, onLog func(level, message string)) *boxPlatformWriter {
+	if onLog == nil {
+		return nil
+	}
+	w := &boxPlatformWriter{onLog: onLog}
+	w.maxLevel.Store(uint32(maxLevel))
+	return w
+}
+
+func (w *boxPlatformWriter) DisableColors() bool {
+	return true
+}
+
+func (w *boxPlatformWriter) WriteMessage(level log.Level, message string) {
+	if w == nil || w.onLog == nil {
+		return
+	}
+	if uint32(level) > w.maxLevel.Load() {
+		return
+	}
+	clean := cleanSingBoxLogMessage(message)
+	if clean == "" {
+		return
+	}
+	lvlStr := strings.ToUpper(log.FormatLevel(level))
+	w.onLog(lvlStr, clean)
 }
 
 // Engine manages the embedded sing-box instance (*box.Box) with dynamic node pools and telemetry.
@@ -86,6 +152,8 @@ type Engine struct {
 	connTracker       *BlockerConnectionTracker
 	onDemandStart     func(poolTag string)
 	onTelemetryUpdate func()
+	logLevel          string
+	logWriter         *boxPlatformWriter
 	boxCtx            context.Context
 	cancel            context.CancelFunc
 }
@@ -119,17 +187,20 @@ func New(opts EngineOptions) (*Engine, error) {
 		allocated = make(map[string]int)
 	}
 
+	normLvl, parsedLvl := parseSingBoxLogLevel(opts.LogLevel)
 	eng := &Engine{
-		port:           listenPort,
-		addr:           fmt.Sprintf("%s:%d", listenHost, listenPort),
-		services:       opts.Services,
-		allocatedPorts: allocated,
-		activeIDs:      opts.ActiveIDs,
-		tracker:        opts.Tracker,
-		failureMonitor: opts.FailureMonitor,
+		port:              listenPort,
+		addr:              fmt.Sprintf("%s:%d", listenHost, listenPort),
+		services:          opts.Services,
+		allocatedPorts:    allocated,
+		activeIDs:         opts.ActiveIDs,
+		tracker:           opts.Tracker,
+		failureMonitor:    opts.FailureMonitor,
 		blocker:           opts.Blocker,
 		onDemandStart:     opts.OnDemandStart,
 		onTelemetryUpdate: opts.OnTelemetryUpdate,
+		logLevel:          normLvl,
+		logWriter:         newBoxPlatformWriter(parsedLvl, opts.OnLog),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -176,6 +247,10 @@ func New(opts EngineOptions) (*Engine, error) {
 	}
 
 	eng.boxCtx = boxCtx
+	if eng.logWriter != nil && b.LogFactory() != nil {
+		b.LogFactory().AttachPlatformWriter(eng.logWriter)
+		b.LogFactory().SetLevel(parsedLvl)
+	}
 	if eng.blocker != nil {
 		eng.connTracker = &BlockerConnectionTracker{
 			blocker:          eng.blocker,
@@ -288,6 +363,21 @@ func (e *Engine) Port() int {
 // Addr returns the listening host:port address.
 func (e *Engine) Addr() string {
 	return e.addr
+}
+
+// SetLogLevel dynamically updates the embedded sing-box log level without restarting the engine.
+func (e *Engine) SetLogLevel(level string) {
+	normLvl, parsedLvl := parseSingBoxLogLevel(level)
+	e.mu.Lock()
+	e.logLevel = normLvl
+	if e.logWriter != nil {
+		e.logWriter.maxLevel.Store(uint32(parsedLvl))
+	}
+	b := e.box
+	e.mu.Unlock()
+	if b != nil && b.LogFactory() != nil {
+		b.LogFactory().SetLevel(parsedLvl)
+	}
 }
 
 func isSidecarService(svc config.Service) bool {
@@ -1307,8 +1397,9 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host string, port int) (*option.Options, error) {
 	configMap := make(map[string]any)
 
+	normLvl, _ := parseSingBoxLogLevel(opts.LogLevel)
 	configMap["log"] = map[string]any{
-		"level": "warn",
+		"level": normLvl,
 	}
 
 	finalOutbound := resolveFinalOutbound(opts)

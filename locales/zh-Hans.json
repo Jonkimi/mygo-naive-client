@@ -604,5 +604,35 @@
     }
   },
   "tailnetApplyReconnect": "应用并重新连接",
-  "tailnetAppliedRestarted": "已应用并重启内嵌节点"
+  "tailnetAppliedRestarted": "已应用并重启内嵌节点",
+  "navLogs": "运行日志",
+  "logsPageTitle": "运行日志与诊断",
+  "logsPageDesc": "分栏独立查看 sing-box 网关核心、客户端系统事件与各节点子进程实时输出",
+  "logsTabGateway": "网关与系统",
+  "logsTabNodes": "节点进程",
+  "logsEngineLevelLabel": "引擎级别:",
+  "logsSourceAll": "全部来源",
+  "logsSourceGateway": "网关核心 (sing-box)",
+  "logsSourceSystem": "系统事件",
+  "logsLevelAll": "全部",
+  "logsLevelDebug": "Debug",
+  "logsLevelInfo": "Info",
+  "logsLevelWarn": "Warn",
+  "logsLevelError": "Error",
+  "logsSearchPlaceholder": "输入关键字过滤日志...",
+  "logsActionPause": "暂停",
+  "logsActionResume": "继续",
+  "logsStatusLive": "实时",
+  "logsStatusPaused": "已暂停",
+  "logsEmpty": "暂无日志输出。",
+  "logsNoMatch": "没有匹配当前筛选条件的日志。",
+  "logsNoNodes": "尚未配置任何代理节点。",
+  "logsOpenFullPage": "完整视图",
+  "logsLineCount": "{matched} / {total} 行",
+  "@logsLineCount": {
+    "placeholders": {
+      "matched": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  }
 }

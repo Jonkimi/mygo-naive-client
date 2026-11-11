@@ -620,5 +620,35 @@
     }
   },
   "tailnetApplyReconnect": "Apply & Reconnect",
-  "tailnetAppliedRestarted": "Applied and restarted embedded node"
+  "tailnetAppliedRestarted": "Applied and restarted embedded node",
+  "navLogs": "Logs",
+  "logsPageTitle": "Diagnostic Logs",
+  "logsPageDesc": "Separate real-time streams for sing-box gateway & system events and individual node processes",
+  "logsTabGateway": "Gateway & System",
+  "logsTabNodes": "Node Processes",
+  "logsEngineLevelLabel": "Engine Level:",
+  "logsSourceAll": "All Sources",
+  "logsSourceGateway": "Gateway (sing-box)",
+  "logsSourceSystem": "System Events",
+  "logsLevelAll": "All",
+  "logsLevelDebug": "Debug",
+  "logsLevelInfo": "Info",
+  "logsLevelWarn": "Warn",
+  "logsLevelError": "Error",
+  "logsSearchPlaceholder": "Filter logs by keyword...",
+  "logsActionPause": "Pause",
+  "logsActionResume": "Resume",
+  "logsStatusLive": "LIVE",
+  "logsStatusPaused": "PAUSED",
+  "logsEmpty": "No log output yet.",
+  "logsNoMatch": "No log lines match the current filter.",
+  "logsNoNodes": "No proxy nodes configured.",
+  "logsOpenFullPage": "Full View",
+  "logsLineCount": "{matched} / {total} lines",
+  "@logsLineCount": {
+    "placeholders": {
+      "matched": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  }
 }

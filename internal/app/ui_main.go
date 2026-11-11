@@ -29,7 +29,8 @@ func (a *app) view(c *ui.Context) {
 	c.OnShortcut(ui.Cmd, ui.Key2, func() { a.activeTab = TabRouting })
 	c.OnShortcut(ui.Cmd, ui.Key3, func() { a.activeTab = TabInsights })
 	c.OnShortcut(ui.Cmd, ui.Key4, func() { a.activeTab = TabTailnet })
-	c.OnShortcut(ui.Cmd, ui.Key5, func() { a.activeTab = TabSettings })
+	c.OnShortcut(ui.Cmd, ui.Key5, func() { a.activeTab = TabLogs })
+	c.OnShortcut(ui.Cmd, ui.Key6, func() { a.activeTab = TabSettings })
 	c.OnShortcut(ui.Cmd, ui.KeyComma, func() { a.activeTab = TabSettings })
 	c.OnShortcut(ui.Cmd, ui.KeyB, func() { a.toggleSidebar() })
 
@@ -50,6 +51,8 @@ func (a *app) view(c *ui.Context) {
 				a.renderInsightsPage(c, p)
 			case TabTailnet:
 				a.renderTailnetPage(c, p)
+			case TabLogs:
+				a.renderLogsPage(c, p)
 			}
 		})
 	})

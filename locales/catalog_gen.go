@@ -5135,3 +5135,245 @@ func TailnetAppliedRestarted() string { return In(i18n.Locale()).TailnetAppliedR
 func (msgs Messages) TailnetAppliedRestarted() string {
 	return Catalog.Format(msgs.locale, "tailnetAppliedRestarted", nil)
 }
+
+// NavLogs says "Logs"
+// in the language the app shows.
+func NavLogs() string { return In(i18n.Locale()).NavLogs() }
+
+// NavLogs says "Logs"
+// in the language of msgs.
+func (msgs Messages) NavLogs() string {
+	return Catalog.Format(msgs.locale, "navLogs", nil)
+}
+
+// LogsPageTitle says "Diagnostic Logs"
+// in the language the app shows.
+func LogsPageTitle() string { return In(i18n.Locale()).LogsPageTitle() }
+
+// LogsPageTitle says "Diagnostic Logs"
+// in the language of msgs.
+func (msgs Messages) LogsPageTitle() string {
+	return Catalog.Format(msgs.locale, "logsPageTitle", nil)
+}
+
+// LogsPageDesc says "Separate real-time streams for sing-box gateway & system events and individual node processes"
+// in the language the app shows.
+func LogsPageDesc() string { return In(i18n.Locale()).LogsPageDesc() }
+
+// LogsPageDesc says "Separate real-time streams for sing-box gateway & system events and individual node processes"
+// in the language of msgs.
+func (msgs Messages) LogsPageDesc() string {
+	return Catalog.Format(msgs.locale, "logsPageDesc", nil)
+}
+
+// LogsTabGateway says "Gateway & System"
+// in the language the app shows.
+func LogsTabGateway() string { return In(i18n.Locale()).LogsTabGateway() }
+
+// LogsTabGateway says "Gateway & System"
+// in the language of msgs.
+func (msgs Messages) LogsTabGateway() string {
+	return Catalog.Format(msgs.locale, "logsTabGateway", nil)
+}
+
+// LogsTabNodes says "Node Processes"
+// in the language the app shows.
+func LogsTabNodes() string { return In(i18n.Locale()).LogsTabNodes() }
+
+// LogsTabNodes says "Node Processes"
+// in the language of msgs.
+func (msgs Messages) LogsTabNodes() string {
+	return Catalog.Format(msgs.locale, "logsTabNodes", nil)
+}
+
+// LogsEngineLevelLabel says "Engine Level:"
+// in the language the app shows.
+func LogsEngineLevelLabel() string { return In(i18n.Locale()).LogsEngineLevelLabel() }
+
+// LogsEngineLevelLabel says "Engine Level:"
+// in the language of msgs.
+func (msgs Messages) LogsEngineLevelLabel() string {
+	return Catalog.Format(msgs.locale, "logsEngineLevelLabel", nil)
+}
+
+// LogsSourceAll says "All Sources"
+// in the language the app shows.
+func LogsSourceAll() string { return In(i18n.Locale()).LogsSourceAll() }
+
+// LogsSourceAll says "All Sources"
+// in the language of msgs.
+func (msgs Messages) LogsSourceAll() string {
+	return Catalog.Format(msgs.locale, "logsSourceAll", nil)
+}
+
+// LogsSourceGateway says "Gateway (sing-box)"
+// in the language the app shows.
+func LogsSourceGateway() string { return In(i18n.Locale()).LogsSourceGateway() }
+
+// LogsSourceGateway says "Gateway (sing-box)"
+// in the language of msgs.
+func (msgs Messages) LogsSourceGateway() string {
+	return Catalog.Format(msgs.locale, "logsSourceGateway", nil)
+}
+
+// LogsSourceSystem says "System Events"
+// in the language the app shows.
+func LogsSourceSystem() string { return In(i18n.Locale()).LogsSourceSystem() }
+
+// LogsSourceSystem says "System Events"
+// in the language of msgs.
+func (msgs Messages) LogsSourceSystem() string {
+	return Catalog.Format(msgs.locale, "logsSourceSystem", nil)
+}
+
+// LogsLevelAll says "All"
+// in the language the app shows.
+func LogsLevelAll() string { return In(i18n.Locale()).LogsLevelAll() }
+
+// LogsLevelAll says "All"
+// in the language of msgs.
+func (msgs Messages) LogsLevelAll() string {
+	return Catalog.Format(msgs.locale, "logsLevelAll", nil)
+}
+
+// LogsLevelDebug says "Debug"
+// in the language the app shows.
+func LogsLevelDebug() string { return In(i18n.Locale()).LogsLevelDebug() }
+
+// LogsLevelDebug says "Debug"
+// in the language of msgs.
+func (msgs Messages) LogsLevelDebug() string {
+	return Catalog.Format(msgs.locale, "logsLevelDebug", nil)
+}
+
+// LogsLevelInfo says "Info"
+// in the language the app shows.
+func LogsLevelInfo() string { return In(i18n.Locale()).LogsLevelInfo() }
+
+// LogsLevelInfo says "Info"
+// in the language of msgs.
+func (msgs Messages) LogsLevelInfo() string {
+	return Catalog.Format(msgs.locale, "logsLevelInfo", nil)
+}
+
+// LogsLevelWarn says "Warn"
+// in the language the app shows.
+func LogsLevelWarn() string { return In(i18n.Locale()).LogsLevelWarn() }
+
+// LogsLevelWarn says "Warn"
+// in the language of msgs.
+func (msgs Messages) LogsLevelWarn() string {
+	return Catalog.Format(msgs.locale, "logsLevelWarn", nil)
+}
+
+// LogsLevelError says "Error"
+// in the language the app shows.
+func LogsLevelError() string { return In(i18n.Locale()).LogsLevelError() }
+
+// LogsLevelError says "Error"
+// in the language of msgs.
+func (msgs Messages) LogsLevelError() string {
+	return Catalog.Format(msgs.locale, "logsLevelError", nil)
+}
+
+// LogsSearchPlaceholder says "Filter logs by keyword..."
+// in the language the app shows.
+func LogsSearchPlaceholder() string { return In(i18n.Locale()).LogsSearchPlaceholder() }
+
+// LogsSearchPlaceholder says "Filter logs by keyword..."
+// in the language of msgs.
+func (msgs Messages) LogsSearchPlaceholder() string {
+	return Catalog.Format(msgs.locale, "logsSearchPlaceholder", nil)
+}
+
+// LogsActionPause says "Pause"
+// in the language the app shows.
+func LogsActionPause() string { return In(i18n.Locale()).LogsActionPause() }
+
+// LogsActionPause says "Pause"
+// in the language of msgs.
+func (msgs Messages) LogsActionPause() string {
+	return Catalog.Format(msgs.locale, "logsActionPause", nil)
+}
+
+// LogsActionResume says "Resume"
+// in the language the app shows.
+func LogsActionResume() string { return In(i18n.Locale()).LogsActionResume() }
+
+// LogsActionResume says "Resume"
+// in the language of msgs.
+func (msgs Messages) LogsActionResume() string {
+	return Catalog.Format(msgs.locale, "logsActionResume", nil)
+}
+
+// LogsStatusLive says "LIVE"
+// in the language the app shows.
+func LogsStatusLive() string { return In(i18n.Locale()).LogsStatusLive() }
+
+// LogsStatusLive says "LIVE"
+// in the language of msgs.
+func (msgs Messages) LogsStatusLive() string {
+	return Catalog.Format(msgs.locale, "logsStatusLive", nil)
+}
+
+// LogsStatusPaused says "PAUSED"
+// in the language the app shows.
+func LogsStatusPaused() string { return In(i18n.Locale()).LogsStatusPaused() }
+
+// LogsStatusPaused says "PAUSED"
+// in the language of msgs.
+func (msgs Messages) LogsStatusPaused() string {
+	return Catalog.Format(msgs.locale, "logsStatusPaused", nil)
+}
+
+// LogsEmpty says "No log output yet."
+// in the language the app shows.
+func LogsEmpty() string { return In(i18n.Locale()).LogsEmpty() }
+
+// LogsEmpty says "No log output yet."
+// in the language of msgs.
+func (msgs Messages) LogsEmpty() string {
+	return Catalog.Format(msgs.locale, "logsEmpty", nil)
+}
+
+// LogsNoMatch says "No log lines match the current filter."
+// in the language the app shows.
+func LogsNoMatch() string { return In(i18n.Locale()).LogsNoMatch() }
+
+// LogsNoMatch says "No log lines match the current filter."
+// in the language of msgs.
+func (msgs Messages) LogsNoMatch() string {
+	return Catalog.Format(msgs.locale, "logsNoMatch", nil)
+}
+
+// LogsNoNodes says "No proxy nodes configured."
+// in the language the app shows.
+func LogsNoNodes() string { return In(i18n.Locale()).LogsNoNodes() }
+
+// LogsNoNodes says "No proxy nodes configured."
+// in the language of msgs.
+func (msgs Messages) LogsNoNodes() string {
+	return Catalog.Format(msgs.locale, "logsNoNodes", nil)
+}
+
+// LogsOpenFullPage says "Full View"
+// in the language the app shows.
+func LogsOpenFullPage() string { return In(i18n.Locale()).LogsOpenFullPage() }
+
+// LogsOpenFullPage says "Full View"
+// in the language of msgs.
+func (msgs Messages) LogsOpenFullPage() string {
+	return Catalog.Format(msgs.locale, "logsOpenFullPage", nil)
+}
+
+// LogsLineCount says "{matched} / {total} lines"
+// in the language the app shows.
+func LogsLineCount(matched int, total int) string {
+	return In(i18n.Locale()).LogsLineCount(matched, total)
+}
+
+// LogsLineCount says "{matched} / {total} lines"
+// in the language of msgs.
+func (msgs Messages) LogsLineCount(matched int, total int) string {
+	return Catalog.Format(msgs.locale, "logsLineCount", map[string]any{"matched": matched, "total": total})
+}

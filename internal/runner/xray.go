@@ -10,6 +10,26 @@ import (
 
 // GenerateXrayConfig builds a complete Xray JSON configuration for sidecar execution.
 func GenerateXrayConfig(svc config.Service, listenPort int) ([]byte, error) {
+	return GenerateXrayConfigWithLogLevel(svc, listenPort, "warning")
+}
+
+func normalizeXrayLogLevel(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return "debug"
+	case "info":
+		return "info"
+	case "warn", "warning", "":
+		return "warning"
+	case "error":
+		return "error"
+	default:
+		return "warning"
+	}
+}
+
+// GenerateXrayConfigWithLogLevel builds a complete Xray JSON configuration with a specified log level.
+func GenerateXrayConfigWithLogLevel(svc config.Service, listenPort int, logLevel string) ([]byte, error) {
 	if listenPort <= 0 {
 		listenPort = 1080
 	}
@@ -32,7 +52,7 @@ func GenerateXrayConfig(svc config.Service, listenPort int) ([]byte, error) {
 
 	cfg := map[string]any{
 		"log": map[string]any{
-			"loglevel": "warning",
+			"loglevel": normalizeXrayLogLevel(logLevel),
 		},
 		"inbounds":  []any{inbound},
 		"outbounds": []any{outbound},

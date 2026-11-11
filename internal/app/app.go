@@ -44,6 +44,7 @@ const (
 	TabRouting
 	TabInsights
 	TabTailnet
+	TabLogs
 	TabSettings
 )
 
@@ -165,6 +166,15 @@ type app struct {
 	blockerAllowlistInput    string
 	blockerDenylistInput     string
 	blockerSubscriptionInput string
+
+	gatewayLogs        *runner.LogBuffer
+	logsSubTab         int
+	logsLevelFilter    string
+	logsSourceFilter   string
+	logsSearchQuery    string
+	logsSelectedNodeID string
+	logsPaused         bool
+	logsFrozenLines    []string
 
 	batchTesting bool
 	batchStage   string
@@ -384,6 +394,15 @@ func newApp(dataDir string) *app {
 		tailnetMgr:     tnMgr,
 		quitCh:         make(chan struct{}),
 	}
+	a.gatewayLogs = runner.NewLogBuffer(1000, func() {
+		if a.win != nil {
+			a.win.Update(func() {
+				if a.activeTab == TabLogs && a.logsSubTab == 0 && !a.logsPaused {
+					a.win.Invalidate()
+				}
+			})
+		}
+	})
 	if st.AutoProbeInterval > 0 {
 		a.tracker.SetProbeInterval(time.Duration(st.AutoProbeInterval) * time.Minute)
 	}
@@ -405,6 +424,8 @@ func (a *app) initSubsystems() {
 			a.rebuildTrayMenu()
 		})
 	})
+	a.mgr.SetLogLevel(a.state.LogLevel)
+	a.appendSystemLog("INFO", "Client initialized (gateway port :%d, traffic mode: %s, log level: %s)", a.state.GatewayPort, a.state.TrafficMode, normalizeLogLevel(a.state.LogLevel))
 	a.mgr.PreStartChecker = func(svc config.Service) error {
 		if svc.EffectiveEngine() == config.EngineSingBox {
 			if a.gateway == nil {
@@ -446,7 +467,7 @@ func (a *app) initSubsystems() {
 	a.mgr.OnLog = func(id string) {
 		if a.win != nil {
 			a.win.Update(func() {
-				if a.activeLogDrawerID == id || a.expandedLogs[id] {
+				if a.activeLogDrawerID == id || a.expandedLogs[id] || (a.activeTab == TabLogs && a.logsSubTab == 1 && !a.logsPaused && (a.logsSelectedNodeID == id || a.logsSelectedNodeID == "")) {
 					a.win.Invalidate()
 				}
 			})
@@ -1592,6 +1613,8 @@ func (a *app) startGateway() error {
 		TailnetHostExcludes:   tnExcludes,
 		TailnetMagicDNSSuffix: tnSuffix,
 		StateDir:              a.userDataDir(),
+		LogLevel:              normalizeLogLevel(a.state.LogLevel),
+		OnLog:                 a.appendGatewayLog,
 		OnDemandStart: func(tag string) {
 			a.startDormantServiceForTag(tag)
 		},
@@ -1605,6 +1628,7 @@ func (a *app) startGateway() error {
 			a.tunDevice = nil
 		}
 		a.lastGatewayErr = err
+		a.appendSystemLog("ERROR", "Gateway build failed: %v", err)
 		return err
 	}
 	if err := eng.Start(); err != nil {
@@ -1614,11 +1638,13 @@ func (a *app) startGateway() error {
 			a.tunDevice = nil
 		}
 		a.lastGatewayErr = err
+		a.appendSystemLog("ERROR", "Gateway start failed: %v", err)
 		return err
 	}
 	a.gateway = eng
 	a.lastGatewayErr = nil
 	a.lastGatewaySig = a.gatewayConfigSignature()
+	a.appendSystemLog("INFO", "Gateway started on %s (mode: %s)", eng.Addr(), a.state.TrafficMode)
 
 	if a.tailnetMgr != nil {
 		if tnMode == tailnet.ModeEmbedded {
@@ -1785,6 +1811,7 @@ func (a *app) startGatewayWithFallback() error {
 	}
 	if a.state.TrafficMode == "tun" {
 		_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
+		a.appendSystemLog("WARN", "TUN mode failed (%v); falling back to port mode", err)
 		if a.tunDevice != nil {
 			_ = a.tunDevice.Close()
 			a.tunDevice = nil
@@ -1807,7 +1834,41 @@ func (a *app) startGatewayWithFallback() error {
 	return err
 }
 
+func (a *app) appendGatewayLog(level, msg string) {
+	if a.gatewayLogs == nil {
+		return
+	}
+	ts := time.Now().Format("15:04:05")
+	a.gatewayLogs.AppendLine(fmt.Sprintf("[%s] [%s] [sing-box] %s", ts, strings.ToUpper(strings.TrimSpace(level)), msg))
+}
+
+func (a *app) appendSystemLog(level, format string, args ...any) {
+	if a.gatewayLogs == nil {
+		return
+	}
+	ts := time.Now().Format("15:04:05")
+	msg := fmt.Sprintf(format, args...)
+	a.gatewayLogs.AppendLine(fmt.Sprintf("[%s] [%s] [system] %s", ts, strings.ToUpper(strings.TrimSpace(level)), msg))
+}
+
+func (a *app) setLogLevel(level string) {
+	norm := normalizeLogLevel(level)
+	if a.state.LogLevel == norm {
+		return
+	}
+	a.state.LogLevel = norm
+	if a.gateway != nil {
+		a.gateway.SetLogLevel(norm)
+	}
+	if a.mgr != nil {
+		a.mgr.SetLogLevel(norm)
+	}
+	a.saveState()
+	a.appendSystemLog("INFO", "Engine log level changed to %s", strings.ToUpper(norm))
+}
+
 func (a *app) setTrafficMode(mode string) error {
+	a.appendSystemLog("INFO", "Switching traffic takeover mode to %s", mode)
 	switch mode {
 	case "port":
 		a.state.TrafficMode = "port"

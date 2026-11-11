@@ -49,7 +49,8 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 				a.renderNavItem(c, p, TabRouting, iconNavRouting, cat.NavRouting(), "⌘2", collapsed)
 				a.renderNavItem(c, p, TabInsights, iconNavInsights, cat.NavInsights(), "⌘3", collapsed)
 				a.renderNavItem(c, p, TabTailnet, iconNavTailnet, cat.NavTailnet(), "⌘4", collapsed)
-				a.renderNavItem(c, p, TabSettings, iconNavSettings, cat.NavSettings(), "⌘,", collapsed)
+				a.renderNavItem(c, p, TabLogs, iconTerminal, cat.NavLogs(), "⌘5", collapsed)
+					a.renderNavItem(c, p, TabSettings, iconNavSettings, cat.NavSettings(), "⌘,", collapsed)
 			})
 
 			// Spacer

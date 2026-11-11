@@ -516,12 +516,20 @@ func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 	}
 }
 
-// Navigating to the settings workbench page via Cmd+5 allows hot-switching language and appearance.
+// Navigating to the logs and settings workbench pages via Cmd+5 / Cmd+6 / Cmd+, allows hot-switching language and appearance.
 func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 
-	// Switch to Settings tab
+	// Switch to Logs tab via Cmd+5
 	tt.Key(ui.Cmd, ui.Key5)
+	tt.Frame()
+
+	if a.activeTab != TabLogs {
+		t.Fatalf("expected activeTab = TabLogs after Cmd+5, got %v", a.activeTab)
+	}
+
+	// Switch to Settings tab via Cmd+6
+	tt.Key(ui.Cmd, ui.Key6)
 	tt.Frame()
 
 	if a.activeTab != TabSettings {
@@ -2676,6 +2684,159 @@ func TestApp_CustomDoHConfiguration(t *testing.T) {
 		t.Fatalf("expected custom-dns.mycorp.internal in bootstrap domains, got %v", domains)
 	}
 }
+
+func TestLogsPage_GatewayAndNodeTabsFilteringAndActions(t *testing.T) {
+	svcs := []config.Service{
+		{
+			ID:      "svc-hk",
+			Name:    "HK-Naive-01",
+			Listens: []string{"socks://127.0.0.1:1080"},
+			Proxies: []string{"https://user:pass@hk.example.com:443"},
+		},
+		{
+			ID:       "svc-us",
+			Name:     "US-Xray-02",
+			Protocol: config.ProtoVLESS,
+			Engine:   config.EngineSidecar,
+			Server:   "us.example.com",
+		},
+	}
+	a, tt, _ := newTestApp(t, svcs)
+
+	// 1. Navigate to Logs page via sidebar
+	if err := tt.Click(a.catalog().NavLogs()); err != nil {
+		t.Fatalf("click NavLogs failed: %v", err)
+	}
+	tt.Frame()
+	if a.activeTab != TabLogs {
+		t.Fatalf("expected activeTab = TabLogs, got %v", a.activeTab)
+	}
+
+	// 2. Append gateway and system logs and verify display in SubTab 0 (Gateway & System)
+	a.appendGatewayLog("WARN", "dns: exchange timeout for blocked.example.com")
+	a.appendSystemLog("ERROR", "TUN helper permission denied")
+	tt.Frame()
+
+	if !tt.HasText("dns: exchange timeout for blocked.example.com") {
+		t.Fatalf("expected sing-box warn log on Gateway & System tab, got texts: %v", tt.Texts())
+	}
+	if !tt.HasText("TUN helper permission denied") {
+		t.Fatalf("expected system error log on Gateway & System tab")
+	}
+
+	// 3. Filter by Source: Gateway only vs System only
+	if err := tt.Click(a.catalog().LogsSourceGateway()); err != nil {
+		t.Fatalf("click LogsSourceGateway: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("dns: exchange timeout for blocked.example.com") || tt.HasText("TUN helper permission denied") {
+		t.Fatalf("expected only gateway log when gateway source filter is active")
+	}
+
+	if err := tt.Click(a.catalog().LogsSourceSystem()); err != nil {
+		t.Fatalf("click LogsSourceSystem: %v", err)
+	}
+	tt.Frame()
+	if tt.HasText("dns: exchange timeout for blocked.example.com") || !tt.HasText("TUN helper permission denied") {
+		t.Fatalf("expected only system log when system source filter is active")
+	}
+
+	// Reset source filter to All
+	if err := tt.Click(a.catalog().LogsSourceAll()); err != nil {
+		t.Fatalf("click LogsSourceAll: %v", err)
+	}
+	tt.Frame()
+
+	// 4. Filter by Level: Error only
+	if err := tt.Click("btn-logs-filter-error"); err != nil {
+		t.Fatalf("click error filter: %v", err)
+	}
+	tt.Frame()
+	if tt.HasText("dns: exchange timeout for blocked.example.com") || !tt.HasText("TUN helper permission denied") {
+		t.Fatalf("expected only ERROR lines when error level filter is active")
+	}
+	// Reset level filter to All
+	if err := tt.Click("btn-logs-filter-all"); err != nil {
+		t.Fatalf("click all level filter: %v", err)
+	}
+	tt.Frame()
+
+	// 5. Keyword search filter
+	a.logsSearchQuery = "exchange timeout"
+	tt.Frame()
+	if !tt.HasText("dns: exchange timeout for blocked.example.com") || tt.HasText("TUN helper permission denied") {
+		t.Fatalf("expected keyword search to filter lines")
+	}
+	a.logsSearchQuery = ""
+	tt.Frame()
+
+	// 6. Pause stream: new logs appended while paused should not appear until resumed
+	if err := tt.Click(a.catalog().LogsActionPause()); err != nil {
+		t.Fatalf("click pause: %v", err)
+	}
+	tt.Frame()
+	if !a.logsPaused {
+		t.Fatalf("expected logsPaused = true")
+	}
+	a.appendSystemLog("INFO", "late event while paused")
+	tt.Frame()
+	if tt.HasText("late event while paused") {
+		t.Fatalf("expected new log line to be hidden while stream is paused")
+	}
+	if err := tt.Click(a.catalog().LogsActionResume()); err != nil {
+		t.Fatalf("click resume: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("late event while paused") {
+		t.Fatalf("expected new log line to appear after stream is resumed")
+	}
+
+	// 7. Change engine log level and verify persistence
+	if err := tt.Click("btn-engine-level-debug"); err != nil {
+		t.Fatalf("click engine level debug: %v", err)
+	}
+	tt.Frame()
+	if a.state.LogLevel != "debug" {
+		t.Fatalf("expected state.LogLevel = 'debug', got %q", a.state.LogLevel)
+	}
+
+	// 8. Clear gateway logs
+	if err := tt.Click(a.catalog().LogClear()); err != nil {
+		t.Fatalf("click clear: %v", err)
+	}
+	tt.Frame()
+	if len(a.gatewayLogs.Lines()) != 0 {
+		t.Fatalf("expected gatewayLogs to be empty after clear, got %d lines", len(a.gatewayLogs.Lines()))
+	}
+
+	// 9. Switch to Node Processes sub-tab and switch between nodes
+	a.mgr.LogsOf("svc-hk").AppendLine("[12:00:01] [INFO] HK naive sidecar listening on :51001")
+	a.mgr.LogsOf("svc-us").AppendLine("[12:00:02] [WARN] US xray sidecar TLS handshake retry")
+
+	if err := tt.Click(a.catalog().LogsTabNodes()); err != nil {
+		t.Fatalf("click LogsTabNodes: %v", err)
+	}
+	tt.Frame()
+	if a.logsSubTab != 1 {
+		t.Fatalf("expected logsSubTab = 1, got %d", a.logsSubTab)
+	}
+	if !tt.HasText("[12:00:01] [INFO] HK naive sidecar listening on :51001") {
+		t.Fatalf("expected first node's logs to be displayed initially")
+	}
+
+	// Switch to second node (svc-us)
+	if err := tt.Click("btn-logs-node-svc-us"); err != nil {
+		t.Fatalf("click node svc-us: %v", err)
+	}
+	tt.Frame()
+	if a.logsSelectedNodeID != "svc-us" {
+		t.Fatalf("expected logsSelectedNodeID = 'svc-us', got %q", a.logsSelectedNodeID)
+	}
+	if !tt.HasText("[12:00:02] [WARN] US xray sidecar TLS handshake retry") {
+		t.Fatalf("expected second node's logs to be displayed after selecting svc-us")
+	}
+}
+
 
 // Tests that selecting DNS options in the settings UI dropdowns updates state.
 func TestApp_DnsSelectDropdownUI(t *testing.T) {

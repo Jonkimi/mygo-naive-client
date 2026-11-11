@@ -91,6 +91,7 @@ type Manager struct {
 	mu             sync.RWMutex
 	binPath        string
 	xrayBinPath    string
+	logLevel       string
 	workDir        string
 	instances      map[string]*instance
 	onChange       func()
@@ -144,6 +145,13 @@ func (m *Manager) XrayBinaryPath() string {
 func (m *Manager) SetXrayBinaryPath(path string) {
 	m.mu.Lock()
 	m.xrayBinPath = path
+	m.mu.Unlock()
+}
+
+// SetLogLevel updates the log level used when generating Xray sidecar configs.
+func (m *Manager) SetLogLevel(level string) {
+	m.mu.Lock()
+	m.logLevel = level
 	m.mu.Unlock()
 }
 
@@ -394,6 +402,7 @@ func (m *Manager) Start(svc config.Service) error {
 	workDir := m.workDir
 	naiveBin := m.binPath
 	xrayBin := m.xrayBinPath
+	logLevel := m.logLevel
 	m.mu.Unlock()
 
 	isXray := svc.EffectiveProtocol() != config.ProtoNaive
@@ -430,7 +439,7 @@ func (m *Manager) Start(svc config.Service) error {
 
 	if isXray {
 		var err error
-		cfgBytes, err = GenerateXrayConfig(svc, allocatedPort)
+		cfgBytes, err = GenerateXrayConfigWithLogLevel(svc, allocatedPort, logLevel)
 		if err != nil {
 			m.setError(svc.ID, err.Error())
 			return err

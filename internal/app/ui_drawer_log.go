@@ -53,6 +53,12 @@ func (a *app) renderLogDrawer(c *ui.Context, p palette) {
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					if actionChip(c.Key("btn-drawer-open-full-logs"), p, iconTerminal, cat.LogsOpenFullPage(), false).Clicked() {
+						a.logsSelectedNodeID = a.activeLogDrawerID
+						a.logsSubTab = 1
+						a.activeLogDrawerID = ""
+						a.activeTab = TabLogs
+					}
 					if actionChip(c.Key("btn-drawer-copy"), p, iconCopy, cat.LogCopy(), len(lines) == 0).Clicked() {
 						a.writeClipboard(strings.Join(lines, "\n"), cat.CopiedServiceLogs())
 					}
