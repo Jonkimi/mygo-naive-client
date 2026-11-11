@@ -2,7 +2,7 @@
   "name": "Naive Client",
   "identifier": "dev.egoist.naiveclient",
   "slug": "naive-client",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "out": "build",
   "i18n": {
     "dir": "locales",
