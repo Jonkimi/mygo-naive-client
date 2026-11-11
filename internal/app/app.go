@@ -409,7 +409,7 @@ func (a *app) initSubsystems() {
 		if svc.EffectiveEngine() == config.EngineSingBox {
 			if a.gateway == nil {
 				if a.state.GatewayEnabled {
-					if err := a.startGateway(); err != nil {
+					if err := a.startGatewayWithFallback(); err != nil {
 						return fmt.Errorf("网关内核启动失败: %w", err)
 					}
 				} else {
@@ -422,7 +422,7 @@ func (a *app) initSubsystems() {
 	a.mgr.ServiceDialer = func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error) {
 		if a.gateway == nil {
 			if a.state.GatewayEnabled {
-				if err := a.startGateway(); err != nil {
+				if err := a.startGatewayWithFallback(); err != nil {
 					return nil, fmt.Errorf("网关内核启动失败: %w", err)
 				}
 			} else {
@@ -529,7 +529,7 @@ func (a *app) boot() {
 		}
 	}
 	if a.state.GatewayEnabled {
-		if err := a.startGateway(); err != nil && a.tailnetMgr != nil {
+		if err := a.startGatewayWithFallback(); err != nil && a.tailnetMgr != nil {
 			a.tailnetMgr.SetError(err.Error())
 		}
 	}
@@ -1465,27 +1465,35 @@ func (a *app) startGateway() error {
 	if a.state.TrafficMode == "tun" {
 		if runtime.GOOS == "windows" {
 			if a.mockTunDevice != nil {
-				dev, err := a.mockTunDevice()
-				if err != nil {
-					return fmt.Errorf("request TUN device: %w", err)
+				if a.tunDevice == nil {
+					dev, err := a.mockTunDevice()
+					if err != nil {
+						err = fmt.Errorf("request TUN device: %w", err)
+						a.lastGatewayErr = err
+						return err
+					}
+					a.tunDevice = dev
 				}
-				a.tunDevice = dev
-				if dev != nil {
-					tunFD = dev.FD
-					tunName = dev.Name
+				if a.tunDevice != nil {
+					tunFD = a.tunDevice.FD
+					tunName = a.tunDevice.Name
 				}
 			} else {
 				// On Windows, Wintun runs in-process via wintun.dll with TunFD == 0.
 				// It requires the client process to be running with Administrator privileges.
 				if !tunhelper.IsElevated() {
-					return errors.New("TUN 模式在 Windows 上需要以管理员身份运行客户端")
+					err := errors.New("TUN 模式在 Windows 上需要以管理员身份运行客户端")
+					a.lastGatewayErr = err
+					return err
 				}
 			}
 		} else {
 			if a.tunDevice == nil {
 				dev, err := a.requestTunDevice()
 				if err != nil {
-					return fmt.Errorf("request TUN device: %w", err)
+					err = fmt.Errorf("request TUN device: %w", err)
+					a.lastGatewayErr = err
+					return err
 				}
 				a.tunDevice = dev
 			}
@@ -1497,7 +1505,9 @@ func (a *app) startGateway() error {
 				if a.mockTunDevice == nil {
 					fd, err := tunhelper.DupFD(a.tunDevice.FD)
 					if err != nil {
-						return fmt.Errorf("duplicate TUN fd: %w", err)
+						err = fmt.Errorf("duplicate TUN fd: %w", err)
+						a.lastGatewayErr = err
+						return err
 					}
 					tunFD = fd
 				}
@@ -1762,6 +1772,41 @@ func (a *app) releaseTunDevice() {
 	}
 }
 
+// startGatewayWithFallback starts the gateway and, if TUN mode fails (e.g. TUN helper
+// timeout or permission denial), cleans up the TUN device, falls back to "port" mode,
+// saves state, and restarts the gateway in port mode.
+func (a *app) startGatewayWithFallback() error {
+	err := a.startGateway()
+	if err == nil {
+		if a.win != nil {
+			a.win.Invalidate()
+		}
+		return nil
+	}
+	if a.state.TrafficMode == "tun" {
+		_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
+		if a.tunDevice != nil {
+			_ = a.tunDevice.Close()
+			a.tunDevice = nil
+		}
+		a.state.TrafficMode = "port"
+		fallbackErr := a.startGateway()
+		a.toast("TUN Mode error: " + err.Error())
+		a.saveState()
+		if a.win != nil {
+			a.win.Invalidate()
+		}
+		if fallbackErr != nil {
+			return fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
+		}
+		return err
+	}
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+	return err
+}
+
 func (a *app) setTrafficMode(mode string) error {
 	switch mode {
 	case "port":
@@ -1772,9 +1817,11 @@ func (a *app) setTrafficMode(mode string) error {
 		if a.tunDevice != nil {
 			restart := a.gateway != nil
 			a.releaseTunDevice()
-			if restart {
+			if restart || a.state.GatewayEnabled {
 				_ = a.startGateway()
 			}
+		} else if a.gateway == nil && a.state.GatewayEnabled {
+			_ = a.startGateway()
 		}
 		a.saveState()
 		if a.win != nil {
@@ -1786,10 +1833,16 @@ func (a *app) setTrafficMode(mode string) error {
 		if a.tunDevice != nil {
 			a.releaseTunDevice()
 			if err := a.startGateway(); err != nil {
+				if a.win != nil {
+					a.win.Invalidate()
+				}
 				return err
 			}
 		} else if a.gateway == nil {
 			if err := a.startGateway(); err != nil {
+				if a.win != nil {
+					a.win.Invalidate()
+				}
 				return err
 			}
 		}
@@ -1807,22 +1860,7 @@ func (a *app) setTrafficMode(mode string) error {
 		if a.sysproxy != nil {
 			_ = a.sysproxy.Unset()
 		}
-		if err := a.startGateway(); err != nil {
-			_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
-			if a.tunDevice != nil {
-				_ = a.tunDevice.Close()
-				a.tunDevice = nil
-			}
-			a.state.TrafficMode = "port"
-			fallbackErr := a.startGateway()
-			a.toast("TUN Mode error: " + err.Error())
-			a.saveState()
-			if a.win != nil {
-				a.win.Invalidate()
-			}
-			if fallbackErr != nil {
-				return fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
-			}
+		if err := a.startGatewayWithFallback(); err != nil {
 			return err
 		}
 		a.saveState()

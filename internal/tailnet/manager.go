@@ -297,6 +297,8 @@ func (m *Manager) updateFromEmbedded(st *adapter.TailscaleEndpointStatus) {
 		}
 	}
 
+	SortPeers(peers)
+
 	m.updateStatus(func(s *Status) {
 		s.ActiveMode = ModeEmbedded
 		s.BackendState = st.BackendState

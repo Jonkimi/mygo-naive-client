@@ -3135,6 +3135,77 @@ func TestTunStartupFailure_CleansUpTunDeviceAndFallback(t *testing.T) {
 	tt.Frame()
 }
 
+// Regression: when starting a node or booting while TrafficMode is persisted as "tun"
+// and requestTunDevice fails (e.g. "request TUN device: context deadline exceeded"),
+// startGateway previously returned before setting lastGatewayErr and PreStartChecker/boot
+// did not fall back TrafficMode to "port", leaving Sidebar and Settings out of sync.
+func TestTunRequestDeviceFailure_PreStartAndSettingsRefresh(t *testing.T) {
+	svc := config.Service{
+		ID:          "svc-vless-tun-fail",
+		Name:        "VLESS-Node",
+		Protocol:    config.ProtoVLESS,
+		Engine:      config.EngineSingBox,
+		Server:      "example.org",
+		ServerPort:  443,
+		UUID:        "00000000-0000-0000-0000-000000000001",
+		Security:    "reality",
+		SNI:         "example.org",
+		Fingerprint: "chrome",
+		PublicKey:   "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE",
+		ShortID:     "0123456789abcdef",
+		Flow:        "xtls-rprx-vision",
+		Network:     "tcp",
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	a.state.GatewayEnabled = true
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.TrafficMode = "tun"
+
+	// Simulate "request TUN device: context deadline exceeded"
+	a.mockTunDevice = func() (*tunhelper.ReceivedDevice, error) {
+		return nil, errors.New("context deadline exceeded")
+	}
+
+	// 1. Direct startGateway() must record lastGatewayErr even when requestTunDevice fails early
+	err := a.startGateway()
+	if err == nil {
+		t.Fatalf("expected error from startGateway when requestTunDevice fails")
+	}
+	if a.lastGatewayErr == nil || !strings.Contains(a.lastGatewayErr.Error(), "request TUN device") {
+		t.Fatalf("expected lastGatewayErr to contain 'request TUN device', got %v", a.lastGatewayErr)
+	}
+
+	// Verify Settings page displays the error status and error message when gateway is down
+	a.activeTab = TabSettings
+	tt.SetSize(900, 1400)
+	tt.Frame()
+	if !tt.HasText(a.catalog().StatusError()) {
+		t.Fatalf("expected Settings gateway status badge to show %q, got texts: %v", a.catalog().StatusError(), tt.Texts())
+	}
+	if !tt.HasText(a.catalog().ErrorPrefix() + a.lastGatewayErr.Error()) {
+		t.Fatalf("expected Settings page to display gateway error %q", a.lastGatewayErr.Error())
+	}
+
+	// 2. Starting an in-process service (triggers PreStartChecker -> startGatewayWithFallback)
+	// should fall back TrafficMode from "tun" to "port" and bring up the port gateway.
+	_ = a.mgr.Start(svc)
+	tt.Frame()
+
+	if a.state.TrafficMode != "port" {
+		t.Fatalf("expected TrafficMode to fall back to 'port' after TUN request timeout, got %q", a.state.TrafficMode)
+	}
+	if a.gateway == nil {
+		t.Fatalf("expected gateway to recover in fallback 'port' mode")
+	}
+	if a.lastGatewayErr != nil {
+		t.Fatalf("expected lastGatewayErr to be cleared once port fallback gateway is running, got %v", a.lastGatewayErr)
+	}
+	if !tt.HasText("Running :" + fmt.Sprint(a.state.GatewayPort)) {
+		t.Fatalf("expected Settings page to refresh gateway status to Running, got texts: %v", tt.Texts())
+	}
+}
+
 type mockCloser struct {
 	onClose func() error
 }

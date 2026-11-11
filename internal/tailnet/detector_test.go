@@ -129,3 +129,32 @@ func TestDetectHostInterface(t *testing.T) {
 	t.Logf("detected Tailscale interface: %q", iface)
 }
 
+func TestSortPeers(t *testing.T) {
+	peers := []PeerInfo{
+		{ID: "node-3", Hostname: "zebra", Online: false},
+		{ID: "node-2", Hostname: "apple", Online: false},
+		{ID: "node-5", Hostname: "beta-2", Online: true},
+		{ID: "node-4", Hostname: "Beta-1", Online: true},
+		{ID: "node-1", Hostname: "alpha", Online: true},
+		{ID: "node-6", Hostname: "alpha", Online: true},
+	}
+
+	SortPeers(peers)
+
+	expectedIDs := []string{
+		"node-1", // Online: alpha, id node-1
+		"node-6", // Online: alpha, id node-6
+		"node-4", // Online: Beta-1 (case-insensitive)
+		"node-5", // Online: beta-2
+		"node-2", // Offline: apple
+		"node-3", // Offline: zebra
+	}
+
+	for i, want := range expectedIDs {
+		if peers[i].ID != want {
+			t.Errorf("peers[%d].ID = %s, want %s (full list: %+v)", i, peers[i].ID, want, peers)
+		}
+	}
+}
+
+

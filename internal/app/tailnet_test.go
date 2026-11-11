@@ -10,6 +10,7 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/tailnet"
+	"naive-client/internal/tunhelper"
 
 	"github.com/sagernet/tailscale/ipn/ipnstate"
 	"github.com/sagernet/tailscale/tailcfg"
@@ -259,3 +260,68 @@ func TestTailnetUI_AdvancedCardVisibility(t *testing.T) {
 		t.Error("expected TailnetAdvancedTitle to be visible in Embedded mode")
 	}
 }
+
+// Regression: toggling Tailnet mode or sharing switches while in TUN mode must
+// reload the gateway engine by reusing the existing TUN device rather than
+// closing it and re-requesting administrator privileges via tunhelper.
+func TestTailnetUI_TunModeDoesNotReRequestTunDevice(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = true
+	defer a.stopGateway()
+
+	origMockTunDevice := a.mockTunDevice
+	tunRequestCount := 0
+	tunCloseCount := 0
+	a.mockTunDevice = func() (*tunhelper.ReceivedDevice, error) {
+		tunRequestCount++
+		dev, err := origMockTunDevice()
+		if err != nil {
+			return nil, err
+		}
+		dev.Conn = mockCloser{onClose: func() error {
+			tunCloseCount++
+			return nil
+		}}
+		return dev, nil
+	}
+
+	if err := a.setTrafficMode("tun"); err != nil {
+		t.Fatalf("setTrafficMode('tun') failed: %v", err)
+	}
+	if tunRequestCount != 1 {
+		t.Fatalf("expected 1 initial TUN device request, got %d", tunRequestCount)
+	}
+
+	a.activeTab = TabTailnet
+	tt.Frame()
+
+	// 1. Switch Tailnet mode (e.g., to Host mode)
+	if err := tt.Click(a.catalog().TailnetModeHost()); err != nil {
+		t.Fatalf("click TailnetModeHost: %v", err)
+	}
+	tt.Frame()
+
+	if tunRequestCount != 1 || tunCloseCount != 0 {
+		t.Fatalf("switching Tailnet mode in TUN mode re-requested/closed TUN device: requests=%d, closes=%d", tunRequestCount, tunCloseCount)
+	}
+
+	// 2. Toggle Expose Mixed Port switch
+	lblExpose, ok := tt.Find(a.catalog().TailnetExposeMixed())
+	if !ok {
+		t.Fatal("expected TailnetExposeMixed row")
+	}
+	tt.ClickAt(850, lblExpose.Y+lblExpose.H/2)
+	tt.Frame()
+
+	if !a.state.TailnetExposeMixedPort {
+		t.Fatal("expected TailnetExposeMixedPort to be enabled")
+	}
+	if tunRequestCount != 1 || tunCloseCount != 0 {
+		t.Fatalf("toggling Tailnet sharing switch in TUN mode re-requested/closed TUN device: requests=%d, closes=%d", tunRequestCount, tunCloseCount)
+	}
+	if a.gateway == nil {
+		t.Fatal("expected gateway to remain running in TUN mode after Tailnet update")
+	}
+}
+

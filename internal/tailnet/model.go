@@ -1,5 +1,10 @@
 package tailnet
 
+import (
+	"sort"
+	"strings"
+)
+
 // Mode represents the Tailnet operational mode.
 type Mode string
 
@@ -70,3 +75,22 @@ func DefaultConfig() Config {
 		ExposeMixedPort: false,
 	}
 }
+
+// SortPeers sorts a slice of PeerInfo deterministically:
+// 1. Online peers first, offline peers last
+// 2. Case-insensitive hostname in ascending order
+// 3. ID in ascending order (tie-breaker)
+func SortPeers(peers []PeerInfo) {
+	sort.Slice(peers, func(i, j int) bool {
+		if peers[i].Online != peers[j].Online {
+			return peers[i].Online // true comes before false
+		}
+		hostI := strings.ToLower(peers[i].Hostname)
+		hostJ := strings.ToLower(peers[j].Hostname)
+		if hostI != hostJ {
+			return hostI < hostJ
+		}
+		return peers[i].ID < peers[j].ID
+	})
+}
+

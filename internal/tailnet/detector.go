@@ -152,6 +152,8 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 		})
 	}
 
+	SortPeers(peers)
+
 	magicDNS := st.MagicDNSSuffix
 	if magicDNS == "" && st.CurrentTailnet != nil {
 		magicDNS = st.CurrentTailnet.MagicDNSSuffix

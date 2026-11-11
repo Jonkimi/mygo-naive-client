@@ -309,7 +309,12 @@ func (a *app) renderTailnetPeersCard(c *ui.Context, p palette, st tailnet.Status
 			}
 
 			for i, peer := range st.Peers {
-				peerKey := fmt.Sprintf("peer-row-%d-%s", i, peer.ID)
+				peerKey := peer.ID
+				if peerKey == "" {
+					peerKey = fmt.Sprintf("peer-row-%d", i)
+				} else {
+					peerKey = "peer-row-" + peerKey
+				}
 				isCurrentExit := peer.ExitNode || (st.CurrentExitNode != "" && st.CurrentExitNode == peer.ID)
 
 				ui.Row(c.Key(peerKey)).
@@ -422,8 +427,7 @@ func (a *app) renderTailnetAdvancedCard(c *ui.Context, p palette) {
 func (a *app) restartGatewayIfRunning() {
 	if a.state.GatewayEnabled || a.state.TailnetMode == string(tailnet.ModeEmbedded) {
 		a.state.GatewayEnabled = true
-		a.stopGateway()
-		if err := a.startGateway(); err != nil {
+		if err := a.startGatewayWithFallback(); err != nil {
 			if a.tailnetMgr != nil {
 				a.tailnetMgr.SetError(err.Error())
 			}

@@ -183,7 +183,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				if switchRow(c, p, "page-set-gateway-enable", cat.GatewayAutoStart(), &a.state.GatewayEnabled) {
 					a.saveState()
 					if a.state.GatewayEnabled {
-						if err := a.startGateway(); err != nil {
+						if err := a.startGatewayWithFallback(); err != nil {
 							a.toast("网关启动失败: " + err.Error())
 						}
 					} else {
@@ -196,7 +196,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 						Background(p.redBg).Children(func() {
 						ui.Text(c, cat.ErrorPrefix()+a.lastGatewayErr.Error()).FontSize(11).TextColor(p.red).Grow(1)
 						if actionChip(c.Key("page-btn-retry-gw"), p, iconRefresh, "重试", false).Clicked() {
-							if err := a.startGateway(); err != nil {
+							if err := a.startGatewayWithFallback(); err != nil {
 								a.toast("重试失败: " + err.Error())
 							}
 						}
@@ -211,7 +211,7 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 						a.state.GatewayPort = parsed
 						a.saveState()
 						if a.state.GatewayEnabled {
-							_ = a.startGateway()
+							_ = a.startGatewayWithFallback()
 						}
 					}
 				}
