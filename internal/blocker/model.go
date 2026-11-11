@@ -35,6 +35,8 @@ type QueryLogEntry struct {
 	Chain     string        `json:"chain,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Duration  time.Duration `json:"duration,omitempty"`
+	// Network is the transport of a Gateway connection: "tcp" or "udp". Empty for DNS entries.
+	Network string `json:"network,omitempty"`
 }
 
 // HourlyBucket records aggregate queries in a one-hour window.

@@ -486,6 +486,9 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 
 							// Col 4: Duration
 							durStr := formatQueryDuration(e.Duration)
+							if e.Duration <= 0 && e.Network == "udp" {
+								durStr = "UDP"
+							}
 							durColor := queryDurationColor(e.Duration, p)
 							ui.Text(c, durStr).FontSize(10).FontWeight(600).TextColor(durColor).Width(55).NoWrap()
 

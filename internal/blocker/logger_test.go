@@ -246,3 +246,19 @@ func TestQueryLogger_AnnotateDurationBySource(t *testing.T) {
 
 
 
+
+// Regression: Gateway entries must keep their transport, and a duration annotated
+// by source after a retry must still land on the entry (the binding is consumed once).
+func TestQueryLogger_NetworkAndDurationBySource(t *testing.T) {
+	l := NewQueryLogger(16)
+	id := l.RecordWithChain("1.2.3.4", SourceGateway, VerdictAllowed, "", "final")
+	l.SetNetworkByLogID(id, "udp")
+	l.BindSourceConn("127.0.0.1:5555", id)
+	if !l.AnnotateDurationBySource("127.0.0.1:5555", 40*time.Millisecond) {
+		t.Fatal("expected duration to be annotated")
+	}
+	entries, _ := l.GetFilteredEntries("", "", 10)
+	if len(entries) != 1 || entries[0].Network != "udp" || entries[0].Duration != 40*time.Millisecond {
+		t.Fatalf("unexpected entry: %+v", entries)
+	}
+}

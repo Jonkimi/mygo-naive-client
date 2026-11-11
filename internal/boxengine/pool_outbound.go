@@ -262,9 +262,8 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 					p.tracker.RecordDial(candID, targetHost, rtt, err)
 				}
 			}
-			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(err), rtt)
-			}
+			// Do not consume the source binding here: a later candidate may still succeed
+			// and needs it to record the connection duration. Final failure is annotated below.
 			lastErr = err
 			continue
 		}
@@ -296,7 +295,13 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 					p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
 				} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					p.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
+					// realRTT is 0 when below minValidFirstRTT (sample discarded for the tracker);
+					// still show a duration in the log instead of "-".
+					logRTT := realRTT
+					if logRTT <= 0 {
+						logRTT = minValidFirstRTT
+					}
+					p.blocker.Logger().AnnotateDurationBySource(sourceKey, logRTT)
 				}
 				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
 					p.failureMonitor.Record(telemetry.FailureEvent{
@@ -373,11 +378,24 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 
 	candidates := p.provider.GetCandidates(tagKey)
 
+	udpSourceKey := ""
+	if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+		udpSourceKey = inboundCtx.Source.String()
+	}
+	unbindUDP := func() {
+		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().UnbindSourceConn(udpSourceKey)
+		}
+	}
+
 	targetHost := extractTargetHost(ctx, destination)
 	if p.blocker != nil && targetHost != "" && p.blocker.ShouldBlock(targetHost) {
 		return nil, syscall.EPERM
 	}
 	if len(candidates) == 0 {
+		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(udpSourceKey, "节点未启动")
+		}
 		return nil, fmt.Errorf("no active proxy candidates for UDP packet in pool %s", tagKey)
 	}
 
@@ -392,6 +410,8 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 
 		conn, err := ob.ListenPacket(ctx, destination)
 		if err == nil {
+			// UDP has no handshake RTT; leave Duration empty (UI shows the UDP tag).
+			unbindUDP()
 			return conn, nil
 		}
 		lastErr = err
@@ -399,6 +419,9 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 
 	if lastErr == nil {
 		lastErr = errors.New("all candidates skipped for UDP")
+	}
+	if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+		p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(lastErr))
 	}
 	return nil, fmt.Errorf("all candidates failed UDP in %s: %w", p.tag, lastErr)
 }

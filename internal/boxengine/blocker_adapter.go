@@ -225,7 +225,17 @@ func (o *blockerOutbound) ListenPacket(ctx context.Context, destination M.Socksa
 			return nil, syscall.EPERM
 		}
 	}
-	return o.Outbound.ListenPacket(ctx, destination)
+	conn, err := o.Outbound.ListenPacket(ctx, destination)
+	if o.blocker != nil && o.blocker.Logger() != nil && o.Outbound.Tag() == "direct" {
+		if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+			if err != nil {
+				o.blocker.Logger().AnnotateBySource(inboundCtx.Source.String(), formatConnectionError(err))
+			} else {
+				o.blocker.Logger().UnbindSourceConn(inboundCtx.Source.String())
+			}
+		}
+	}
+	return conn, err
 }
 
 type rejectOutbound struct {
@@ -279,11 +289,11 @@ type BlockerConnectionTracker struct {
 }
 
 func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
-	blocked, _ := t.recordConnectionWithID(target, matchedRule, matchOutbound)
+	blocked, _ := t.recordConnectionWithID(target, matchedRule, matchOutbound, "tcp")
 	return blocked
 }
 
-func (t *BlockerConnectionTracker) recordConnectionWithID(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) (bool, int64) {
+func (t *BlockerConnectionTracker) recordConnectionWithID(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound, network string) (bool, int64) {
 	isBlockOutbound := matchOutbound != nil && matchOutbound.Tag() == "block"
 	blocked, rule, verdict := t.blocker.Evaluate(target)
 	if isBlockOutbound {
@@ -301,6 +311,7 @@ func (t *BlockerConnectionTracker) recordConnectionWithID(target string, matched
 	var logID int64
 	if t.blocker.Logger() != nil {
 		logID = t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
+		t.blocker.Logger().SetNetworkByLogID(logID, network)
 	}
 	return blocked, logID
 }
@@ -326,7 +337,7 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 	}
 
 	if target != "" {
-		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound)
+		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound, "tcp")
 		if blocked {
 			_ = conn.Close()
 			return conn
@@ -358,7 +369,7 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 		}
 	}
 	if target != "" {
-		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound)
+		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound, "udp")
 		if blocked {
 			_ = conn.Close()
 			return conn

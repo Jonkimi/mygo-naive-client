@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -58,6 +59,9 @@ type QueryLogger struct {
 	dirtyTop        bool
 	topBlockedCache []TopDomainItem
 	topAllowedCache []TopDomainItem
+
+	onUpdate   atomic.Pointer[func()]
+	lastNotify atomic.Int64 // unix nano of the last onUpdate call
 
 	sourceMap sync.Map // source string (e.g. "127.0.0.1:port") -> int64 (log entry ID)
 }
@@ -410,8 +414,64 @@ func (l *QueryLogger) AnnotateFailureBySource(source string, errReason string, d
 	return l.AnnotateByLogID(logID, errReason)
 }
 
+// SetOnUpdate registers a callback fired (throttled) after an existing entry is
+// annotated with a duration or error, so views can redraw. It may run on any goroutine.
+func (l *QueryLogger) SetOnUpdate(fn func()) {
+	if l == nil {
+		return
+	}
+	if fn == nil {
+		l.onUpdate.Store(nil)
+		return
+	}
+	l.onUpdate.Store(&fn)
+}
+
+const updateNotifyInterval = 200 * time.Millisecond
+
+func (l *QueryLogger) notifyUpdated() {
+	fn := l.onUpdate.Load()
+	if fn == nil {
+		return
+	}
+	now := time.Now().UnixNano()
+	last := l.lastNotify.Load()
+	if now-last < int64(updateNotifyInterval) || !l.lastNotify.CompareAndSwap(last, now) {
+		return
+	}
+	(*fn)()
+}
+
+// SetNetworkByLogID records the transport ("tcp"/"udp") of the entry with the given ID.
+func (l *QueryLogger) SetNetworkByLogID(id int64, network string) bool {
+	if l == nil || id <= 0 || network == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := l.count - 1; i >= 0; i-- {
+		idx := (l.start + i) % l.capacity
+		if l.entries[idx].ID == id {
+			l.entries[idx].Network = network
+			return true
+		}
+		if l.entries[idx].ID < id {
+			break
+		}
+	}
+	return false
+}
+
 // SetDurationByLogID finds the entry by ID and records its duration.
 func (l *QueryLogger) SetDurationByLogID(id int64, d time.Duration) bool {
+	ok := l.setDurationByLogIDLocked(id, d)
+	if ok {
+		l.notifyUpdated()
+	}
+	return ok
+}
+
+func (l *QueryLogger) setDurationByLogIDLocked(id int64, d time.Duration) bool {
 	if l == nil || id <= 0 || d <= 0 {
 		return false
 	}
@@ -440,6 +500,14 @@ func (l *QueryLogger) SetDurationByLogID(id int64, d time.Duration) bool {
 
 // AnnotateByLogID finds the entry by ID and records the failure error reason.
 func (l *QueryLogger) AnnotateByLogID(id int64, errReason string) bool {
+	ok := l.annotateByLogIDLocked(id, errReason)
+	if ok {
+		l.notifyUpdated()
+	}
+	return ok
+}
+
+func (l *QueryLogger) annotateByLogIDLocked(id int64, errReason string) bool {
 	if l == nil || id <= 0 || errReason == "" {
 		return false
 	}

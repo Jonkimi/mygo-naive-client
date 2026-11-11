@@ -430,6 +430,18 @@ func (a *app) initSubsystems() {
 		}
 		return a.gateway.DialNode(ctx, svc.ID, network, addr)
 	}
+	if a.blocker != nil && a.blocker.Logger() != nil {
+		// Durations/errors are annotated after the entry is created; redraw Insights so they show up.
+		a.blocker.Logger().SetOnUpdate(func() {
+			if a.win != nil {
+				a.win.Update(func() {
+					if a.activeTab == TabInsights {
+						a.win.Invalidate()
+					}
+				})
+			}
+		})
+	}
 	a.mgr.OnLog = func(id string) {
 		if a.win != nil {
 			a.win.Update(func() {
