@@ -676,6 +676,13 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			"stack":        "system",
 			"dns_address":  []string{tunhelper.DNSAddress},
 		}
+		if isWindows {
+			// On Windows, setting dns_mode to "hijack" combined with strict_route installs
+			// WFP (Windows Filtering Platform) filters to block non-TUN port 53 outbound queries,
+			// preventing SMHNR (Smart Multi-Homed Name Resolution) from leaking DNS queries to
+			// other physical or virtual network adapters.
+			tunIn["dns_mode"] = "hijack"
+		}
 		if opts.TunInterface != "" {
 			tunIn["interface_name"] = opts.TunInterface
 		}

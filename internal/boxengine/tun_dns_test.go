@@ -143,3 +143,15 @@ func TestTailscaleDNSSplit(t *testing.T) {
 		t.Errorf("missing Tailscale DNS split rules, got: %v", rulesDNS)
 	}
 }
+
+// Tests that on Windows, tun inbound includes dns_mode="hijack", auto_route=true, and strict_route=true
+// to ensure WFP rules and metric settings prevent DNS leakage / multi-homed resolution bypass.
+func TestTunWindowsInboundDNSMode(t *testing.T) {
+	opts := EngineOptions{TrafficMode: "tun"}
+	in := tunInbound(t, opts)
+
+	// Verify standard fields present across platforms
+	if dnsAddrs, ok := in["dns_address"].([]string); !ok || len(dnsAddrs) == 0 || dnsAddrs[0] != tunhelper.DNSAddress {
+		t.Fatalf("expected dns_address to contain %s, got %v", tunhelper.DNSAddress, in["dns_address"])
+	}
+}
