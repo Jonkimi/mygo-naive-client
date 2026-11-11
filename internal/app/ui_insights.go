@@ -380,7 +380,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 	}
 	cat := a.catalog()
 
-	filtered, totalCount := a.blocker.Logger().GetFilteredEntries(a.insightsFilter, a.insightsSearch, 30)
+	filtered, totalCount := a.blocker.Logger().GetFoldedEntries(a.insightsFilter, a.insightsSearch, 30)
 
 	ui.Column(c.Key("insights-query-log-card")).
 		Padding(12, 14, 12, 14).Radius(8).
@@ -451,7 +451,9 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 				ui.Text(c, cat.InsightsQueryLogEmpty()).FontSize(11).TextColor(p.textDim).Padding(10, 6, 10, 6)
 			} else {
 				for _, entry := range filtered {
-					e := entry
+					e := entry.QueryLogEntry
+					foldCount := entry.Count
+					foldFirst := entry.First
 					dom := e.Domain
 					idStr := strconv.FormatInt(e.ID, 10)
 					timeStr := e.Timestamp.Format("15:04:05")
@@ -493,7 +495,16 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							ui.Text(c, durStr).FontSize(10).FontWeight(600).TextColor(durColor).Width(55).NoWrap()
 
 							// Col 5: Domain
-							ui.Text(c, dom).FontSize(11).TextColor(p.text).Width(170).SingleLine().Ellipsis("…").Tooltip(dom)
+							domTip := dom
+							if foldCount > 1 {
+								domTip = fmt.Sprintf("%s ×%d (%s – %s)", dom, foldCount, foldFirst.Format("15:04:05"), timeStr)
+							}
+							ui.Row(c).Width(170).AlignItems(ui.Center).Gap(4).Tooltip(domTip).Children(func() {
+								ui.Text(c, dom).FontSize(11).TextColor(p.text).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+								if foldCount > 1 {
+									tagPill(c, fmt.Sprintf("×%d", foldCount), p.red, p.redBg)
+								}
+							})
 
 							// Col 6: Chain
 							chainText := e.Chain

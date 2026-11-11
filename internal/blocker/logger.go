@@ -324,6 +324,72 @@ func (l *QueryLogger) GetFilteredEntries(verdictFilter string, domainQuery strin
 	return res, totalRecorded
 }
 
+// FoldedEntry is a display row: the newest entry of a run of identical consecutive
+// blocked entries, with the run length and the timestamp of the oldest one.
+type FoldedEntry struct {
+	QueryLogEntry
+	Count int
+	First time.Time
+}
+
+func sameBlockedRun(a, b QueryLogEntry) bool {
+	return a.Verdict == VerdictBlocked && b.Verdict == VerdictBlocked &&
+		a.Domain == b.Domain && a.Source == b.Source && a.Rule == b.Rule &&
+		a.Chain == b.Chain && a.Error == b.Error
+}
+
+// FoldConsecutive collapses adjacent identical blocked entries (input is newest-first).
+// Allowed/whitelisted entries are never folded.
+func FoldConsecutive(entries []QueryLogEntry) []FoldedEntry {
+	out := make([]FoldedEntry, 0, len(entries))
+	for _, e := range entries {
+		if n := len(out); n > 0 && sameBlockedRun(out[n-1].QueryLogEntry, e) {
+			out[n-1].Count++
+			out[n-1].First = e.Timestamp
+			continue
+		}
+		out = append(out, FoldedEntry{QueryLogEntry: e, Count: 1, First: e.Timestamp})
+	}
+	return out
+}
+
+// GetFoldedEntries is like GetFilteredEntries but folds runs of identical blocked
+// entries and returns up to limit folded rows (not raw entries).
+func (l *QueryLogger) GetFoldedEntries(verdictFilter string, domainQuery string, limit int) (rows []FoldedEntry, totalRecorded int) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	totalRecorded = l.count
+	if limit <= 0 {
+		limit = 50
+	}
+	q := strings.ToLower(strings.TrimSpace(domainQuery))
+	rows = make([]FoldedEntry, 0, min(limit, l.count))
+
+	for i := 0; i < l.count; i++ {
+		e := l.entries[(l.start+l.count-1-i)%l.capacity]
+		if verdictFilter == "blocked" && e.Verdict != VerdictBlocked {
+			continue
+		}
+		if verdictFilter == "allowed" && e.Verdict != VerdictAllowed && e.Verdict != VerdictWhitelisted {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(e.Domain), q) {
+			continue
+		}
+		if n := len(rows); n > 0 && sameBlockedRun(rows[n-1].QueryLogEntry, e) {
+			rows[n-1].Count++
+			rows[n-1].First = e.Timestamp
+			continue
+		}
+		if len(rows) >= limit {
+			break
+		}
+		rows = append(rows, FoldedEntry{QueryLogEntry: e, Count: 1, First: e.Timestamp})
+	}
+	return rows, totalRecorded
+}
+
 // GetStatsSummary returns total queries and total blocked queries in O(1) time.
 func (l *QueryLogger) GetStatsSummary() (total int64, blocked int64) {
 	l.mu.RLock()
