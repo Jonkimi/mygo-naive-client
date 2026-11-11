@@ -123,3 +123,8 @@ func closeFD(fd int) error {
 	return syscall.Close(fd)
 }
 
+
+// DupFD returns an independent duplicate of fd.
+func DupFD(fd int) (int, error) {
+	return syscall.Dup(fd)
+}

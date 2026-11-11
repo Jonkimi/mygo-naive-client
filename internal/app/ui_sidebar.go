@@ -478,24 +478,36 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).Gap(2).
 					Children(func() {
+						// Modes form an escalating ladder (port < sysproxy < tun):
+						// bars up to and including the active tier are lit, like signal strength.
+						tierOf := func(id string) int {
+							switch id {
+							case "sysproxy":
+								return 2
+							case "tun":
+								return 3
+							}
+							return 1
+						}
 						renderCollapsedModeBtn := func(modeID, label string) {
-							isSelected := activeMode == modeID
+							tier := tierOf(modeID)
+							lit := tier <= tierOf(activeMode)
 							barColor := p.borderSubtle
 							if p.dark {
 								barColor = p.textDim
 							}
-							if isSelected {
+							if lit {
 								barColor = p.navActiveColor()
 							}
 
-							btn := ui.ButtonBase(c.Key("collapsed-mode-btn-" + modeID)).
+							btn := ui.Column(c.Key("collapsed-mode-btn-" + modeID)).
 								Label(label).
 								Size(8, 20).Radius(3).
 								Background(ui.Transparent).
-								AlignItems(ui.Center).Justify(ui.Center).
+								AlignItems(ui.Center).Justify(ui.End).
 								Tooltip(label).
 								Children(func() {
-									ui.Box(c).Width(6).Height(10).Radius(2).Background(barColor)
+									ui.Box(c).Width(6).Height(float32(6+tier*4)).Radius(2).Background(barColor)
 								})
 							if btn.Hovered() {
 								btn.Background(p.cardHover)

@@ -97,6 +97,7 @@ type app struct {
 	gateway        *boxengine.Engine
 	lastGatewayErr error
 	lastGatewaySig string
+	sysproxyQueue  chan func() // serial worker so slow networksetup calls never block the UI
 	sysproxy       *sysproxy.Sysproxy
 	router         *routing.Router
 	blocker        *blocker.Engine
@@ -1489,7 +1490,17 @@ func (a *app) startGateway() error {
 				a.tunDevice = dev
 			}
 			if a.tunDevice != nil {
+				// sing-tun wraps the fd in an os.File and closes it with the engine, so
+				// give it a private duplicate; ReceivedDevice keeps closing its own copy.
+				// Sharing one fd number made the second close hit an unrelated, reused fd.
 				tunFD = a.tunDevice.FD
+				if a.mockTunDevice == nil {
+					fd, err := tunhelper.DupFD(a.tunDevice.FD)
+					if err != nil {
+						return fmt.Errorf("duplicate TUN fd: %w", err)
+					}
+					tunFD = fd
+				}
 				tunName = a.tunDevice.Name
 			}
 		}
@@ -1608,7 +1619,8 @@ func (a *app) startGateway() error {
 	}
 
 	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
-		_ = a.sysproxy.Set(eng.Addr(), a.state.SystemProxyBypass)
+		sp, addr, bypass := a.sysproxy, eng.Addr(), a.state.SystemProxyBypass
+		a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
 	} else if a.state.TrafficMode == "tun" && a.sysproxy != nil {
 		_ = a.sysproxy.MarkDirtyTun(tunName)
 	}
@@ -1719,17 +1731,48 @@ func (a *app) stopGateway() {
 	}
 }
 
+// runSysproxyOp queues a system-proxy change on a single worker. Each
+// networksetup call takes tens to hundreds of ms and a switch makes many of
+// them, so doing it inline froze the UI for 2-3s; the queue keeps rapid clicks ordered.
+func (a *app) runSysproxyOp(op func()) {
+	if a.sysproxyQueue == nil {
+		a.sysproxyQueue = make(chan func(), 16)
+		go func(q chan func()) {
+			for f := range q {
+				f()
+			}
+		}(a.sysproxyQueue)
+	}
+	a.sysproxyQueue <- op
+}
+
+// releaseTunDevice stops the running gateway before closing the TUN device.
+// Regression: closing the fd while the engine still owned it made sing-tun
+// fail with "UTUN_OPT_MAX_PENDING_PACKETS: invalid argument" when leaving TUN mode.
+func (a *app) releaseTunDevice() {
+	if a.gateway != nil {
+		_ = a.gateway.Stop()
+		a.gateway = nil
+		a.lastGatewayErr = nil
+		a.lastGatewaySig = ""
+	}
+	if a.tunDevice != nil {
+		_ = a.tunDevice.Close()
+		a.tunDevice = nil
+	}
+}
+
 func (a *app) setTrafficMode(mode string) error {
 	switch mode {
 	case "port":
 		a.state.TrafficMode = "port"
-		if a.sysproxy != nil {
-			_ = a.sysproxy.Unset()
+		if sp := a.sysproxy; sp != nil {
+			a.runSysproxyOp(func() { _ = sp.Unset() })
 		}
 		if a.tunDevice != nil {
-			_ = a.tunDevice.Close()
-			a.tunDevice = nil
-			if a.gateway != nil {
+			restart := a.gateway != nil
+			a.releaseTunDevice()
+			if restart {
 				_ = a.startGateway()
 			}
 		}
@@ -1741,8 +1784,7 @@ func (a *app) setTrafficMode(mode string) error {
 	case "sysproxy":
 		a.state.TrafficMode = "sysproxy"
 		if a.tunDevice != nil {
-			_ = a.tunDevice.Close()
-			a.tunDevice = nil
+			a.releaseTunDevice()
 			if err := a.startGateway(); err != nil {
 				return err
 			}
@@ -1751,10 +1793,9 @@ func (a *app) setTrafficMode(mode string) error {
 				return err
 			}
 		}
-		if a.sysproxy != nil && a.gateway != nil {
-			if err := a.sysproxy.Set(a.gateway.Addr(), a.state.SystemProxyBypass); err != nil {
-				return err
-			}
+		if sp := a.sysproxy; sp != nil && a.gateway != nil {
+			addr, bypass := a.gateway.Addr(), a.state.SystemProxyBypass
+			a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
 		}
 		a.saveState()
 		if a.win != nil {
@@ -2090,6 +2131,17 @@ func (a *app) triggerUpdateGeoData() {
 	}()
 }
 
+// engineTrafficMode collapses "port" and "sysproxy": the sing-box config is
+// identical for both (only TUN adds an inbound), so switching between them must
+// not restart the engine. Regression: saveState -> syncRouter saw a changed
+// signature and rebuilt the gateway, so port -> sysproxy took 2s+.
+func engineTrafficMode(mode string) string {
+	if mode == "tun" {
+		return "tun"
+	}
+	return "port"
+}
+
 func (a *app) gatewayConfigSignature() string {
 	type svcSig struct {
 		ID          string
@@ -2137,7 +2189,7 @@ func (a *app) gatewayConfigSignature() string {
 		PreferIPv4     bool
 	}{
 		Port:           a.state.GatewayPort,
-		TrafficMode:    a.state.TrafficMode,
+		TrafficMode:    engineTrafficMode(a.state.TrafficMode),
 		Svcs:           svcs,
 		AllocatedPorts: allocPorts,
 		Rules:          a.state.RoutingRules,

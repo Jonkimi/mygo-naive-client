@@ -23,3 +23,8 @@ func ListenForFD(ctx context.Context, sockPath string) (*ReceivedDevice, error) 
 func closeFD(fd int) error {
 	return syscall.Close(syscall.Handle(fd))
 }
+
+// DupFD is a no-op on Windows, where TUN runs in-process.
+func DupFD(fd int) (int, error) {
+	return fd, nil
+}
