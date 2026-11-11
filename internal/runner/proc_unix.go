@@ -54,9 +54,12 @@ func cleanStaleOrphans(workDir string) {
 	if workDir == "" {
 		return
 	}
-	out, err := exec.Command("ps", "-eo", "pid,command").Output()
+	out, err := exec.Command("ps", "-ww", "-eo", "pid,command").Output()
 	if err != nil {
-		return
+		out, err = exec.Command("ps", "-eo", "pid,command").Output()
+		if err != nil {
+			return
+		}
 	}
 	myPid := os.Getpid()
 	lines := strings.Split(string(out), "\n")

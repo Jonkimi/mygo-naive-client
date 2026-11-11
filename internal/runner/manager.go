@@ -276,6 +276,7 @@ func AllocateFreePort() (int, error) {
 }
 
 // CheckPortsAvailable verifies that all TCP ports in svc.Listens can be bound locally.
+// If a port is occupied by a stale sidecar process, it attempts reclamation before failing.
 func CheckPortsAvailable(svc config.Service) error {
 	for _, raw := range svc.Listens {
 		ep, err := config.ParseListenURI(raw)
@@ -287,6 +288,13 @@ func CheckPortsAvailable(svc config.Service) error {
 		}
 		ln, err := net.Listen("tcp", ep.ListenAddr())
 		if err != nil {
+			if reclaimSidecarOnPort(ep.Port) {
+				ln2, err2 := net.Listen("tcp", ep.ListenAddr())
+				if err2 == nil {
+					_ = ln2.Close()
+					continue
+				}
+			}
 			return fmt.Errorf("本地端口 %s 已被占用或无权限监听: %w", ep.ListenAddr(), err)
 		}
 		_ = ln.Close()

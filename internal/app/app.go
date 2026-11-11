@@ -101,10 +101,12 @@ type app struct {
 	router         *routing.Router
 	blocker        *blocker.Engine
 	tailnetMgr     *tailnet.Manager
-	tunDevice      *tunhelper.ReceivedDevice
-	mockTunDevice  func() (*tunhelper.ReceivedDevice, error)
-	mockTunCreator func(options tun.Options) (tun.Tun, error)
+	tunDevice        *tunhelper.ReceivedDevice
+	mockTunDevice    func() (*tunhelper.ReceivedDevice, error)
+	mockTunCreator   func(options tun.Options) (tun.Tun, error)
 	mockNodeResolver func(host string) []net.IP
+	resolvedNodeIPs  map[string][]net.IP
+	resolvedNodeMu   sync.RWMutex
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -351,7 +353,7 @@ func Run() error {
 		a.applyLanguagePolicy()
 		a.installAppMenu()
 		a.applyAppIconPolicy()
-		a.boot()
+		go a.boot()
 	})
 
 	return mygo.App.Run()
@@ -518,6 +520,8 @@ func (a *app) boot() {
 			}
 		}
 	}
+
+	a.dispatchUI(nil)
 
 	if a.state.AutoCheckUpdate {
 		a.triggerCheckUpdate(false)
@@ -1229,7 +1233,12 @@ func (a *app) requestTunDevice() (*tunhelper.ReceivedDevice, error) {
 func (a *app) collectNodeServerIPs() []string {
 	var ips []string
 	seen := make(map[string]bool)
-	add := func(host string) {
+	var mu sync.Mutex
+
+	var pendingDomains []string
+	seenDomains := make(map[string]bool)
+
+	addHost := func(host string) {
 		host = strings.TrimSpace(host)
 		host = strings.TrimPrefix(host, "[")
 		host = strings.TrimSuffix(host, "]")
@@ -1238,51 +1247,33 @@ func (a *app) collectNodeServerIPs() []string {
 		}
 		if ip := net.ParseIP(host); ip != nil {
 			s := ip.String()
+			mu.Lock()
 			if !seen[s] {
 				seen[s] = true
 				ips = append(ips, s)
 			}
+			mu.Unlock()
 			return
 		}
-		// Resolve domain names to IP addresses so bypass routes can be established
-		var resolved []net.IP
-		if a != nil && a.mockNodeResolver != nil {
-			resolved = a.mockNodeResolver(host)
-		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			resolved, _ = net.DefaultResolver.LookupIP(ctx, "ip", host)
-			if len(resolved) == 0 {
-				r := &net.Resolver{
-					PreferGo: true,
-					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-						d := net.Dialer{Timeout: 2 * time.Second}
-						return d.DialContext(ctx, "udp", "223.5.5.5:53")
-					},
-				}
-				resolved, _ = r.LookupIP(ctx, "ip", host)
-			}
-		}
-		for _, ip := range resolved {
-			s := ip.String()
-			if !seen[s] {
-				seen[s] = true
-				ips = append(ips, s)
-			}
+		lower := strings.ToLower(host)
+		if !seenDomains[lower] {
+			seenDomains[lower] = true
+			pendingDomains = append(pendingDomains, host)
 		}
 	}
+
 	for _, svc := range a.state.Services {
 		if svc.Server != "" {
-			add(svc.Server)
+			addHost(svc.Server)
 		}
 		for _, proxyURI := range svc.Proxies {
 			if u, err := url.Parse(proxyURI); err == nil && u.Hostname() != "" {
-				add(u.Hostname())
+				addHost(u.Hostname())
 			}
 		}
 		if svc.ExternalURI != "" {
 			if u, err := url.Parse(svc.ExternalURI); err == nil && u.Hostname() != "" {
-				add(u.Hostname())
+				addHost(u.Hostname())
 			}
 		}
 	}
@@ -1291,23 +1282,116 @@ func (a *app) collectNodeServerIPs() []string {
 		if host, _, err := net.SplitHostPort(b); err == nil {
 			b = host
 		}
-		add(b)
+		addHost(b)
 	}
 	for _, d := range parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH) {
 		if u, err := url.Parse(d); err == nil && u.Hostname() != "" {
-			add(u.Hostname())
+			addHost(u.Hostname())
 		} else {
 			if host, _, err := net.SplitHostPort(d); err == nil {
 				d = host
 			}
-			add(d)
+			addHost(d)
 		}
 	}
 	// Exclude Cloudflare WARP Anycast endpoints from TUN routing to prevent routing loops for local WARP
 	for _, warpIP := range []string{"162.159.200.1", "162.159.192.1", "162.159.193.1", "162.159.195.1"} {
-		add(warpIP)
+		addHost(warpIP)
 	}
+
+	if len(pendingDomains) > 0 {
+		resolvedMap := make(map[string][]net.IP, len(pendingDomains))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8) // Limit concurrent lookups
+		for _, host := range pendingDomains {
+			wg.Add(1)
+			go func(targetHost string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				var resolved []net.IP
+				if a != nil && a.mockNodeResolver != nil {
+					resolved = a.mockNodeResolver(targetHost)
+				} else {
+					ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+					defer cancel()
+					resolved, _ = net.DefaultResolver.LookupIP(ctx, "ip", targetHost)
+					if len(resolved) == 0 {
+						r := &net.Resolver{
+							PreferGo: true,
+							Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+								d := net.Dialer{Timeout: 1000 * time.Millisecond}
+								return d.DialContext(ctx, "udp", "223.5.5.5:53")
+							},
+						}
+						resolved, _ = r.LookupIP(ctx, "ip", targetHost)
+					}
+				}
+
+				mu.Lock()
+				resolvedMap[strings.ToLower(strings.TrimSpace(targetHost))] = resolved
+				for _, ip := range resolved {
+					s := ip.String()
+					if !seen[s] {
+						seen[s] = true
+						ips = append(ips, s)
+					}
+				}
+				mu.Unlock()
+			}(host)
+		}
+		wg.Wait()
+		if a != nil {
+			a.resolvedNodeMu.Lock()
+			if a.resolvedNodeIPs == nil {
+				a.resolvedNodeIPs = make(map[string][]net.IP)
+			}
+			for k, v := range resolvedMap {
+				a.resolvedNodeIPs[k] = v
+			}
+			a.resolvedNodeMu.Unlock()
+		}
+	}
+
 	return ips
+}
+
+func (a *app) nodeIPResolver() func(host string) []net.IP {
+	if a.mockNodeResolver != nil {
+		return a.mockNodeResolver
+	}
+	return func(host string) []net.IP {
+		key := strings.ToLower(strings.TrimSpace(host))
+		a.resolvedNodeMu.RLock()
+		if ips, ok := a.resolvedNodeIPs[key]; ok {
+			a.resolvedNodeMu.RUnlock()
+			return ips
+		}
+		a.resolvedNodeMu.RUnlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		defer cancel()
+		ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", host)
+		if len(ips) == 0 {
+			r := &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{Timeout: 1000 * time.Millisecond}
+					return d.DialContext(ctx, "udp", "223.5.5.5:53")
+				},
+			}
+			ips, _ = r.LookupIP(ctx, "ip", host)
+		}
+
+		a.resolvedNodeMu.Lock()
+		if a.resolvedNodeIPs == nil {
+			a.resolvedNodeIPs = make(map[string][]net.IP)
+		}
+		a.resolvedNodeIPs[key] = ips
+		a.resolvedNodeMu.Unlock()
+		return ips
+	}
 }
 
 
@@ -1426,7 +1510,7 @@ func (a *app) startGateway() error {
 		TunInterface:          tunName,
 		TunAddresses:          tunAddrs,
 		TunCreator:            a.mockTunCreator,
-		NodeIPResolver:        a.mockNodeResolver,
+		NodeIPResolver:        a.nodeIPResolver(),
 		Services:              a.state.Services,
 		AllocatedPorts:        allocPorts,
 		ActiveIDs:             activeIDs,

@@ -77,7 +77,7 @@ func isBypassSafe(ip net.IP) bool {
 // installs direct host routes for excludeIPs to bypass the TUN interface,
 // and installs a high-priority DynamicStore DNS entry for Split DNS hijacking.
 func SetupRoutes(name string, excludeIPs []string) error {
-	_ = TeardownRoutes(name, excludeIPs)
+	_ = teardownRoutesInternal(name, excludeIPs, false)
 
 	gw, iface := getDefaultGateway()
 
@@ -125,10 +125,16 @@ func SetupRoutes(name string, excludeIPs []string) error {
 
 // TeardownRoutes removes the 0/1 and 128/1 routes, node host routes, and DynamicStore DNS on macOS.
 func TeardownRoutes(name string, excludeIPs []string) error {
-	if name != "" {
+	return teardownRoutesInternal(name, excludeIPs, true)
+}
+
+func teardownRoutesInternal(name string, excludeIPs []string, flushDNS bool) error {
+	if name != "" && flushDNS {
 		teardownDarwinDNS(name)
 	}
-	cleanupStaleDarwinDNS()
+	if flushDNS {
+		cleanupStaleDarwinDNS()
+	}
 
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
@@ -161,8 +167,10 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 	for _, r := range routes {
 		_ = exec.Command(r[0], r[1:]...).Run()
 	}
-	_ = exec.Command("dscacheutil", "-flushcache").Run()
-	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
+	if flushDNS {
+		_ = exec.Command("dscacheutil", "-flushcache").Run()
+		_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
+	}
 	return nil
 }
 
@@ -205,15 +213,46 @@ func cleanupStaleDarwinDNS() {
 	if err != nil {
 		return
 	}
-	for _, key := range parseScutilKeys(string(out)) {
-		show := exec.Command("scutil")
-		show.Stdin = strings.NewReader("show " + key + "\nquit\n")
-		body, err := show.Output()
-		if err != nil || !strings.Contains(string(body), DNSAddress) {
-			continue
+	keys := parseScutilKeys(string(out))
+	if len(keys) == 0 {
+		return
+	}
+
+	var sb strings.Builder
+	for _, key := range keys {
+		sb.WriteString("show " + key + "\n")
+	}
+	sb.WriteString("quit\n")
+
+	show := exec.Command("scutil")
+	show.Stdin = strings.NewReader(sb.String())
+	showOut, err := show.Output()
+	if err != nil {
+		return
+	}
+
+	var rmSb strings.Builder
+	hasRemovals := false
+	sections := strings.Split(string(showOut), "subKey [")
+	for idx, key := range keys {
+		match := false
+		if idx+1 < len(sections) {
+			if strings.Contains(sections[idx+1], DNSAddress) {
+				match = true
+			}
+		} else if strings.Contains(string(showOut), DNSAddress) {
+			match = true
 		}
+		if match {
+			rmSb.WriteString("remove " + key + "\n")
+			hasRemovals = true
+		}
+	}
+
+	if hasRemovals {
+		rmSb.WriteString("quit\n")
 		rm := exec.Command("scutil")
-		rm.Stdin = strings.NewReader("remove " + key + "\nquit\n")
+		rm.Stdin = strings.NewReader(rmSb.String())
 		_ = rm.Run()
 	}
 }

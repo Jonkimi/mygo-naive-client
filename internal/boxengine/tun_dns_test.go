@@ -1,8 +1,11 @@
 package boxengine
 
 import (
+	"net"
+	"sync"
 	"testing"
 
+	"naive-client/internal/config"
 	"naive-client/internal/tunhelper"
 )
 
@@ -155,3 +158,31 @@ func TestTunWindowsInboundDNSMode(t *testing.T) {
 		t.Fatalf("expected dns_address to contain %s, got %v", tunhelper.DNSAddress, in["dns_address"])
 	}
 }
+
+// Regression: extractNodeExcludeAddresses previously resolved every node domain sequentially
+// and without caching across buildInboundsConfig and buildRouteConfig, causing TUN startup
+// to stall for 30-60 seconds when multiple domains were configured.
+func TestExtractNodeExcludeAddresses_ConcurrentAndDeduplicated(t *testing.T) {
+	services := []config.Service{
+		{ID: "n1", Server: "node1.example.com"},
+		{ID: "n2", Server: "node2.example.com", Proxies: []string{"https://u:p@node1.example.com:443"}},
+		{ID: "n3", Server: "node3.example.com"},
+	}
+	var mu sync.Mutex
+	calls := make(map[string]int)
+	resolver := func(host string) []net.IP {
+		mu.Lock()
+		calls[host]++
+		mu.Unlock()
+		return []net.IP{net.ParseIP("198.51.100.1")}
+	}
+
+	cidrs := extractNodeExcludeAddresses(services, resolver)
+	if len(cidrs) != 1 || cidrs[0] != "198.51.100.1/32" {
+		t.Fatalf("expected [198.51.100.1/32], got %v", cidrs)
+	}
+	if calls["node1.example.com"] != 1 {
+		t.Errorf("expected node1.example.com to be resolved once per call, got %d", calls["node1.example.com"])
+	}
+}
+

@@ -487,6 +487,7 @@ func (e *Engine) GetNodeName(nodeID string) string {
 func extractNodeExcludeAddresses(services []config.Service, resolver func(host string) []net.IP) []string {
 	var results []string
 	seen := make(map[string]bool)
+	var mu sync.Mutex
 
 	addIP := func(ip net.IP) {
 		var cidr string
@@ -495,11 +496,18 @@ func extractNodeExcludeAddresses(services []config.Service, resolver func(host s
 		} else if ip16 := ip.To16(); ip16 != nil {
 			cidr = ip16.String() + "/128"
 		}
-		if cidr != "" && !seen[cidr] {
-			seen[cidr] = true
-			results = append(results, cidr)
+		if cidr != "" {
+			mu.Lock()
+			if !seen[cidr] {
+				seen[cidr] = true
+				results = append(results, cidr)
+			}
+			mu.Unlock()
 		}
 	}
+
+	var pendingHosts []string
+	seenHosts := make(map[string]bool)
 
 	addHost := func(host string) {
 		host = strings.TrimSpace(host)
@@ -512,10 +520,10 @@ func extractNodeExcludeAddresses(services []config.Service, resolver func(host s
 			addIP(ip)
 			return
 		}
-		if resolver != nil {
-			for _, ip := range resolver(host) {
-				addIP(ip)
-			}
+		lower := strings.ToLower(host)
+		if !seenHosts[lower] {
+			seenHosts[lower] = true
+			pendingHosts = append(pendingHosts, host)
 		}
 	}
 
@@ -534,7 +542,58 @@ func extractNodeExcludeAddresses(services []config.Service, resolver func(host s
 			}
 		}
 	}
+
+	if resolver != nil && len(pendingHosts) > 0 {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8)
+		for _, host := range pendingHosts {
+			wg.Add(1)
+			go func(h string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				for _, ip := range resolver(h) {
+					addIP(ip)
+				}
+			}(host)
+		}
+		wg.Wait()
+	}
+
 	return results
+}
+
+func defaultNodeIPResolver() func(host string) []net.IP {
+	var cacheMu sync.Mutex
+	cache := make(map[string][]net.IP)
+	return func(h string) []net.IP {
+		key := strings.ToLower(strings.TrimSpace(h))
+		cacheMu.Lock()
+		if ips, ok := cache[key]; ok {
+			cacheMu.Unlock()
+			return ips
+		}
+		cacheMu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		defer cancel()
+		ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", h)
+		if len(ips) == 0 {
+			r := &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{Timeout: 1000 * time.Millisecond}
+					return d.DialContext(ctx, "udp", "223.5.5.5:53")
+				},
+			}
+			ips, _ = r.LookupIP(ctx, "ip", h)
+		}
+
+		cacheMu.Lock()
+		cache[key] = ips
+		cacheMu.Unlock()
+		return ips
+	}
 }
 
 
@@ -688,22 +747,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		}
 		resolver := opts.NodeIPResolver
 		if resolver == nil {
-			resolver = func(h string) []net.IP {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", h)
-				if len(ips) == 0 {
-					r := &net.Resolver{
-						PreferGo: true,
-						Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-							d := net.Dialer{Timeout: 2 * time.Second}
-							return d.DialContext(ctx, "udp", "223.5.5.5:53")
-						},
-					}
-					ips, _ = r.LookupIP(ctx, "ip", h)
-				}
-				return ips
-			}
+			resolver = defaultNodeIPResolver()
 		}
 		excludes := extractNodeExcludeAddresses(opts.Services, resolver)
 		// Exclude loopback addresses from TUN capture so 127.0.0.1 is never trapped in TUN
@@ -1083,10 +1127,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 	// 0.3 Node Server IPs routed directly to guarantee sidecars (naive, xray) never loop into proxy pool
 	resolver := opts.NodeIPResolver
 	if resolver == nil {
-		resolver = func(h string) []net.IP {
-			ips, _ := net.DefaultResolver.LookupIP(context.Background(), "ip", h)
-			return ips
-		}
+		resolver = defaultNodeIPResolver()
 	}
 	var nodeCIDRs []string
 	for _, exc := range extractNodeExcludeAddresses(opts.Services, resolver) {
@@ -1271,6 +1312,10 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 
 	finalOutbound := resolveFinalOutbound(opts)
 	allBootstrapDomains := collectAllBootstrapDomains(opts)
+
+	if opts.NodeIPResolver == nil {
+		opts.NodeIPResolver = defaultNodeIPResolver()
+	}
 
 	configMap["inbounds"] = buildInboundsConfig(opts, host, port)
 	outbounds, err := buildOutboundsConfig(opts, finalOutbound, e.allocatedPorts)
