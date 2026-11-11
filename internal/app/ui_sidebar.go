@@ -468,15 +468,15 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		card := ui.Column(c.Key("sidebar-engine-pill")).
 			Label(cat.EngineStatusPillTitle()).
 			Width(collapsedTileSize).Height(91).
-			Padding(6, 4, 6, 4).Gap(4).Radius(8).
+			Padding(6, 2, 6, 2).Gap(4).Radius(8).
 			Background(p.card).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).
 			Children(func() {
 				// Row 1: Positional 3-bar mode capsule (Left: Port, Center: SysProxy, Right: TUN)
 				ui.Row(c.Key("collapsed-mode-row")).
-					Size(28, 22).Radius(4).
+					Size(32, 22).Radius(4).
 					Background(ui.Transparent).
-					AlignItems(ui.Center).Justify(ui.Center).Gap(2).
+					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
 						// Modes form an escalating ladder (port < sysproxy < tun):
 						// bars up to and including the active tier are lit, like signal strength.
@@ -502,7 +502,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 
 							btn := ui.Column(c.Key("collapsed-mode-btn-" + modeID)).
 								Label(label).
-								Size(8, 20).Radius(3).
+								Grow(1).Height(22).Radius(3).
 								Background(ui.Transparent).
 								AlignItems(ui.Center).Justify(ui.End).
 								Tooltip(label).
