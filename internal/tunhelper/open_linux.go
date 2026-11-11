@@ -40,6 +40,21 @@ func OpenPlatformTUN() (int, string, error) {
 	return fd, name, nil
 }
 
+func isBypassSafe(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return false
+		}
+	}
+	if len(ip) == 16 && ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0 {
+		return false
+	}
+	return true
+}
+
 // SetupRoutes installs default 0/1 and 128/1 routes on Linux pointing to the TUN interface,
 // and installs specific direct routes for excludeIPs.
 func SetupRoutes(name string, excludeIPs []string) error {
@@ -47,7 +62,7 @@ func SetupRoutes(name string, excludeIPs []string) error {
 
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
-		if ip == nil {
+		if !isBypassSafe(ip) {
 			continue
 		}
 		if ip.To4() != nil {
@@ -73,7 +88,7 @@ func SetupRoutes(name string, excludeIPs []string) error {
 func TeardownRoutes(name string, excludeIPs []string) error {
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
-		if ip == nil {
+		if !isBypassSafe(ip) {
 			continue
 		}
 		if ip.To4() != nil {

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -512,6 +513,49 @@ func TestCollectAllBootstrapDomains(t *testing.T) {
 	}
 }
 
+// Regression: User rules containing both domain criteria and IP CIDR criteria were previously
+// combined into a single sing-box rule. Because sing-box evaluates fields within a rule with
+// logical AND, raw IP connections (like 127.0.0.1 or LAN IP) failed to match the rule and were proxied.
+func TestUserRuleWithDomainAndIPCidrSeparated(t *testing.T) {
+	opts := EngineOptions{
+		Rules: []routing.Rule{
+			{
+				ID:           "rule-lan-direct",
+				Enabled:      true,
+				DomainSuffix: []string{"localhost", "lan"},
+				IPCidr:       []string{"127.0.0.0/8", "192.168.0.0/16"},
+				Action: routing.RouteAction{
+					Type: routing.ActionDirect,
+				},
+			},
+		},
+	}
+	routeCfg := buildRouteConfig(opts, "PROXY_POOL", nil)
+	rules := routeCfg["rules"].([]map[string]any)
+
+	var hasSeparateDomainRule bool
+	var hasSeparateIPRule bool
+	for _, r := range rules {
+		if r["outbound"] != "direct" {
+			continue
+		}
+		_, hasDomain := r["domain_suffix"]
+		_, hasIP := r["ip_cidr"]
+		if hasDomain && !hasIP {
+			hasSeparateDomainRule = true
+		}
+		if hasIP && !hasDomain {
+			hasSeparateIPRule = true
+		}
+	}
+	if !hasSeparateDomainRule {
+		t.Error("expected separate domain rule for user rule with both domain and IP criteria")
+	}
+	if !hasSeparateIPRule {
+		t.Error("expected separate IP CIDR rule for user rule with both domain and IP criteria")
+	}
+}
+
 // Tests that TunPlatform injects TunFD and TunName into tun.Options.
 func TestTunPlatform_OpenInterface(t *testing.T) {
 	var captured tun.Options
@@ -584,11 +628,12 @@ func TestEngine_TUNConfigOptions(t *testing.T) {
 			if tunOpts.InterfaceName != "utun3" {
 				t.Errorf("expected interface_name utun3, got %q", tunOpts.InterfaceName)
 			}
-			if !tunOpts.AutoRoute {
-				t.Errorf("expected auto_route to be true")
+			expectedAutoRoute := runtime.GOOS == "windows"
+			if tunOpts.AutoRoute != expectedAutoRoute {
+				t.Errorf("expected auto_route to be %v on %s, got %v", expectedAutoRoute, runtime.GOOS, tunOpts.AutoRoute)
 			}
-			if !tunOpts.StrictRoute {
-				t.Errorf("expected strict_route to be true")
+			if tunOpts.StrictRoute != expectedAutoRoute {
+				t.Errorf("expected strict_route to be %v on %s, got %v", expectedAutoRoute, runtime.GOOS, tunOpts.StrictRoute)
 			}
 			excludes := tunOpts.RouteExcludeAddress
 			if len(excludes) == 0 {
@@ -1219,7 +1264,7 @@ func TestEngine_GatewayNodeNameLogging(t *testing.T) {
 		Timeout: 3 * time.Second,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/node-test", targetPort))
+	resp, err := client.Get(fmt.Sprintf("http://mock-proxy-target.test:%d/node-test", targetPort))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -1563,6 +1608,70 @@ func TestEngine_ProtoNaiveWithSingBoxEngineDoesNotCrash(t *testing.T) {
 	defer eng.Close()
 	if !eng.IsSidecar(svc.ID) {
 		t.Errorf("expected IsSidecar to be true for ProtoNaive node")
+	}
+}
+
+// Regression: Loopback connections (127.0.0.1, localhost, and sidecar SOCKS dialing) were previously
+// using direct outbounds with route.auto_detect_interface: true, binding to the physical NIC (en0)
+// and failing with EADDRNOTAVAIL (Can't assign requested address) on macOS.
+func TestEngine_LoopbackDirectAndSidecarBindInterface(t *testing.T) {
+	opts := EngineOptions{
+		TrafficMode: "tun",
+		Services: []config.Service{
+			{
+				ID:       "svc-sidecar",
+				Name:     "naive-sidecar",
+				Protocol: config.ProtoNaive,
+				Engine:   config.EngineSidecar,
+				Listens:  []string{"socks://127.0.0.1:1083"},
+				Proxies:  []string{"https://user:pass@example.com:443"},
+			},
+		},
+	}
+
+	outbounds, err := buildOutboundsConfig(opts, "direct", nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig: %v", err)
+	}
+
+	expectedIf := loopbackInterfaceName()
+
+	var foundLoopbackDirect bool
+	var foundSidecarOb bool
+	for _, ob := range outbounds {
+		if ob["tag"] == "loopback-direct" {
+			foundLoopbackDirect = true
+			if expectedIf != "" && ob["bind_interface"] != expectedIf {
+				t.Errorf("expected loopback-direct bind_interface %q, got %v", expectedIf, ob["bind_interface"])
+			}
+		}
+		if ob["tag"] == "node-svc-sidecar" {
+			foundSidecarOb = true
+			if expectedIf != "" && ob["bind_interface"] != expectedIf {
+				t.Errorf("expected sidecar outbound bind_interface %q, got %v", expectedIf, ob["bind_interface"])
+			}
+		}
+	}
+	if !foundLoopbackDirect {
+		t.Error("expected loopback-direct outbound")
+	}
+	if !foundSidecarOb {
+		t.Error("expected node-svc-sidecar outbound")
+	}
+
+	// Verify route rules send loopback to loopback-direct
+	routeCfg := buildRouteConfig(opts, "direct", nil)
+	rules := routeCfg["rules"].([]map[string]any)
+	var hasLoopbackRoute bool
+	for _, r := range rules {
+		if r["outbound"] == "loopback-direct" {
+			if cidrs, ok := r["ip_cidr"].([]string); ok && len(cidrs) > 0 && cidrs[0] == "127.0.0.0/8" {
+				hasLoopbackRoute = true
+			}
+		}
+	}
+	if !hasLoopbackRoute {
+		t.Error("missing route rule for 127.0.0.0/8 -> loopback-direct in TUN mode")
 	}
 }
 

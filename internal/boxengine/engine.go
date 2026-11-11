@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -608,6 +609,17 @@ func collectAllBootstrapDomains(opts EngineOptions) []string {
 	return allBootstrapDomains
 }
 
+func loopbackInterfaceName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "lo0"
+	case "linux":
+		return "lo"
+	default:
+		return ""
+	}
+}
+
 func collectRuleSetTags(opts EngineOptions) (siteTags, ipTags []string) {
 	for _, r := range opts.Rules {
 		if !r.Enabled {
@@ -653,34 +665,48 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		if mtu <= 0 {
 			mtu = 9000
 		}
+		isWindows := runtime.GOOS == "windows"
 		tunIn := map[string]any{
 			"type":         "tun",
 			"tag":          "tun-in",
 			"address":      tunAddrs,
 			"mtu":          mtu,
-			"auto_route":   true,
-			"strict_route": true,
+			"auto_route":   isWindows,
+			"strict_route": isWindows,
 			"stack":        "system",
+			"dns_address":  []string{tunhelper.DNSAddress},
 		}
-		// Leaving dns_address unset allows sing-box to automatically derive the peer DNS
-		// address (tunhelper.DNSAddress == 172.19.0.2) and populate its internal dnsHijackAddress,
-		// ensuring both UDP and TCP DNS queries are properly hijacked.
 		if opts.TunInterface != "" {
 			tunIn["interface_name"] = opts.TunInterface
 		}
 		resolver := opts.NodeIPResolver
 		if resolver == nil {
 			resolver = func(h string) []net.IP {
-				ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
 				ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", h)
+				if len(ips) == 0 {
+					r := &net.Resolver{
+						PreferGo: true,
+						Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+							d := net.Dialer{Timeout: 2 * time.Second}
+							return d.DialContext(ctx, "udp", "223.5.5.5:53")
+						},
+					}
+					ips, _ = r.LookupIP(ctx, "ip", h)
+				}
 				return ips
 			}
 		}
 		excludes := extractNodeExcludeAddresses(opts.Services, resolver)
+		// Exclude loopback addresses from TUN capture so 127.0.0.1 is never trapped in TUN
+		excludes = append(excludes, "127.0.0.0/8", "::1/128")
+		// Exclude Cloudflare WARP Anycast endpoints so local WARP clients do not loop into TUN
+		excludes = append(excludes, "162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24", "162.159.200.0/24", "162.159.204.0/24")
 		if opts.TailnetMode == tailnet.ModeHost {
 			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
+			tailnetExcludes = append(tailnetExcludes, "100.100.100.100/32")
 			for _, te := range tailnetExcludes {
 				te = strings.TrimSpace(te)
 				if te != "" && te != "0.0.0.0/0" && te != "::/0" {
@@ -704,6 +730,14 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		"tag":  "direct",
 	}
 
+	loopbackOut := map[string]any{
+		"type": "direct",
+		"tag":  "loopback-direct",
+	}
+	if ifName := loopbackInterfaceName(); ifName != "" {
+		loopbackOut["bind_interface"] = ifName
+	}
+
 	tailnetDirectOut := map[string]any{
 		"type": "direct",
 		"tag":  "tailnet-direct",
@@ -711,9 +745,13 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		// cannot be used as a DNS server detour (tailscale-host-dns).
 		"connect_timeout": "10s",
 	}
+	if tsIf := tailnet.DetectHostInterface(); tsIf != "" {
+		tailnetDirectOut["bind_interface"] = tsIf
+	}
 
 	outbounds := []map[string]any{
 		directOut,
+		loopbackOut,
 		tailnetDirectOut,
 		{
 			"type": "block",
@@ -775,12 +813,16 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 			if allocPort <= 0 {
 				return nil, fmt.Errorf("sidecar 节点 %q (%s) 缺少有效的本地监听端口，请检查配置或启动状态", svc.Name, svc.ID)
 			}
-			outbounds = append(outbounds, map[string]any{
+			sidecarOb := map[string]any{
 				"type":        "socks",
 				"tag":         nodeTag,
 				"server":      "127.0.0.1",
 				"server_port": allocPort,
-			})
+			}
+			if ifName := loopbackInterfaceName(); ifName != "" {
+				sidecarOb["bind_interface"] = ifName
+			}
+			outbounds = append(outbounds, sidecarOb)
 		} else {
 			outbounds = append(outbounds, buildNativeOutbound(svc))
 		}
@@ -855,9 +897,18 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		buildDNSServerMap("bootstrap-dns", bootstrapDNS[0], "", ""),
 		buildDNSServerMap("domestic-doh", domesticDoH[0], "", "bootstrap-dns"),
 		buildDNSServerMap("remote-doh", remoteDoH[0], remoteDoHDetour, "bootstrap-dns"),
+		{
+			"type": "hosts",
+			"tag":  "local-dns",
+		},
 	}
 
 	var dnsRules []map[string]any
+	dnsRules = append(dnsRules, map[string]any{
+		"domain":        []string{"localhost"},
+		"domain_suffix": []string{".local", ".localhost"},
+		"server":        "local-dns",
+	})
 	if len(allBootstrapDomains) > 0 {
 		dnsRules = append(dnsRules, map[string]any{
 			"domain": allBootstrapDomains,
@@ -883,6 +934,11 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		// Match short names (single-label domain without dots, e.g. "nas", "debian") to MagicDNS
 		dnsRules = append(dnsRules, map[string]any{
 			"domain_regex":  []string{`^[^.]+$`},
+			"server":        "tailscale-host-dns",
+		})
+		// Reverse DNS for Tailscale CGNAT addresses
+		dnsRules = append(dnsRules, map[string]any{
+			"domain_suffix": []string{".100.in-addr.arpa"},
 			"server":        "tailscale-host-dns",
 		})
 	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
@@ -1006,7 +1062,57 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"action": "hijack-dns",
 	})
 
-	// 0.2 Bootstrap domains & IPs routing directly to avoid TUN/proxy deadlocks (Item 6)
+	// 0.2 Ensure loopback traffic is routed to loopback-direct (bound to lo0) to avoid en0 binding (Errno 49)
+	singRules = append(singRules, map[string]any{
+		"ip_cidr":  []string{"127.0.0.0/8", "::1/128"},
+		"outbound": "loopback-direct",
+	})
+	singRules = append(singRules, map[string]any{
+		"domain":        []string{"localhost"},
+		"domain_suffix": []string{".local", ".localhost"},
+		"outbound":      "loopback-direct",
+	})
+
+	// 0.3 Node Server IPs routed directly to guarantee sidecars (naive, xray) never loop into proxy pool
+	resolver := opts.NodeIPResolver
+	if resolver == nil {
+		resolver = func(h string) []net.IP {
+			ips, _ := net.DefaultResolver.LookupIP(context.Background(), "ip", h)
+			return ips
+		}
+	}
+	var nodeCIDRs []string
+	for _, exc := range extractNodeExcludeAddresses(opts.Services, resolver) {
+		if !strings.HasPrefix(exc, "127.") && exc != "::1/128" {
+			nodeCIDRs = append(nodeCIDRs, exc)
+		}
+	}
+	if len(nodeCIDRs) > 0 {
+		singRules = append(singRules, map[string]any{
+			"ip_cidr":  nodeCIDRs,
+			"outbound": "direct",
+		})
+	}
+
+	// 0.4 Cloudflare WARP Anycast endpoints routed directly to prevent local WARP routing loops
+	singRules = append(singRules, map[string]any{
+		"ip_cidr": []string{
+			"162.159.192.0/24",
+			"162.159.193.0/24",
+			"162.159.195.0/24",
+			"162.159.200.0/24",
+			"162.159.204.0/24",
+			"188.114.96.0/24",
+			"188.114.97.0/24",
+			"188.114.98.0/24",
+			"188.114.99.0/24",
+			"2606:4700:d0::/48",
+			"2606:4700:d1::/48",
+		},
+		"outbound": "direct",
+	})
+
+	// 0.4 Bootstrap domains & IPs routing directly to avoid TUN/proxy deadlocks (Item 6)
 	if len(allBootstrapDomains) > 0 {
 		singRules = append(singRules, map[string]any{
 			"domain":   allBootstrapDomains,
@@ -1050,6 +1156,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 				tailnetCIDRs = append(tailnetCIDRs, c)
 			}
 		}
+		tailnetCIDRs = append(tailnetCIDRs, "100.100.100.100/32")
 		if len(tailnetCIDRs) > 0 {
 			singRules = append(singRules, map[string]any{
 				"ip_cidr":  tailnetCIDRs,
@@ -1096,8 +1203,8 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 
 		outbound := resolveRouteOutbound(r.Action, opts.TailnetMode)
 
-		// 1. Direct domain / CIDR matching rule
-		if len(r.DomainFull) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 || len(r.IPCidr) > 0 {
+		// 1. Direct domain matching rule
+		if len(r.DomainFull) > 0 || len(r.DomainSuffix) > 0 || len(r.DomainKeyword) > 0 {
 			sr := map[string]any{"outbound": outbound}
 			if len(r.DomainFull) > 0 {
 				sr["domain"] = r.DomainFull
@@ -1108,10 +1215,15 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 			if len(r.DomainKeyword) > 0 {
 				sr["domain_keyword"] = r.DomainKeyword
 			}
-			if len(r.IPCidr) > 0 {
-				sr["ip_cidr"] = r.IPCidr
-			}
 			singRules = append(singRules, sr)
+		}
+
+		// 2. IP CIDR matching rule (separate rule; sing-box evaluates fields within a single rule with logical AND)
+		if len(r.IPCidr) > 0 {
+			singRules = append(singRules, map[string]any{
+				"ip_cidr":  r.IPCidr,
+				"outbound": outbound,
+			})
 		}
 
 		// 2. RuleSet matching rule (OR logic with domain criteria)

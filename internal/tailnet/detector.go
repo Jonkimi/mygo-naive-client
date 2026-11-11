@@ -3,6 +3,9 @@ package tailnet
 import (
 	"context"
 	"fmt"
+	"net"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -164,3 +167,58 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 		SubnetRoutes:    subnetRoutes,
 	}
 }
+
+// DetectHostInterface returns the network interface name used by Tailscale (e.g. "utun6", "tailscale0")
+// by inspecting system interfaces for a Tailscale CGNAT IP (100.64.0.0/10) or ULA (fd7a:115c:a1e0::/48).
+func DetectHostInterface() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil {
+				if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+					return iface.Name
+				}
+			}
+			if len(ip) == 16 && ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0 {
+				return iface.Name
+			}
+		}
+	}
+	// Fallback on macOS via route lookup for Tailscale MagicDNS IP
+	if runtime.GOOS == "darwin" {
+		out, err := exec.Command("route", "-n", "get", "100.100.100.100").Output()
+		if err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && fields[0] == "interface:" {
+					iface := fields[1]
+					if strings.HasPrefix(iface, "utun") {
+						return iface
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+

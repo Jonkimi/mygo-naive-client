@@ -122,3 +122,10 @@ func TestDetector_DetectHost_NotRunning(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestDetectHostInterface(t *testing.T) {
+	// Should not panic or crash; returns interface name if Tailscale is running on test host
+	iface := DetectHostInterface()
+	t.Logf("detected Tailscale interface: %q", iface)
+}
+

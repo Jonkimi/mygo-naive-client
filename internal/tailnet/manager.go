@@ -117,6 +117,28 @@ func (m *Manager) ShouldUseEmbeddedMode() bool {
 	return m.cfg.Enabled && m.status.ActiveMode == ModeEmbedded
 }
 
+// DetectHostStatus queries the host Tailscale daemon directly regardless of current config.
+func (m *Manager) DetectHostStatus() *Status {
+	m.mu.RLock()
+	if m.status.BackendState == "Running" && (m.status.ActiveMode == ModeHost || m.status.ActiveMode == ModeAuto) {
+		st := m.status
+		m.mu.RUnlock()
+		return &st
+	}
+	detector := m.detector
+	m.mu.RUnlock()
+	if detector == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	st, err := detector.DetectHost(ctx)
+	if err != nil {
+		return nil
+	}
+	return st
+}
+
 // GetHostExcludeAddresses returns CGNAT, ULA, and discovered subnet routes for TUN exclusion.
 func (m *Manager) GetHostExcludeAddresses() []string {
 	m.mu.RLock()

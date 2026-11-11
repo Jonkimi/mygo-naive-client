@@ -1,7 +1,6 @@
 package boxengine
 
 import (
-	"net/netip"
 	"testing"
 
 	"naive-client/internal/tunhelper"
@@ -19,21 +18,16 @@ func tunInbound(t *testing.T, opts EngineOptions) map[string]any {
 }
 
 // The macOS DynamicStore DNS entry points system DNS at tunhelper.DNSAddress.
-// By leaving dns_address unset in tun inbound, sing-box automatically derives
-// the peer address from the TUN subnet (172.19.0.1/30 -> 172.19.0.2) and populates
-// dnsHijackAddress so both UDP and TCP DNS are hijacked.
+// Explicitly setting dns_address to tunhelper.DNSAddress in tun inbound ensures
+// that sing-box's virtual DNS server binds to the peer address (172.19.0.2:53)
+// and handles all incoming system DNS queries.
 func TestTunDNSAddressMatchesHelperAndIsHijacked(t *testing.T) {
 	opts := EngineOptions{TrafficMode: "tun"}
 	in := tunInbound(t, opts)
 
-	if dnsAddrs, ok := in["dns_address"].([]string); ok && len(dnsAddrs) > 0 {
-		t.Fatalf("dns_address should remain unset for sing-box auto derivation, got %v", dnsAddrs)
-	}
-	addrs, _ := in["address"].([]string)
-	prefix := netip.MustParsePrefix(addrs[0])
-	derivedDNS := prefix.Addr().Next()
-	if derivedDNS.String() != tunhelper.DNSAddress {
-		t.Errorf("derived DNS address %s does not match tunhelper.DNSAddress %s", derivedDNS, tunhelper.DNSAddress)
+	dnsAddrs, ok := in["dns_address"].([]string)
+	if !ok || len(dnsAddrs) == 0 || dnsAddrs[0] != tunhelper.DNSAddress {
+		t.Fatalf("expected dns_address to contain %s, got %v", tunhelper.DNSAddress, in["dns_address"])
 	}
 
 	route := buildRouteConfig(opts, "direct", nil)
@@ -58,5 +52,94 @@ func TestEmptyTailnetModeDoesNotEnableTailscaleDNS(t *testing.T) {
 		if s["tag"] == "tailscale-host-dns" {
 			t.Fatal("tailscale-host-dns must not be generated when TailnetMode is empty")
 		}
+	}
+}
+
+// Tests that TUN mode explicitly excludes loopback 127.0.0.0/8 and ::1/128, routes localhost direct,
+// and resolves localhost via local-dns instead of remote-doh.
+func TestTunLoopbackAndLocalhostDirect(t *testing.T) {
+	opts := EngineOptions{TrafficMode: "tun"}
+	in := tunInbound(t, opts)
+	excludes, _ := in["route_exclude_address"].([]string)
+	hasIPv4Loopback := false
+	hasIPv6Loopback := false
+	for _, ex := range excludes {
+		if ex == "127.0.0.0/8" {
+			hasIPv4Loopback = true
+		}
+		if ex == "::1/128" {
+			hasIPv6Loopback = true
+		}
+	}
+	if !hasIPv4Loopback || !hasIPv6Loopback {
+		t.Fatalf("tun inbound route_exclude_address missing loopback CIDRs: %v", excludes)
+	}
+
+	route := buildRouteConfig(opts, "PROXY_POOL", nil)
+	rules := route["rules"].([]map[string]any)
+	var directLoopback bool
+	for _, r := range rules {
+		if cidrs, ok := r["ip_cidr"].([]string); ok && (r["outbound"] == "direct" || r["outbound"] == "loopback-direct") {
+			for _, c := range cidrs {
+				if c == "127.0.0.0/8" {
+					directLoopback = true
+				}
+			}
+		}
+	}
+	if !directLoopback {
+		t.Error("missing route rule for 127.0.0.0/8 -> direct/loopback-direct")
+	}
+
+	dnsCfg := buildDNSConfig(opts, "PROXY_POOL", nil)
+	rulesDNS := dnsCfg["rules"].([]map[string]any)
+	var localhostResolved bool
+	for _, r := range rulesDNS {
+		if doms, ok := r["domain"].([]string); ok && r["server"] == "local-dns" {
+			for _, d := range doms {
+				if d == "localhost" {
+					localhostResolved = true
+				}
+			}
+		}
+	}
+	if !localhostResolved {
+		t.Error("missing dns rule for localhost -> local-dns")
+	}
+}
+
+// Tests that Tailscale DNS properly splits queries: ts.net and short names go to
+// tailscale-host-dns, while ordinary domestic and foreign domains do not.
+func TestTailscaleDNSSplit(t *testing.T) {
+	opts := EngineOptions{
+		TrafficMode:           "tun",
+		TailnetMode:           "host",
+		TailnetMagicDNSSuffix: "my-tailnet.ts.net",
+	}
+	dnsCfg := buildDNSConfig(opts, "PROXY_POOL", nil)
+	rulesDNS := dnsCfg["rules"].([]map[string]any)
+
+	var hasSuffixRule bool
+	var hasRegexRule bool
+	for _, r := range rulesDNS {
+		if r["server"] == "tailscale-host-dns" {
+			if suffixes, ok := r["domain_suffix"].([]string); ok {
+				for _, s := range suffixes {
+					if s == "ts.net" {
+						hasSuffixRule = true
+					}
+				}
+			}
+			if regexes, ok := r["domain_regex"].([]string); ok {
+				for _, reg := range regexes {
+					if reg == `^[^.]+$` {
+						hasRegexRule = true
+					}
+				}
+			}
+		}
+	}
+	if !hasSuffixRule || !hasRegexRule {
+		t.Errorf("missing Tailscale DNS split rules, got: %v", rulesDNS)
 	}
 }

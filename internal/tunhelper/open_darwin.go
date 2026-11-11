@@ -56,6 +56,23 @@ func OpenPlatformTUN() (int, string, error) {
 	return tunFd, name, nil
 }
 
+func isBypassSafe(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		// Skip Tailscale CGNAT range (100.64.0.0/10) including MagicDNS 100.100.100.100
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return false
+		}
+	}
+	// Skip Tailscale ULA range (fd7a:115c:a1e0::/48)
+	if len(ip) == 16 && ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0 {
+		return false
+	}
+	return true
+}
+
 // SetupRoutes configures system routes (0/1 and 128/1) pointing to the utun interface on macOS,
 // installs direct host routes for excludeIPs to bypass the TUN interface,
 // and installs a high-priority DynamicStore DNS entry for Split DNS hijacking.
@@ -67,7 +84,7 @@ func SetupRoutes(name string, excludeIPs []string) error {
 	// 1. Install specific host routes for node IPs to bypass TUN directly via physical gateway
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
-		if ip == nil {
+		if !isBypassSafe(ip) {
 			continue
 		}
 		if ip.To4() != nil {
@@ -115,7 +132,7 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 
 	for _, ipStr := range excludeIPs {
 		ip := net.ParseIP(strings.TrimSpace(ipStr))
-		if ip == nil {
+		if !isBypassSafe(ip) {
 			continue
 		}
 		if ip.To4() != nil {
@@ -154,15 +171,20 @@ func setupDarwinDNS(ifName string) {
 	searchDomain := getSearchDomainFromResolvConf()
 	var sb strings.Builder
 	sb.WriteString("d.init\n")
-	sb.WriteString("d.add ServerAddresses * "+DNSAddress+"\n")
-	sb.WriteString("d.add SearchOrder 50000\n")
+	sb.WriteString("d.add ServerAddresses * " + DNSAddress + "\n")
 	sb.WriteString(fmt.Sprintf("d.add InterfaceName %s\n", ifName))
 	if searchDomain != "" {
 		cleanDomain := strings.Trim(searchDomain, ".")
 		sb.WriteString(fmt.Sprintf("d.add SearchDomains * %s\n", cleanDomain))
 		sb.WriteString(fmt.Sprintf("d.add SupplementalMatchDomains * \"\" %s.\n", cleanDomain))
+		// Explicitly assign the lowest SupplementalMatchOrders (highest priority) as CFNumber (* # ...)
+		// within Apple's standard VPN supplemental resolver range (100000..150000).
+		// 100000 is the theoretical minimum base order for VPNs, ensuring it precedes
+		// Tailscale (101800) and other registered VPN services without breaking convention.
+		sb.WriteString("d.add SupplementalMatchOrders * # 100000 100000\n")
 	} else {
 		sb.WriteString("d.add SupplementalMatchDomains * \"\"\n")
+		sb.WriteString("d.add SupplementalMatchOrders * # 100000\n")
 	}
 	sb.WriteString(fmt.Sprintf("set State:/Network/Service/%s/DNS\n", ifName))
 	sb.WriteString("quit\n")
@@ -178,7 +200,7 @@ func setupDarwinDNS(ifName string) {
 // contain DNSAddress are touched, so DNS entries owned by other VPNs are left alone.
 func cleanupStaleDarwinDNS() {
 	list := exec.Command("scutil")
-	list.Stdin = strings.NewReader("list State:/Network/Service/utun[0-9]+/DNS\nquit\n")
+	list.Stdin = strings.NewReader("list State:/Network/Service/.*DNS\nquit\n")
 	out, err := list.Output()
 	if err != nil {
 		return

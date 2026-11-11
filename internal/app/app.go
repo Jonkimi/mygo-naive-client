@@ -1249,9 +1249,19 @@ func (a *app) collectNodeServerIPs() []string {
 		if a != nil && a.mockNodeResolver != nil {
 			resolved = a.mockNodeResolver(host)
 		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			resolved, _ = net.DefaultResolver.LookupIP(ctx, "ip", host)
+			if len(resolved) == 0 {
+				r := &net.Resolver{
+					PreferGo: true,
+					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+						d := net.Dialer{Timeout: 2 * time.Second}
+						return d.DialContext(ctx, "udp", "223.5.5.5:53")
+					},
+				}
+				resolved, _ = r.LookupIP(ctx, "ip", host)
+			}
 		}
 		for _, ip := range resolved {
 			s := ip.String()
@@ -1292,6 +1302,10 @@ func (a *app) collectNodeServerIPs() []string {
 			}
 			add(d)
 		}
+	}
+	// Exclude Cloudflare WARP Anycast endpoints from TUN routing to prevent routing loops for local WARP
+	for _, warpIP := range []string{"162.159.200.1", "162.159.192.1", "162.159.193.1", "162.159.195.1"} {
+		add(warpIP)
 	}
 	return ips
 }
@@ -1381,6 +1395,27 @@ func (a *app) startGateway() error {
 		} else if a.tailnetMgr.ShouldUseEmbeddedMode() {
 			tnMode = tailnet.ModeEmbedded
 			tnSuffix = a.tailnetMgr.GetMagicDNSSuffix()
+		} else if hostSt := a.tailnetMgr.DetectHostStatus(); hostSt != nil && hostSt.BackendState == "Running" {
+			tnMode = tailnet.ModeHost
+			tnExcludes = a.tailnetMgr.GetHostExcludeAddresses()
+			tnSuffix = hostSt.MagicDNSSuffix
+		}
+	}
+	// Fallback detection from resolv.conf if Tailscale is running on host with MagicDNS
+	if tnMode == tailnet.ModeOff && runtime.GOOS == "darwin" {
+		if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
+			s := string(data)
+			if strings.Contains(s, "100.100.100.100") {
+				for _, l := range strings.Split(s, "\n") {
+					f := strings.Fields(l)
+					if len(f) >= 2 && f[0] == "search" && strings.HasSuffix(f[1], "ts.net") {
+						tnMode = tailnet.ModeHost
+						tnSuffix = f[1]
+						tnExcludes = append([]string{}, tailnet.DefaultTailnetSubnets...)
+						break
+					}
+				}
+			}
 		}
 	}
 
@@ -1450,10 +1485,16 @@ func (a *app) startGateway() error {
 }
 
 func (a *app) effectiveDomesticDNS() string {
-	if a.state.DomesticDNS != "" {
-		return a.state.DomesticDNS
+	dns := a.state.DomesticDNS
+	if dns == "" {
+		dns = a.state.BootstrapDoH
 	}
-	return a.state.BootstrapDoH
+	// If 100.100.100.100 was set in domestic DNS to work around Tailscale,
+	// fall back to default public domestic DoH so domestic domains don't flood MagicDNS.
+	if strings.Contains(dns, "100.100.100.100") {
+		return ""
+	}
+	return dns
 }
 
 func (a *app) effectiveRemoteDNS() string {

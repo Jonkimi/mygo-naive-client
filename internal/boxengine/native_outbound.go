@@ -60,6 +60,11 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 					"server_port": port,
 					"version":     "5",
 				}
+				if host == "127.0.0.1" || host == "localhost" {
+					if ifName := loopbackInterfaceName(); ifName != "" {
+						ob["bind_interface"] = ifName
+					}
+				}
 				if username != "" {
 					ob["username"] = username
 					ob["password"] = password
