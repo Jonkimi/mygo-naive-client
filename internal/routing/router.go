@@ -17,7 +17,40 @@ const (
 	ActionBlock        ActionType = "BLOCK"
 	ActionTailnet      ActionType = "TAILNET"
 	ActionTailnetExit  ActionType = "TAILNET_EXIT"
+	ActionWarp         ActionType = "WARP"
 )
+
+var privateLANSubnets []*net.IPNet
+
+func init() {
+	cidrs := []string{
+		"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10",
+	}
+	for _, c := range cidrs {
+		if _, ipNet, err := net.ParseCIDR(c); err == nil {
+			privateLANSubnets = append(privateLANSubnets, ipNet)
+		}
+	}
+}
+
+func isPrivateLANIP(ip net.IP) bool {
+	for _, n := range privateLANSubnets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalDomain(host string) bool {
+	for _, s := range []string{"local", "localhost", "internal", "lan", "home.arpa"} {
+		if host == s || strings.HasSuffix(host, "."+s) {
+			return true
+		}
+	}
+	return false
+}
 
 type RouteAction struct {
 	Type      ActionType `json:"type"`
@@ -137,11 +170,23 @@ func (r *Router) Match(target string) (RouteAction, string) {
 	}
 	host = strings.TrimSpace(strings.ToLower(host))
 
+	resolveAction := func(act RouteAction, ip net.IP, host string) RouteAction {
+		if act.Type == ActionWarp {
+			if ip != nil && isPrivateLANIP(ip) {
+				return RouteAction{Type: ActionDirect}
+			}
+			if isLocalDomain(host) {
+				return RouteAction{Type: ActionDirect}
+			}
+		}
+		return act
+	}
+
 	// Check if host is an IP
 	if ip := net.ParseIP(host); ip != nil {
 		for _, item := range r.parsedNets {
 			if item.ipNet.Contains(ip) {
-				return item.rule.Action, item.rule.Name
+				return resolveAction(item.rule.Action, ip, host), item.rule.Name
 			}
 		}
 		if r.geoIP != nil {
@@ -152,12 +197,12 @@ func (r *Router) Match(target string) (RouteAction, string) {
 				}
 				for _, tag := range rule.GeoIP {
 					if r.geoIP.MatchIP(tag, ip) {
-						return rule.Action, rule.Name
+						return resolveAction(rule.Action, ip, host), rule.Name
 					}
 				}
 			}
 		}
-		return r.finalAction, "Final"
+		return resolveAction(r.finalAction, ip, host), "Final"
 	}
 
 	// Host is a domain name
@@ -170,7 +215,7 @@ func (r *Router) Match(target string) (RouteAction, string) {
 		// 1. Full domain match
 		for _, d := range rule.DomainFull {
 			if strings.EqualFold(host, strings.TrimSpace(d)) {
-				return rule.Action, rule.Name
+				return resolveAction(rule.Action, nil, host), rule.Name
 			}
 		}
 
@@ -181,7 +226,7 @@ func (r *Router) Match(target string) (RouteAction, string) {
 				continue
 			}
 			if host == s || strings.HasSuffix(host, "."+s) {
-				return rule.Action, rule.Name
+				return resolveAction(rule.Action, nil, host), rule.Name
 			}
 		}
 
@@ -189,7 +234,7 @@ func (r *Router) Match(target string) (RouteAction, string) {
 		for _, kw := range rule.DomainKeyword {
 			kw = strings.TrimSpace(strings.ToLower(kw))
 			if kw != "" && strings.Contains(host, kw) {
-				return rule.Action, rule.Name
+				return resolveAction(rule.Action, nil, host), rule.Name
 			}
 		}
 
@@ -197,13 +242,13 @@ func (r *Router) Match(target string) (RouteAction, string) {
 		if r.geoSite != nil {
 			for _, tag := range rule.GeoSite {
 				if r.geoSite.MatchDomain(tag, host) {
-					return rule.Action, rule.Name
+					return resolveAction(rule.Action, nil, host), rule.Name
 				}
 			}
 		}
 	}
 
-	return r.finalAction, "Final"
+	return resolveAction(r.finalAction, nil, host), "Final"
 }
 
 func DefaultPresets() []Rule {

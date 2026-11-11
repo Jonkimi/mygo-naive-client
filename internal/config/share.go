@@ -53,9 +53,27 @@ func (s Service) ShareURI() string {
 		return s.socks5ShareURI()
 	case ProtoHTTP:
 		return s.httpShareURI()
+	case ProtoWARP:
+		return s.warpShareURI()
 	default:
 		return s.NaiveShareURI()
 	}
+}
+
+func (s Service) warpShareURI() string {
+	ep := "auto"
+	if s.WARPConfig != nil && s.WARPConfig.Endpoint != "" {
+		ep = s.WARPConfig.Endpoint
+	}
+	mode := "auto"
+	if s.WARPConfig != nil && s.WARPConfig.Transport != "" {
+		mode = string(s.WARPConfig.Transport)
+	}
+	alias := strings.TrimSpace(s.Name)
+	if alias == "" {
+		alias = "Cloudflare WARP"
+	}
+	return fmt.Sprintf("warp://%s?mode=%s#%s", ep, mode, url.PathEscape(alias))
 }
 
 func (s Service) vlessShareURI() string {

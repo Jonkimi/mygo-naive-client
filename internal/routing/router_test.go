@@ -117,3 +117,46 @@ func TestRouter_DefaultPresets(t *testing.T) {
 		}
 	}
 }
+
+func TestRouter_ActionWarpAndLANProtection(t *testing.T) {
+	presets := DefaultPresets()
+	for i := range presets {
+		if presets[i].ID == "preset-lan-direct" {
+			presets[i].Action = RouteAction{Type: ActionWarp}
+			presets[i].DomainSuffix = append(presets[i].DomainSuffix, "baidu.com")
+			presets[i].IPCidr = append(presets[i].IPCidr, "114.114.114.114/32")
+			break
+		}
+	}
+
+	r := NewRouter(presets, RouteAction{Type: ActionProxyPool})
+
+	lanTargets := []string{
+		"192.168.1.1:80",
+		"10.0.0.1:443",
+		"127.0.0.1:8080",
+		"172.16.0.1:22",
+		"169.254.1.1",
+		"nas.local:5000",
+		"router.lan",
+		"localhost:3000",
+	}
+	for _, target := range lanTargets {
+		act, _ := r.Match(target)
+		if act.Type != ActionDirect {
+			t.Errorf("expected target %s to be protected as ActionDirect, got %+v", target, act)
+		}
+	}
+
+	warpTargets := []string{
+		"baidu.com:443",
+		"news.baidu.com",
+		"114.114.114.114:53",
+	}
+	for _, target := range warpTargets {
+		act, _ := r.Match(target)
+		if act.Type != ActionWarp {
+			t.Errorf("expected target %s to resolve to ActionWarp, got %+v", target, act)
+		}
+	}
+}

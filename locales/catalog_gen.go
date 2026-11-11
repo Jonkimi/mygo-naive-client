@@ -5377,3 +5377,461 @@ func LogsLineCount(matched int, total int) string {
 func (msgs Messages) LogsLineCount(matched int, total int) string {
 	return Catalog.Format(msgs.locale, "logsLineCount", map[string]any{"matched": matched, "total": total})
 }
+
+// NavCloudflare says "Cloudflare"
+// in the language the app shows.
+func NavCloudflare() string { return In(i18n.Locale()).NavCloudflare() }
+
+// NavCloudflare says "Cloudflare"
+// in the language of msgs.
+func (msgs Messages) NavCloudflare() string {
+	return Catalog.Format(msgs.locale, "navCloudflare", nil)
+}
+
+// CloudflarePageTitle says "Cloudflare Ecosystem"
+// in the language the app shows.
+func CloudflarePageTitle() string { return In(i18n.Locale()).CloudflarePageTitle() }
+
+// CloudflarePageTitle says "Cloudflare Ecosystem"
+// in the language of msgs.
+func (msgs Messages) CloudflarePageTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflarePageTitle", nil)
+}
+
+// CloudflarePageDesc says "Manage Cloudflare WARP egress anonymity and Cloudflare Tunnel ingress penetration"
+// in the language the app shows.
+func CloudflarePageDesc() string { return In(i18n.Locale()).CloudflarePageDesc() }
+
+// CloudflarePageDesc says "Manage Cloudflare WARP egress anonymity and Cloudflare Tunnel ingress penetration"
+// in the language of msgs.
+func (msgs Messages) CloudflarePageDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflarePageDesc", nil)
+}
+
+// CloudflareSubtabWarp says "WARP Egress Anonymity"
+// in the language the app shows.
+func CloudflareSubtabWarp() string { return In(i18n.Locale()).CloudflareSubtabWarp() }
+
+// CloudflareSubtabWarp says "WARP Egress Anonymity"
+// in the language of msgs.
+func (msgs Messages) CloudflareSubtabWarp() string {
+	return Catalog.Format(msgs.locale, "cloudflareSubtabWarp", nil)
+}
+
+// CloudflareSubtabTunnel says "Tunnel Ingress Penetration"
+// in the language the app shows.
+func CloudflareSubtabTunnel() string { return In(i18n.Locale()).CloudflareSubtabTunnel() }
+
+// CloudflareSubtabTunnel says "Tunnel Ingress Penetration"
+// in the language of msgs.
+func (msgs Messages) CloudflareSubtabTunnel() string {
+	return Catalog.Format(msgs.locale, "cloudflareSubtabTunnel", nil)
+}
+
+// CloudflareWarpAccountTitle says "WARP Device & Credentials"
+// in the language the app shows.
+func CloudflareWarpAccountTitle() string { return In(i18n.Locale()).CloudflareWarpAccountTitle() }
+
+// CloudflareWarpAccountTitle says "WARP Device & Credentials"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAccountTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAccountTitle", nil)
+}
+
+// CloudflareWarpAccountRegistered says "Registered"
+// in the language the app shows.
+func CloudflareWarpAccountRegistered() string {
+	return In(i18n.Locale()).CloudflareWarpAccountRegistered()
+}
+
+// CloudflareWarpAccountRegistered says "Registered"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAccountRegistered() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAccountRegistered", nil)
+}
+
+// CloudflareWarpAccountNotRegistered says "Not Registered"
+// in the language the app shows.
+func CloudflareWarpAccountNotRegistered() string {
+	return In(i18n.Locale()).CloudflareWarpAccountNotRegistered()
+}
+
+// CloudflareWarpAccountNotRegistered says "Not Registered"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAccountNotRegistered() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAccountNotRegistered", nil)
+}
+
+// CloudflareWarpAccountRegisterBtn says "One-Click Register / Refresh"
+// in the language the app shows.
+func CloudflareWarpAccountRegisterBtn() string {
+	return In(i18n.Locale()).CloudflareWarpAccountRegisterBtn()
+}
+
+// CloudflareWarpAccountRegisterBtn says "One-Click Register / Refresh"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAccountRegisterBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAccountRegisterBtn", nil)
+}
+
+// CloudflareWarpAccountRegistering says "Registering..."
+// in the language the app shows.
+func CloudflareWarpAccountRegistering() string {
+	return In(i18n.Locale()).CloudflareWarpAccountRegistering()
+}
+
+// CloudflareWarpAccountRegistering says "Registering..."
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAccountRegistering() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAccountRegistering", nil)
+}
+
+// CloudflareWarpLicenseTitle says "WARP+ License Key"
+// in the language the app shows.
+func CloudflareWarpLicenseTitle() string { return In(i18n.Locale()).CloudflareWarpLicenseTitle() }
+
+// CloudflareWarpLicenseTitle says "WARP+ License Key"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpLicenseTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpLicenseTitle", nil)
+}
+
+// CloudflareWarpLicenseBindBtn says "Bind License"
+// in the language the app shows.
+func CloudflareWarpLicenseBindBtn() string { return In(i18n.Locale()).CloudflareWarpLicenseBindBtn() }
+
+// CloudflareWarpLicenseBindBtn says "Bind License"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpLicenseBindBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpLicenseBindBtn", nil)
+}
+
+// CloudflareWarpLicenseBinding says "Binding..."
+// in the language the app shows.
+func CloudflareWarpLicenseBinding() string { return In(i18n.Locale()).CloudflareWarpLicenseBinding() }
+
+// CloudflareWarpLicenseBinding says "Binding..."
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpLicenseBinding() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpLicenseBinding", nil)
+}
+
+// CloudflareWarpTransport says "Default Transport Protocol"
+// in the language the app shows.
+func CloudflareWarpTransport() string { return In(i18n.Locale()).CloudflareWarpTransport() }
+
+// CloudflareWarpTransport says "Default Transport Protocol"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransport() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransport", nil)
+}
+
+// CloudflareWarpTransportAuto says "MASQUE Auto Fallback (H3 ➔ H2 Recommended)"
+// in the language the app shows.
+func CloudflareWarpTransportAuto() string { return In(i18n.Locale()).CloudflareWarpTransportAuto() }
+
+// CloudflareWarpTransportAuto says "MASQUE Auto Fallback (H3 ➔ H2 Recommended)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportAuto() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAuto", nil)
+}
+
+// CloudflareWarpTransportMasque says "MASQUE (Proprietary HTTP/3 + HTTP/2)"
+// in the language the app shows.
+func CloudflareWarpTransportMasque() string { return In(i18n.Locale()).CloudflareWarpTransportMasque() }
+
+// CloudflareWarpTransportMasque says "MASQUE (Proprietary HTTP/3 + HTTP/2)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportMasque() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasque", nil)
+}
+
+// CloudflareWarpTransportWireGuard says "WireGuard (UDP 2408 + Reserved)"
+// in the language the app shows.
+func CloudflareWarpTransportWireGuard() string {
+	return In(i18n.Locale()).CloudflareWarpTransportWireGuard()
+}
+
+// CloudflareWarpTransportWireGuard says "WireGuard (UDP 2408 + Reserved)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportWireGuard() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuard", nil)
+}
+
+// CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint"
+// in the language the app shows.
+func CloudflareWarpCleanEndpoint() string { return In(i18n.Locale()).CloudflareWarpCleanEndpoint() }
+
+// CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpCleanEndpoint() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpCleanEndpoint", nil)
+}
+
+// CloudflareWarpCleanEndpointPlaceholder says "Leave blank for default (162.159.198.2:443)"
+// in the language the app shows.
+func CloudflareWarpCleanEndpointPlaceholder() string {
+	return In(i18n.Locale()).CloudflareWarpCleanEndpointPlaceholder()
+}
+
+// CloudflareWarpCleanEndpointPlaceholder says "Leave blank for default (162.159.198.2:443)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpCleanEndpointPlaceholder() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpCleanEndpointPlaceholder", nil)
+}
+
+// CloudflareWarpAttachedNodes says "Nodes with WARP Egress Enabled"
+// in the language the app shows.
+func CloudflareWarpAttachedNodes() string { return In(i18n.Locale()).CloudflareWarpAttachedNodes() }
+
+// CloudflareWarpAttachedNodes says "Nodes with WARP Egress Enabled"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAttachedNodes() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAttachedNodes", nil)
+}
+
+// CloudflareWarpNoAttachedNodes says "No nodes have WARP egress enabled (can be enabled in node editor)"
+// in the language the app shows.
+func CloudflareWarpNoAttachedNodes() string { return In(i18n.Locale()).CloudflareWarpNoAttachedNodes() }
+
+// CloudflareWarpNoAttachedNodes says "No nodes have WARP egress enabled (can be enabled in node editor)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpNoAttachedNodes() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpNoAttachedNodes", nil)
+}
+
+// CloudflareTunnelTitle says "Zero Trust Tunnel Ingress"
+// in the language the app shows.
+func CloudflareTunnelTitle() string { return In(i18n.Locale()).CloudflareTunnelTitle() }
+
+// CloudflareTunnelTitle says "Zero Trust Tunnel Ingress"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelTitle", nil)
+}
+
+// CloudflareTunnelEnable says "Enable Cloudflare Tunnel Ingress"
+// in the language the app shows.
+func CloudflareTunnelEnable() string { return In(i18n.Locale()).CloudflareTunnelEnable() }
+
+// CloudflareTunnelEnable says "Enable Cloudflare Tunnel Ingress"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelEnable() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelEnable", nil)
+}
+
+// CloudflareTunnelToken says "Tunnel Token"
+// in the language the app shows.
+func CloudflareTunnelToken() string { return In(i18n.Locale()).CloudflareTunnelToken() }
+
+// CloudflareTunnelToken says "Tunnel Token"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelToken() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelToken", nil)
+}
+
+// CloudflareTunnelTokenPlaceholder says "Paste Tunnel Token from Cloudflare Zero Trust dashboard"
+// in the language the app shows.
+func CloudflareTunnelTokenPlaceholder() string {
+	return In(i18n.Locale()).CloudflareTunnelTokenPlaceholder()
+}
+
+// CloudflareTunnelTokenPlaceholder says "Paste Tunnel Token from Cloudflare Zero Trust dashboard"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelTokenPlaceholder() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelTokenPlaceholder", nil)
+}
+
+// CloudflareTunnelProtocol says "Tunnel Protocol"
+// in the language the app shows.
+func CloudflareTunnelProtocol() string { return In(i18n.Locale()).CloudflareTunnelProtocol() }
+
+// CloudflareTunnelProtocol says "Tunnel Protocol"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelProtocol() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelProtocol", nil)
+}
+
+// CloudflareTunnelHAConnections says "HA Connections"
+// in the language the app shows.
+func CloudflareTunnelHAConnections() string { return In(i18n.Locale()).CloudflareTunnelHAConnections() }
+
+// CloudflareTunnelHAConnections says "HA Connections"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelHAConnections() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelHAConnections", nil)
+}
+
+// CloudflareTunnelPostQuantum says "Post-Quantum Cryptography"
+// in the language the app shows.
+func CloudflareTunnelPostQuantum() string { return In(i18n.Locale()).CloudflareTunnelPostQuantum() }
+
+// CloudflareTunnelPostQuantum says "Post-Quantum Cryptography"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelPostQuantum() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelPostQuantum", nil)
+}
+
+// CloudflareTunnelConnected says "Connected"
+// in the language the app shows.
+func CloudflareTunnelConnected() string { return In(i18n.Locale()).CloudflareTunnelConnected() }
+
+// CloudflareTunnelConnected says "Connected"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelConnected() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelConnected", nil)
+}
+
+// CloudflareTunnelDisconnected says "Disconnected"
+// in the language the app shows.
+func CloudflareTunnelDisconnected() string { return In(i18n.Locale()).CloudflareTunnelDisconnected() }
+
+// CloudflareTunnelDisconnected says "Disconnected"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelDisconnected() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelDisconnected", nil)
+}
+
+// NodeEditorEnableWarp says "Enable WARP Egress Anonymity"
+// in the language the app shows.
+func NodeEditorEnableWarp() string { return In(i18n.Locale()).NodeEditorEnableWarp() }
+
+// NodeEditorEnableWarp says "Enable WARP Egress Anonymity"
+// in the language of msgs.
+func (msgs Messages) NodeEditorEnableWarp() string {
+	return Catalog.Format(msgs.locale, "nodeEditorEnableWarp", nil)
+}
+
+// NodeEditorEnableWarpDesc says "Chains Cloudflare WARP egress after this proxy node, masking the real VPS IP and unblocking geo-restricted services"
+// in the language the app shows.
+func NodeEditorEnableWarpDesc() string { return In(i18n.Locale()).NodeEditorEnableWarpDesc() }
+
+// NodeEditorEnableWarpDesc says "Chains Cloudflare WARP egress after this proxy node, masking the real VPS IP and unblocking geo-restricted services"
+// in the language of msgs.
+func (msgs Messages) NodeEditorEnableWarpDesc() string {
+	return Catalog.Format(msgs.locale, "nodeEditorEnableWarpDesc", nil)
+}
+
+// NodeEditorWarpNaiveNotice says "NaiveProxy nodes only support TCP and will automatically detour WARP over pure-TCP MASQUE HTTP/2"
+// in the language the app shows.
+func NodeEditorWarpNaiveNotice() string { return In(i18n.Locale()).NodeEditorWarpNaiveNotice() }
+
+// NodeEditorWarpNaiveNotice says "NaiveProxy nodes only support TCP and will automatically detour WARP over pure-TCP MASQUE HTTP/2"
+// in the language of msgs.
+func (msgs Messages) NodeEditorWarpNaiveNotice() string {
+	return Catalog.Format(msgs.locale, "nodeEditorWarpNaiveNotice", nil)
+}
+
+// NodeEditorProtocolWarp says "Cloudflare WARP (Direct)"
+// in the language the app shows.
+func NodeEditorProtocolWarp() string { return In(i18n.Locale()).NodeEditorProtocolWarp() }
+
+// NodeEditorProtocolWarp says "Cloudflare WARP (Direct)"
+// in the language of msgs.
+func (msgs Messages) NodeEditorProtocolWarp() string {
+	return Catalog.Format(msgs.locale, "nodeEditorProtocolWarp", nil)
+}
+
+// RoutingWarp says "WARP Direct"
+// in the language the app shows.
+func RoutingWarp() string { return In(i18n.Locale()).RoutingWarp() }
+
+// RoutingWarp says "WARP Direct"
+// in the language of msgs.
+func (msgs Messages) RoutingWarp() string {
+	return Catalog.Format(msgs.locale, "routingWarp", nil)
+}
+
+// RoutingWarpLanProtected says "LAN Direct Protected"
+// in the language the app shows.
+func RoutingWarpLanProtected() string { return In(i18n.Locale()).RoutingWarpLanProtected() }
+
+// RoutingWarpLanProtected says "LAN Direct Protected"
+// in the language of msgs.
+func (msgs Messages) RoutingWarpLanProtected() string {
+	return Catalog.Format(msgs.locale, "routingWarpLanProtected", nil)
+}
+
+// RuleActionWarpHint says "WARP Direct Outbound: Egress through the built-in Cloudflare WARP node to anonymize your home IP while automatically …"
+// in the language the app shows.
+func RuleActionWarpHint() string { return In(i18n.Locale()).RuleActionWarpHint() }
+
+// RuleActionWarpHint says "WARP Direct Outbound: Egress through the built-in Cloudflare WARP node to anonymize your home IP while automatically …"
+// in the language of msgs.
+func (msgs Messages) RuleActionWarpHint() string {
+	return Catalog.Format(msgs.locale, "ruleActionWarpHint", nil)
+}
+
+// RuleDrawerDescWarp says "Traffic matching this rule will route through the built-in Cloudflare WARP node, hiding your public IP while retainin…"
+// in the language the app shows.
+func RuleDrawerDescWarp() string { return In(i18n.Locale()).RuleDrawerDescWarp() }
+
+// RuleDrawerDescWarp says "Traffic matching this rule will route through the built-in Cloudflare WARP node, hiding your public IP while retainin…"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDescWarp() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDescWarp", nil)
+}
+
+// BuiltinTag says "Built-in"
+// in the language the app shows.
+func BuiltinTag() string { return In(i18n.Locale()).BuiltinTag() }
+
+// BuiltinTag says "Built-in"
+// in the language of msgs.
+func (msgs Messages) BuiltinTag() string {
+	return Catalog.Format(msgs.locale, "builtinTag", nil)
+}
+
+// BuiltinWarpNodeName says "Cloudflare WARP (Built-in Direct)"
+// in the language the app shows.
+func BuiltinWarpNodeName() string { return In(i18n.Locale()).BuiltinWarpNodeName() }
+
+// BuiltinWarpNodeName says "Cloudflare WARP (Built-in Direct)"
+// in the language of msgs.
+func (msgs Messages) BuiltinWarpNodeName() string {
+	return Catalog.Format(msgs.locale, "builtinWarpNodeName", nil)
+}
+
+// CloudflareDirectWarpTakeover says "Route Direct Traffic to WARP (Direct ➔ WARP)"
+// in the language the app shows.
+func CloudflareDirectWarpTakeover() string { return In(i18n.Locale()).CloudflareDirectWarpTakeover() }
+
+// CloudflareDirectWarpTakeover says "Route Direct Traffic to WARP (Direct ➔ WARP)"
+// in the language of msgs.
+func (msgs Messages) CloudflareDirectWarpTakeover() string {
+	return Catalog.Format(msgs.locale, "cloudflareDirectWarpTakeover", nil)
+}
+
+// CloudflareDirectWarpTakeoverDesc says "Automatically route direct domestic traffic through the built-in WARP node while preserving local LAN subnet connecti…"
+// in the language the app shows.
+func CloudflareDirectWarpTakeoverDesc() string {
+	return In(i18n.Locale()).CloudflareDirectWarpTakeoverDesc()
+}
+
+// CloudflareDirectWarpTakeoverDesc says "Automatically route direct domestic traffic through the built-in WARP node while preserving local LAN subnet connecti…"
+// in the language of msgs.
+func (msgs Messages) CloudflareDirectWarpTakeoverDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareDirectWarpTakeoverDesc", nil)
+}
+
+// CloudflareWarpProbeURL says "WARP Probe URL"
+// in the language the app shows.
+func CloudflareWarpProbeURL() string { return In(i18n.Locale()).CloudflareWarpProbeURL() }
+
+// CloudflareWarpProbeURL says "WARP Probe URL"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpProbeURL() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpProbeURL", nil)
+}
+
+// CloudflareWarpProbeURLPlaceholder says "Default http://connect.rom.miui.com/generate_204"
+// in the language the app shows.
+func CloudflareWarpProbeURLPlaceholder() string {
+	return In(i18n.Locale()).CloudflareWarpProbeURLPlaceholder()
+}
+
+// CloudflareWarpProbeURLPlaceholder says "Default http://connect.rom.miui.com/generate_204"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpProbeURLPlaceholder() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpProbeURLPlaceholder", nil)
+}

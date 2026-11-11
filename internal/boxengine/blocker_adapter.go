@@ -258,6 +258,9 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 	if tag == "block" || outboundType == "block" {
 		return &rejectOutbound{Outbound: ob}, nil
 	}
+	if strings.HasPrefix(tag, "raw-node-") {
+		return ob, nil
+	}
 	if r.blocker == nil && r.fm == nil {
 		return ob, nil
 	}

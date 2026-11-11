@@ -17,6 +17,7 @@ import (
 	"naive-client/internal/routing"
 	"naive-client/internal/tailnet"
 	"naive-client/internal/updater"
+	"naive-client/internal/warp"
 	"naive-client/locales"
 )
 
@@ -29,8 +30,9 @@ const (
 	appIconDock    = "dock"
 	appIconMenubar = "menubar"
 
-	defaultProbeURL    = "https://cp.cloudflare.com/generate_204"
-	defaultDownloadURL = "https://speed.cloudflare.com/__down?bytes=10000000"
+	defaultProbeURL     = "https://cp.cloudflare.com/generate_204"
+	defaultWarpProbeURL = "http://connect.rom.miui.com/generate_204"
+	defaultDownloadURL  = "https://speed.cloudflare.com/__down?bytes=10000000"
 )
 
 // PersistedState holds the client settings and configured NaiveProxy services.
@@ -92,6 +94,9 @@ type PersistedState struct {
 	TailnetAdvertiseExit   bool     `json:"tailnetAdvertiseExit"`
 	TailnetAdvertiseRoutes []string `json:"tailnetAdvertiseRoutes,omitempty"`
 
+	// Cloudflare integration (WARP egress & Tunnel ingress)
+	Cloudflare warp.Config `json:"cloudflare"`
+
 	// Engine diagnostic log level ("debug", "info", "warn", "error")
 	LogLevel string `json:"logLevel,omitempty"`
 }
@@ -144,6 +149,13 @@ func defaultPersistedState() PersistedState {
 		TailnetExposeMixedPort:  false,
 		TailnetAdvertiseExit:    false,
 		TailnetAdvertiseRoutes:  []string{},
+		Cloudflare: warp.Config{
+			DefaultMode: warp.ModeAuto,
+			Tunnel: warp.TunnelConfig{
+				HAConnections: 4,
+				Protocol:      "auto",
+			},
+		},
 		LogLevel:                "warn",
 	}
 }
@@ -205,10 +217,76 @@ func (a *app) resolveXrayBinaryPath() string {
 	return a.defaultXrayBinaryPath()
 }
 
-const secretTailnetAuthKey = "tailnet-auth-key"
+const (
+	secretTailnetAuthKey    = "tailnet-auth-key"
+	secretWarpWGPrivKey     = "cloudflare-warp-wg-privkey"
+	secretWarpMasquePrivKey = "cloudflare-warp-masque-privkey"
+	secretCloudflareToken   = "cloudflare-tunnel-token"
+)
 
 func (a *app) tailnetKeyFile() string {
 	return filepath.Join(a.userDataDir(), ".tailnet-key")
+}
+
+func (a *app) cloudflareSecretFile(name string) string {
+	return filepath.Join(a.userDataDir(), "."+name)
+}
+
+func (a *app) readSecretString(key string) string {
+	if !mygo.IsDev() && !a.headless {
+		val, err := mygo.Secrets.Get(key)
+		if err == nil && len(val) > 0 {
+			return string(val)
+		}
+		if errors.Is(err, mygo.ErrSecretNotFound) {
+			return ""
+		}
+	}
+	raw, err := os.ReadFile(a.cloudflareSecretFile(key))
+	if err == nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return ""
+}
+
+func (a *app) writeSecretString(key, val string) {
+	val = strings.TrimSpace(val)
+	if !mygo.IsDev() && !a.headless {
+		if val == "" {
+			_ = mygo.Secrets.Delete(key)
+		} else {
+			err := mygo.Secrets.Set(key, []byte(val))
+			if err == nil {
+				_ = os.Remove(a.cloudflareSecretFile(key))
+				return
+			}
+		}
+	}
+	path := a.cloudflareSecretFile(key)
+	if val == "" {
+		_ = os.Remove(path)
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, []byte(val), 0o600)
+}
+
+func (a *app) readCloudflareSecrets(cfg *warp.Config) {
+	if wgKey := a.readSecretString(secretWarpWGPrivKey); wgKey != "" {
+		cfg.Account.WGPrivateKey = wgKey
+	}
+	if mKey := a.readSecretString(secretWarpMasquePrivKey); mKey != "" {
+		cfg.Account.MASQUEPrivateKey = mKey
+	}
+	if tok := a.readSecretString(secretCloudflareToken); tok != "" {
+		cfg.Tunnel.Token = tok
+	}
+}
+
+func (a *app) writeCloudflareSecrets(cfg *warp.Config) {
+	a.writeSecretString(secretWarpWGPrivKey, cfg.Account.WGPrivateKey)
+	a.writeSecretString(secretWarpMasquePrivKey, cfg.Account.MASQUEPrivateKey)
+	a.writeSecretString(secretCloudflareToken, cfg.Tunnel.Token)
 }
 
 func (a *app) readTailnetAuthKey() string {
@@ -285,6 +363,13 @@ func (a *app) loadState() {
 	} else if st.TailnetAuthKey != "" {
 		// Migration: persist plaintext key from older state.json into secure store
 		a.writeTailnetAuthKey(st.TailnetAuthKey)
+		needsResave = true
+	}
+
+	a.readCloudflareSecrets(&st.Cloudflare)
+	if st.Cloudflare.Account.WGPrivateKey != "" || st.Cloudflare.Account.MASQUEPrivateKey != "" || st.Cloudflare.Tunnel.Token != "" {
+		// Migration: persist plaintext secrets from state.json into secure store
+		a.writeCloudflareSecrets(&st.Cloudflare)
 		needsResave = true
 	}
 	if st.Appearance == "" {
@@ -394,6 +479,7 @@ func (a *app) loadState() {
 	}
 	a.state = st
 	a.gatewayPortInput = fmt.Sprintf("%d", st.GatewayPort)
+	a.syncBuiltinWarpService()
 	a.syncRouter()
 	a.syncBlocker()
 	if a.tailnetMgr != nil {
@@ -408,14 +494,19 @@ func (a *app) saveState() {
 	if !a.stateLoaded {
 		return
 	}
+	a.syncBuiltinWarpService()
 	a.syncRouter()
 	if a.tailnetMgr != nil {
 		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
 	}
 	a.writeTailnetAuthKey(a.state.TailnetAuthKey)
+	a.writeCloudflareSecrets(&a.state.Cloudflare)
 
 	toPersist := a.state
 	toPersist.TailnetAuthKey = "" // never store plaintext auth key in state.json
+	toPersist.Cloudflare.Account.WGPrivateKey = ""
+	toPersist.Cloudflare.Account.MASQUEPrivateKey = ""
+	toPersist.Cloudflare.Tunnel.Token = ""
 
 	if len(toPersist.Services) == 0 {
 		if rawExisting, err := os.ReadFile(a.stateFilePath()); err == nil && len(rawExisting) > 0 {

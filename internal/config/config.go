@@ -32,7 +32,32 @@ const (
 	ProtoTUIC        Protocol = "tuic"
 	ProtoSOCKS5      Protocol = "socks5"
 	ProtoHTTP        Protocol = "http"
+	ProtoWARP        Protocol = "warp"
 )
+
+// BuiltinWarpServiceID is the reserved service ID for the automatically managed Cloudflare WARP direct node.
+const BuiltinWarpServiceID = "builtin-warp"
+
+// WarpTransport defines the underlying protocol for Cloudflare WARP.
+type WarpTransport string
+
+const (
+	WarpTransportAuto      WarpTransport = "auto"      // MASQUE H3 -> H2 -> WireGuard
+	WarpTransportMasque    WarpTransport = "masque"    // MASQUE (H3 + H2 fallback)
+	WarpTransportWireGuard WarpTransport = "wireguard" // Native WireGuard UDP
+)
+
+// WarpNodeConfig holds optional per-node overrides for Cloudflare WARP egress.
+type WarpNodeConfig struct {
+	Transport   WarpTransport `json:"transport,omitempty"`   // "auto", "masque", "wireguard"
+	Endpoint    string        `json:"endpoint,omitempty"`    // clean IP:port (e.g. "162.159.192.1:2408" or "162.159.198.2:443")
+	PrivateKey  string        `json:"privateKey,omitempty"`  // custom private key override; empty uses global account
+	AddressIPv4 string        `json:"addressIpv4,omitempty"` // e.g. "172.16.0.2/32"
+	AddressIPv6 string        `json:"addressIpv6,omitempty"` // e.g. "2606:4700:110:.../128"
+	Reserved    []uint8       `json:"reserved,omitempty"`    // WireGuard 3-byte client_id
+	PeerPubKey  string        `json:"peerPubKey,omitempty"`
+	MTU         int           `json:"mtu,omitempty"`         // default 1280
+}
 
 // ExecutionEngine specifies which underlying engine handles the outbound node.
 type ExecutionEngine string
@@ -106,6 +131,15 @@ type Service struct {
 
 	// ExtraJSON holds optional raw JSON key-values merged into the generated config.json.
 	ExtraJSON string `json:"extraJson,omitempty"`
+
+	// Cloudflare WARP egress chaining or standalone node settings
+	EnableWARP bool            `json:"enableWarp,omitempty"`
+	WARPConfig *WarpNodeConfig `json:"warpConfig,omitempty"`
+}
+
+// IsBuiltinWarp returns true if this service is the client's built-in direct Cloudflare WARP node.
+func (s Service) IsBuiltinWarp() bool {
+	return s.ID == BuiltinWarpServiceID
 }
 
 // EffectiveKind returns KindExternalProxy if Kind == KindExternalProxy, else KindManagedNaive.
@@ -134,6 +168,9 @@ func (s Service) EffectiveProtocol() Protocol {
 // ProtoNaive always runs as EngineSidecar because embedded sing-box requires CGO (cronet-go)
 // for native naive outbounds, which is disabled in pure-Go desktop builds.
 func (s Service) EffectiveEngine() ExecutionEngine {
+	if s.Protocol == ProtoWARP || s.EffectiveProtocol() == ProtoWARP {
+		return EngineSingBox
+	}
 	if s.Protocol == ProtoNaive {
 		return EngineSidecar
 	}
@@ -234,86 +271,118 @@ func (s Service) PrimaryProxy() string {
 
 // RedactedProxy returns a display-safe summary of the primary proxy (hiding password).
 func (s Service) RedactedProxy() string {
+	if s.EffectiveProtocol() == ProtoWARP {
+		ep := "auto"
+		if s.WARPConfig != nil && s.WARPConfig.Endpoint != "" {
+			ep = s.WARPConfig.Endpoint
+		}
+		mode := "masque"
+		if s.WARPConfig != nil && s.WARPConfig.Transport != "" {
+			mode = string(s.WARPConfig.Transport)
+		}
+		return fmt.Sprintf("warp://%s (%s)", ep, mode)
+	}
+	var res string
 	if s.EffectiveProtocol() != ProtoNaive && s.Server != "" {
 		port := s.ServerPort
 		if port <= 0 {
 			port = 443
 		}
-		return fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
-	}
-	if s.EffectiveKind() == KindExternalProxy {
+		res = fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
+	} else if s.EffectiveKind() == KindExternalProxy {
 		u, err := url.Parse(s.ExternalURI)
 		if err != nil || u.Host == "" {
-			return s.ExternalURI
-		}
-		if u.User != nil {
-			username := u.User.Username()
-			if username != "" {
-				u.User = url.UserPassword(username, "***")
+			res = s.ExternalURI
+		} else {
+			if u.User != nil {
+				username := u.User.Username()
+				if username != "" {
+					u.User = url.UserPassword(username, "***")
+				}
 			}
+			res = u.String()
 		}
-		return u.String()
-	}
-	raw := s.PrimaryProxy()
-	if raw == "" {
-		return "直连 (无代理)"
-	}
-	// If it's a proxy chain (comma-separated), redact each hop.
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		u, err := url.Parse(part)
-		if err != nil || u.Scheme == "" || u.Host == "" {
-			out = append(out, part)
-			continue
-		}
-		if u.User != nil {
-			username := u.User.Username()
-			if username != "" {
-				u.User = nil
-				out = append(out, fmt.Sprintf("%s://%s:***@%s", u.Scheme, username, u.Host))
-				continue
+	} else {
+		raw := s.PrimaryProxy()
+		if raw == "" {
+			res = "直连 (无代理)"
+		} else {
+			// If it's a proxy chain (comma-separated), redact each hop.
+			parts := strings.Split(raw, ",")
+			out := make([]string, 0, len(parts))
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				u, err := url.Parse(part)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					out = append(out, part)
+					continue
+				}
+				if u.User != nil {
+					username := u.User.Username()
+					if username != "" {
+						u.User = nil
+						out = append(out, fmt.Sprintf("%s://%s:***@%s", u.Scheme, username, u.Host))
+						continue
+					}
+				}
+				out = append(out, fmt.Sprintf("%s://%s", u.Scheme, u.Host))
 			}
+			res = strings.Join(out, " -> ")
 		}
-		out = append(out, fmt.Sprintf("%s://%s", u.Scheme, u.Host))
 	}
-	return strings.Join(out, " -> ")
+	if s.EnableWARP && s.EffectiveProtocol() != ProtoWARP {
+		return res + " → WARP"
+	}
+	return res
 }
 
 // CompactRemoteEndpoint returns a concise protocol://host:port summary without credentials
 // for clean display in service cards.
 func (s Service) CompactRemoteEndpoint() string {
+	if s.EffectiveProtocol() == ProtoWARP {
+		ep := "auto"
+		if s.WARPConfig != nil && s.WARPConfig.Endpoint != "" {
+			ep = s.WARPConfig.Endpoint
+		}
+		return fmt.Sprintf("warp://%s", ep)
+	}
+	var res string
 	if s.EffectiveProtocol() != ProtoNaive && s.Server != "" {
 		port := s.ServerPort
 		if port <= 0 {
 			port = 443
 		}
-		return fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
-	}
-	if s.EffectiveKind() == KindExternalProxy {
+		res = fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
+	} else if s.EffectiveKind() == KindExternalProxy {
 		u, err := url.Parse(s.ExternalURI)
 		if err != nil || u.Host == "" {
-			return s.ExternalURI
+			res = s.ExternalURI
+		} else {
+			res = fmt.Sprintf("%s://%s", u.Scheme, u.Host)
 		}
-		return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
-	}
-	raw := s.PrimaryProxy()
-	if raw == "" {
-		return ""
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		u, err := url.Parse(part)
-		if err != nil || u.Scheme == "" || u.Host == "" {
-			out = append(out, part)
-			continue
+	} else {
+		raw := s.PrimaryProxy()
+		if raw == "" {
+			res = ""
+		} else {
+			parts := strings.Split(raw, ",")
+			out := make([]string, 0, len(parts))
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				u, err := url.Parse(part)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					out = append(out, part)
+					continue
+				}
+				out = append(out, fmt.Sprintf("%s://%s", u.Scheme, u.Host))
+			}
+			res = strings.Join(out, " → ")
 		}
-		out = append(out, fmt.Sprintf("%s://%s", u.Scheme, u.Host))
 	}
-	return strings.Join(out, " → ")
+	if s.EnableWARP && s.EffectiveProtocol() != ProtoWARP && res != "" {
+		return res + " → WARP"
+	}
+	return res
 }
 
 // ListenEndpoint parses a listen URI into protocol, host, and port.
@@ -413,6 +482,16 @@ func ParseListenURI(raw string) (ListenEndpoint, error) {
 func (s Service) Validate() error {
 	if strings.TrimSpace(s.Name) == "" {
 		return errors.New("服务名称不能为空")
+	}
+	if s.EffectiveProtocol() == ProtoWARP {
+		if s.WARPConfig != nil && s.WARPConfig.Endpoint != "" {
+			if _, _, err := net.SplitHostPort(s.WARPConfig.Endpoint); err != nil {
+				if net.ParseIP(s.WARPConfig.Endpoint) == nil && strings.Contains(s.WARPConfig.Endpoint, ":") {
+					return fmt.Errorf("无效的 WARP 端点地址: %q", s.WARPConfig.Endpoint)
+				}
+			}
+		}
+		return nil
 	}
 	if s.EffectiveKind() == KindExternalProxy {
 		if strings.TrimSpace(s.ExternalURI) == "" {

@@ -520,16 +520,24 @@ func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 
-	// Switch to Logs tab via Cmd+5
+	// Switch to Cloudflare tab via Cmd+5
 	tt.Key(ui.Cmd, ui.Key5)
 	tt.Frame()
 
-	if a.activeTab != TabLogs {
-		t.Fatalf("expected activeTab = TabLogs after Cmd+5, got %v", a.activeTab)
+	if a.activeTab != TabCloudflare {
+		t.Fatalf("expected activeTab = TabCloudflare after Cmd+5, got %v", a.activeTab)
 	}
 
-	// Switch to Settings tab via Cmd+6
+	// Switch to Logs tab via Cmd+6
 	tt.Key(ui.Cmd, ui.Key6)
+	tt.Frame()
+
+	if a.activeTab != TabLogs {
+		t.Fatalf("expected activeTab = TabLogs after Cmd+6, got %v", a.activeTab)
+	}
+
+	// Switch to Settings tab via Cmd+7
+	tt.Key(ui.Cmd, ui.Key7)
 	tt.Frame()
 
 	if a.activeTab != TabSettings {

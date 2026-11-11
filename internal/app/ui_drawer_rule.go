@@ -136,6 +136,14 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 								})
 								ui.Text(c, cat.RuleDrawerDescDirect()).FontSize(11).TextColor(p.textMuted)
 
+							case routing.ActionWarp:
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
+									tagPill(c, cat.RoutingWarpLanProtected(), p.green, p.greenBg)
+									tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+								})
+								ui.Text(c, cat.RuleDrawerDescWarp()).FontSize(11).TextColor(p.textMuted)
+
 							case routing.ActionProxyTag:
 								tags := targetRule.Action.GetTags()
 								activeNodes := a.activeNodesForTags(tags)

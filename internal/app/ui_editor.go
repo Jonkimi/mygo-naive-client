@@ -23,6 +23,7 @@ var editorProtocols = []config.Protocol{
 	config.ProtoTUIC,
 	config.ProtoSOCKS5,
 	config.ProtoHTTP,
+	config.ProtoWARP,
 }
 
 var editorProtocolNames = []string{
@@ -35,6 +36,7 @@ var editorProtocolNames = []string{
 	"TUIC",
 	"SOCKS5 (External)",
 	"HTTP (External)",
+	"Cloudflare WARP (Direct)",
 }
 
 type editorForm struct {
@@ -84,6 +86,14 @@ type editorForm struct {
 
 	// External SOCKS5 / HTTP
 	externalURI string
+
+	// Cloudflare WARP
+	enableWARP     bool
+	warpModeIndex  int // 0: Auto (H3 ➔ H2), 1: MASQUE, 2: WireGuard
+	warpEndpoint   string
+	warpPrivateKey string
+	warpIPv4       string
+	warpIPv6       string
 
 	// Advanced Naive fields
 	tunnelTimeout string
@@ -200,6 +210,26 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		fingerprint = "chrome"
 	}
 
+	warpModeIdx := 0
+	warpEndpoint := ""
+	warpPrivKey := ""
+	warpIPv4 := ""
+	warpIPv6 := ""
+	if svc.WARPConfig != nil {
+		switch svc.WARPConfig.Transport {
+		case config.WarpTransportAuto:
+			warpModeIdx = 0
+		case config.WarpTransportMasque:
+			warpModeIdx = 1
+		case config.WarpTransportWireGuard:
+			warpModeIdx = 2
+		}
+		warpEndpoint = svc.WARPConfig.Endpoint
+		warpPrivKey = svc.WARPConfig.PrivateKey
+		warpIPv4 = svc.WARPConfig.AddressIPv4
+		warpIPv6 = svc.WARPConfig.AddressIPv6
+	}
+
 	a.editor = editorForm{
 		open:           true,
 		isNew:          isNew,
@@ -233,6 +263,12 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		congestionCtl:  congestion,
 		zeroRTT:        svc.ZeroRTTHandshake,
 		externalURI:    svc.ExternalURI,
+		enableWARP:     svc.EnableWARP,
+		warpModeIndex:  warpModeIdx,
+		warpEndpoint:   warpEndpoint,
+		warpPrivateKey: warpPrivKey,
+		warpIPv4:       warpIPv4,
+		warpIPv6:       warpIPv6,
 		concurrencyStr: conc,
 		tunnelTimeout:  tunnel,
 		idleTimeout:    idle,
@@ -273,6 +309,59 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		listens = splitMultiValues(a.editor.listenInput)
 	}
 
+	attachWARP := func(s *config.Service) {
+		if a.editor.enableWARP {
+			var transport config.WarpTransport
+			switch a.editor.warpModeIndex {
+			case 0:
+				transport = config.WarpTransportAuto
+			case 1:
+				transport = config.WarpTransportMasque
+			case 2:
+				transport = config.WarpTransportWireGuard
+			}
+			s.EnableWARP = true
+			s.WARPConfig = &config.WarpNodeConfig{
+				Transport:   transport,
+				Endpoint:    strings.TrimSpace(a.editor.warpEndpoint),
+				PrivateKey:  strings.TrimSpace(a.editor.warpPrivateKey),
+				AddressIPv4: strings.TrimSpace(a.editor.warpIPv4),
+				AddressIPv6: strings.TrimSpace(a.editor.warpIPv6),
+			}
+		}
+	}
+
+	if proto == config.ProtoWARP {
+		var transport config.WarpTransport
+		switch a.editor.warpModeIndex {
+		case 0:
+			transport = config.WarpTransportAuto
+		case 1:
+			transport = config.WarpTransportMasque
+		case 2:
+			transport = config.WarpTransportWireGuard
+		}
+		svc := config.Service{
+			ID:        a.editor.svcID,
+			Name:      strings.TrimSpace(a.editor.name),
+			AutoStart: a.editor.autoStart,
+			Protocol:  config.ProtoWARP,
+			Engine:    config.EngineSingBox,
+			Tags:      tags,
+			WARPConfig: &config.WarpNodeConfig{
+				Transport:   transport,
+				Endpoint:    strings.TrimSpace(a.editor.warpEndpoint),
+				PrivateKey:  strings.TrimSpace(a.editor.warpPrivateKey),
+				AddressIPv4: strings.TrimSpace(a.editor.warpIPv4),
+				AddressIPv6: strings.TrimSpace(a.editor.warpIPv6),
+			},
+		}
+		if err := svc.Validate(); err != nil {
+			return svc, err
+		}
+		return svc, nil
+	}
+
 	if proto == config.ProtoSOCKS5 || proto == config.ProtoHTTP {
 		svc := config.Service{
 			ID:          a.editor.svcID,
@@ -284,6 +373,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 			Tags:        tags,
 			ExternalURI: strings.TrimSpace(a.editor.externalURI),
 		}
+		attachWARP(&svc)
 		if err := svc.Validate(); err != nil {
 			return svc, err
 		}
@@ -326,6 +416,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 				svc.IdleTimeout = v
 			}
 		}
+		attachWARP(&svc)
 		if err := svc.Validate(); err != nil {
 			return svc, err
 		}
@@ -406,6 +497,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		}
 	}
 	svc.NoPostQuantum = a.editor.noPostQuantum
+	attachWARP(&svc)
 
 	if err := svc.Validate(); err != nil {
 		return svc, err
@@ -759,6 +851,46 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 
 		case config.ProtoSOCKS5, config.ProtoHTTP:
 			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel(), &a.editor.externalURI, cat.ExternalURIHint())
+
+		case config.ProtoWARP:
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Column(c).Gap(2).Children(func() {
+					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+					ui.Text(c, "Cloudflare WARP 直连出站").FontSize(11).TextColor(p.textMuted)
+				})
+				tagPill(c, "Sing-Box 原生", p.green, p.greenBg)
+			})
+
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.CloudflareWarpTransport()).FontSize(13).FontWeight(500).TextColor(p.text)
+				transportLabels := []string{"Auto (H3 ➔ H2)", "MASQUE", "WireGuard"}
+				segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, transportLabels)
+			})
+
+			labeledInput(c, p, "inp-warp-direct-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpCleanEndpointPlaceholder())
+		}
+
+		if proto != config.ProtoWARP {
+			ui.Column(c).Gap(8).Padding(12).Radius(8).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				switchRow(c, p, "inp-enable-warp-toggle", cat.NodeEditorEnableWarp(), &a.editor.enableWARP)
+				ui.Text(c, cat.NodeEditorEnableWarpDesc()).FontSize(11).TextColor(p.textMuted)
+
+				if a.editor.enableWARP {
+					if proto == config.ProtoNaive || proto == config.ProtoHTTP {
+						ui.Row(c).Gap(6).Padding(6, 8, 6, 8).Radius(6).Background(p.accentBg).Children(func() {
+							ui.Text(c, cat.NodeEditorWarpNaiveNotice()).FontSize(11).TextColor(p.accent)
+						})
+					} else {
+						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+							ui.Text(c, cat.CloudflareWarpTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
+							transportLabels := []string{"Auto (H3 ➔ H2)", "MASQUE", "WireGuard"}
+							segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, transportLabels)
+						})
+					}
+
+					labeledInput(c, p, "inp-warp-chained-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpCleanEndpointPlaceholder())
+				}
+			})
 		}
 	})
 }
@@ -768,6 +900,12 @@ func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
 	proto := editorProtocols[a.editor.protoIndex]
 
 	ui.Column(c).Gap(12).Children(func() {
+		if proto == config.ProtoWARP || a.editor.enableWARP {
+			labeledInput(c, p, "inp-warp-privkey-adv", "WARP PrivateKey (可选自定义私钥)", &a.editor.warpPrivateKey, "留空使用全局注册凭证")
+			labeledInput(c, p, "inp-warp-ipv4-adv", "WARP 虚拟 IPv4 (可选覆盖)", &a.editor.warpIPv4, "172.16.0.2/32")
+			labeledInput(c, p, "inp-warp-ipv6-adv", "WARP 虚拟 IPv6 (可选覆盖)", &a.editor.warpIPv6, "2606:4700:110:8a36::2/128")
+		}
+
 		if proto == config.ProtoNaive {
 			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 				ui.Box(c).Grow(1).Children(func() {

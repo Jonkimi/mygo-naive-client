@@ -31,6 +31,7 @@ import (
 	"naive-client/internal/telemetry"
 	"naive-client/internal/tunhelper"
 	"naive-client/internal/updater"
+	"naive-client/internal/warp"
 	"naive-client/locales"
 
 	"github.com/sagernet/sing-tun"
@@ -44,6 +45,7 @@ const (
 	TabRouting
 	TabInsights
 	TabTailnet
+	TabCloudflare
 	TabLogs
 	TabSettings
 )
@@ -184,6 +186,15 @@ type app struct {
 	importDlg  importDialogState
 	deleteDlg  deleteDialogState
 	ruleEditor ruleEditorForm
+
+	// Cloudflare workbench state
+	cloudflareSubTab       int
+	warpRegistering        bool
+	warpBindingLicense     bool
+	warpLicenseInput       string
+	warpCleanEndpointInput string
+	tunnelTokenInput       string
+	tunnelTokenVisible     bool
 
 	pendingToast string
 	clipboardMem string // fallback clipboard used in headless tests
@@ -495,7 +506,7 @@ func (a *app) initSubsystems() {
 		go func() {
 			time.Sleep(200 * time.Millisecond)
 			if a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-				a.mgr.ProbeService(svc, a.state.ProbeURL)
+				a.mgr.ProbeService(svc, a.probeURLForService(svc))
 			}
 		}()
 	}
@@ -643,7 +654,6 @@ func (a *app) probeAllRunningServicesSilent() {
 		return
 	}
 
-	probeURL := a.state.ProbeURL
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -655,7 +665,7 @@ func (a *app) probeAllRunningServicesSilent() {
 				defer wg.Done()
 				// ProbeServiceCtx updates inst.status.Latency and fires OnProbeSuccess,
 				// which automatically records probe RTT into QualityTracker via a.tracker.RecordProbe.
-				_, _ = a.mgr.ProbeServiceCtx(ctx, s, probeURL)
+				_, _ = a.mgr.ProbeServiceCtx(ctx, s, a.probeURLForService(s))
 			}(svc)
 		}
 		wg.Wait()
@@ -762,12 +772,25 @@ func (a *app) stopAllServices() {
 	a.rebuildTrayMenu()
 }
 
+func (a *app) probeURLForService(svc config.Service) string {
+	if svc.EffectiveProtocol() == config.ProtoWARP {
+		if strings.TrimSpace(a.state.Cloudflare.ProbeURL) != "" {
+			return strings.TrimSpace(a.state.Cloudflare.ProbeURL)
+		}
+		return defaultWarpProbeURL
+	}
+	if strings.TrimSpace(a.state.ProbeURL) != "" {
+		return a.state.ProbeURL
+	}
+	return defaultProbeURL
+}
+
 func (a *app) triggerServiceProbe(svc config.Service) {
 	if a.mgr.StatusOf(svc.ID).State != runner.StateRunning {
 		a.toast(a.catalog().TestRequiresRunning())
 		return
 	}
-	a.mgr.ProbeService(svc, a.state.ProbeURL)
+	a.mgr.ProbeService(svc, a.probeURLForService(svc))
 }
 
 func (a *app) triggerServiceDownloadTest(svc config.Service) {
@@ -806,7 +829,6 @@ func (a *app) triggerBatchTest() {
 	a.batchTesting = true
 	a.batchStage = "测延迟中..."
 
-	probeURL := a.state.ProbeURL
 	downloadURL := a.state.DownloadTestURL
 
 	go func() {
@@ -827,7 +849,7 @@ func (a *app) triggerBatchTest() {
 			wg.Add(1)
 			go func(s config.Service) {
 				defer wg.Done()
-				_, _ = a.mgr.ProbeServiceCtx(ctx, s, probeURL)
+				_, _ = a.mgr.ProbeServiceCtx(ctx, s, a.probeURLForService(s))
 			}(svc)
 		}
 		wg.Wait()
@@ -1166,6 +1188,78 @@ func (a *app) triggerSeamlessXrayUpdate(auto ...bool) {
 			} else {
 				a.toast(fmt.Sprintf("已成功安装/更新 Xray-core 至 %s", rel.TagName))
 			}
+		})
+	}()
+}
+
+// Cloudflare WARP registration and license actions
+func (a *app) triggerWarpRegister() {
+	if a.warpRegistering {
+		return
+	}
+	a.warpRegistering = true
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+	go func() {
+		defer func() {
+			a.dispatchUI(func() {
+				a.warpRegistering = false
+				if a.win != nil {
+					a.win.Invalidate()
+				}
+			})
+		}()
+		cli := warp.NewClient(nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		acc, err := cli.ProvisionAll(ctx, a.state.Cloudflare.Account, a.warpLicenseInput)
+		a.dispatchUI(func() {
+			if err != nil {
+				a.toast("WARP 注册失败: " + err.Error())
+				return
+			}
+			a.state.Cloudflare.Account = acc
+			a.saveState()
+			a.toast("WARP 凭证注册成功: " + acc.IPv4)
+		})
+	}()
+}
+
+func (a *app) triggerWarpBindLicense() {
+	key := strings.TrimSpace(a.warpLicenseInput)
+	if key == "" {
+		a.toast("License 密钥不能为空")
+		return
+	}
+	if a.warpBindingLicense {
+		return
+	}
+	a.warpBindingLicense = true
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+	go func() {
+		defer func() {
+			a.dispatchUI(func() {
+				a.warpBindingLicense = false
+				if a.win != nil {
+					a.win.Invalidate()
+				}
+			})
+		}()
+		cli := warp.NewClient(nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		err := cli.BindLicense(ctx, &a.state.Cloudflare.Account, key)
+		a.dispatchUI(func() {
+			if err != nil {
+				a.toast("绑定 License 失败: " + err.Error())
+				return
+			}
+			a.state.Cloudflare.Account.LicenseKey = key
+			a.saveState()
+			a.toast("WARP+ License 绑定成功: " + a.state.Cloudflare.Account.AccountType)
 		})
 	}()
 }
@@ -1612,6 +1706,7 @@ func (a *app) startGateway() error {
 		TailnetMode:           tnMode,
 		TailnetHostExcludes:   tnExcludes,
 		TailnetMagicDNSSuffix: tnSuffix,
+		CloudflareConfig:      &a.state.Cloudflare,
 		StateDir:              a.userDataDir(),
 		LogLevel:              normalizeLogLevel(a.state.LogLevel),
 		OnLog:                 a.appendGatewayLog,
@@ -2252,6 +2347,8 @@ func (a *app) gatewayConfigSignature() string {
 		ExternalURI string
 		Tags        []string
 		Listens     []string
+		EnableWARP  bool
+		WARPConfig  *config.WarpNodeConfig
 	}
 	svcs := make([]svcSig, len(a.state.Services))
 	for i, s := range a.state.Services {
@@ -2265,6 +2362,8 @@ func (a *app) gatewayConfigSignature() string {
 			ExternalURI: s.ExternalURI,
 			Tags:        s.Tags,
 			Listens:     s.Listens,
+			EnableWARP:  s.EnableWARP,
+			WARPConfig:  s.WARPConfig,
 		}
 	}
 	var allocPorts map[string]int
@@ -2272,35 +2371,37 @@ func (a *app) gatewayConfigSignature() string {
 		allocPorts = a.mgr.AllocatedPorts()
 	}
 	sigObj := struct {
-		Port           int
-		TrafficMode    string
-		Svcs           []svcSig
-		AllocatedPorts map[string]int
-		Rules          []routing.Rule
-		Final          routing.RouteAction
-		HasSiteDB      bool
-		HasIPDB        bool
-		GeoTag         string
+		Port             int
+		TrafficMode      string
+		Svcs             []svcSig
+		AllocatedPorts   map[string]int
+		Rules            []routing.Rule
+		Final            routing.RouteAction
+		HasSiteDB        bool
+		HasIPDB          bool
+		GeoTag           string
 		BootstrapDomains []string
 		Bootstrap        string
-		Domestic       string
-		Remote         string
-		PreferIPv4     bool
+		Domestic         string
+		Remote           string
+		PreferIPv4       bool
+		Cloudflare       warp.Config
 	}{
-		Port:           a.state.GatewayPort,
-		TrafficMode:    engineTrafficMode(a.state.TrafficMode),
-		Svcs:           svcs,
-		AllocatedPorts: allocPorts,
-		Rules:          a.state.RoutingRules,
-		Final:          a.state.RoutingFinal,
-		HasSiteDB:      a.cachedSiteDB != nil,
-		HasIPDB:        a.cachedIPDB != nil,
-		GeoTag:         a.localGeodataVersion,
+		Port:             a.state.GatewayPort,
+		TrafficMode:      engineTrafficMode(a.state.TrafficMode),
+		Svcs:             svcs,
+		AllocatedPorts:   allocPorts,
+		Rules:            a.state.RoutingRules,
+		Final:            a.state.RoutingFinal,
+		HasSiteDB:        a.cachedSiteDB != nil,
+		HasIPDB:          a.cachedIPDB != nil,
+		GeoTag:           a.localGeodataVersion,
 		BootstrapDomains: a.collectBootstrapDomains(),
 		Bootstrap:        a.state.BootstrapDNS,
-		Domestic:       a.effectiveDomesticDNS(),
-		Remote:         a.effectiveRemoteDNS(),
-		PreferIPv4:     a.state.PreferIPv4,
+		Domestic:         a.effectiveDomesticDNS(),
+		Remote:           a.effectiveRemoteDNS(),
+		PreferIPv4:       a.state.PreferIPv4,
+		Cloudflare:       a.state.Cloudflare,
 	}
 	return fmt.Sprintf("%#v", sigObj)
 }
@@ -2318,6 +2419,93 @@ func (a *app) syncRouter() {
 		a.gateway.UpdateNodes(a.state.Services, allocPorts, activeIDs)
 		if !a.state.GatewayEnabled || a.gatewayConfigSignature() != a.lastGatewaySig {
 			_ = a.startGateway()
+		}
+	}
+}
+
+func (a *app) isBuiltinWarpNeeded() bool {
+	if a.state.Cloudflare.DirectWarpEnabled {
+		return true
+	}
+	if a.state.RoutingFinal.Type == routing.ActionWarp {
+		return true
+	}
+	for _, r := range a.state.RoutingRules {
+		if r.Enabled && r.Action.Type == routing.ActionWarp {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) syncBuiltinWarpService() {
+	needed := a.isBuiltinWarpNeeded()
+	foundIdx := -1
+	for i, s := range a.state.Services {
+		if s.IsBuiltinWarp() {
+			foundIdx = i
+			break
+		}
+	}
+
+	if needed {
+		cat := a.catalog()
+		nodeName := cat.BuiltinWarpNodeName()
+		if nodeName == "" {
+			nodeName = "Cloudflare WARP (内置直连)"
+		}
+
+		cleanIP := a.state.Cloudflare.CleanIP
+		if a.state.Cloudflare.CleanPort > 0 && cleanIP != "" {
+			cleanIP = fmt.Sprintf("%s:%d", cleanIP, a.state.Cloudflare.CleanPort)
+		}
+
+		warpTransport := config.WarpTransportAuto
+		switch a.state.Cloudflare.DefaultMode {
+		case warp.ModeMASQUE:
+			warpTransport = config.WarpTransportMasque
+		case warp.ModeWireGuard:
+			warpTransport = config.WarpTransportWireGuard
+		}
+
+		warpSvc := config.Service{
+			ID:        config.BuiltinWarpServiceID,
+			Name:      nodeName,
+			Protocol:  config.ProtoWARP,
+			Engine:    config.EngineSingBox,
+			AutoStart: true,
+			WARPConfig: &config.WarpNodeConfig{
+				Transport: warpTransport,
+				Endpoint:  cleanIP,
+			},
+		}
+
+		if foundIdx < 0 {
+			a.state.Services = append(a.state.Services, warpSvc)
+		} else {
+			a.state.Services[foundIdx].Name = nodeName
+			a.state.Services[foundIdx].AutoStart = true
+			if a.state.Services[foundIdx].WARPConfig == nil {
+				a.state.Services[foundIdx].WARPConfig = warpSvc.WARPConfig
+			}
+			warpSvc = a.state.Services[foundIdx]
+		}
+
+		if a.mgr != nil && a.mgr.StatusOf(config.BuiltinWarpServiceID).State != runner.StateRunning {
+			if a.gateway != nil || a.state.GatewayEnabled {
+				_ = a.mgr.Start(warpSvc)
+			}
+		}
+
+		if !a.state.Cloudflare.Account.IsRegistered() && !a.warpRegistering {
+			a.triggerWarpRegister()
+		}
+	} else {
+		if foundIdx >= 0 {
+			if a.mgr != nil {
+				_ = a.mgr.Stop(config.BuiltinWarpServiceID)
+			}
+			a.state.Services = append(a.state.Services[:foundIdx], a.state.Services[foundIdx+1:]...)
 		}
 	}
 }

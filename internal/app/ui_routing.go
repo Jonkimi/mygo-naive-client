@@ -62,7 +62,7 @@ func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string,
 	if a.tracker == nil || a.mgr == nil {
 		return ""
 	}
-	if act.Type != routing.ActionProxyTag && act.Type != routing.ActionProxyPool {
+	if act.Type != routing.ActionProxyTag && act.Type != routing.ActionProxyPool && act.Type != routing.ActionWarp {
 		return ""
 	}
 	var running map[string]bool
@@ -76,6 +76,12 @@ func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string,
 	}
 	var candidates []string
 	switch act.Type {
+	case routing.ActionWarp:
+		for _, s := range a.state.Services {
+			if s.IsBuiltinWarp() && running[s.ID] {
+				candidates = append(candidates, s.ID)
+			}
+		}
 	case routing.ActionProxyTag:
 		tags := act.GetTags()
 		for _, s := range a.state.Services {
@@ -157,8 +163,10 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 		actionIdx = 1
 	case routing.ActionDirect:
 		actionIdx = 2
-	case routing.ActionBlock:
+	case routing.ActionWarp:
 		actionIdx = 3
+	case routing.ActionBlock:
+		actionIdx = 4
 	}
 
 	initTab := 0
@@ -199,8 +207,10 @@ func (a *app) openEditFinalRuleDialog() {
 		actionIdx = 1
 	case routing.ActionDirect:
 		actionIdx = 2
-	case routing.ActionBlock:
+	case routing.ActionWarp:
 		actionIdx = 3
+	case routing.ActionBlock:
+		actionIdx = 4
 	}
 
 	tags := a.state.RoutingFinal.GetTags()
@@ -254,6 +264,8 @@ func (a *app) cycleFinalAction() {
 	case routing.ActionProxyPool:
 		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionDirect}
 	case routing.ActionDirect:
+		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionWarp}
+	case routing.ActionWarp:
 		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyTag, Tag: "AI", Tags: []string{"AI"}}
 	default:
 		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}
@@ -503,6 +515,8 @@ func (a *app) saveRuleEditor() {
 	case 2:
 		act = routing.RouteAction{Type: routing.ActionDirect}
 	case 3:
+		act = routing.RouteAction{Type: routing.ActionWarp}
+	case 4:
 		act = routing.RouteAction{Type: routing.ActionBlock}
 	}
 
@@ -575,6 +589,9 @@ func (a *app) saveRuleEditor() {
 				a.state.RoutingRules[i].GeoSite = geosites
 				a.state.RoutingRules[i].GeoIP = geoips
 				a.state.RoutingRules[i].Action = act
+				if a.ruleEditor.ruleID == "preset-lan-direct" {
+					a.state.Cloudflare.DirectWarpEnabled = (act.Type == routing.ActionWarp)
+				}
 				break
 			}
 		}
@@ -670,6 +687,10 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 					statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
 				case routing.ActionDirect:
 					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
+					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+				case routing.ActionWarp:
+					statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
+					tagPill(c, cat.RoutingWarpLanProtected(), p.green, p.greenBg)
 					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
 				case routing.ActionProxyTag:
 					tags := rule.Action.GetTags()
@@ -949,6 +970,10 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[s
 				case routing.ActionDirect:
 					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
 					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+				case routing.ActionWarp:
+					statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
+					tagPill(c, cat.RoutingWarpLanProtected(), p.green, p.greenBg)
+					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
 				case routing.ActionProxyTag:
 					tags := a.state.RoutingFinal.GetTags()
 					activeNodes := a.activeNodesForTags(tags, runningIDs)
@@ -1013,11 +1038,13 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 				// Action selector
 				ui.Column(c).Gap(4).Children(func() {
 					ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					actions := []string{cat.RoutingTagPool(), cat.RoutingProxyPool(), cat.RoutingDirect(), cat.RoutingBlock()}
+					actions := []string{cat.RoutingTagPool(), cat.RoutingProxyPool(), cat.RoutingDirect(), cat.RoutingWarp(), cat.RoutingBlock()}
 					segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
 					switch a.ruleEditor.actionIndex {
 					case 2: // Direct
 						ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim)
+					case 3: // WARP Direct
+						ui.Text(c, cat.RuleActionWarpHint()).FontSize(11).TextColor(p.green)
 					case 0, 1: // Tag Pool or Proxy Pool
 						ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim)
 					}

@@ -20,10 +20,11 @@ import (
 	"naive-client/internal/blocker"
 	"naive-client/internal/config"
 	"naive-client/internal/geodata"
-	"naive-client/internal/tunhelper"
 	"naive-client/internal/routing"
 	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
+	"naive-client/internal/tunhelper"
+	"naive-client/internal/warp"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -71,6 +72,9 @@ type EngineOptions struct {
 	TailnetHostExcludes   []string
 	TailnetMagicDNSSuffix string
 	StateDir              string
+
+	// Cloudflare integration (WARP egress & Tunnel ingress)
+	CloudflareConfig *warp.Config
 
 	// Logging configuration
 	LogLevel string
@@ -152,6 +156,7 @@ type Engine struct {
 	connTracker       *BlockerConnectionTracker
 	onDemandStart     func(poolTag string)
 	onTelemetryUpdate func()
+	cloudflareConfig  *warp.Config
 	logLevel          string
 	logWriter         *boxPlatformWriter
 	boxCtx            context.Context
@@ -199,6 +204,7 @@ func New(opts EngineOptions) (*Engine, error) {
 		blocker:           opts.Blocker,
 		onDemandStart:     opts.OnDemandStart,
 		onTelemetryUpdate: opts.OnTelemetryUpdate,
+		cloudflareConfig:  opts.CloudflareConfig,
 		logLevel:          normLvl,
 		logWriter:         newBoxPlatformWriter(parsedLvl, opts.OnLog),
 	}
@@ -291,6 +297,10 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			OnTelemetryUpdate: telemetryUpdate,
 			Blocker:           bl,
 		}), nil
+	})
+
+	outbound.Register[warpMasqueOptions](outboundReg, "masque", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, mOpts warpMasqueOptions) (adapter.Outbound, error) {
+		return newWarpMasqueOutbound(ctx, router, logger, tag, mOpts, eng)
 	})
 
 	var finalOutboundReg adapter.OutboundRegistry = outboundReg
@@ -491,6 +501,8 @@ func resolveRouteOutbound(act routing.RouteAction, tailnetMode tailnet.Mode) str
 		return "block"
 	case routing.ActionProxyPool:
 		return "PROXY_POOL"
+	case routing.ActionWarp:
+		return "node-" + config.BuiltinWarpServiceID
 	case routing.ActionProxyTag:
 		if joined := joinCleanTags(act.GetTags()); joined != "" {
 			return "PROXY_TAG:" + joined
@@ -522,11 +534,29 @@ func (e *Engine) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 	if ob, ok := e.box.Outbound().Outbound("node-" + nodeID); ok {
 		return ob, true
 	}
+	if e.box.Endpoint() != nil {
+		if ep, ok := e.box.Endpoint().Get("node-" + nodeID); ok {
+			return ep, true
+		}
+	}
 	cleanID := strings.TrimPrefix(nodeID, "node-")
 	if ob, ok := e.box.Outbound().Outbound("node-" + cleanID); ok {
 		return ob, true
 	}
-	return e.box.Outbound().Outbound(nodeID)
+	if e.box.Endpoint() != nil {
+		if ep, ok := e.box.Endpoint().Get("node-" + cleanID); ok {
+			return ep, true
+		}
+	}
+	if ob, ok := e.box.Outbound().Outbound(nodeID); ok {
+		return ob, true
+	}
+	if e.box.Endpoint() != nil {
+		if ep, ok := e.box.Endpoint().Get(nodeID); ok {
+			return ep, true
+		}
+	}
+	return nil, false
 }
 
 // DialNode dials a destination address through the specified node outbound.
@@ -693,7 +723,9 @@ func resolveFinalOutbound(opts EngineOptions) string {
 	}
 	if opts.FinalAction != "" {
 		fa := strings.TrimSpace(opts.FinalAction)
-		if strings.HasPrefix(strings.ToUpper(fa), "PROXY_TAG:") {
+		if strings.EqualFold(fa, string(routing.ActionWarp)) {
+			return "node-" + config.BuiltinWarpServiceID
+		} else if strings.HasPrefix(strings.ToUpper(fa), "PROXY_TAG:") {
 			tag := strings.TrimSpace(fa[len("PROXY_TAG:"):])
 			if tag != "" {
 				return "PROXY_TAG:" + tag
@@ -805,6 +837,24 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		})
 	}
 
+	if opts.CloudflareConfig != nil && opts.CloudflareConfig.Tunnel.Enabled && strings.TrimSpace(opts.CloudflareConfig.Tunnel.Token) != "" {
+		tunnelIn := map[string]any{
+			"type":  "cloudflared",
+			"tag":   "cloudflare-tunnel-in",
+			"token": strings.TrimSpace(opts.CloudflareConfig.Tunnel.Token),
+		}
+		if proto := strings.ToLower(strings.TrimSpace(opts.CloudflareConfig.Tunnel.Protocol)); proto != "" && proto != "auto" {
+			tunnelIn["protocol"] = proto
+		}
+		if opts.CloudflareConfig.Tunnel.HAConnections > 0 {
+			tunnelIn["ha_connections"] = opts.CloudflareConfig.Tunnel.HAConnections
+		}
+		if opts.CloudflareConfig.Tunnel.PostQuantum {
+			tunnelIn["post_quantum"] = true
+		}
+		inbounds = append(inbounds, tunnelIn)
+	}
+
 	if opts.TrafficMode == "tun" {
 		tunAddrs := opts.TunAddresses
 		if len(tunAddrs) == 0 {
@@ -843,7 +893,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		// Exclude loopback addresses from TUN capture so 127.0.0.1 is never trapped in TUN
 		excludes = append(excludes, "127.0.0.0/8", "::1/128")
 		// Exclude Cloudflare WARP Anycast endpoints so local WARP clients do not loop into TUN
-		excludes = append(excludes, "162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24", "162.159.200.0/24", "162.159.204.0/24")
+		excludes = append(excludes, "162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24", "162.159.198.0/24", "162.159.200.0/24", "162.159.204.0/24")
 		if opts.TailnetMode == tailnet.ModeHost {
 			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
@@ -941,7 +991,21 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 
 	// Node outbounds
 	for _, svc := range opts.Services {
-		nodeTag := "node-" + svc.ID
+		if svc.EffectiveProtocol() == config.ProtoWARP {
+			if isWarpWireGuard(svc, opts.CloudflareConfig) {
+				// Handled in buildEndpointsConfig as WireGuard endpoint
+				continue
+			}
+			masqueOb := buildMasqueOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, "", false)
+			outbounds = append(outbounds, masqueOb)
+			continue
+		}
+
+		baseTag := "node-" + svc.ID
+		if svc.EnableWARP {
+			baseTag = "raw-node-" + svc.ID
+		}
+
 		if isSidecarService(svc) {
 			allocPort := 0
 			if allocatedPorts != nil && allocatedPorts[svc.ID] > 0 {
@@ -956,7 +1020,7 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 			}
 			sidecarOb := map[string]any{
 				"type":        "socks",
-				"tag":         nodeTag,
+				"tag":         baseTag,
 				"server":      "127.0.0.1",
 				"server_port": allocPort,
 			}
@@ -965,50 +1029,253 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 			}
 			outbounds = append(outbounds, sidecarOb)
 		} else {
-			outbounds = append(outbounds, buildNativeOutbound(svc))
+			nativeOb := buildNativeOutbound(svc)
+			nativeOb["tag"] = baseTag
+			outbounds = append(outbounds, nativeOb)
+		}
+
+		if svc.EnableWARP {
+			isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
+			if isWarpWireGuard(svc, opts.CloudflareConfig) {
+				// Handled in buildEndpointsConfig as WireGuard endpoint
+				continue
+			}
+			masqueOb := buildMasqueOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, baseTag, isTCPOnly)
+			outbounds = append(outbounds, masqueOb)
 		}
 	}
 	return outbounds, nil
 }
 
+func resolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mode {
+	if svc.WARPConfig != nil && svc.WARPConfig.Transport != "" {
+		switch svc.WARPConfig.Transport {
+		case config.WarpTransportWireGuard:
+			return warp.ModeWireGuard
+		case config.WarpTransportMasque:
+			return warp.ModeMASQUE
+		case config.WarpTransportAuto:
+			return warp.ModeAuto
+		}
+	}
+	if globalCfg != nil && globalCfg.DefaultMode != "" {
+		return globalCfg.DefaultMode
+	}
+	return warp.ModeAuto
+}
+
+func isWarpActive(svc config.Service) bool {
+	return svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+}
+
+func isWarpWireGuard(svc config.Service, globalCfg *warp.Config) bool {
+	isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
+	if isTCPOnly {
+		return false
+	}
+	return resolveServiceWarpMode(svc, globalCfg) == warp.ModeWireGuard
+}
+
+func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, detour string, tcpOnlyDetour bool) map[string]any {
+	endpoint := warp.DefaultMASQUEEndpoint
+	if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
+		endpoint = strings.TrimSpace(svc.WARPConfig.Endpoint)
+	} else if globalCfg != nil && globalCfg.CleanIP != "" {
+		host, port := globalCfg.ResolveEndpoint(warp.ModeMASQUE)
+		endpoint = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+
+	privKey := ""
+	certPEM := ""
+	ipv4 := warp.DefaultIPv4
+	ipv6 := warp.DefaultIPv6
+
+	if svc.WARPConfig != nil {
+		if svc.WARPConfig.PrivateKey != "" {
+			privKey = svc.WARPConfig.PrivateKey
+		}
+		if svc.WARPConfig.AddressIPv4 != "" {
+			ipv4 = svc.WARPConfig.AddressIPv4
+		}
+		if svc.WARPConfig.AddressIPv6 != "" {
+			ipv6 = svc.WARPConfig.AddressIPv6
+		}
+	}
+
+	if privKey == "" && globalCfg != nil {
+		privKey = globalCfg.Account.MASQUEPrivateKey
+		certPEM = globalCfg.Account.MASQUECertPEM
+		if globalCfg.Account.MASQUEIPv4 != "" {
+			ipv4 = globalCfg.Account.MASQUEIPv4
+		} else if globalCfg.Account.IPv4 != "" {
+			ipv4 = globalCfg.Account.IPv4
+		}
+		if globalCfg.Account.MASQUEIPv6 != "" {
+			ipv6 = globalCfg.Account.MASQUEIPv6
+		} else if globalCfg.Account.IPv6 != "" {
+			ipv6 = globalCfg.Account.IPv6
+		}
+	}
+
+	ob := map[string]any{
+		"type":        "masque",
+		"tag":         tag,
+		"endpoint":    endpoint,
+		"private_key": privKey,
+		"cert_pem":    certPEM,
+		"ipv4":        ipv4,
+		"ipv6":        ipv6,
+	}
+	if detour != "" {
+		ob["detour"] = detour
+	}
+	if tcpOnlyDetour {
+		ob["tcp_only_detour"] = true
+	}
+	return ob
+}
+
+func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, tag, detour string) map[string]any {
+	peerHost := "162.159.192.1"
+	peerPort := 2408
+	if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
+		if h, pStr, err := net.SplitHostPort(strings.TrimSpace(svc.WARPConfig.Endpoint)); err == nil {
+			peerHost = h
+			if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+				peerPort = p
+			}
+		} else {
+			peerHost = strings.TrimSpace(svc.WARPConfig.Endpoint)
+		}
+	} else if globalCfg != nil && globalCfg.CleanIP != "" {
+		peerHost, peerPort = globalCfg.ResolveEndpoint(warp.ModeWireGuard)
+	}
+
+	privKey := ""
+	peerPubKey := warp.DefaultWireGuardPubKey
+	reserved := []uint8{0, 0, 0}
+	ipv4 := warp.DefaultIPv4
+	ipv6 := warp.DefaultIPv6
+
+	if svc.WARPConfig != nil {
+		if svc.WARPConfig.PrivateKey != "" {
+			privKey = svc.WARPConfig.PrivateKey
+		}
+		if svc.WARPConfig.PeerPubKey != "" {
+			peerPubKey = svc.WARPConfig.PeerPubKey
+		}
+		if len(svc.WARPConfig.Reserved) == 3 {
+			reserved = svc.WARPConfig.Reserved
+		}
+		if svc.WARPConfig.AddressIPv4 != "" {
+			ipv4 = svc.WARPConfig.AddressIPv4
+		}
+		if svc.WARPConfig.AddressIPv6 != "" {
+			ipv6 = svc.WARPConfig.AddressIPv6
+		}
+	}
+
+	if privKey == "" && globalCfg != nil {
+		privKey = globalCfg.Account.WGPrivateKey
+		if globalCfg.Account.WGPeerPublicKey != "" {
+			peerPubKey = globalCfg.Account.WGPeerPublicKey
+		}
+		if len(globalCfg.Account.Reserved) == 3 {
+			reserved = globalCfg.Account.Reserved
+		}
+		if globalCfg.Account.IPv4 != "" {
+			ipv4 = globalCfg.Account.IPv4
+		}
+		if globalCfg.Account.IPv6 != "" {
+			ipv6 = globalCfg.Account.IPv6
+		}
+	}
+
+	ipv4Prefix := ipv4
+	if !strings.Contains(ipv4Prefix, "/") {
+		ipv4Prefix += "/32"
+	}
+	ipv6Prefix := ipv6
+	if !strings.Contains(ipv6Prefix, "/") {
+		ipv6Prefix += "/128"
+	}
+
+	ep := map[string]any{
+		"type":        "wireguard",
+		"tag":         tag,
+		"address":     []string{ipv4Prefix, ipv6Prefix},
+		"private_key": privKey,
+		"mtu":         1280,
+		"peers": []map[string]any{
+			{
+				"address":     peerHost,
+				"port":        peerPort,
+				"public_key":  peerPubKey,
+				"allowed_ips": []string{"0.0.0.0/0", "::/0"},
+				"reserved":    reserved,
+			},
+		},
+	}
+	if detour != "" {
+		ep["detour"] = detour
+	}
+	if net.ParseIP(peerHost) == nil {
+		ep["domain_resolver"] = "bootstrap-dns"
+	}
+	return ep
+}
+
 func buildEndpointsConfig(opts EngineOptions) []map[string]any {
-	if opts.TailnetMode != tailnet.ModeEmbedded || opts.TailnetConfig == nil {
-		return nil
+	var endpoints []map[string]any
+	if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
+		stateDir := opts.StateDir
+		if stateDir == "" {
+			stateDir = "tsnet-state"
+		} else {
+			stateDir = filepath.Join(stateDir, "tsnet-state")
+		}
+		tsEp := map[string]any{
+			"type":            "tailscale",
+			"tag":             "tailscale-ep",
+			"state_directory": stateDir,
+			"domain_resolver": "bootstrap-dns",
+		}
+		if opts.TailnetConfig.AuthKey != "" {
+			tsEp["auth_key"] = opts.TailnetConfig.AuthKey
+		}
+		if opts.TailnetConfig.ControlURL != "" {
+			tsEp["control_url"] = opts.TailnetConfig.ControlURL
+		}
+		if opts.TailnetConfig.Hostname != "" {
+			tsEp["hostname"] = opts.TailnetConfig.Hostname
+		}
+		if opts.TailnetConfig.AcceptRoutes {
+			tsEp["accept_routes"] = true
+		}
+		if opts.TailnetConfig.ExitNode != "" {
+			tsEp["exit_node"] = opts.TailnetConfig.ExitNode
+		}
+		if opts.TailnetConfig.AdvertiseExitNode {
+			tsEp["advertise_exit_node"] = true
+		}
+		if len(opts.TailnetConfig.AdvertiseRoutes) > 0 {
+			tsEp["advertise_routes"] = opts.TailnetConfig.AdvertiseRoutes
+		}
+		endpoints = append(endpoints, tsEp)
 	}
-	stateDir := opts.StateDir
-	if stateDir == "" {
-		stateDir = "tsnet-state"
-	} else {
-		stateDir = filepath.Join(stateDir, "tsnet-state")
+
+	for _, svc := range opts.Services {
+		if isWarpActive(svc) && isWarpWireGuard(svc, opts.CloudflareConfig) {
+			detour := ""
+			if svc.EffectiveProtocol() != config.ProtoWARP && svc.EnableWARP {
+				detour = "raw-node-" + svc.ID
+			}
+			wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)
+			endpoints = append(endpoints, wgEp)
+		}
 	}
-	tsEp := map[string]any{
-		"type":            "tailscale",
-		"tag":             "tailscale-ep",
-		"state_directory": stateDir,
-		"domain_resolver": "bootstrap-dns",
-	}
-	if opts.TailnetConfig.AuthKey != "" {
-		tsEp["auth_key"] = opts.TailnetConfig.AuthKey
-	}
-	if opts.TailnetConfig.ControlURL != "" {
-		tsEp["control_url"] = opts.TailnetConfig.ControlURL
-	}
-	if opts.TailnetConfig.Hostname != "" {
-		tsEp["hostname"] = opts.TailnetConfig.Hostname
-	}
-	if opts.TailnetConfig.AcceptRoutes {
-		tsEp["accept_routes"] = true
-	}
-	if opts.TailnetConfig.ExitNode != "" {
-		tsEp["exit_node"] = opts.TailnetConfig.ExitNode
-	}
-	if opts.TailnetConfig.AdvertiseExitNode {
-		tsEp["advertise_exit_node"] = true
-	}
-	if len(opts.TailnetConfig.AdvertiseRoutes) > 0 {
-		tsEp["advertise_routes"] = opts.TailnetConfig.AdvertiseRoutes
-	}
-	return []map[string]any{tsEp}
+
+	return endpoints
 }
 
 func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomains []string) map[string]any {
@@ -1112,7 +1379,7 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 
 		var targetDNSServer string
 		switch r.Action.Type {
-		case routing.ActionDirect:
+		case routing.ActionDirect, routing.ActionWarp:
 			targetDNSServer = "domestic-doh"
 		case routing.ActionProxyPool, routing.ActionProxyTag, routing.ActionProxyService:
 			targetDNSServer = "remote-doh"
@@ -1215,6 +1482,24 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"outbound":      "loopback-direct",
 	})
 
+	// 0.25 Ensure RFC1918 private / LAN traffic is always routed direct to protect local network services
+	singRules = append(singRules, map[string]any{
+		"ip_cidr": []string{
+			"10.0.0.0/8",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"169.254.0.0/16",
+			"100.64.0.0/10",
+			"fc00::/7",
+			"fe80::/10",
+		},
+		"outbound": "direct",
+	})
+	singRules = append(singRules, map[string]any{
+		"domain_suffix": []string{".lan", ".internal", ".home.arpa"},
+		"outbound":      "direct",
+	})
+
 	// 0.3 Node Server IPs routed directly to guarantee sidecars (naive, xray) never loop into proxy pool
 	resolver := opts.NodeIPResolver
 	if resolver == nil {
@@ -1239,6 +1524,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 			"162.159.192.0/24",
 			"162.159.193.0/24",
 			"162.159.195.0/24",
+			"162.159.198.0/24",
 			"162.159.200.0/24",
 			"162.159.204.0/24",
 			"188.114.96.0/24",
@@ -1359,10 +1645,33 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 
 		// 2. IP CIDR matching rule (separate rule; sing-box evaluates fields within a single rule with logical AND)
 		if len(r.IPCidr) > 0 {
-			singRules = append(singRules, map[string]any{
-				"ip_cidr":  r.IPCidr,
-				"outbound": outbound,
-			})
+			var targetCIDRs []string
+			if r.Action.Type == routing.ActionWarp {
+				for _, c := range r.IPCidr {
+					cleanC := strings.TrimSpace(c)
+					if !strings.Contains(cleanC, "/") {
+						if ip := net.ParseIP(cleanC); ip != nil {
+							if ip.To4() != nil {
+								cleanC += "/32"
+							} else {
+								cleanC += "/128"
+							}
+						}
+					}
+					if _, ipNet, err := net.ParseCIDR(cleanC); err == nil && isPrivateLANNet(ipNet) {
+						continue
+					}
+					targetCIDRs = append(targetCIDRs, c)
+				}
+			} else {
+				targetCIDRs = r.IPCidr
+			}
+			if len(targetCIDRs) > 0 {
+				singRules = append(singRules, map[string]any{
+					"ip_cidr":  targetCIDRs,
+					"outbound": outbound,
+				})
+			}
 		}
 
 		// 2. RuleSet matching rule (OR logic with domain criteria)
@@ -1376,7 +1685,11 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 				rsets = append(rsets, "geosite-"+cleanGS)
 			}
 			for _, gi := range r.GeoIP {
-				rsets = append(rsets, "geoip-"+strings.ToLower(strings.TrimSpace(gi)))
+				cleanGI := strings.ToLower(strings.TrimSpace(gi))
+				if r.Action.Type == routing.ActionWarp && cleanGI == "private" {
+					continue
+				}
+				rsets = append(rsets, "geoip-"+cleanGI)
 			}
 			if len(rsets) > 0 {
 				singRules = append(singRules, map[string]any{
@@ -1392,6 +1705,22 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"final":                 finalOutbound,
 		"auto_detect_interface": true,
 	}
+}
+
+func isPrivateLANNet(n *net.IPNet) bool {
+	ip := n.IP.To4()
+	if ip != nil {
+		b0, b1 := ip[0], ip[1]
+		if b0 == 127 || b0 == 10 || (b0 == 172 && b1 >= 16 && b1 <= 31) || (b0 == 192 && b1 == 168) || (b0 == 169 && b1 == 254) {
+			return true
+		}
+	} else {
+		ip6 := n.IP
+		if ip6.IsLoopback() || ip6[0] == 0xfc || ip6[0] == 0xfd || (ip6[0] == 0xfe && (ip6[1]&0xc0) == 0x80) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host string, port int) (*option.Options, error) {

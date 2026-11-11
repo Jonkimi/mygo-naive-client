@@ -29,8 +29,9 @@ func (a *app) view(c *ui.Context) {
 	c.OnShortcut(ui.Cmd, ui.Key2, func() { a.activeTab = TabRouting })
 	c.OnShortcut(ui.Cmd, ui.Key3, func() { a.activeTab = TabInsights })
 	c.OnShortcut(ui.Cmd, ui.Key4, func() { a.activeTab = TabTailnet })
-	c.OnShortcut(ui.Cmd, ui.Key5, func() { a.activeTab = TabLogs })
-	c.OnShortcut(ui.Cmd, ui.Key6, func() { a.activeTab = TabSettings })
+	c.OnShortcut(ui.Cmd, ui.Key5, func() { a.activeTab = TabCloudflare })
+	c.OnShortcut(ui.Cmd, ui.Key6, func() { a.activeTab = TabLogs })
+	c.OnShortcut(ui.Cmd, ui.Key7, func() { a.activeTab = TabSettings })
 	c.OnShortcut(ui.Cmd, ui.KeyComma, func() { a.activeTab = TabSettings })
 	c.OnShortcut(ui.Cmd, ui.KeyB, func() { a.toggleSidebar() })
 
@@ -51,6 +52,8 @@ func (a *app) view(c *ui.Context) {
 				a.renderInsightsPage(c, p)
 			case TabTailnet:
 				a.renderTailnetPage(c, p)
+			case TabCloudflare:
+				a.renderCloudflarePage(c, p)
 			case TabLogs:
 				a.renderLogsPage(c, p)
 			}
@@ -335,12 +338,35 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
 
 						// Protocol and Engine capsule
-						protoStr := strings.ToUpper(string(svc.EffectiveProtocol()))
-						engineStr := "SING-BOX"
-						if svc.EffectiveEngine() == config.EngineSidecar {
-							engineStr = "SIDECAR"
+						if svc.EffectiveProtocol() == config.ProtoWARP {
+							modeStr := "MASQUE"
+							if svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportWireGuard {
+								modeStr = "WG"
+							} else if svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportAuto {
+								modeStr = "AUTO"
+							}
+							tagPill(c, "WARP · "+modeStr, p.accentText, p.accentBg)
+							if svc.IsBuiltinWarp() {
+								tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
+							}
+						} else {
+							protoStr := strings.ToUpper(string(svc.EffectiveProtocol()))
+							engineStr := "SING-BOX"
+							if svc.EffectiveEngine() == config.EngineSidecar {
+								engineStr = "SIDECAR"
+							}
+							tagPill(c, protoStr+" · "+engineStr, p.accentText, p.accentBg)
+
+							if svc.EnableWARP {
+								warpBadge := "WARP"
+								if svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportWireGuard {
+									warpBadge = "WARP · WG"
+								} else {
+									warpBadge = "WARP · MASQUE"
+								}
+								tagPill(c, "➔ "+warpBadge, p.green, p.greenBg)
+							}
 						}
-						tagPill(c, protoStr+" · "+engineStr, p.accentText, p.accentBg)
 
 						for _, tag := range svc.Tags {
 							if tag != "" {
@@ -592,8 +618,10 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						if subtleActionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false).Clicked() {
 							a.openEditServiceDialog(svc)
 						}
-						if dangerActionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), false).Clicked() {
-							a.openDeleteServiceDialog(svc)
+						if !svc.IsBuiltinWarp() {
+							if dangerActionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), false).Clicked() {
+								a.openDeleteServiceDialog(svc)
+							}
 						}
 					})
 				})

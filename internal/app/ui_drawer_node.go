@@ -268,6 +268,18 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 
 							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 								tagPill(c, protoStr+" · "+engineStr, p.accentText, p.accentBg)
+								if svc.EffectiveProtocol() == config.ProtoWARP {
+									warpMode := "AUTO"
+									if svc.WARPConfig != nil && svc.WARPConfig.Transport != "" {
+										warpMode = strings.ToUpper(string(svc.WARPConfig.Transport))
+									}
+									tagPill(c, "WARP · "+warpMode, p.green, p.greenBg)
+									if svc.IsBuiltinWarp() {
+										tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
+									}
+								} else if svc.EnableWARP {
+									tagPill(c, "➔ WARP", p.green, p.greenBg)
+								}
 								if svc.AutoStart {
 									tagPill(c, cat.TagAutoStart(), p.accentText, p.accentBg)
 								}
