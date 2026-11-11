@@ -1076,8 +1076,9 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 	}
 
 	dnsMap := map[string]any{
-		"servers": dnsServers,
-		"final":   dnsFinal,
+		"servers":         dnsServers,
+		"final":           dnsFinal,
+		"reverse_mapping": true,
 	}
 	if opts.PreferIPv4 {
 		dnsMap["strategy"] = "prefer_ipv4"
@@ -1410,6 +1411,10 @@ func buildDNSServerMap(tag string, rawAddr string, detour string, domainResolver
 			}
 			if detour != "" {
 				m["detour"] = detour
+			} else if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsLoopback() {
+				if ifName := loopbackInterfaceName(); ifName != "" {
+					m["bind_interface"] = ifName
+				}
 			}
 			if domainResolver != "" {
 				m["domain_resolver"] = domainResolver
@@ -1434,7 +1439,17 @@ func buildDNSServerMap(tag string, rawAddr string, detour string, domainResolver
 		"server_port": port,
 	}
 	if detour != "" {
-		m["detour"] = detour
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			if ifName := loopbackInterfaceName(); ifName != "" {
+				m["bind_interface"] = ifName
+			}
+		} else {
+			m["detour"] = detour
+		}
+	} else if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if ifName := loopbackInterfaceName(); ifName != "" {
+			m["bind_interface"] = ifName
+		}
 	}
 	if domainResolver != "" {
 		m["domain_resolver"] = domainResolver

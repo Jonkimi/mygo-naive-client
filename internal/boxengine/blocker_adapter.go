@@ -174,23 +174,14 @@ type blockerOutbound struct {
 }
 
 func (o *blockerOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	if o.blocker != nil {
-		host := destination.Fqdn
-		if host == "" && destination.Addr.IsValid() {
-			host = destination.Addr.String()
-		}
-		if host != "" && o.blocker.ShouldBlock(host) {
-			return nil, syscall.EPERM
-		}
+	host := extractTargetHost(ctx, destination)
+	if o.blocker != nil && host != "" && o.blocker.ShouldBlock(host) {
+		return nil, syscall.EPERM
 	}
 	start := time.Now()
 	conn, err := o.Outbound.DialContext(ctx, network, destination)
 	rtt := time.Since(start)
 	if err != nil && !errors.Is(err, syscall.EPERM) {
-		host := destination.Fqdn
-		if host == "" && destination.Addr.IsValid() {
-			host = destination.Addr.String()
-		}
 		if o.blocker != nil && o.blocker.Logger() != nil && o.Outbound.Tag() == "direct" {
 			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
 				o.blocker.Logger().AnnotateFailureBySource(inboundCtx.Source.String(), formatConnectionError(err), rtt)
@@ -216,14 +207,9 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 }
 
 func (o *blockerOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	if o.blocker != nil {
-		host := destination.Fqdn
-		if host == "" && destination.Addr.IsValid() {
-			host = destination.Addr.String()
-		}
-		if host != "" && o.blocker.ShouldBlock(host) {
-			return nil, syscall.EPERM
-		}
+	host := extractTargetHost(ctx, destination)
+	if o.blocker != nil && host != "" && o.blocker.ShouldBlock(host) {
+		return nil, syscall.EPERM
 	}
 	conn, err := o.Outbound.ListenPacket(ctx, destination)
 	if o.blocker != nil && o.blocker.Logger() != nil && o.Outbound.Tag() == "direct" {

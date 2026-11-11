@@ -1,12 +1,22 @@
 package boxengine
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"naive-client/internal/blocker"
 	"naive-client/internal/config"
+	"naive-client/internal/routing"
 	"naive-client/internal/tunhelper"
+
+	"github.com/miekg/dns"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 func tunInbound(t *testing.T, opts EngineOptions) map[string]any {
@@ -185,4 +195,256 @@ func TestExtractNodeExcludeAddresses_ConcurrentAndDeduplicated(t *testing.T) {
 		t.Errorf("expected node1.example.com to be resolved once per call, got %d", calls["node1.example.com"])
 	}
 }
+
+// Regression: buildDNSConfig previously omitted reverse_mapping: true, so TUN connections
+// using non-SNI protocols (such as git over SSH, where sniff only sees "SSH-2.0-...")
+// had an empty metadata.Domain when connecting by resolved IP. Consequently, domain-based
+// routing rules were bypassed (falling through to Final) and Insights logged the raw IP.
+func TestEngine_DNSReverseMappingRestoresNonSNISSHDomain(t *testing.T) {
+	// 1. Verify buildDNSConfig sets reverse_mapping: true
+	dnsCfg := buildDNSConfig(EngineOptions{TrafficMode: "tun"}, "PROXY_POOL", nil)
+	if dnsCfg["reverse_mapping"] != true {
+		t.Fatalf("expected reverse_mapping: true in buildDNSConfig, got %v", dnsCfg["reverse_mapping"])
+	}
+
+	// 2. Mock local UDP DNS server that resolves "git.corp.example" -> 198.51.100.77 (non-loopback IP)
+	dnsPC, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp dns: %v", err)
+	}
+	defer dnsPC.Close()
+	dnsAddr := dnsPC.LocalAddr().String()
+
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, addr, err := dnsPC.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var req dns.Msg
+			if err := req.Unpack(buf[:n]); err != nil || len(req.Question) == 0 {
+				continue
+			}
+			resp := new(dns.Msg)
+			resp.SetReply(&req)
+			q := req.Question[0]
+			if q.Qtype == dns.TypeA {
+				resp.Answer = append(resp.Answer, &dns.A{
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeA,
+						Class:  dns.ClassINET,
+						Ttl:    120,
+					},
+					A: net.ParseIP("198.51.100.77").To4(),
+				})
+			}
+			if raw, err := resp.Pack(); err == nil {
+				_, _ = dnsPC.WriteTo(raw, addr)
+			}
+		}
+	}()
+
+	// 3. Mock SSH server listening on 127.0.0.1:sshPort
+	sshLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen ssh target: %v", err)
+	}
+	defer sshLn.Close()
+	sshPort := sshLn.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			c, err := sshLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				_, _ = conn.Write([]byte("SSH-2.0-MockGitServer\r\n"))
+				var b [64]byte
+				_, _ = conn.Read(b[:])
+			}(c)
+		}
+	}()
+
+	// 4. Mock SOCKS5 sidecar node to verify domain-based routing rule is matched for 198.51.100.77
+	var proxyHit bool
+	var proxyMu sync.Mutex
+	socksLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen socks: %v", err)
+	}
+	defer socksLn.Close()
+	socksPort := socksLn.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			c, err := socksLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 256)
+				if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+					return
+				}
+				nAuth := int(buf[1])
+				if _, err := io.ReadFull(conn, buf[:nAuth]); err != nil {
+					return
+				}
+				_, _ = conn.Write([]byte{0x05, 0x00})
+				if _, err := io.ReadFull(conn, buf[:4]); err != nil {
+					return
+				}
+				var targetHost string
+				switch buf[3] {
+				case 1:
+					if _, err := io.ReadFull(conn, buf[:4]); err != nil {
+						return
+					}
+					targetHost = net.IP(buf[:4]).String()
+				case 3:
+					if _, err := io.ReadFull(conn, buf[:1]); err != nil {
+						return
+					}
+					dLen := int(buf[0])
+					if _, err := io.ReadFull(conn, buf[:dLen]); err != nil {
+						return
+					}
+					targetHost = string(buf[:dLen])
+				}
+				if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+					return
+				}
+				p := int(buf[0])<<8 | int(buf[1])
+
+				// Sidecar node handles both UDP DNS over SOCKS or TCP connection to 198.51.100.77
+				destAddr := net.JoinHostPort(targetHost, fmt.Sprintf("%d", p))
+				if targetHost == "198.51.100.77" {
+					proxyMu.Lock()
+					proxyHit = true
+					proxyMu.Unlock()
+					destAddr = fmt.Sprintf("127.0.0.1:%d", sshPort)
+				}
+
+				targetConn, err := net.Dial("tcp", destAddr)
+				if err != nil {
+					return
+				}
+				defer targetConn.Close()
+				_, _ = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0})
+				done := make(chan struct{}, 2)
+				go func() { _, _ = io.Copy(targetConn, conn); done <- struct{}{} }()
+				go func() { _, _ = io.Copy(conn, targetConn); done <- struct{}{} }()
+				<-done
+			}(c)
+		}
+	}()
+
+	// 5. Start Engine with FinalAction="block", and a domain rule for "corp.example" -> PROXY_POOL.
+	// Without reverse_mapping, connecting by IP 198.51.100.77 (with an SSH banner lacking SNI) would miss
+	// the domain rule and hit FinalAction="block" (connection refused).
+	bl := blocker.NewEngine(blocker.Options{})
+	opts := EngineOptions{
+		ListenAddr:   "127.0.0.1:0",
+		Blocker:      bl,
+		BootstrapDNS: []string{dnsAddr},
+		DomesticDoH:  []string{dnsAddr},
+		RemoteDoH:    []string{dnsAddr},
+		Services: []config.Service{
+			{
+				ID:     "svc-ssh-proxy",
+				Name:   "SSH-Proxy-Node",
+				Engine: config.EngineSidecar,
+			},
+		},
+		AllocatedPorts: map[string]int{"svc-ssh-proxy": socksPort},
+		ActiveIDs:      map[string]bool{"svc-ssh-proxy": true},
+		Rules: []routing.Rule{
+			{
+				ID:           "custom-git-ssh",
+				Name:         "Git SSH Proxy",
+				Enabled:      true,
+				DomainSuffix: []string{"corp.example"},
+				Action:       routing.RouteAction{Type: routing.ActionProxyPool},
+			},
+		},
+		FinalAction: "block",
+	}
+
+	eng, err := New(opts)
+	if err != nil {
+		t.Fatalf("New Engine: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("Start Engine: %v", err)
+	}
+	defer eng.Close()
+
+	// Step A: Perform DNS query for "git.corp.example" through sing-box DNS router (simulating TUN DNS lookup)
+	msg := new(dns.Msg)
+	msg.SetQuestion("git.corp.example.", dns.TypeA)
+	raw, _ := msg.Pack()
+	writer := &testPacketWriter{done: make(chan struct{})}
+	eng.box.Router().HijackDNSPacket(context.Background(), raw, writer, adapter.InboundContext{})
+	select {
+	case <-writer.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for DNS query")
+	}
+
+	// Step B: Connect to proxy using raw IP (198.51.100.77:sshPort) and send SSH client banner (no SNI).
+	proxyConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", eng.Port()))
+	if err != nil {
+		t.Fatalf("dial mixed proxy: %v", err)
+	}
+	defer proxyConn.Close()
+
+	// SOCKS5 handshake to raw IP 198.51.100.77:sshPort
+	_, _ = proxyConn.Write([]byte{0x05, 0x01, 0x00})
+	var greet [2]byte
+	if _, err := io.ReadFull(proxyConn, greet[:]); err != nil {
+		t.Fatalf("socks greet: %v", err)
+	}
+	req := []byte{0x05, 0x01, 0x00, 0x01, 198, 51, 100, 77, byte(sshPort >> 8), byte(sshPort & 0xff)}
+	_, _ = proxyConn.Write(req)
+	var resp [10]byte
+	if _, err := io.ReadFull(proxyConn, resp[:]); err != nil || resp[1] != 0x00 {
+		t.Fatalf("socks connect failed: %v, resp=%v", err, resp)
+	}
+
+	// Send SSH client identification string (non-TLS, no SNI)
+	_, _ = proxyConn.Write([]byte("SSH-2.0-OpenSSH_10.5\r\n"))
+	banner := make([]byte, 64)
+	n, _ := proxyConn.Read(banner)
+	if !strings.HasPrefix(string(banner[:n]), "SSH-2.0-MockGitServer") {
+		t.Fatalf("expected SSH banner response, got %q", string(banner[:n]))
+	}
+
+	proxyMu.Lock()
+	hit := proxyHit
+	proxyMu.Unlock()
+	if !hit {
+		t.Fatalf("expected SSH connection to 198.51.100.77 to match domain rule 'git.corp.example' via DNS reverse_mapping and route through PROXY_POOL")
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify Gateway log recorded the reverse-mapped domain "git.corp.example" rather than raw IP "198.51.100.77"
+	entries := bl.Logger().GetEntries(10)
+	var foundReverseMappedGateway bool
+	for _, e := range entries {
+		if e.Source == blocker.SourceGateway && e.Domain == "git.corp.example" {
+			foundReverseMappedGateway = true
+			break
+		}
+	}
+	if !foundReverseMappedGateway {
+		t.Fatalf("expected non-SNI SSH connection to raw IP to be reverse-mapped to 'git.corp.example' in Gateway logs, got entries: %+v", entries)
+	}
+}
+
 
