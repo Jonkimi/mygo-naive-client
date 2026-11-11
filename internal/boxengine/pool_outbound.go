@@ -281,6 +281,14 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				if p.tracker != nil {
 					if !wasStalled || firstErr == nil {
 						trackerRTT := realRTT
+						if firstErr == nil {
+							// Only plausible first-response RTTs feed the tracker; the log keeps the real value.
+							if trackerRTT < minValidFirstRTT {
+								trackerRTT = 0
+							} else if trackerRTT > maxValidFirstRTT {
+								trackerRTT = maxValidFirstRTT
+							}
+						}
 						if !isTLS && firstErr == nil && realRTT >= telemetry.SeverePacketLossRTT {
 							// For non-TLS traffic, latencies >= SeverePacketLossRTT (3000ms) typically reflect
 							// backend application computation (e.g. AI inference, slow search, report export)
@@ -295,13 +303,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 					p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
 				} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					// realRTT is 0 when below minValidFirstRTT (sample discarded for the tracker);
-					// still show a duration in the log instead of "-".
-					logRTT := realRTT
-					if logRTT <= 0 {
-						logRTT = minValidFirstRTT
-					}
-					p.blocker.Logger().AnnotateDurationBySource(sourceKey, logRTT)
+					p.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
 				}
 				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
 					p.failureMonitor.Record(telemetry.FailureEvent{
@@ -552,13 +554,8 @@ func (c *firstRTTConn) Read(b []byte) (int, error) {
 			isTLS := c.isTLS
 			c.mu.Unlock()
 			if c.onResult != nil {
-				sampleRTT := rtt
-				if sampleRTT < minValidFirstRTT {
-					sampleRTT = 0
-				} else if sampleRTT > maxValidFirstRTT {
-					sampleRTT = maxValidFirstRTT
-				}
-				c.onResult(sampleRTT, isTLS, nil)
+				// Report the real measured RTT; consumers decide whether it is a valid tracker sample.
+				c.onResult(rtt, isTLS, nil)
 			}
 		} else {
 			c.mu.Unlock()
