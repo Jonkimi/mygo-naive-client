@@ -235,7 +235,14 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	gwBadgeBg := p.elevated
 
 	if !gwRunning {
-		gwBadgeText = cat.TailnetModeOff()
+		if a.state.GatewayEnabled && a.lastGatewayErr != nil {
+			gwDotColor = p.red
+			gwBadgeText = cat.StatusError()
+			gwBadgeFg = p.red
+			gwBadgeBg = p.redBg
+		} else {
+			gwBadgeText = cat.TailnetModeOff()
+		}
 	} else {
 		gwDotColor = p.green
 	}

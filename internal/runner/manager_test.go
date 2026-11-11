@@ -481,3 +481,68 @@ func TestManager_PIDFileLifecycleAndStaleCleanup(t *testing.T) {
 	}
 }
 
+// Regression test: concurrent Start calls for the same service ID (e.g. triggered simultaneously
+// by OnDemandStart and boot auto-start) must be serialized per service so that at most one
+// sidecar process is left running and earlier instances are cleanly terminated.
+func TestManager_ConcurrentStartSameServiceLeavesSingleProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping process signal test on windows")
+	}
+	dir := t.TempDir()
+	bin := writeFakeNaiveScript(t, dir, false)
+	mgr := NewManager(bin, dir, nil)
+	defer mgr.StopAll()
+
+	port := freePort(t)
+	svc := config.DefaultService("race-svc", port)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = mgr.Start(svc)
+		}()
+	}
+	wg.Wait()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mgr.StatusOf(svc.ID).State == StateRunning && mgr.StatusOf(svc.ID).PID > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	st := mgr.StatusOf(svc.ID)
+	if st.State != StateRunning || st.PID <= 0 {
+		t.Fatalf("expected service running with valid PID, got %+v", st)
+	}
+
+	// Count live processes matching this service's config path
+	cfgPath := filepath.Join(dir, fmt.Sprintf("service-%s.json", svc.ID))
+	out, err := exec.Command("ps", "-ww", "-eo", "pid,command").Output()
+	if err != nil {
+		out, err = exec.Command("ps", "-eo", "pid,command").Output()
+	}
+	if err == nil {
+		matchCount := 0
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, cfgPath) && strings.Contains(line, "naive") {
+				matchCount++
+			}
+		}
+		if matchCount != 1 {
+			t.Fatalf("expected exactly 1 running naive process for %s, found %d\n%s", svc.ID, matchCount, string(out))
+		}
+	}
+
+	if err := mgr.Stop(svc.ID); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if err := syscall.Kill(st.PID, 0); err == nil {
+		t.Fatalf("expected process %d to be terminated after Stop", st.PID)
+	}
+}
+
+

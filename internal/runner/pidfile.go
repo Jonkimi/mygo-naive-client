@@ -19,11 +19,21 @@ func writePIDFile(workDir, svcID string, pid int) {
 	_ = os.WriteFile(pidFilePath(workDir, svcID), []byte(strconv.Itoa(pid)), 0o600)
 }
 
-func removePIDFile(workDir, svcID string) {
+func removePIDFile(workDir, svcID string, expectedPID int) {
 	if workDir == "" || svcID == "" {
 		return
 	}
-	_ = os.Remove(pidFilePath(workDir, svcID))
+	pPath := pidFilePath(workDir, svcID)
+	if expectedPID > 0 {
+		data, err := os.ReadFile(pPath)
+		if err != nil {
+			return
+		}
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid != expectedPID {
+			return
+		}
+	}
+	_ = os.Remove(pPath)
 }
 
 func cleanServicePID(workDir, svcID string) {

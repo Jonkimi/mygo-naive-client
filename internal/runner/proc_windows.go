@@ -91,6 +91,8 @@ func killStalePID(pid int) {
 	}
 }
 
-func cleanStaleOrphans(workDir string) {
+func cleanupOrphanProcesses(workDir string) {
 	// PID file cleanup in cleanPIDFiles is cross-platform and sufficient on Windows
 }
+
+func cleanupOrphansForConfig(cfgPath string) {}

@@ -107,6 +107,7 @@ type app struct {
 	mockNodeResolver func(host string) []net.IP
 	resolvedNodeIPs  map[string][]net.IP
 	resolvedNodeMu   sync.RWMutex
+	dormantStartMu   sync.Mutex
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -507,15 +508,21 @@ func (a *app) boot() {
 	if a.sysproxy != nil {
 		_ = a.sysproxy.RecoverIfDirty()
 	}
+	if a.localVersion != "" {
+		for _, svc := range a.state.Services {
+			if svc.AutoStart && svc.EffectiveEngine() != config.EngineSingBox {
+				_ = a.mgr.Start(svc)
+			}
+		}
+	}
 	if a.state.GatewayEnabled {
 		if err := a.startGateway(); err != nil && a.tailnetMgr != nil {
 			a.tailnetMgr.SetError(err.Error())
 		}
 	}
-
-	if a.localVersion != "" {
-		for _, svc := range a.state.Services {
-			if svc.AutoStart {
+	for _, svc := range a.state.Services {
+		if svc.AutoStart && !a.isServiceActive(svc.ID) {
+			if svc.EffectiveEngine() == config.EngineSingBox || a.localVersion != "" {
 				_ = a.mgr.Start(svc)
 			}
 		}
@@ -1171,6 +1178,9 @@ func (a *app) readClipboard() string {
 }
 
 func (a *app) startDormantServiceForTag(tag string) {
+	a.dormantStartMu.Lock()
+	defer a.dormantStartMu.Unlock()
+
 	tag = strings.TrimSpace(strings.TrimPrefix(tag, "PROXY_TAG:"))
 	var wantTags []string
 	for _, part := range strings.Split(tag, ",") {
@@ -1178,24 +1188,41 @@ func (a *app) startDormantServiceForTag(tag string) {
 			wantTags = append(wantTags, p)
 		}
 	}
-	for _, svc := range a.state.Services {
-		matches := false
+
+	matchesService := func(svc config.Service) bool {
 		if tag == "" || tag == "PROXY_POOL" || len(wantTags) == 0 {
-			matches = true
-		} else {
-			for _, t := range svc.Tags {
-				for _, wt := range wantTags {
-					if strings.EqualFold(t, wt) {
-						matches = true
-						break
-					}
-				}
-				if matches {
-					break
+			return true
+		}
+		for _, t := range svc.Tags {
+			for _, wt := range wantTags {
+				if strings.EqualFold(t, wt) {
+					return true
 				}
 			}
 		}
-		if matches && !a.isServiceActive(svc.ID) {
+		return false
+	}
+
+	// If a matching service is already running or starting, wait briefly for it to reach StateRunning
+	// rather than spawning another service or restarting the same service.
+	for _, svc := range a.state.Services {
+		if matchesService(svc) && a.isServiceActive(svc.ID) {
+			for i := 0; i < 20; i++ {
+				st := a.mgr.StatusOf(svc.ID)
+				if st.State == runner.StateRunning {
+					if a.gateway != nil {
+						a.gateway.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+					}
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			return
+		}
+	}
+
+	for _, svc := range a.state.Services {
+		if matchesService(svc) && !a.isServiceActive(svc.ID) {
 			_ = a.mgr.Start(svc)
 			for i := 0; i < 20; i++ {
 				st := a.mgr.StatusOf(svc.ID)
@@ -1540,10 +1567,19 @@ func (a *app) startGateway() error {
 		},
 	})
 	if err != nil {
+		if a.state.TrafficMode == "tun" && a.tunDevice != nil {
+			_ = a.tunDevice.Close()
+			a.tunDevice = nil
+		}
 		a.lastGatewayErr = err
 		return err
 	}
 	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		if a.state.TrafficMode == "tun" && a.tunDevice != nil {
+			_ = a.tunDevice.Close()
+			a.tunDevice = nil
+		}
 		a.lastGatewayErr = err
 		return err
 	}
@@ -1720,12 +1756,19 @@ func (a *app) setTrafficMode(mode string) error {
 		}
 		if err := a.startGateway(); err != nil {
 			_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
+			if a.tunDevice != nil {
+				_ = a.tunDevice.Close()
+				a.tunDevice = nil
+			}
 			a.state.TrafficMode = "port"
-			_ = a.startGateway()
+			fallbackErr := a.startGateway()
 			a.toast("TUN Mode error: " + err.Error())
 			a.saveState()
 			if a.win != nil {
 				a.win.Invalidate()
+			}
+			if fallbackErr != nil {
+				return fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
 			}
 			return err
 		}

@@ -34,4 +34,6 @@ func killStalePID(pid int) {
 	}
 }
 
-func cleanStaleOrphans(workDir string) {}
+func cleanupOrphanProcesses(workDir string) {}
+
+func cleanupOrphansForConfig(cfgPath string) {}

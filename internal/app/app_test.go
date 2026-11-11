@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -3080,6 +3081,71 @@ func TestCollectNodeServerIPs_ResolvesDomains(t *testing.T) {
 		}
 	}
 }
+
+// Regression: when TUN mode fails to start (e.g. sing-box error or port conflict),
+// tunDevice must be cleanly closed and reset to nil, preventing stale FD leak and cascade failure
+// on port fallback and subsequent retries.
+func TestTunStartupFailure_CleansUpTunDeviceAndFallback(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.state.GatewayPort = freeLocalPort(t)
+
+	// Mock TUN device
+	devClosed := false
+	a.mockTunDevice = func() (*tunhelper.ReceivedDevice, error) {
+		return &tunhelper.ReceivedDevice{
+			FD:   999,
+			Name: "utun99",
+			Conn: mockCloser{onClose: func() error {
+				devClosed = true
+				return nil
+			}},
+		}, nil
+	}
+
+	// Mock TunCreator that intentionally fails to simulate TUN startup failure
+	a.mockTunCreator = func(options tun.Options) (tun.Tun, error) {
+		return nil, errors.New("simulated tun creation failure")
+	}
+
+	// Attempting to switch to TUN mode should return error
+	err := a.setTrafficMode("tun")
+	if err == nil {
+		t.Fatalf("expected error from setTrafficMode('tun') with failing tun creator")
+	}
+
+	// 1. Stale tunDevice must be closed and cleared to nil
+	if a.tunDevice != nil {
+		t.Fatalf("expected a.tunDevice to be nil after TUN startup failure, got %+v", a.tunDevice)
+	}
+	if !devClosed {
+		t.Fatalf("expected mockTunDevice Conn to be closed upon startup failure")
+	}
+
+	// 2. TrafficMode must be fallen back to port
+	if a.state.TrafficMode != "port" {
+		t.Fatalf("expected TrafficMode fallback to 'port', got %q", a.state.TrafficMode)
+	}
+
+	// 3. Fallback port gateway should be running cleanly
+	if a.gateway == nil {
+		t.Fatalf("expected gateway to be running in fallback port mode")
+	}
+
+	// 4. UI rendering should reflect fallback without crash
+	tt.Frame()
+}
+
+type mockCloser struct {
+	onClose func() error
+}
+
+func (m mockCloser) Close() error {
+	if m.onClose != nil {
+		return m.onClose()
+	}
+	return nil
+}
+
 
 
 

@@ -69,6 +69,7 @@ func (st Status) Uptime(now time.Time) time.Duration {
 const maxCrashRestarts = 3
 
 type instance struct {
+	opMu       sync.Mutex
 	svc        config.Service
 	status     Status
 	logs       *LogBuffer
@@ -107,7 +108,7 @@ func NewManager(binPath, workDir string, onChange func()) *Manager {
 	if onChange == nil {
 		onChange = func() {}
 	}
-	cleanStaleOrphans(workDir)
+	cleanupOrphanProcesses(workDir)
 	cleanPIDFiles(workDir)
 	return &Manager{
 		binPath:    binPath,
@@ -308,6 +309,14 @@ func (m *Manager) Start(svc config.Service) error {
 	if err := svc.Validate(); err != nil {
 		return err
 	}
+
+	m.mu.Lock()
+	inst := m.ensureInstanceLocked(svc.ID)
+	m.mu.Unlock()
+
+	inst.opMu.Lock()
+	defer inst.opMu.Unlock()
+
 	if m.PreStartChecker != nil {
 		if err := m.PreStartChecker(svc); err != nil {
 			m.setError(svc.ID, err.Error())
@@ -315,12 +324,11 @@ func (m *Manager) Start(svc config.Service) error {
 		}
 	}
 	// Stop existing run of this service if any
-	_ = m.Stop(svc.ID)
+	_ = m.stopLocked(svc.ID, inst)
 	cleanServicePID(m.workDir, svc.ID)
 
 	if svc.EffectiveKind() == config.KindExternalProxy || svc.EffectiveEngine() == config.EngineSingBox {
 		m.mu.Lock()
-		inst := m.ensureInstanceLocked(svc.ID)
 		inst.svc = svc
 		inst.stopping = false
 		inst.cancel = nil
@@ -384,7 +392,6 @@ func (m *Manager) Start(svc config.Service) error {
 
 	m.mu.Lock()
 	workDir := m.workDir
-	inst := m.ensureInstanceLocked(svc.ID)
 	naiveBin := m.binPath
 	xrayBin := m.xrayBinPath
 	m.mu.Unlock()
@@ -417,16 +424,6 @@ func (m *Manager) Start(svc config.Service) error {
 		}
 	}
 
-	if err := CheckPortsAvailable(svc); err != nil {
-		m.setError(svc.ID, err.Error())
-		return err
-	}
-
-	if err := os.MkdirAll(workDir, 0o700); err != nil {
-		m.setError(svc.ID, err.Error())
-		return err
-	}
-
 	var cfgBytes []byte
 	var cfgPath string
 	var cmdArgs []string
@@ -449,6 +446,18 @@ func (m *Manager) Start(svc config.Service) error {
 		}
 		cfgPath = filepath.Join(workDir, fmt.Sprintf("service-%s.json", svc.ID))
 		cmdArgs = []string{cfgPath}
+	}
+
+	cleanupOrphansForConfig(cfgPath)
+
+	if err := CheckPortsAvailable(svc); err != nil {
+		m.setError(svc.ID, err.Error())
+		return err
+	}
+
+	if err := os.MkdirAll(workDir, 0o700); err != nil {
+		m.setError(svc.ID, err.Error())
+		return err
 	}
 
 	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
@@ -550,25 +559,32 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 			terminateProcess(cmd)
 			select {
 			case waitErr = <-waitDone:
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(300 * time.Millisecond):
 				killProcessGroup(cmd)
-				waitErr = <-waitDone
+				select {
+				case waitErr = <-waitDone:
+				case <-time.After(300 * time.Millisecond):
+				}
 			}
 		case waitErr = <-waitDone:
 		}
 
-		removePIDFile(m.workDir, inst.svc.ID)
+		removePIDFile(m.workDir, inst.svc.ID, pid)
 
 		m.mu.Lock()
 		stopping := inst.stopping || ctx.Err() != nil
-		inst.cmd = nil
-		inst.status.PID = 0
+		if inst.cmd == cmd {
+			inst.cmd = nil
+			inst.status.PID = 0
+		}
 		m.mu.Unlock()
 
 		if stopping {
 			m.mu.Lock()
-			inst.status.State = StateStopped
-			inst.status.StartedAt = time.Time{}
+			if inst.done == done {
+				inst.status.State = StateStopped
+				inst.status.StartedAt = time.Time{}
+			}
 			m.mu.Unlock()
 			inst.logs.AppendLine(fmt.Sprintf("[%s] 服务已停止", time.Now().Format("15:04:05")))
 			m.onChange()
@@ -621,8 +637,21 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 func (m *Manager) Stop(id string) error {
 	m.mu.Lock()
 	inst, ok := m.instances[id]
-	if !ok || (inst.status.State != StateRunning && inst.status.State != StateStarting) {
-		if ok && inst.status.State == StateError {
+	if !ok {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+
+	inst.opMu.Lock()
+	defer inst.opMu.Unlock()
+	return m.stopLocked(id, inst)
+}
+
+func (m *Manager) stopLocked(id string, inst *instance) error {
+	m.mu.Lock()
+	if inst.status.State != StateRunning && inst.status.State != StateStarting && inst.done == nil {
+		if inst.status.State == StateError {
 			inst.status.State = StateStopped
 			inst.status.LastError = ""
 		}
@@ -648,6 +677,7 @@ func (m *Manager) Stop(id string) error {
 	inst.stopping = true
 	cancel := inst.cancel
 	done := inst.done
+	cmd := inst.cmd
 	m.mu.Unlock()
 
 	if cancel != nil {
@@ -657,6 +687,19 @@ func (m *Manager) Stop(id string) error {
 		select {
 		case <-done:
 		case <-time.After(1 * time.Second):
+			m.mu.Lock()
+			activeCmd := inst.cmd
+			if activeCmd == nil {
+				activeCmd = cmd
+			}
+			m.mu.Unlock()
+			if activeCmd != nil {
+				killProcessGroup(activeCmd)
+			}
+			select {
+			case <-done:
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
 	}
 	return nil

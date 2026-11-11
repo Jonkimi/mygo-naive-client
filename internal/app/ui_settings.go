@@ -173,6 +173,8 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					ui.Text(c, cat.GatewaySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 					if a.gateway != nil && a.state.GatewayEnabled {
 						statusBadge(c, "Running :"+fmt.Sprint(a.state.GatewayPort), p.green, p.greenBg)
+					} else if a.state.GatewayEnabled && a.lastGatewayErr != nil {
+						statusBadge(c, cat.StatusError(), p.red, p.redBg)
 					} else {
 						statusBadge(c, cat.StatusStopped(), p.textDim, p.elevated)
 					}
@@ -181,10 +183,24 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 				if switchRow(c, p, "page-set-gateway-enable", cat.GatewayAutoStart(), &a.state.GatewayEnabled) {
 					a.saveState()
 					if a.state.GatewayEnabled {
-						_ = a.startGateway()
+						if err := a.startGateway(); err != nil {
+							a.toast("网关启动失败: " + err.Error())
+						}
 					} else {
 						a.stopGateway()
 					}
+				}
+
+				if a.state.GatewayEnabled && a.gateway == nil && a.lastGatewayErr != nil {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Padding(8, 10, 8, 10).Radius(6).
+						Background(p.redBg).Children(func() {
+						ui.Text(c, cat.ErrorPrefix()+a.lastGatewayErr.Error()).FontSize(11).TextColor(p.red).Grow(1)
+						if actionChip(c.Key("page-btn-retry-gw"), p, iconRefresh, "重试", false).Clicked() {
+							if err := a.startGateway(); err != nil {
+								a.toast("重试失败: " + err.Error())
+							}
+						}
+					})
 				}
 
 				if a.gatewayPortInput == "" && a.state.GatewayPort > 0 {

@@ -43,14 +43,16 @@ func killStalePID(pid int) {
 	if pid <= 1 || pid == os.Getpid() {
 		return
 	}
-	// Send SIGTERM first
+	// Send SIGTERM to both process group and process first
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
 	_ = syscall.Kill(pid, syscall.SIGTERM)
 	// Give it up to 150ms to exit cleanly, then SIGKILL
 	time.Sleep(150 * time.Millisecond)
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
-func cleanStaleOrphans(workDir string) {
+func cleanupOrphanProcesses(workDir string) {
 	if workDir == "" {
 		return
 	}
@@ -66,6 +68,39 @@ func cleanStaleOrphans(workDir string) {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.Contains(line, workDir) {
+			continue
+		}
+		if !strings.Contains(line, "naive") && !strings.Contains(line, "xray") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 1 || pid == myPid {
+			continue
+		}
+		killStalePID(pid)
+	}
+}
+
+func cleanupOrphansForConfig(cfgPath string) {
+	if cfgPath == "" {
+		return
+	}
+	out, err := exec.Command("ps", "-ww", "-eo", "pid,command").Output()
+	if err != nil {
+		out, err = exec.Command("ps", "-eo", "pid,command").Output()
+		if err != nil {
+			return
+		}
+	}
+	myPid := os.Getpid()
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, cfgPath) {
 			continue
 		}
 		if !strings.Contains(line, "naive") && !strings.Contains(line, "xray") {
