@@ -438,8 +438,6 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 								}
 							}
 							listenSummary = listens
-						} else if len(svc.Listens) > 0 && svc.PrimaryListen() != "socks://127.0.0.1:0" {
-							listenSummary = svc.PrimaryListen()
 						}
 						ui.Text(c, listenSummary).FontSize(12).FontWeight(600).TextColor(p.textMuted)
 

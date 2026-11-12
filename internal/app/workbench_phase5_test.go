@@ -273,3 +273,43 @@ func TestLogDrawer_OpenClose(t *testing.T) {
 		t.Fatalf("expected log drawer to close after Esc, got activeLogDrawerID=%q", a.activeLogDrawerID)
 	}
 }
+
+// Tests that built-in and in-process sing-box nodes retain "sing-box (in-process)" across app restart,
+// and are never overwritten with "socks://127.0.0.1:1080".
+func TestInProcessNodes_PersistListenSummaryAcrossRestart(t *testing.T) {
+	inprocessNode := config.Service{
+		ID:         "vless-inprocess-test",
+		Name:       "Test VLESS Node",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSingBox,
+		Server:     "vless.example.com",
+		ServerPort: 443,
+		UUID:       "11111111-2222-3333-4444-555555555555",
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{inprocessNode})
+	a.state.Cloudflare.DirectWarpEnabled = true
+	a.saveState()
+	tt.Frame()
+
+	// 1. Initially, should show "sing-box (in-process)"
+	if _, ok := tt.Find("sing-box (in-process)"); !ok {
+		t.Fatalf("expected 'sing-box (in-process)' on initial render")
+	}
+	if _, ok := tt.Find("socks://127.0.0.1:1080"); ok {
+		t.Fatalf("did not expect 'socks://127.0.0.1:1080' on initial render")
+	}
+
+	// 2. Simulate app restart by saving and reloading state
+	a.saveState()
+	a.loadState()
+	tt.Frame()
+
+	// 3. Verify that after loadState, in-process node STILL shows "sing-box (in-process)" and NOT "socks://127.0.0.1:1080"
+	if _, ok := tt.Find("sing-box (in-process)"); !ok {
+		t.Fatalf("expected 'sing-box (in-process)' after restart/loadState")
+	}
+	if _, ok := tt.Find("socks://127.0.0.1:1080"); ok {
+		t.Fatalf("expected no 'socks://127.0.0.1:1080' for in-process node after restart/loadState")
+	}
+}

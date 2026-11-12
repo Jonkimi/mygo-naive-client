@@ -473,7 +473,9 @@ func (a *app) loadState() {
 		st.AutoProbeInterval = 5
 	}
 	for i := range st.Services {
-		if len(st.Services[i].Listens) == 0 {
+		if st.Services[i].EffectiveEngine() == config.EngineSingBox {
+			st.Services[i].Listens = nil
+		} else if len(st.Services[i].Listens) == 0 {
 			st.Services[i].Listens = []string{"socks://127.0.0.1:1080"}
 		}
 	}

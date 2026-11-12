@@ -288,3 +288,67 @@ func TestBuildRouteConfig_ActionWarpAndLANDirectProtection(t *testing.T) {
 		t.Errorf("expected ActionWarp to route domain DNS lookups to domestic-doh")
 	}
 }
+
+func TestBuildOutboundsConfig_StandardProxy_NoWARP(t *testing.T) {
+	vlessSvc := config.Service{
+		ID:         "vless-plain",
+		Name:       "Plain VLESS",
+		Protocol:   config.ProtoVLESS,
+		Server:     "plain.example.com",
+		ServerPort: 443,
+		UUID:       "11111111-2222-3333-4444-555555555555",
+		EnableWARP: false,
+	}
+
+	builtinWarp := config.Service{
+		ID:        config.BuiltinWarpServiceID,
+		Name:      "Cloudflare WARP",
+		Protocol:  config.ProtoWARP,
+		Engine:    config.EngineSingBox,
+		AutoStart: true,
+	}
+
+	opts := EngineOptions{
+		Services: []config.Service{vlessSvc, builtinWarp},
+		CloudflareConfig: &warp.Config{
+			DefaultMode: warp.ModeAuto,
+		},
+	}
+
+	outbounds, err := buildOutboundsConfig(opts, "PROXY_POOL", nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+
+	outboundByTag := make(map[string]map[string]any)
+	for _, ob := range outbounds {
+		if tag, ok := ob["tag"].(string); ok {
+			outboundByTag[tag] = ob
+		}
+	}
+
+	// 1. Plain VLESS must have tag "node-vless-plain", type "vless", and NO detour
+	ob, ok := outboundByTag["node-vless-plain"]
+	if !ok {
+		t.Fatalf("expected node-vless-plain in outbounds, got tags: %v", outboundByTag)
+	}
+	if ob["type"] != "vless" {
+		t.Errorf("expected type vless, got %v", ob["type"])
+	}
+	if detour, hasDetour := ob["detour"]; hasDetour && detour != "" {
+		t.Errorf("expected no detour on plain proxy node, got %v", detour)
+	}
+
+	// 2. Must NOT create raw-node-vless-plain
+	if _, hasRaw := outboundByTag["raw-node-vless-plain"]; hasRaw {
+		t.Errorf("expected no raw-node-vless-plain when EnableWARP is false")
+	}
+
+	// 3. Endpoints must NOT contain vless-plain
+	endpoints := buildEndpointsConfig(opts)
+	for _, ep := range endpoints {
+		if ep["tag"] == "node-vless-plain" || ep["tag"] == "wg-node-vless-plain" {
+			t.Errorf("plain proxy node must not be in endpoints, found: %+v", ep)
+		}
+	}
+}
