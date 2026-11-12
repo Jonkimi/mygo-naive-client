@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"naive-client/internal/config"
+	"naive-client/internal/runner"
 	"naive-client/locales"
 )
 
@@ -108,5 +109,60 @@ func TestTailnetErrorBanner_CopyError(t *testing.T) {
 	}
 	if !tt.HasText(a.catalog().ToastErrorCopied()) {
 		t.Fatalf("expected toast %q, got texts: %v", a.catalog().ToastErrorCopied(), tt.Texts())
+	}
+}
+
+func TestWarpUnhealthyBanner_LocalizationAndNavigation(t *testing.T) {
+	svc := config.Service{
+		ID:       "warp-direct-test",
+		Name:     "Cloudflare WARP",
+		Protocol: config.ProtoWARP,
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	a.state.Cloudflare.Account.DeviceID = "dev-ok"
+	a.state.Cloudflare.Account.WGPrivateKey = "key-ok"
+	a.saveState()
+
+	// Inject probe failure
+	stUnhealthy := runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "warp server (162.159.198.2:443) connection failed: i/o timeout",
+	}
+	a.mgr.SetStatusForTest(svc.ID, stUnhealthy)
+	tt.Frame()
+
+	// 1. In Simplified Chinese
+	catZh := a.catalog()
+	if !tt.HasText(catZh.StatusUnhealthy()) {
+		t.Errorf("expected Chinese StatusUnhealthy %q", catZh.StatusUnhealthy())
+	}
+	if !tt.HasText(catZh.NodeUnhealthyDiagnosticTitle()) {
+		t.Errorf("expected Chinese DiagnosticTitle %q", catZh.NodeUnhealthyDiagnosticTitle())
+	}
+
+	// 2. Switch to English
+	a.state.Language = locales.LangEn
+	a.applyLanguagePolicy()
+	tt.Frame()
+
+	catEn := a.catalog()
+	if !tt.HasText(catEn.StatusUnhealthy()) {
+		t.Errorf("expected English StatusUnhealthy %q", catEn.StatusUnhealthy())
+	}
+	if !tt.HasText(catEn.NodeUnhealthyDiagnosticTitle()) {
+		t.Errorf("expected English DiagnosticTitle %q", catEn.NodeUnhealthyDiagnosticTitle())
+	}
+	if !tt.HasText(catEn.ActionGoToCloudflare()) {
+		t.Errorf("expected English ActionGoToCloudflare %q", catEn.ActionGoToCloudflare())
+	}
+
+	// 3. Click "Cloudflare Settings" button to switch tabs
+	if err := tt.Click(catEn.ActionGoToCloudflare()); err != nil {
+		t.Fatalf("failed to click '%s': %v", catEn.ActionGoToCloudflare(), err)
+	}
+	tt.Frame()
+	if a.activeTab != TabCloudflare {
+		t.Errorf("expected activeTab to switch to TabCloudflare, got %v", a.activeTab)
 	}
 }

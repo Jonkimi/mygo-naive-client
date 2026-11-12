@@ -458,6 +458,9 @@ func (e *Engine) findCandidates(cleanTag string) []string {
 		}
 
 		if cleanTag == "" || cleanTag == "PROXY_POOL" || len(wantTags) == 0 {
+			if svc.IsBuiltinWarp() {
+				continue
+			}
 			candidates = append(candidates, svc.ID)
 			continue
 		}
@@ -570,7 +573,58 @@ func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr stri
 	if !dest.IsValid() {
 		return nil, fmt.Errorf("invalid destination addr %q", addr)
 	}
-	return ob.DialContext(ctx, network, dest)
+	isWarp := e.isWarpNode(cleanID)
+	if isWarp && dest.IsDomain() {
+		if ip, err := resolveHostIP(ctx, dest.Fqdn); err == nil {
+			dest = M.SocksaddrFrom(ip, dest.Port)
+		}
+	}
+	conn, err := ob.DialContext(ctx, network, dest)
+	if err != nil && isWarp {
+		if !strings.Contains(err.Error(), "warp server") {
+			ep := e.getWarpEndpoint(cleanID)
+			return nil, fmt.Errorf("warp server (%s) connection failed: %w", ep, err)
+		}
+	}
+	return conn, err
+}
+
+func (e *Engine) isWarpNode(nodeID string) bool {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	if cleanID == config.BuiltinWarpServiceID {
+		return true
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, svc := range e.services {
+		if svc.ID == cleanID {
+			return svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+		}
+	}
+	return false
+}
+
+func (e *Engine) getWarpEndpoint(nodeID string) string {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, svc := range e.services {
+		if svc.ID == cleanID {
+			if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
+				return strings.TrimSpace(svc.WARPConfig.Endpoint)
+			}
+			mode := resolveServiceWarpMode(svc, e.cloudflareConfig)
+			if e.cloudflareConfig != nil {
+				host, port := e.cloudflareConfig.ResolveEndpoint(mode)
+				return net.JoinHostPort(host, strconv.Itoa(port))
+			}
+		}
+	}
+	if e.cloudflareConfig != nil {
+		host, port := e.cloudflareConfig.ResolveEndpoint(warp.ModeAuto)
+		return net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	return warp.DefaultMASQUEEndpoint
 }
 
 // IsSidecar implements NodeProvider.
@@ -660,6 +714,9 @@ func extractNodeExcludeAddresses(services []config.Service, resolver func(host s
 			if u, err := url.Parse(svc.ExternalURI); err == nil && u.Hostname() != "" {
 				addHost(u.Hostname())
 			}
+		}
+		if svc.WARPConfig != nil && svc.WARPConfig.Endpoint != "" {
+			addHost(svc.WARPConfig.Endpoint)
 		}
 	}
 
@@ -1132,6 +1189,9 @@ func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, 
 	if tcpOnlyDetour {
 		ob["tcp_only_detour"] = true
 	}
+	if !tcpOnlyDetour && resolveServiceWarpMode(svc, globalCfg) == warp.ModeAuto {
+		ob["wireguard_fallback"] = "wg-" + tag
+	}
 	return ob
 }
 
@@ -1188,6 +1248,12 @@ func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, ta
 		}
 		if globalCfg.Account.IPv6 != "" {
 			ipv6 = globalCfg.Account.IPv6
+		}
+	}
+
+	if privKey == "" {
+		if priv, _, err := warp.GenerateWireGuardKeypair(); err == nil {
+			privKey = priv
 		}
 	}
 
@@ -1265,13 +1331,23 @@ func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 	}
 
 	for _, svc := range opts.Services {
-		if isWarpActive(svc) && isWarpWireGuard(svc, opts.CloudflareConfig) {
+		if isWarpActive(svc) {
+			isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
+			if isTCPOnly {
+				continue
+			}
 			detour := ""
 			if svc.EffectiveProtocol() != config.ProtoWARP && svc.EnableWARP {
 				detour = "raw-node-" + svc.ID
 			}
-			wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)
-			endpoints = append(endpoints, wgEp)
+			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
+			if mode == warp.ModeWireGuard {
+				wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)
+				endpoints = append(endpoints, wgEp)
+			} else if mode == warp.ModeAuto {
+				wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, detour)
+				endpoints = append(endpoints, wgEp)
+			}
 		}
 	}
 
@@ -1296,6 +1372,16 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 	if strings.HasPrefix(finalOutbound, "PROXY_TAG:") || strings.HasPrefix(finalOutbound, "node-") {
 		remoteDoHDetour = finalOutbound
 	}
+	hasProxyCandidate := false
+	for _, s := range opts.Services {
+		if s.EffectiveProtocol() != config.ProtoWARP && !s.IsBuiltinWarp() {
+			hasProxyCandidate = true
+			break
+		}
+	}
+	if !hasProxyCandidate && remoteDoHDetour == "PROXY_POOL" {
+		remoteDoHDetour = ""
+	}
 
 	// bootstrap-dns and domestic-doh intentionally have no detour: they use the default
 	// dialer, which route.auto_detect_interface binds to the physical NIC. A detour to a
@@ -1316,6 +1402,11 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		"domain":        []string{"localhost"},
 		"domain_suffix": []string{".local", ".localhost"},
 		"server":        "local-dns",
+	})
+	dnsRules = append(dnsRules, map[string]any{
+		"domain":        []string{"connect.rom.miui.com", "cp.cloudflare.com"},
+		"domain_suffix": []string{".miui.com", ".xiaomi.com", ".qualcomm.cn"},
+		"server":        "domestic-doh",
 	})
 	if len(allBootstrapDomains) > 0 {
 		dnsRules = append(dnsRules, map[string]any{
@@ -1428,7 +1519,7 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 	}
 
 	dnsFinal := "remote-doh"
-	if finalOutbound == "direct" {
+	if finalOutbound == "direct" || finalOutbound == "node-"+config.BuiltinWarpServiceID || strings.Contains(finalOutbound, "warp") {
 		dnsFinal = "domestic-doh"
 	}
 

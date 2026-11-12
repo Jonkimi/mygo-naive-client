@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -785,6 +786,56 @@ func (a *app) probeURLForService(svc config.Service) string {
 	return defaultProbeURL
 }
 
+func (a *app) isNodeUnhealthy(svc config.Service, rt runner.Status) bool {
+	if rt.State != runner.StateRunning {
+		return false
+	}
+	if rt.ProbeError != "" || rt.SpeedError != "" {
+		return true
+	}
+	if a.tracker != nil {
+		sc := a.tracker.GetScore(svc.ID)
+		if sc.IsBroken {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint string, isWarp bool, isUnregistered bool) {
+	cat := a.catalog()
+	isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+
+	if isWarpNode {
+		if !a.state.Cloudflare.Account.IsRegistered() ||
+			strings.Contains(strings.ToLower(rt.ProbeError+rt.SpeedError), "not registered") {
+			return cat.WarpUnhealthyUnregisteredHint(), true, true
+		}
+
+		endpoint := warp.DefaultMASQUEEndpoint
+		if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
+			endpoint = strings.TrimSpace(svc.WARPConfig.Endpoint)
+		} else if a.state.Cloudflare.CleanIP != "" {
+			host, port := a.state.Cloudflare.ResolveEndpoint(warp.ModeAuto)
+			endpoint = net.JoinHostPort(host, strconv.Itoa(port))
+		}
+
+		if svc.EffectiveProtocol() == config.ProtoWARP {
+			return cat.WarpUnhealthyDirectHint(endpoint), true, false
+		}
+		return cat.WarpUnhealthyDetourHint(endpoint), true, false
+	}
+
+	errText := rt.ProbeError
+	if errText == "" {
+		errText = rt.SpeedError
+	}
+	if errText == "" {
+		errText = cat.NodeDrawerCircuitTripped()
+	}
+	return errText, false, false
+}
+
 func (a *app) triggerServiceProbe(svc config.Service) {
 	if a.mgr.StatusOf(svc.ID).State != runner.StateRunning {
 		a.toast(a.catalog().TestRequiresRunning())
@@ -1222,6 +1273,11 @@ func (a *app) triggerWarpRegister() {
 			a.state.Cloudflare.Account = acc
 			a.saveState()
 			a.toast("WARP 凭证注册成功: " + acc.IPv4)
+			for _, svc := range a.state.Services {
+				if (svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP) && a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+					a.mgr.ProbeService(svc, a.probeURLForService(svc))
+				}
+			}
 		})
 	}()
 }
@@ -1450,8 +1506,16 @@ func (a *app) collectNodeServerIPs() []string {
 		}
 	}
 	// Exclude Cloudflare WARP Anycast endpoints from TUN routing to prevent routing loops for local WARP
-	for _, warpIP := range []string{"162.159.200.1", "162.159.192.1", "162.159.193.1", "162.159.195.1"} {
+	for _, warpIP := range []string{"162.159.200.1", "162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.198.2", "162.159.204.1"} {
 		addHost(warpIP)
+	}
+	if a.state.Cloudflare.CleanIP != "" {
+		addHost(a.state.Cloudflare.CleanIP)
+	}
+	for _, svc := range a.state.Services {
+		if svc.WARPConfig != nil && svc.WARPConfig.Endpoint != "" {
+			addHost(svc.WARPConfig.Endpoint)
+		}
 	}
 
 	if len(pendingDomains) > 0 {
@@ -2452,7 +2516,7 @@ func (a *app) syncBuiltinWarpService() {
 		cat := a.catalog()
 		nodeName := cat.BuiltinWarpNodeName()
 		if nodeName == "" {
-			nodeName = "Cloudflare WARP (内置直连)"
+			nodeName = "Cloudflare WARP"
 		}
 
 		cleanIP := a.state.Cloudflare.CleanIP
@@ -2487,6 +2551,9 @@ func (a *app) syncBuiltinWarpService() {
 			a.state.Services[foundIdx].AutoStart = true
 			if a.state.Services[foundIdx].WARPConfig == nil {
 				a.state.Services[foundIdx].WARPConfig = warpSvc.WARPConfig
+			} else {
+				a.state.Services[foundIdx].WARPConfig.Transport = warpTransport
+				a.state.Services[foundIdx].WARPConfig.Endpoint = cleanIP
 			}
 			warpSvc = a.state.Services[foundIdx]
 		}

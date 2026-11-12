@@ -10,6 +10,7 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
+	"naive-client/internal/runner"
 	"naive-client/internal/warp"
 )
 
@@ -268,6 +269,8 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 				for _, svc := range attached {
 					nodeTag := svc.Name
 					isDirect := svc.EffectiveProtocol() == config.ProtoWARP
+					rt := a.mgr.StatusOf(svc.ID)
+					unhealthy := a.isNodeUnhealthy(svc, rt)
 
 					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).
 						Padding(8, 10, 8, 10).Radius(6).Background(p.surface).
@@ -278,6 +281,17 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 									tagPill(c, "WARP Direct", p.accent, p.accentBg)
 								} else {
 									tagPill(c, fmt.Sprintf("%s ➔ WARP", strings.ToUpper(string(svc.EffectiveProtocol()))), p.green, p.greenBg)
+								}
+								if rt.State == runner.StateRunning {
+									if unhealthy {
+										tagPill(c, cat.StatusUnhealthy(), p.amber, p.amberBg)
+									} else {
+										tagPill(c, cat.StatusRunning(), p.green, p.greenBg)
+									}
+								} else if rt.State == runner.StateError {
+									tagPill(c, cat.StatusError(), p.red, p.redBg)
+								} else {
+									tagPill(c, cat.StatusStopped(), p.textDim, p.card)
 								}
 							})
 

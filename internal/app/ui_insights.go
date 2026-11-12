@@ -515,7 +515,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 								chainText = "-"
 							}
 							errText := e.Error
-							if errText == "" {
+							if errText == "" && !strings.Contains(chainText, "WARP") {
 								if idx := strings.LastIndex(chainText, " ("); idx > 0 && strings.HasSuffix(chainText, ")") {
 									errText = strings.TrimSuffix(chainText[idx+2:], ")")
 									chainText = chainText[:idx]
@@ -525,14 +525,28 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							if errText != "" {
 								fullChain = chainText + " (" + errText + ")"
 							}
-							if errText != "" {
-								ui.Row(c).Grow(1).Shrink(1).MinWidth(0).AlignItems(ui.Center).Gap(4).Tooltip(fullChain).Children(func() {
+							ui.Row(c).Grow(1).Shrink(1).MinWidth(0).AlignItems(ui.Center).Gap(4).Tooltip(fullChain).Children(func() {
+								if idx := strings.LastIndex(chainText, " -> "); idx >= 0 {
+									prefix := chainText[:idx+4]
+									target := chainText[idx+4:]
+									ui.Text(c, prefix).FontSize(10).TextColor(p.textDim).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+									isWarp := strings.Contains(target, "WARP") || strings.Contains(target, "Cloudflare")
+									targetColor := p.textDim
+									targetWeight := 400
+									if isWarp {
+										targetColor = p.amber
+										targetWeight = 600
+									}
+									ui.Text(c, target).FontSize(10).FontWeight(targetWeight).TextColor(targetColor).SingleLine().Ellipsis("…").Shrink(0)
+								} else if strings.Contains(chainText, "WARP") || strings.Contains(chainText, "Cloudflare") {
+									ui.Text(c, chainText).FontSize(10).FontWeight(600).TextColor(p.amber).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+								} else {
 									ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+								}
+								if errText != "" {
 									ui.Text(c, "("+errText+")").FontSize(10).TextColor(p.red).SingleLine().Shrink(0)
-								})
-							} else {
-								ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).Grow(1).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(fullChain)
-							}
+								}
+							})
 
 							// Col 7: Action
 							ui.Row(c).Width(55).AlignItems(ui.Center).Children(func() {

@@ -323,18 +323,19 @@ func (a *app) renderEmptyState(c *ui.Context, p palette) {
 func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 	cat := a.catalog()
 	rt := a.mgr.StatusOf(svc.ID)
+	unhealthy := a.isNodeUnhealthy(svc, rt)
 
 	ui.Column(c).
 		Padding(16, 16, 12, 16).Gap(12).
 		Radius(12).Background(p.card).
-		Border(1, a.cardBorderColor(p, rt.State)).
+		Border(1, a.cardBorderColor(p, rt.State, unhealthy)).
 		Children(func() {
 			// Upper section: Left (Title + Badges + Route summary) | Right (Primary Start/Stop button)
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(16).Children(func() {
 				ui.Column(c).Grow(1).Gap(7).Children(func() {
 					// Line 1: Runtime status + Service Name + Tags & Telemetry badges
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						a.renderRuntimeStatusBadge(c, p, rt.State)
+						a.renderRuntimeStatusBadge(c, p, rt.State, unhealthy)
 						ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
 
 						// Protocol and Engine capsule
@@ -389,7 +390,13 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						if rt.Probing {
 							tagPill(c, cat.LatencyTesting(), p.amber, p.amberBg)
 						} else if rt.ProbeError != "" {
-							tagPill(c, cat.LatencyFailed(), p.red, p.redBg)
+							pillText := cat.LatencyFailed()
+							if isWarpUnreachable(rt.ProbeError) {
+								pillText = cat.WarpServerUnreachablePill()
+							}
+							ui.Box(c.Key("pill-probe-err-" + svc.ID)).Tooltip(rt.ProbeError).Children(func() {
+								tagPill(c, pillText, p.red, p.redBg)
+							})
 						} else if rt.Latency > 0 {
 							tagPill(c, fmt.Sprintf("%d ms", max(1, rt.Latency.Milliseconds())), p.green, p.greenBg)
 						}
@@ -406,7 +413,13 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 								tagPill(c, cat.DownloadTesting(), p.amber, p.amberBg)
 							}
 						} else if rt.SpeedError != "" {
-							tagPill(c, cat.DownloadFailed(), p.red, p.redBg)
+							pillText := cat.DownloadFailed()
+							if isWarpUnreachable(rt.SpeedError) {
+								pillText = cat.WarpServerUnreachablePill()
+							}
+							ui.Box(c.Key("pill-speed-err-" + svc.ID)).Tooltip(rt.SpeedError).Children(func() {
+								tagPill(c, pillText, p.red, p.redBg)
+							})
 						} else if rt.DownloadSpeed > 0 {
 							tagPill(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.green, p.greenBg)
 						}
@@ -556,6 +569,39 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 					})
 			}
 
+			// Unhealthy Diagnostic Banner if service is running but probes/health failed
+			if rt.LastError == "" && unhealthy {
+				hint, isWarp, _ := a.diagnoseNodeUnhealthy(svc, rt)
+				ui.Row(c.Key("unhealthy-banner-" + svc.ID)).
+					AlignItems(ui.Center).Justify(ui.SpaceBetween).
+					Padding(8, 10, 8, 10).Radius(7).
+					Background(p.amberBg).Border(1, p.amber.Alpha(0.25)).
+					Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
+							ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amber)
+							ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(12).FontWeight(700).TextColor(p.amber)
+							ui.Text(c, hint).FontSize(12).FontWeight(500).TextColor(p.amber).Grow(1)
+						})
+
+						if isWarp {
+							btnCF := ui.ButtonBase(c.Key("btn-goto-cloudflare-" + svc.ID)).
+								Label("btn-goto-cloudflare-" + svc.ID).
+								Padding(3, 8, 3, 8).Radius(5).
+								Background(p.card).Border(1, p.borderSubtle).
+								Tooltip(cat.ActionGoToCloudflare()).
+								Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+										ui.Icon(c, iconSettings).Size(11, 11).TextColor(p.text)
+										ui.Text(c, cat.ActionGoToCloudflare()).FontSize(11).TextColor(p.text)
+									})
+								})
+							if btnCF.Clicked() {
+								a.activeTab = TabCloudflare
+							}
+						}
+					})
+			}
+
 			// Lower section: Card Action Footer (Left: Diagnostics & Share | Right: Edit & Delete)
 			canTest := rt.State == runner.StateRunning
 			ui.Row(c).
@@ -618,7 +664,11 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						if subtleActionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false).Clicked() {
 							a.openEditServiceDialog(svc)
 						}
-						if !svc.IsBuiltinWarp() {
+						if svc.IsBuiltinWarp() {
+							ui.Box(c.Key("delete-btn-wrap")).Tooltip(cat.BuiltinWarpDeleteTooltip()).Children(func() {
+								dangerActionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), true)
+							})
+						} else {
 							if dangerActionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), false).Clicked() {
 								a.openDeleteServiceDialog(svc)
 							}
@@ -628,8 +678,12 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 		})
 }
 
-func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State) {
+func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State, isUnhealthy ...bool) {
 	cat := a.catalog()
+	if len(isUnhealthy) > 0 && isUnhealthy[0] && st == runner.StateRunning {
+		statusBadge(c, cat.StatusUnhealthy(), p.amber, p.amberBg)
+		return
+	}
 	switch st {
 	case runner.StateRunning:
 		statusBadge(c, cat.StatusRunning(), p.green, p.greenBg)
@@ -642,7 +696,10 @@ func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State
 	}
 }
 
-func (a *app) cardBorderColor(p palette, st runner.State) ui.Color {
+func (a *app) cardBorderColor(p palette, st runner.State, isUnhealthy bool) ui.Color {
+	if isUnhealthy {
+		return p.amber.Alpha(0.55)
+	}
 	switch st {
 	case runner.StateRunning:
 		return p.green.Alpha(0.45)
@@ -651,6 +708,14 @@ func (a *app) cardBorderColor(p palette, st runner.State) ui.Color {
 	default:
 		return p.border
 	}
+}
+
+func isWarpUnreachable(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, "warp server") || strings.Contains(lower, "not registered")
 }
 
 func isMissingCoreError(errText string) (missing bool, isXray bool) {

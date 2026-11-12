@@ -205,6 +205,7 @@
   "actionSettings": "设置",
   "statusStarting": "启动中",
   "statusRunning": "运行中",
+  "statusUnhealthy": "不健康",
   "statusError": "异常",
   "statusStopped": "已停止",
   "tagManagedNaive": "NAIVE",
@@ -674,9 +675,26 @@
   "ruleActionWarpHint": "WARP 直连出站：流量经由内置 Cloudflare WARP 节点出站以隐藏家庭真实 IP，局域网与内网地址自动强制直连，域名由国内 DoH 解析。",
   "ruleDrawerDescWarp": "匹配该规则的流量将通过内置 Cloudflare WARP 直连节点出站，隐藏本机真实公网 IP 并保持国内域名就近解析；同时局域网私有地址自动直连，避免内网断联。",
   "builtinTag": "内置直连",
-  "builtinWarpNodeName": "Cloudflare WARP (内置直连)",
+  "builtinWarpNodeName": "Cloudflare WARP",
+  "builtinWarpDeleteTooltip": "内置直连节点由分流规则自动管理，无法手动删除",
   "cloudflareDirectWarpTakeover": "直连流量走 WARP 出口 (Direct ➔ WARP)",
   "cloudflareDirectWarpTakeoverDesc": "自动接管所有国内直连与默认直连流量，走内置 WARP 节点隐藏本机宽带真实 IP，并自动保护局域网（LAN）私有地址直连",
   "cloudflareWarpProbeURL": "WARP 测速地址 (Probe URL)",
-  "cloudflareWarpProbeURLPlaceholder": "默认 http://connect.rom.miui.com/generate_204"
+  "cloudflareWarpProbeURLPlaceholder": "默认 http://connect.rom.miui.com/generate_204",
+  "warpServerUnreachablePill": "WARP 连接失败",
+  "warpUnhealthyDirectHint": "无法连接 Cloudflare WARP 服务器 ({endpoint})：当前网络环境可能阻断了默认 WARP 节点（并非配置问题）。建议在 Cloudflare 页面配置优选 Anycast 端点，或通过代理节点链式开启 WARP。",
+  "@warpUnhealthyDirectHint": {
+    "placeholders": {
+      "endpoint": { "type": "String" }
+    }
+  },
+  "warpUnhealthyDetourHint": "无法通过前置代理连接 Cloudflare WARP 服务器 ({endpoint})：请检查前置节点连通性，或在 Cloudflare 页面切换传输协议。",
+  "@warpUnhealthyDetourHint": {
+    "placeholders": {
+      "endpoint": { "type": "String" }
+    }
+  },
+  "warpUnhealthyUnregisteredHint": "Cloudflare WARP 设备凭证尚未完成注册，请前往 Cloudflare 页面点击「一键注册 / 刷新凭证」。",
+  "actionGoToCloudflare": "前往 Cloudflare 设置",
+  "nodeUnhealthyDiagnosticTitle": "健康诊断"
 }

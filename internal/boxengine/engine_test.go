@@ -20,6 +20,7 @@ import (
 	"naive-client/internal/routing"
 	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
+	"naive-client/internal/warp"
 
 	"github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
@@ -28,6 +29,7 @@ import (
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
+	"github.com/sagernet/sing/service"
 )
 
 // Tests that Engine starts with Mixed inbound, accepts connections, and routes direct traffic.
@@ -1714,10 +1716,120 @@ func TestEngine_LoopbackDirectAndSidecarBindInterface(t *testing.T) {
 	}
 }
 
+func TestEngine_WarpAutoFallbackConfig(t *testing.T) {
+	warpSvc := config.Service{
+		ID:        config.BuiltinWarpServiceID,
+		Name:      "Cloudflare WARP",
+		Protocol:  config.ProtoWARP,
+		AutoStart: true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportAuto,
+		},
+	}
 
+	opts := EngineOptions{
+		Services: []config.Service{warpSvc},
+		CloudflareConfig: &warp.Config{
+			DefaultMode: warp.ModeAuto,
+		},
+	}
 
+	// 1. Verify outbound includes MASQUE with wireguard_fallback tag
+	outbounds, err := buildOutboundsConfig(opts, "direct", nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+	var masqueOb map[string]any
+	for _, ob := range outbounds {
+		if ob["tag"] == "node-"+config.BuiltinWarpServiceID {
+			masqueOb = ob
+			break
+		}
+	}
+	if masqueOb == nil {
+		t.Fatalf("expected node-builtin-warp outbound")
+	}
+	if masqueOb["wireguard_fallback"] != "wg-node-"+config.BuiltinWarpServiceID {
+		t.Errorf("expected wireguard_fallback to be 'wg-node-builtin-warp', got %v", masqueOb["wireguard_fallback"])
+	}
 
+	// 2. Verify companion WireGuard endpoint was built
+	endpoints := buildEndpointsConfig(opts)
+	var wgEp map[string]any
+	for _, ep := range endpoints {
+		if ep["tag"] == "wg-node-"+config.BuiltinWarpServiceID {
+			wgEp = ep
+			break
+		}
+	}
+	if wgEp == nil {
+		t.Fatalf("expected wg-node-builtin-warp companion endpoint in endpoints")
+	}
+	if wgEp["type"] != "wireguard" {
+		t.Errorf("expected endpoint type 'wireguard', got %v", wgEp["type"])
+	}
+}
 
+type testOutboundManager struct {
+	outbounds map[string]adapter.Outbound
+}
 
+func (m *testOutboundManager) Start(stage adapter.StartStage, scope *adapter.Scope) error { return nil }
+func (m *testOutboundManager) Close() error                  { return nil }
+func (m *testOutboundManager) Outbounds() []adapter.Outbound { return nil }
+func (m *testOutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	ob, ok := m.outbounds[tag]
+	return ob, ok
+}
+func (m *testOutboundManager) Default() adapter.Outbound { return nil }
+func (m *testOutboundManager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+	return nil
+}
 
+func TestWarpMasqueOutbound_FallbackToWireGuard(t *testing.T) {
+	fb := &mockOutbound{tag: "wg-node-builtin-warp"}
+	mgr := &testOutboundManager{
+		outbounds: map[string]adapter.Outbound{
+			"wg-node-builtin-warp": fb,
+		},
+	}
+	ctx := service.ContextWith[adapter.OutboundManager](context.Background(), mgr)
 
+	ob, err := newWarpMasqueOutbound(ctx, nil, nil, "node-builtin-warp", warpMasqueOptions{
+		Endpoint:          "127.0.0.1:1", // intentionally unreachable MASQUE
+		WireGuardFallback: "wg-node-builtin-warp",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newWarpMasqueOutbound failed: %v", err)
+	}
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conn, err := ob.DialContext(dialCtx, "tcp", M.ParseSocksaddr("1.1.1.1:80"))
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if fb.dialed != 1 {
+		t.Errorf("expected fallback outbound to be dialed once, dialed %d times", fb.dialed)
+	}
+
+	// Test circuit breaker: subsequent dial within 60s should immediately use fallback without delay
+	start := time.Now()
+	conn2, err := ob.DialContext(dialCtx, "tcp", M.ParseSocksaddr("1.1.1.1:80"))
+	if err != nil {
+		t.Fatalf("expected second dial to succeed via circuit breaker, got: %v", err)
+	}
+	if conn2 != nil {
+		_ = conn2.Close()
+	}
+	if fb.dialed != 2 {
+		t.Errorf("expected fallback outbound dialed twice, dialed %d", fb.dialed)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("expected circuit breaker to bypass MASQUE immediately, took %v", elapsed)
+	}
+}

@@ -289,7 +289,7 @@ func TestManager_EngineSingBoxLifecycleAndProbing(t *testing.T) {
 				buf := make([]byte, 1024)
 				n, _ := conn.Read(buf)
 				reqStr := string(buf[:n])
-				if strings.Contains(reqStr, "HEAD /probe") {
+				if strings.Contains(reqStr, "HEAD /probe") || strings.Contains(reqStr, "GET /probe") {
 					_, _ = conn.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))
 				} else if strings.Contains(reqStr, "GET /download") {
 					payload := strings.Repeat("0123456789abcdef", 8192) // 128KB

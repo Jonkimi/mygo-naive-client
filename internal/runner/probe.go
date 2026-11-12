@@ -47,13 +47,12 @@ func ProbeWithTransport(ctx context.Context, transport *http.Transport, targetUR
 	start := time.Now()
 	defer transport.CloseIdleConnections()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, targetURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return 0, err
 	}
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   8 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

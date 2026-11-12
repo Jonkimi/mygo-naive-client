@@ -1,6 +1,8 @@
 package warp
 
 import (
+	"crypto/tls"
+	"net"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -26,10 +28,43 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// NewClient returns a new Cloudflare WARP API client.
+// NewClient returns a new Cloudflare WARP API client with Anycast IP fallback for Mainland China.
 func NewClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 15 * time.Second}
+		dialer := &net.Dialer{Timeout: 8 * time.Second}
+		tr := &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, _ := net.SplitHostPort(addr)
+				if host == "api.cloudflareclient.com" {
+					// Direct Anycast IPs bypass DNS pollution in Mainland China while preserving SNI TLS verification
+					ips := []string{"162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.200.1"}
+					var lastErr error
+					for _, ip := range ips {
+						subCtx, subCancel := context.WithTimeout(ctx, 2*time.Second)
+						conn, err := dialer.DialContext(subCtx, network, net.JoinHostPort(ip, port))
+						subCancel()
+						if err == nil {
+							return conn, nil
+						}
+						lastErr = err
+					}
+					if conn, err := dialer.DialContext(ctx, network, addr); err == nil {
+						return conn, nil
+					}
+					return nil, lastErr
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				ServerName: "api.cloudflareclient.com",
+			},
+			ForceAttemptHTTP2:   true,
+			TLSHandshakeTimeout: 8 * time.Second,
+		}
+		httpClient = &http.Client{
+			Transport: tr,
+			Timeout:   15 * time.Second,
+		}
 	}
 	return &Client{
 		BaseURL:    DefaultAPIURL,
@@ -164,28 +199,32 @@ func (c *Client) EnrollMASQUE(ctx context.Context, acc *Account) error {
 		return fmt.Errorf("failed to generate MASQUE keypair: %w", err)
 	}
 
-	// If device token doesn't exist, register a device first
-	token := acc.AccessToken
-	deviceID := acc.DeviceID
-	if deviceID == "" || token == "" {
-		fresh, err := c.RegisterWireGuard(ctx)
+	// Ensure a dedicated device exists for MASQUE so patching secp256r1 doesn't overwrite WireGuard's key
+	token := acc.MASQUEToken
+	deviceID := acc.MASQUEDeviceID
+	if deviceID == "" || token == "" || deviceID == acc.DeviceID {
+		masqueDev, err := c.RegisterWireGuard(ctx)
 		if err != nil {
 			return err
 		}
-		deviceID = fresh.DeviceID
-		token = fresh.AccessToken
-		acc.DeviceID = fresh.DeviceID
-		acc.AccessToken = fresh.AccessToken
-		acc.AccountID = fresh.AccountID
-		acc.AccountType = fresh.AccountType
-		acc.LicenseKey = fresh.LicenseKey
-		acc.WGPrivateKey = fresh.WGPrivateKey
-		acc.WGPublicKey = fresh.WGPublicKey
-		acc.WGPeerPublicKey = fresh.WGPeerPublicKey
-		acc.ClientID = fresh.ClientID
-		acc.Reserved = fresh.Reserved
-		acc.IPv4 = fresh.IPv4
-		acc.IPv6 = fresh.IPv6
+		deviceID = masqueDev.DeviceID
+		token = masqueDev.AccessToken
+		acc.MASQUEDeviceID = masqueDev.DeviceID
+		acc.MASQUEToken = masqueDev.AccessToken
+		if acc.DeviceID == "" {
+			acc.DeviceID = masqueDev.DeviceID
+			acc.AccessToken = masqueDev.AccessToken
+			acc.AccountID = masqueDev.AccountID
+			acc.AccountType = masqueDev.AccountType
+			acc.LicenseKey = masqueDev.LicenseKey
+			acc.WGPrivateKey = masqueDev.WGPrivateKey
+			acc.WGPublicKey = masqueDev.WGPublicKey
+			acc.WGPeerPublicKey = masqueDev.WGPeerPublicKey
+			acc.ClientID = masqueDev.ClientID
+			acc.Reserved = masqueDev.Reserved
+			acc.IPv4 = masqueDev.IPv4
+			acc.IPv6 = masqueDev.IPv6
+		}
 	}
 
 	patchBody := map[string]any{
@@ -292,7 +331,7 @@ func (c *Client) BindLicense(ctx context.Context, acc *Account, licenseKey strin
 // ProvisionAll runs one-click registration for both WireGuard and MASQUE, and optionally binds a license key.
 func (c *Client) ProvisionAll(ctx context.Context, existing Account, licenseKey string) (Account, error) {
 	acc := existing
-	if acc.DeviceID == "" || acc.WGPrivateKey == "" {
+	if acc.DeviceID == "" || acc.WGPrivateKey == "" || (acc.MASQUEDeviceID != "" && acc.MASQUEDeviceID == acc.DeviceID) {
 		fresh, err := c.RegisterWireGuard(ctx)
 		if err != nil {
 			return existing, err
@@ -300,10 +339,8 @@ func (c *Client) ProvisionAll(ctx context.Context, existing Account, licenseKey 
 		acc = *fresh
 	}
 
-	if acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "" {
-		if err := c.EnrollMASQUE(ctx, &acc); err != nil {
-			return acc, fmt.Errorf("wireguard registered, but MASQUE enrollment failed: %w", err)
-		}
+	if acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "" || acc.MASQUEDeviceID == "" || acc.MASQUEDeviceID == acc.DeviceID {
+		_ = c.EnrollMASQUE(ctx, &acc)
 	}
 
 	if licenseKey != "" {

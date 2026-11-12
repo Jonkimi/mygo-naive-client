@@ -2090,6 +2090,16 @@ func (msgs Messages) StatusRunning() string {
 	return Catalog.Format(msgs.locale, "statusRunning", nil)
 }
 
+// StatusUnhealthy says "Unhealthy"
+// in the language the app shows.
+func StatusUnhealthy() string { return In(i18n.Locale()).StatusUnhealthy() }
+
+// StatusUnhealthy says "Unhealthy"
+// in the language of msgs.
+func (msgs Messages) StatusUnhealthy() string {
+	return Catalog.Format(msgs.locale, "statusUnhealthy", nil)
+}
+
 // StatusError says "Error"
 // in the language the app shows.
 func StatusError() string { return In(i18n.Locale()).StatusError() }
@@ -5782,14 +5792,24 @@ func (msgs Messages) BuiltinTag() string {
 	return Catalog.Format(msgs.locale, "builtinTag", nil)
 }
 
-// BuiltinWarpNodeName says "Cloudflare WARP (Built-in Direct)"
+// BuiltinWarpNodeName says "Cloudflare WARP"
 // in the language the app shows.
 func BuiltinWarpNodeName() string { return In(i18n.Locale()).BuiltinWarpNodeName() }
 
-// BuiltinWarpNodeName says "Cloudflare WARP (Built-in Direct)"
+// BuiltinWarpNodeName says "Cloudflare WARP"
 // in the language of msgs.
 func (msgs Messages) BuiltinWarpNodeName() string {
 	return Catalog.Format(msgs.locale, "builtinWarpNodeName", nil)
+}
+
+// BuiltinWarpDeleteTooltip says "Built-in direct node is managed automatically by routing rules and cannot be deleted"
+// in the language the app shows.
+func BuiltinWarpDeleteTooltip() string { return In(i18n.Locale()).BuiltinWarpDeleteTooltip() }
+
+// BuiltinWarpDeleteTooltip says "Built-in direct node is managed automatically by routing rules and cannot be deleted"
+// in the language of msgs.
+func (msgs Messages) BuiltinWarpDeleteTooltip() string {
+	return Catalog.Format(msgs.locale, "builtinWarpDeleteTooltip", nil)
 }
 
 // CloudflareDirectWarpTakeover says "Route Direct Traffic to WARP (Direct ➔ WARP)"
@@ -5834,4 +5854,68 @@ func CloudflareWarpProbeURLPlaceholder() string {
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpProbeURLPlaceholder() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpProbeURLPlaceholder", nil)
+}
+
+// WarpServerUnreachablePill says "WARP Unreachable"
+// in the language the app shows.
+func WarpServerUnreachablePill() string { return In(i18n.Locale()).WarpServerUnreachablePill() }
+
+// WarpServerUnreachablePill says "WARP Unreachable"
+// in the language of msgs.
+func (msgs Messages) WarpServerUnreachablePill() string {
+	return Catalog.Format(msgs.locale, "warpServerUnreachablePill", nil)
+}
+
+// WarpUnhealthyDirectHint says "Unable to connect to Cloudflare WARP server ({endpoint}): your network may be blocking default WARP nodes (this is no…"
+// in the language the app shows.
+func WarpUnhealthyDirectHint(endpoint string) string {
+	return In(i18n.Locale()).WarpUnhealthyDirectHint(endpoint)
+}
+
+// WarpUnhealthyDirectHint says "Unable to connect to Cloudflare WARP server ({endpoint}): your network may be blocking default WARP nodes (this is no…"
+// in the language of msgs.
+func (msgs Messages) WarpUnhealthyDirectHint(endpoint string) string {
+	return Catalog.Format(msgs.locale, "warpUnhealthyDirectHint", map[string]any{"endpoint": endpoint})
+}
+
+// WarpUnhealthyDetourHint says "Unable to connect to Cloudflare WARP server ({endpoint}) through upstream proxy: please check proxy node connectivity…"
+// in the language the app shows.
+func WarpUnhealthyDetourHint(endpoint string) string {
+	return In(i18n.Locale()).WarpUnhealthyDetourHint(endpoint)
+}
+
+// WarpUnhealthyDetourHint says "Unable to connect to Cloudflare WARP server ({endpoint}) through upstream proxy: please check proxy node connectivity…"
+// in the language of msgs.
+func (msgs Messages) WarpUnhealthyDetourHint(endpoint string) string {
+	return Catalog.Format(msgs.locale, "warpUnhealthyDetourHint", map[string]any{"endpoint": endpoint})
+}
+
+// WarpUnhealthyUnregisteredHint says "Cloudflare WARP device credentials have not been registered yet. Please go to the Cloudflare page and click 'One-Clic…"
+// in the language the app shows.
+func WarpUnhealthyUnregisteredHint() string { return In(i18n.Locale()).WarpUnhealthyUnregisteredHint() }
+
+// WarpUnhealthyUnregisteredHint says "Cloudflare WARP device credentials have not been registered yet. Please go to the Cloudflare page and click 'One-Clic…"
+// in the language of msgs.
+func (msgs Messages) WarpUnhealthyUnregisteredHint() string {
+	return Catalog.Format(msgs.locale, "warpUnhealthyUnregisteredHint", nil)
+}
+
+// ActionGoToCloudflare says "Cloudflare Settings"
+// in the language the app shows.
+func ActionGoToCloudflare() string { return In(i18n.Locale()).ActionGoToCloudflare() }
+
+// ActionGoToCloudflare says "Cloudflare Settings"
+// in the language of msgs.
+func (msgs Messages) ActionGoToCloudflare() string {
+	return Catalog.Format(msgs.locale, "actionGoToCloudflare", nil)
+}
+
+// NodeUnhealthyDiagnosticTitle says "Health Diagnostics"
+// in the language the app shows.
+func NodeUnhealthyDiagnosticTitle() string { return In(i18n.Locale()).NodeUnhealthyDiagnosticTitle() }
+
+// NodeUnhealthyDiagnosticTitle says "Health Diagnostics"
+// in the language of msgs.
+func (msgs Messages) NodeUnhealthyDiagnosticTitle() string {
+	return Catalog.Format(msgs.locale, "nodeUnhealthyDiagnosticTitle", nil)
 }

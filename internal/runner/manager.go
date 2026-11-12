@@ -234,6 +234,17 @@ func (m *Manager) ensureInstanceLocked(id string) *instance {
 	return inst
 }
 
+// SetStatusForTest overrides the status of a service for testing purposes.
+func (m *Manager) SetStatusForTest(id string, st Status) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.ensureInstanceLocked(id)
+	inst.status = st
+	if m.onChange != nil {
+		m.onChange()
+	}
+}
+
 // RunningIDs returns the IDs of all services currently running or starting.
 func (m *Manager) RunningIDs() []string {
 	m.mu.RLock()
@@ -761,7 +772,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 	var rtt time.Duration
 	var err error
 	if svc.EffectiveEngine() == config.EngineSingBox && m.ServiceDialer != nil {
-		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		tr := &http.Transport{
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				return m.ServiceDialer(c, svc, network, addr)
@@ -773,7 +784,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 		var ep config.ListenEndpoint
 		ep, err = svc.OutboundEndpoint()
 		if err == nil {
-			probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+			probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			rtt, err = Probe(probeCtx, ep, probeURL)
 			cancel()
 		}
@@ -874,12 +885,16 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 		inst.status.DownloadSpeed = 0
 		inst.status.SpeedError = err.Error()
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 下载测速失败: %v", err))
+		m.mu.Unlock()
+		if m.OnProbeFailure != nil {
+			m.OnProbeFailure(svc.ID, err)
+		}
 	} else {
 		inst.status.DownloadSpeed = bps
 		inst.status.SpeedError = ""
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 下载测速完成: %s", FormatSpeed(bps)))
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 	m.onChange()
 	return bps, err
 }

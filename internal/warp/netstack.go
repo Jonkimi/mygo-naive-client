@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 	"sync"
 
 	"github.com/sagernet/gvisor/pkg/buffer"
@@ -154,14 +155,9 @@ func (ns *Netstack) DialContextTCP(ctx context.Context, dest string) (net.Conn, 
 		return nil, fmt.Errorf("invalid port %q", portStr)
 	}
 
-	addr, err := netip.ParseAddr(host)
+	addr, err := ns.resolveHostIP(ctx, host)
 	if err != nil {
-		// Resolve using default resolver
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-		if err != nil || len(ips) == 0 {
-			return nil, fmt.Errorf("failed to resolve host %q: %w", host, err)
-		}
-		addr, _ = netip.ParseAddr(ips[0].String())
+		return nil, err
 	}
 
 	var netProto tcpip.NetworkProtocolNumber
@@ -191,13 +187,9 @@ func (ns *Netstack) DialUDP(ctx context.Context, dest string) (net.Conn, error) 
 		return nil, fmt.Errorf("invalid port %q", portStr)
 	}
 
-	addr, err := netip.ParseAddr(host)
+	addr, err := ns.resolveHostIP(ctx, host)
 	if err != nil {
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-		if err != nil || len(ips) == 0 {
-			return nil, fmt.Errorf("failed to resolve host %q: %w", host, err)
-		}
-		addr, _ = netip.ParseAddr(ips[0].String())
+		return nil, err
 	}
 
 	var netProto tcpip.NetworkProtocolNumber
@@ -228,4 +220,42 @@ func (ns *Netstack) Close() error {
 	ns.LinkEP.Close()
 	ns.Stack.Close()
 	return nil
+}
+
+func (ns *Netstack) resolveHostIP(ctx context.Context, host string) (netip.Addr, error) {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr, nil
+	}
+	netProto := "ip"
+	if ns.IPv4.IsValid() && (!ns.IPv6.IsValid() || ns.IPv6.IsUnspecified()) {
+		netProto = "ip4"
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, netProto, host)
+	if err != nil || len(ips) == 0 {
+		r := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{Timeout: 1000 * time.Millisecond}
+				return d.DialContext(ctx, "udp", "223.5.5.5:53")
+			},
+		}
+		ips, _ = r.LookupIP(ctx, netProto, host)
+	}
+	if len(ips) == 0 {
+		return netip.Addr{}, fmt.Errorf("failed to resolve host %q: %w", host, err)
+	}
+	selected := ips[0]
+	if ns.IPv4.IsValid() {
+		for _, ip := range ips {
+			if ip.To4() != nil {
+				selected = ip
+				break
+			}
+		}
+	}
+	parsed, err := netip.ParseAddr(selected.String())
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to parse resolved IP %q: %w", selected.String(), err)
+	}
+	return parsed, nil
 }

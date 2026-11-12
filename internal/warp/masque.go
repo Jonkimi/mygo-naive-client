@@ -58,6 +58,10 @@ func (t *MASQUETunnel) Protocol() string {
 	return t.protocol
 }
 
+func (t *MASQUETunnel) Done() <-chan struct{} {
+	return t.ctx.Done()
+}
+
 func (t *MASQUETunnel) DialContextTCP(ctx context.Context, dest string) (net.Conn, error) {
 	return t.Netstack.DialContextTCP(ctx, dest)
 }
@@ -121,7 +125,9 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 
 	// If forced to H2 or underlying transport is TCP-only, skip QUIC directly
 	if tcpOnly || forceH2 {
-		tun, err := dialMASQUEH2(tunnelCtx, dialer, endpoint, tlsCfg, ns, cancel)
+		h2DialCtx, h2Cancel := context.WithTimeout(ctx, 3*time.Second)
+		tun, err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
+		h2Cancel()
 		if err != nil {
 			cancel()
 			_ = ns.Close()
@@ -130,16 +136,18 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 		return tun, nil
 	}
 
-	// Try HTTP/3 with 3-second timeout
-	h3Ctx, h3Cancel := context.WithTimeout(ctx, 3*time.Second)
+	// Try HTTP/3 with 1.5-second timeout
+	h3Ctx, h3Cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	tun, err := dialMASQUEH3(h3Ctx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 	h3Cancel()
 	if err == nil {
 		return tun, nil
 	}
 
-	// Fallback to HTTP/2
-	tun, err = dialMASQUEH2(tunnelCtx, dialer, endpoint, tlsCfg, ns, cancel)
+	// Fallback to HTTP/2 with 1.5-second timeout
+	h2DialCtx, h2Cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	tun, err = dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
+	h2Cancel()
 	if err != nil {
 		cancel()
 		_ = ns.Close()
@@ -167,7 +175,7 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		EnableDatagrams: true,
 	}
 
-	qConn, err := quic.DialEarly(ctx, pConn, rAddr, tlsCfg, qCfg)
+	qConn, err := quic.Dial(ctx, pConn, rAddr, tlsCfg, qCfg)
 	if err != nil {
 		_ = pConn.Close()
 		return nil, err
@@ -181,6 +189,14 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 
 	clientConn := h3Tr.NewClientConn(qConn)
 
+	select {
+	case <-clientConn.ReceivedSettings():
+	case <-ctx.Done():
+		_ = qConn.CloseWithError(0, "")
+		_ = pConn.Close()
+		return nil, ctx.Err()
+	}
+
 	reqStream, err := clientConn.OpenRequestStream(ctx)
 	if err != nil {
 		_ = qConn.CloseWithError(0, "")
@@ -188,12 +204,13 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "CONNECT", "https://"+DefaultMASQUESNI+"/.well-known/masque/ip/*/*", nil)
+	req, err := http.NewRequestWithContext(tunnelCtx, "CONNECT", "https://"+DefaultMASQUESNI+"/.well-known/masque/ip/*/*", nil)
 	if err != nil {
 		_ = qConn.CloseWithError(0, "")
 		_ = pConn.Close()
 		return nil, err
 	}
+	req.Proto = "cf-connect-ip"
 	req.Header.Set("Capsule-Protocol", "?1")
 	req.Header.Set("CF-Connect-Proto", "cf-connect-ip")
 
@@ -222,12 +239,15 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		ctx:      tunnelCtx,
 		cancel:   cancel,
 		closer: closerFunc(func() error {
-			return qConn.CloseWithError(0, "")
+			_ = qConn.CloseWithError(0, "")
+			_ = pConn.Close()
+			return nil
 		}),
 	}
 
 	// Inbound datagram loop
 	go func() {
+		defer cancel()
 		for {
 			dg, err := reqStream.ReceiveDatagram(tunnelCtx)
 			if err != nil {
@@ -243,6 +263,7 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 
 	// Outbound datagram loop
 	go func() {
+		defer cancel()
 		for {
 			pkt, err := ns.ReadPacket(tunnelCtx)
 			if err != nil {
@@ -250,8 +271,12 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 			}
 			var dg []byte
 			dg = append(dg, 0x00) // RFC 9297 Context ID 0
-			dg = append(dg, pkt...)
-			if err := reqStream.SendDatagram(dg); err != nil {
+			dg = append(pkt, 0x00)
+			_ = dg
+			outDg := make([]byte, 1+len(pkt))
+			outDg[0] = 0x00
+			copy(outDg[1:], pkt)
+			if err := reqStream.SendDatagram(outDg); err != nil {
 				return
 			}
 		}
@@ -260,17 +285,17 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	return tun, nil
 }
 
-func dialMASQUEH2(ctx context.Context, dialer Dialer, endpoint string, baseTLS *tls.Config, ns *Netstack, cancel context.CancelFunc) (*MASQUETunnel, error) {
+func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseTLS *tls.Config, ns *Netstack, tunnelCtx context.Context, cancel context.CancelFunc) (*MASQUETunnel, error) {
 	tlsCfg := baseTLS.Clone()
 	tlsCfg.NextProtos = []string{http2.NextProtoTLS}
 
-	rawConn, err := dialer.DialContext(ctx, "tcp", endpoint)
+	rawConn, err := dialer.DialContext(dialCtx, "tcp", endpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	tlsConn := tls.Client(rawConn, tlsCfg)
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
+	if err := tlsConn.HandshakeContext(dialCtx); err != nil {
 		_ = rawConn.Close()
 		return nil, err
 	}
@@ -284,19 +309,38 @@ func dialMASQUEH2(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 
 	pr, pw := io.Pipe()
 
-	req, err := http.NewRequestWithContext(ctx, "CONNECT", "https://"+DefaultMASQUESNI+"/.well-known/masque/ip/*/*", pr)
+	req, err := http.NewRequestWithContext(tunnelCtx, "CONNECT", "https://"+DefaultMASQUESNI+"/.well-known/masque/ip/*/*", pr)
 	if err != nil {
 		_ = cc.Close()
 		return nil, err
 	}
+	req.Proto = "cf-connect-ip"
 	req.Header.Set("Capsule-Protocol", "?1")
 	req.Header.Set("CF-Connect-Proto", "cf-connect-ip")
+	req.Header[":protocol"] = []string{"cf-connect-ip"}
 
-	resp, err := cc.RoundTrip(req)
-	if err != nil {
+	respCh := make(chan *http.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		r, err := cc.RoundTrip(req)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- r
+	}()
+
+	var resp *http.Response
+	select {
+	case <-dialCtx.Done():
+		_ = cc.Close()
+		return nil, fmt.Errorf("HTTP/2 CONNECT handshake timed out: %w", dialCtx.Err())
+	case err := <-errCh:
 		_ = cc.Close()
 		return nil, err
+	case resp = <-respCh:
 	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = cc.Close()
 		return nil, fmt.Errorf("HTTP/2 CONNECT rejected: %s", resp.Status)
@@ -306,7 +350,7 @@ func dialMASQUEH2(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		Netstack: ns,
 		protocol: "h2",
 		endpoint: endpoint,
-		ctx:      ctx,
+		ctx:      tunnelCtx,
 		cancel:   cancel,
 		closer:   cc,
 	}
@@ -315,6 +359,7 @@ func dialMASQUEH2(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	go func() {
 		defer cancel()
 		defer resp.Body.Close()
+		defer pw.Close()
 		for {
 			capsuleType, err := readVarint(resp.Body)
 			if err != nil {
@@ -344,7 +389,7 @@ func dialMASQUEH2(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		defer pw.Close()
 		var varintBuf bytes.Buffer
 		for {
-			pkt, err := ns.ReadPacket(ctx)
+			pkt, err := ns.ReadPacket(tunnelCtx)
 			if err != nil {
 				return
 			}

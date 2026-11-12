@@ -205,6 +205,7 @@
   "actionSettings": "Settings",
   "statusStarting": "Starting",
   "statusRunning": "Running",
+  "statusUnhealthy": "Unhealthy",
   "statusError": "Error",
   "statusStopped": "Stopped",
   "tagManagedNaive": "NAIVE",
@@ -690,9 +691,26 @@
   "ruleActionWarpHint": "WARP Direct Outbound: Egress through the built-in Cloudflare WARP node to anonymize your home IP while automatically preserving direct LAN connectivity.",
   "ruleDrawerDescWarp": "Traffic matching this rule will route through the built-in Cloudflare WARP node, hiding your public IP while retaining local DoH DNS resolution and protecting local network traffic.",
   "builtinTag": "Built-in",
-  "builtinWarpNodeName": "Cloudflare WARP (Built-in Direct)",
+  "builtinWarpNodeName": "Cloudflare WARP",
+  "builtinWarpDeleteTooltip": "Built-in direct node is managed automatically by routing rules and cannot be deleted",
   "cloudflareDirectWarpTakeover": "Route Direct Traffic to WARP (Direct ➔ WARP)",
   "cloudflareDirectWarpTakeoverDesc": "Automatically route direct domestic traffic through the built-in WARP node while preserving local LAN subnet connectivity",
   "cloudflareWarpProbeURL": "WARP Probe URL",
-  "cloudflareWarpProbeURLPlaceholder": "Default http://connect.rom.miui.com/generate_204"
+  "cloudflareWarpProbeURLPlaceholder": "Default http://connect.rom.miui.com/generate_204",
+  "warpServerUnreachablePill": "WARP Unreachable",
+  "warpUnhealthyDirectHint": "Unable to connect to Cloudflare WARP server ({endpoint}): your network may be blocking default WARP nodes (this is not a configuration error). We recommend configuring a Clean Anycast Endpoint on the Cloudflare page, or chaining WARP through a proxy node.",
+  "@warpUnhealthyDirectHint": {
+    "placeholders": {
+      "endpoint": { "type": "String" }
+    }
+  },
+  "warpUnhealthyDetourHint": "Unable to connect to Cloudflare WARP server ({endpoint}) through upstream proxy: please check proxy node connectivity or switch transport protocols on the Cloudflare page.",
+  "@warpUnhealthyDetourHint": {
+    "placeholders": {
+      "endpoint": { "type": "String" }
+    }
+  },
+  "warpUnhealthyUnregisteredHint": "Cloudflare WARP device credentials have not been registered yet. Please go to the Cloudflare page and click 'One-Click Register / Refresh'.",
+  "actionGoToCloudflare": "Cloudflare Settings",
+  "nodeUnhealthyDiagnosticTitle": "Health Diagnostics"
 }

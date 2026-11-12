@@ -146,7 +146,7 @@ func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 	fg := p.textMuted
 	bg := ui.Transparent
 	if disabled {
-		fg = p.textDim
+		fg = p.textDim.Alpha(0.6)
 	}
 	btn := ui.ButtonBase(c).
 		Height(28).PaddingX(8).Radius(6).
@@ -170,7 +170,7 @@ func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 	fg := p.textMuted
 	bg := ui.Transparent
 	if disabled {
-		fg = p.textDim
+		fg = p.textDim.Alpha(0.6)
 	}
 	btn := ui.ButtonBase(c).
 		Height(28).PaddingX(8).Radius(6).

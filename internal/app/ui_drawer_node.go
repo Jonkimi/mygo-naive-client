@@ -25,6 +25,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 	}
 
 	rt := a.mgr.StatusOf(svc.ID)
+	unhealthy := a.isNodeUnhealthy(svc, rt)
 
 	// Backdrop (fades in and out, click to dismiss)
 	backdrop := ui.Box(c.Key("node-drawer-backdrop")).
@@ -54,7 +55,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, cat.NodeDrawerTitle()).FontSize(15).FontWeight(700).TextColor(p.text)
-					a.renderRuntimeStatusBadge(c, p, rt.State)
+					a.renderRuntimeStatusBadge(c, p, rt.State, unhealthy)
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -95,7 +96,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 							// Row for State
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 								ui.Text(c, cat.NodeDrawerState()).FontSize(12).TextColor(p.textMuted)
-								a.renderRuntimeStatusBadge(c, p, rt.State)
+								a.renderRuntimeStatusBadge(c, p, rt.State, unhealthy)
 							})
 
 							if rt.Restarts > 0 {
@@ -113,6 +114,24 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 										a.writeClipboard(rt.LastError, cat.ToastErrorCopied())
 									}
 								})
+							} else if unhealthy {
+								hint, _, _ := a.diagnoseNodeUnhealthy(svc, rt)
+								if hint != "" {
+									ui.Column(c.Key("drawer-unhealthy-diag")).Gap(6).Padding(8, 10, 8, 10).Radius(6).
+										Background(p.amberBg).Border(1, p.amber.Alpha(0.28)).
+										Children(func() {
+											ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+												ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(11).FontWeight(700).TextColor(p.amber)
+											})
+											ui.Text(c, hint).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
+											if svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP {
+												if subtleActionChip(c.Key("btn-drawer-goto-cf"), p, iconNavCloudflare, cat.ActionGoToCloudflare(), false).Clicked() {
+													a.activeNodeDrawerID = ""
+													a.activeTab = TabCloudflare
+												}
+											}
+										})
+								}
 							}
 						})
 
@@ -147,6 +166,9 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 									}
 								})
 								ui.Text(c, cat.NodeDrawerProbeLatencyDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.3)
+								if rt.ProbeError != "" {
+									ui.Text(c, rt.ProbeError).FontSize(11).TextColor(p.red).LineHeight(1.3)
+								}
 							})
 
 							// B: Real Traffic Latency EWMA (真实业务延迟)
@@ -203,9 +225,13 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 											tagPill(c, cat.NodeDrawerCircuitTripped(), p.red, p.redBg)
 										} else if sc.ConsecutiveFailures > 0 {
 											tagPill(c, fmt.Sprintf("%d 连续失败", sc.ConsecutiveFailures), p.amber, p.amberBg)
+										} else if unhealthy {
+											tagPill(c, cat.StatusUnhealthy(), p.amber, p.amberBg)
 										} else {
 											tagPill(c, cat.NodeDrawerCircuitNormal(), p.green, p.greenBg)
 										}
+									} else if rt.State == runner.StateRunning && unhealthy {
+										tagPill(c, cat.StatusUnhealthy(), p.amber, p.amberBg)
 									} else {
 										ui.Text(c, cat.NodeDrawerPIDNone()).FontSize(12).TextColor(p.textDim)
 									}
@@ -245,6 +271,9 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 										ui.Text(c, cat.NodeDrawerNotTested()).FontSize(12).TextColor(p.textDim)
 									}
 								})
+								if rt.SpeedError != "" {
+									ui.Text(c, rt.SpeedError).FontSize(11).TextColor(p.red).LineHeight(1.3)
+								}
 							})
 						})
 
