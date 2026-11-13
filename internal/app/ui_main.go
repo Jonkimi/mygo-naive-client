@@ -709,11 +709,7 @@ func (a *app) cardBorderColor(p palette, st runner.State, isUnhealthy bool) ui.C
 }
 
 func isWarpUnreachable(errText string) bool {
-	if errText == "" {
-		return false
-	}
-	lower := strings.ToLower(errText)
-	return strings.Contains(lower, "warp server") || strings.Contains(lower, "not registered")
+	return isWarpTunnelError(errText)
 }
 
 func isMissingCoreError(errText string) (missing bool, isXray bool) {

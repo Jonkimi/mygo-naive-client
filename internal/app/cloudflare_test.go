@@ -731,3 +731,70 @@ func TestNaiveWarp_DynamicPortSyncAndPreStartCheck(t *testing.T) {
 		t.Errorf("expected node-%s masque outbound in gateway after sidecar start", naiveSvc.ID)
 	}
 }
+
+// Regression: for WARP-enabled nodes (direct WARP and chained proxy+WARP),
+// transient probe/speed-test request failures (e.g. packet loss or target timeout)
+// must NOT mark the node as unhealthy unless the WARP tunnel itself failed or
+// consecutive failures tripped the circuit breaker.
+func TestWARPNode_TransientProbeFailureStaysHealthy(t *testing.T) {
+	chainedSvc := config.Service{
+		ID:         "vless-warp-health",
+		Name:       "VLESS + WARP",
+		Protocol:   config.ProtoVLESS,
+		EnableWARP: true,
+	}
+	directWarp := config.Service{
+		ID:       config.BuiltinWarpServiceID,
+		Name:     "Cloudflare WARP",
+		Protocol: config.ProtoWARP,
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{chainedSvc, directWarp})
+	a.state.Cloudflare.DirectWarpEnabled = true
+	a.saveState()
+	tt.Frame()
+
+	// 1. Single probe timeout on target URL -> must stay healthy
+	stTransientProbe := runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "Get \"https://www.gstatic.com/generate_204\": context deadline exceeded",
+	}
+	a.mgr.SetStatusForTest(chainedSvc.ID, stTransientProbe)
+	if a.isNodeUnhealthy(chainedSvc, stTransientProbe) {
+		t.Errorf("expected chained WARP node to remain healthy on transient probe timeout")
+	}
+	a.mgr.SetStatusForTest(directWarp.ID, stTransientProbe)
+	if a.isNodeUnhealthy(directWarp, stTransientProbe) {
+		t.Errorf("expected direct WARP node to remain healthy on transient probe timeout")
+	}
+
+	// 2. Single download speed test timeout -> must stay healthy for WARP nodes
+	stTransientSpeed := runner.Status{
+		State:      runner.StateRunning,
+		SpeedError: "download test failed: unexpected EOF",
+	}
+	if a.isNodeUnhealthy(chainedSvc, stTransientSpeed) {
+		t.Errorf("expected chained WARP node to remain healthy on transient speed test failure")
+	}
+
+	// 3. WARP tunnel / registration failure -> must be marked unhealthy
+	stWarpErr := runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "warp server (162.159.198.2:443) connection failed: i/o timeout",
+	}
+	if !a.isNodeUnhealthy(chainedSvc, stWarpErr) {
+		t.Errorf("expected chained WARP node to be unhealthy on WARP server tunnel error")
+	}
+	if !a.isNodeUnhealthy(directWarp, stWarpErr) {
+		t.Errorf("expected direct WARP node to be unhealthy on WARP server tunnel error")
+	}
+
+	// 4. Circuit breaker tripped on node itself -> must be marked unhealthy
+	a.tracker.RecordProbeFailure(chainedSvc.ID)
+	a.tracker.RecordProbeFailure(chainedSvc.ID)
+	a.tracker.RecordProbeFailure(chainedSvc.ID)
+	if !a.isNodeUnhealthy(chainedSvc, stTransientProbe) {
+		t.Errorf("expected chained WARP node to be unhealthy when circuit breaker is tripped")
+	}
+}
+

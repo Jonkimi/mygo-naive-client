@@ -289,13 +289,16 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 		if err == nil {
 			return conn, nil
 		}
+		if w.logger != nil {
+			w.logger.DebugContext(ctx, fmt.Sprintf("MASQUE dial failed after %v (connect %v, dial %v): %v", t2.Sub(t0), t1.Sub(t0), t2.Sub(t1), err))
+		}
 		select {
 		case <-tun.Done():
 			w.invalidateTunnel(tun)
 		default:
-		}
-		if w.logger != nil {
-			w.logger.DebugContext(ctx, fmt.Sprintf("MASQUE dial failed after %v (connect %v, dial %v): %v", t2.Sub(t0), t1.Sub(t0), t2.Sub(t1), err))
+			// WARP tunnel itself is alive; return destination-level error directly
+			// without blaming the WARP server or triggering WireGuard fallback.
+			return nil, err
 		}
 	} else if w.logger != nil {
 		w.logger.DebugContext(ctx, fmt.Sprintf("MASQUE tunnel create failed after %v: %v", t1.Sub(t0), err))
@@ -342,6 +345,8 @@ func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Soc
 		case <-tun.Done():
 			w.invalidateTunnel(tun)
 		default:
+			// WARP tunnel itself is alive; return destination-level error directly.
+			return nil, err
 		}
 	}
 

@@ -259,8 +259,9 @@ func New(opts EngineOptions) (*Engine, error) {
 	}
 	if eng.blocker != nil {
 		eng.connTracker = &BlockerConnectionTracker{
-			blocker:          eng.blocker,
-			nodeNameResolver: eng.GetNodeName,
+			blocker:            eng.blocker,
+			nodeNameResolver:   eng.GetNodeName,
+			chainedWarpChecker: eng.IsChainedWarp,
 		}
 		b.Router().AppendTracker(eng.connTracker)
 		eng.blocker.SetOnUpdate(eng.ClearDNSCache)
@@ -581,12 +582,23 @@ func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr stri
 	}
 	conn, err := ob.DialContext(ctx, network, dest)
 	if err != nil && isWarp {
-		if !strings.Contains(err.Error(), "warp server") {
+		errLower := strings.ToLower(err.Error())
+		if !strings.Contains(errLower, "warp server") &&
+			(strings.Contains(errLower, "not registered") ||
+				strings.Contains(errLower, "凭证未注册") ||
+				strings.Contains(errLower, "detour outbound") ||
+				strings.Contains(errLower, "masque") ||
+				strings.Contains(errLower, "wireguard")) {
 			ep := e.getWarpEndpoint(cleanID)
 			return nil, fmt.Errorf("warp server (%s) connection failed: %w", ep, err)
 		}
 	}
 	return conn, err
+}
+
+// IsChainedWarp reports whether nodeID is a non-WARP proxy node with EnableWARP enabled.
+func (e *Engine) IsChainedWarp(nodeID string) bool {
+	return e.isChainedWarpNode(nodeID)
 }
 
 func (e *Engine) isWarpNode(nodeID string) bool {

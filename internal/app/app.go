@@ -802,8 +802,31 @@ func (a *app) probeURLForService(svc config.Service) string {
 	return defaultProbeURL
 }
 
+func isWarpTunnelError(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, "warp server") ||
+		strings.Contains(lower, "not registered") ||
+		strings.Contains(lower, "凭证未注册") ||
+		strings.Contains(lower, "detour outbound") ||
+		strings.Contains(lower, "masque") ||
+		strings.Contains(lower, "wireguard")
+}
+
 func (a *app) isNodeUnhealthy(svc config.Service, rt runner.Status) bool {
 	if rt.State != runner.StateRunning {
+		return false
+	}
+	isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+	if isWarpNode {
+		if rt.LastError != "" || isWarpTunnelError(rt.ProbeError) || isWarpTunnelError(rt.SpeedError) {
+			return true
+		}
+		if a.tracker != nil && a.tracker.GetScore(svc.ID).IsBroken {
+			return true
+		}
 		return false
 	}
 	if rt.ProbeError != "" || rt.SpeedError != "" {

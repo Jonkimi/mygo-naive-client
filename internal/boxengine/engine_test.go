@@ -113,6 +113,25 @@ func TestEngine_StartAndDirectRouting(t *testing.T) {
 	if string(body) != "hello from direct" {
 		t.Errorf("unexpected body: %s", string(body))
 	}
+
+	// Wait briefly for async source duration annotation on loopback-direct
+	deadline := time.Now().Add(500 * time.Millisecond)
+	var foundLoopbackDur bool
+	for time.Now().Before(deadline) {
+		for _, entry := range bl.Logger().GetEntries(10) {
+			if entry.Domain == "127.0.0.1" && entry.Source == blocker.SourceGateway && entry.Duration > 0 {
+				foundLoopbackDur = true
+				break
+			}
+		}
+		if foundLoopbackDur {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !foundLoopbackDur {
+		t.Errorf("expected 127.0.0.1 gateway log entry to have Duration > 0, got entries: %+v", bl.Logger().GetEntries(10))
+	}
 }
 
 // Tests that Engine integrates Blocker and blocks blacklisted domains.

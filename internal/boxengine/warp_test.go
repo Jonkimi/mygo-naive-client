@@ -1,11 +1,19 @@
 package boxengine
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	"naive-client/internal/blocker"
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/warp"
+
+	"github.com/sagernet/sing-box/adapter"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 func TestBuildInboundsConfig_CloudflareTunnel(t *testing.T) {
@@ -403,3 +411,149 @@ func TestBuildOutboundsConfig_StoppedAutoZeroSidecar_EnableWARP(t *testing.T) {
 		t.Fatalf("expected masque outbound with tcp_only_detour=true, got %+v", mq)
 	}
 }
+
+// Regression: chained proxy nodes with EnableWARP must append " -> WARP" in Insights gateway chains,
+// while plain proxy nodes keep "... -> nodeName" and builtin-warp stays "... -> Cloudflare WARP".
+func TestInsightsChain_ChainedProxyWarpSuffix(t *testing.T) {
+	services := []config.Service{
+		{
+			ID:         "svc-warp-proxy",
+			Name:       "HK-Proxy",
+			Protocol:   config.ProtoVLESS,
+			Server:     "hk.example.com",
+			ServerPort: 443,
+			UUID:       "11111111-2222-3333-4444-555555555555",
+			EnableWARP: true,
+		},
+		{
+			ID:         "svc-plain-proxy",
+			Name:       "US-Plain",
+			Protocol:   config.ProtoVLESS,
+			Server:     "us.example.com",
+			ServerPort: 443,
+			UUID:       "11111111-2222-3333-4444-555555555556",
+			EnableWARP: false,
+		},
+		{
+			ID:       config.BuiltinWarpServiceID,
+			Name:     "Cloudflare WARP",
+			Protocol: config.ProtoWARP,
+		},
+	}
+
+	eng := &Engine{
+		services:  services,
+		activeIDs: map[string]bool{"svc-warp-proxy": true},
+	}
+	bl := blocker.NewEngine(blocker.Options{})
+	bl.Logger().SetDedupWindow(0)
+
+	tracker := &BlockerConnectionTracker{
+		blocker:            bl,
+		nodeNameResolver:   eng.GetNodeName,
+		chainedWarpChecker: eng.IsChainedWarp,
+	}
+
+	// 1. Pool outbound selecting chained WARP proxy node
+	poolOb := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: eng,
+	})
+	tracker.recordConnection("api.ipify.org", nil, poolOb)
+
+	// 2. Direct-node outbound targeting chained WARP proxy node
+	tracker.recordConnection("example.com", nil, &mockOutbound{tag: "node-svc-warp-proxy"})
+
+	// 3. Plain proxy node without EnableWARP
+	tracker.recordConnection("example.org", nil, &mockOutbound{tag: "node-svc-plain-proxy"})
+
+	// 4. Builtin direct WARP node (should NOT double-append "-> WARP")
+	tracker.recordConnection("cloudflare.com", nil, &mockOutbound{tag: "node-" + config.BuiltinWarpServiceID})
+
+	entries := bl.Logger().GetEntries(10)
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 entries, got %d", len(entries))
+	}
+	byDomain := make(map[string]string)
+	for _, e := range entries {
+		byDomain[e.Domain] = e.Chain
+	}
+	if got := byDomain["api.ipify.org"]; got != "final -> PROXY_POOL -> HK-Proxy -> WARP" {
+		t.Errorf("unexpected pool chained WARP chain: %q", got)
+	}
+	if got := byDomain["example.com"]; got != "final -> HK-Proxy -> WARP" {
+		t.Errorf("unexpected single-node chained WARP chain: %q", got)
+	}
+	if got := byDomain["example.org"]; got != "final -> US-Plain" {
+		t.Errorf("unexpected plain proxy chain: %q", got)
+	}
+	if got := byDomain["cloudflare.com"]; got != "final -> Cloudflare WARP" {
+		t.Errorf("unexpected builtin WARP chain: %q", got)
+	}
+}
+
+// Regression: warpMasqueOutbound must return destination errors raw when the MASQUE tunnel
+// itself is alive (not wrap them as "warp server (...) connection failed"), and Engine.IsChainedWarp
+// distinguishes chained proxy+WARP nodes from builtin WARP.
+func TestDialNode_WarpErrorClassification(t *testing.T) {
+	eng := &Engine{
+		services: []config.Service{
+			{
+				ID:       config.BuiltinWarpServiceID,
+				Name:     "Cloudflare WARP",
+				Protocol: config.ProtoWARP,
+			},
+			{
+				ID:         "svc-chained",
+				Name:       "Chained Node",
+				Protocol:   config.ProtoVLESS,
+				EnableWARP: true,
+			},
+		},
+	}
+	if eng.IsChainedWarp(config.BuiltinWarpServiceID) {
+		t.Errorf("builtin-warp should not be classified as chained WARP")
+	}
+	if !eng.IsChainedWarp("svc-chained") {
+		t.Errorf("svc-chained should be classified as chained WARP")
+	}
+
+	// Simulate warpMasqueOutbound with an active Netstack tunnel where dialing an unreachable
+	// destination times out while the tunnel itself stays alive.
+	ns, err := warp.NewNetstack(warp.DefaultIPv4, warp.DefaultIPv6)
+	if err != nil {
+		t.Fatalf("NewNetstack failed: %v", err)
+	}
+	defer ns.Close()
+	fb := &mockOutbound{tag: "wg-node-builtin-warp"}
+	ob := &warpMasqueOutbound{
+		tag: "node-builtin-warp",
+		tun: &warp.MASQUETunnel{
+			Netstack: ns,
+		},
+		opts: warpMasqueOptions{
+			Endpoint:          "162.159.198.2:443",
+			WireGuardFallback: "wg-node-builtin-warp",
+		},
+		outboundMgr: &testOutboundManager{
+			outbounds: map[string]adapter.Outbound{
+				"wg-node-builtin-warp": fb,
+			},
+		},
+	}
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, dialErr := ob.DialContext(dialCtx, "tcp", M.ParseSocksaddr("1.1.1.1:443"))
+	if dialErr == nil {
+		t.Fatalf("expected destination dial timeout error, got nil")
+	}
+	if strings.Contains(dialErr.Error(), "warp server") {
+		t.Errorf("expected raw destination error without 'warp server' wrapper, got: %v", dialErr)
+	}
+	if fb.dialed != 0 {
+		t.Errorf("expected WireGuard fallback NOT to trigger when MASQUE tunnel is alive, dialed=%d", fb.dialed)
+	}
+	_ = errors.Is
+}
+

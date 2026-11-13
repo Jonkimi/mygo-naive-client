@@ -173,6 +173,17 @@ type blockerOutbound struct {
 	fm      *telemetry.FailureMonitor
 }
 
+func shouldAnnotateDirectOutbound(ob adapter.Outbound) bool {
+	if ob == nil {
+		return false
+	}
+	if _, isPool := ob.(*PoolOutbound); isPool {
+		return false
+	}
+	tag := ob.Tag()
+	return tag != "" && tag != "block" && !strings.HasPrefix(tag, "PROXY_")
+}
+
 func (o *blockerOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	host := extractTargetHost(ctx, destination)
 	if o.blocker != nil && host != "" && o.blocker.ShouldBlock(host) {
@@ -181,9 +192,13 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 	start := time.Now()
 	conn, err := o.Outbound.DialContext(ctx, network, destination)
 	rtt := time.Since(start)
+	annotate := shouldAnnotateDirectOutbound(o.Outbound)
 	if err != nil && !errors.Is(err, syscall.EPERM) {
-		if o.blocker != nil && o.blocker.Logger() != nil && o.Outbound.Tag() == "direct" {
+		if o.blocker != nil && o.blocker.Logger() != nil && annotate {
 			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+				if rtt <= 0 {
+					rtt = time.Microsecond
+				}
 				o.blocker.Logger().AnnotateFailureBySource(inboundCtx.Source.String(), formatConnectionError(err), rtt)
 			}
 		}
@@ -196,9 +211,12 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 				Error:          err,
 			})
 		}
-	} else if err == nil && o.Outbound.Tag() == "direct" {
+	} else if err == nil && annotate {
 		if o.blocker != nil && o.blocker.Logger() != nil {
 			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+				if rtt <= 0 {
+					rtt = time.Microsecond
+				}
 				o.blocker.Logger().AnnotateDurationBySource(inboundCtx.Source.String(), rtt)
 			}
 		}
@@ -212,7 +230,7 @@ func (o *blockerOutbound) ListenPacket(ctx context.Context, destination M.Socksa
 		return nil, syscall.EPERM
 	}
 	conn, err := o.Outbound.ListenPacket(ctx, destination)
-	if o.blocker != nil && o.blocker.Logger() != nil && o.Outbound.Tag() == "direct" {
+	if o.blocker != nil && o.blocker.Logger() != nil && shouldAnnotateDirectOutbound(o.Outbound) {
 		if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
 			if err != nil {
 				o.blocker.Logger().AnnotateBySource(inboundCtx.Source.String(), formatConnectionError(err))
@@ -273,8 +291,9 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 
 // BlockerConnectionTracker intercepts routed connections and logs/blocks based on blocker rules.
 type BlockerConnectionTracker struct {
-	blocker          *blocker.Engine
-	nodeNameResolver func(nodeID string) string
+	blocker            *blocker.Engine
+	nodeNameResolver   func(nodeID string) string
+	chainedWarpChecker func(nodeID string) bool
 }
 
 func (t *BlockerConnectionTracker) recordConnection(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound) bool {
@@ -296,7 +315,7 @@ func (t *BlockerConnectionTracker) recordConnectionWithID(target string, matched
 			}
 		}
 	}
-	chain := formatGatewayChain(target, matchedRule, matchOutbound, blocked, rule, t.nodeNameResolver)
+	chain := formatGatewayChain(target, matchedRule, matchOutbound, blocked, rule, t.nodeNameResolver, t.chainedWarpChecker)
 	var logID int64
 	if t.blocker.Logger() != nil {
 		logID = t.blocker.Logger().RecordWithChain(target, blocker.SourceGateway, verdict, rule, chain)
@@ -405,12 +424,16 @@ func formatRouteRule(r adapter.Rule) string {
 	return s
 }
 
-func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound, blocked bool, blockerRule string, nodeNameResolver func(nodeID string) string) string {
+func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound adapter.Outbound, blocked bool, blockerRule string, nodeNameResolver func(nodeID string) string, chainedWarpChecker ...func(nodeID string) bool) string {
 	if blocked {
 		if blockerRule != "" {
 			return blockerRule + " -> block"
 		}
 		return "block"
+	}
+	var isChainedWarp func(string) bool
+	if len(chainedWarpChecker) > 0 {
+		isChainedWarp = chainedWarpChecker[0]
 	}
 	rulePart := formatRouteRule(matchedRule)
 	outboundPart := "direct"
@@ -424,6 +447,9 @@ func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound a
 			}
 		} else {
 			outboundPart = tag
+		}
+		if strings.HasPrefix(tag, "node-") && isChainedWarp != nil && isChainedWarp(tag) {
+			outboundPart += " -> WARP"
 		}
 	}
 	chain := rulePart + " -> " + outboundPart
@@ -445,6 +471,9 @@ func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound a
 			}
 			if nodeName != "" {
 				chain = chain + " -> " + nodeName
+				if isChainedWarp != nil && isChainedWarp(candID) {
+					chain += " -> WARP"
+				}
 			}
 		}
 	}

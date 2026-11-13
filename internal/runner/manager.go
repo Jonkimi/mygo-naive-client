@@ -809,6 +809,10 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 	} else {
 		inst.status.Latency = rtt
 		inst.status.ProbeError = ""
+		if svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP {
+			// Clear stale WARP tunnel errors from a previous download test once connectivity recovers.
+			inst.status.SpeedError = ""
+		}
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试成功: %d ms", max(1, rtt.Milliseconds())))
 		m.mu.Unlock()
 		if m.OnProbeSuccess != nil {

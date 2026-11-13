@@ -67,6 +67,9 @@ func (t *MASQUETunnel) Protocol() string {
 }
 
 func (t *MASQUETunnel) Done() <-chan struct{} {
+	if t.ctx == nil {
+		return nil
+	}
 	return t.ctx.Done()
 }
 
