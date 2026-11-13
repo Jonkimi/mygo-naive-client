@@ -2,9 +2,11 @@ package boxengine
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
@@ -157,27 +159,73 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 		acc.IPv6 = gAcc.IPv6
 	}
 
-	// If WireGuard fallback is available and MASQUE credentials are not enrolled,
-	// bypass MASQUE immediately to avoid a 3s timeout with invalid ephemeral keys.
-	if w.opts.WireGuardFallback != "" && (acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "") {
-		return nil, errors.New("masque key not enrolled, using wireguard fallback")
-	}
-
-	// If no WireGuard fallback and account is not registered at all, abort early
-	if acc.MASQUEPrivateKey == "" && (w.eng == nil || w.eng.cloudflareConfig == nil || !w.eng.cloudflareConfig.Account.IsRegistered()) {
-		return nil, errors.New("warp credentials not registered on Cloudflare")
-	}
-
-	// Ephemeral key generation if still unpopulated
+	// Auto-provision enrolled MASQUE credentials if still unpopulated
 	if acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "" {
-		priv, _, cert, err := warp.GenerateMASQUEKeypair()
-		if err == nil {
-			acc.MASQUEPrivateKey = priv
-			acc.MASQUECertPEM = cert
+		var apiHTTPClient *http.Client
+		if upstreamDialer != nil {
+			tr := &http.Transport{
+				DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
+					return upstreamDialer.DialContext(c, network, addr)
+				},
+				TLSClientConfig: &tls.Config{
+					ServerName: "api.cloudflareclient.com",
+				},
+				ForceAttemptHTTP2:   true,
+				TLSHandshakeTimeout: 5 * time.Second,
+			}
+			apiHTTPClient = &http.Client{
+				Transport: tr,
+				Timeout:   8 * time.Second,
+			}
+		}
+		client := warp.NewClient(apiHTTPClient)
+		var curAccount warp.Account
+		if w.eng != nil {
+			w.eng.mu.RLock()
+			if w.eng.cloudflareConfig != nil {
+				curAccount = w.eng.cloudflareConfig.Account
+			}
+			w.eng.mu.RUnlock()
+		}
+		provTimeout := 8 * time.Second
+		if w.opts.WireGuardFallback != "" {
+			provTimeout = 4 * time.Second
+		}
+		provCtx, provCancel := context.WithTimeout(ctx, provTimeout)
+		enrolled, err := client.ProvisionAll(provCtx, curAccount, "")
+		provCancel()
+		if apiHTTPClient != nil {
+			if tr, ok := apiHTTPClient.Transport.(*http.Transport); ok {
+				tr.CloseIdleConnections()
+			}
+		}
+		if err != nil {
+			w.masqueFailedAt = time.Now()
+			return nil, fmt.Errorf("Cloudflare WARP MASQUE 凭证未注册且自动注册失败: %w", err)
+		}
+		acc.MASQUEPrivateKey = enrolled.MASQUEPrivateKey
+		acc.MASQUECertPEM = enrolled.MASQUECertPEM
+		acc.MASQUEIPv4 = enrolled.MASQUEIPv4
+		acc.MASQUEIPv6 = enrolled.MASQUEIPv6
+		if w.eng != nil {
+			w.eng.mu.Lock()
+			if w.eng.cloudflareConfig != nil {
+				w.eng.cloudflareConfig.Account = enrolled
+			}
+			w.eng.mu.Unlock()
 		}
 	}
 
-	tun, err := warp.ConnectMASQUE(ctx, upstreamDialer, w.opts.Endpoint, acc, w.opts.TCPOnlyDetour, w.opts.ForceH2)
+	connectCtx := ctx
+	var connectCancel context.CancelFunc
+	if w.opts.WireGuardFallback != "" {
+		// Leave headroom inside caller's deadline for WireGuard fallback if MASQUE fails.
+		connectCtx, connectCancel = context.WithTimeout(ctx, 5*time.Second)
+	}
+	tun, err := warp.ConnectMASQUE(connectCtx, upstreamDialer, w.opts.Endpoint, acc, w.opts.TCPOnlyDetour, w.opts.ForceH2)
+	if connectCancel != nil {
+		connectCancel()
+	}
 	if err != nil {
 		w.masqueFailedAt = time.Now()
 		return nil, err
@@ -185,6 +233,18 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	w.masqueFailedAt = time.Time{}
 	w.tun = tun
 	return tun, nil
+}
+
+func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
+	w.mu.Lock()
+	if w.tun == tun {
+		w.tun = nil
+		w.masqueFailedAt = time.Now()
+	}
+	w.mu.Unlock()
+	if tun != nil {
+		_ = tun.Close()
+	}
 }
 
 func resolveHostIP(ctx context.Context, host string) (netip.Addr, error) {
@@ -229,6 +289,11 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 		if err == nil {
 			return conn, nil
 		}
+		select {
+		case <-tun.Done():
+			w.invalidateTunnel(tun)
+		default:
+		}
 		if w.logger != nil {
 			w.logger.DebugContext(ctx, fmt.Sprintf("MASQUE dial failed after %v (connect %v, dial %v): %v", t2.Sub(t0), t1.Sub(t0), t2.Sub(t1), err))
 		}
@@ -243,7 +308,7 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 
 	if fbOb := w.getFallbackOutbound(); fbOb != nil {
 		tR0 := time.Now()
-		if destination.IsDomain() {
+		if w.opts.Detour == "" && destination.IsDomain() {
 			if ip, rErr := resolveHostIP(ctx, destination.Fqdn); rErr == nil {
 				destination = M.SocksaddrFrom(ip, destination.Port)
 			}
@@ -268,9 +333,15 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	tun, err := w.getOrCreateTunnel(ctx)
 	if err == nil {
-		conn, err := tun.DialUDP(ctx, destination.String())
+		var conn net.Conn
+		conn, err = tun.DialUDP(ctx, destination.String())
 		if err == nil {
 			return &udpPacketConnAdapter{Conn: conn, raddr: destination.UDPAddr()}, nil
+		}
+		select {
+		case <-tun.Done():
+			w.invalidateTunnel(tun)
+		default:
 		}
 	}
 
@@ -280,7 +351,7 @@ func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Soc
 	}
 
 	if fbOb := w.getFallbackOutbound(); fbOb != nil {
-		if destination.IsDomain() {
+		if w.opts.Detour == "" && destination.IsDomain() {
 			if ip, rErr := resolveHostIP(ctx, destination.Fqdn); rErr == nil {
 				destination = M.SocksaddrFrom(ip, destination.Port)
 			}

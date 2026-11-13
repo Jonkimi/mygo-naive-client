@@ -771,7 +771,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 
 	var rtt time.Duration
 	var err error
-	if svc.EffectiveEngine() == config.EngineSingBox && m.ServiceDialer != nil {
+	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && m.ServiceDialer != nil {
 		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		tr := &http.Transport{
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
@@ -844,7 +844,7 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 
 	var bps float64
 	var err error
-	if svc.EffectiveEngine() == config.EngineSingBox && m.ServiceDialer != nil {
+	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && m.ServiceDialer != nil {
 		speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		tr := &http.Transport{
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {

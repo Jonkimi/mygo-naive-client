@@ -352,3 +352,54 @@ func TestBuildOutboundsConfig_StandardProxy_NoWARP(t *testing.T) {
 		}
 	}
 }
+
+// Regression: an unstarted sidecar node with auto loopback listen (socks://127.0.0.1:0)
+// must not fail buildOutboundsConfig; once started with an allocated port, both raw-node
+// and chained masque node must be built with tcp_only_detour: true.
+func TestBuildOutboundsConfig_StoppedAutoZeroSidecar_EnableWARP(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:         "naive-auto",
+		Name:       "Naive Auto",
+		Protocol:   config.ProtoNaive,
+		Engine:     config.EngineSidecar,
+		Listens:    []string{"socks://127.0.0.1:0"},
+		Proxies:    []string{"https://user:pass@naive.example.com"},
+		EnableWARP: true,
+	}
+
+	// 1. Before starting (no allocated port): must succeed and skip naive-auto
+	optsStopped := EngineOptions{
+		Services: []config.Service{naiveSvc},
+	}
+	outboundsStopped, err := buildOutboundsConfig(optsStopped, "PROXY_POOL", nil)
+	if err != nil {
+		t.Fatalf("expected stopped :0 sidecar not to fail buildOutboundsConfig, got: %v", err)
+	}
+	for _, ob := range outboundsStopped {
+		if ob["tag"] == "node-naive-auto" || ob["tag"] == "raw-node-naive-auto" {
+			t.Fatalf("expected unstarted :0 sidecar outbound to be skipped, found %+v", ob)
+		}
+	}
+
+	// 2. After starting with an allocated port: raw-node-naive-auto + node-naive-auto (masque H2)
+	optsRunning := EngineOptions{
+		Services:       []config.Service{naiveSvc},
+		AllocatedPorts: map[string]int{"naive-auto": 15432},
+	}
+	outboundsRunning, err := buildOutboundsConfig(optsRunning, "PROXY_POOL", optsRunning.AllocatedPorts)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig with allocated port failed: %v", err)
+	}
+	byTag := make(map[string]map[string]any)
+	for _, ob := range outboundsRunning {
+		if tag, ok := ob["tag"].(string); ok {
+			byTag[tag] = ob
+		}
+	}
+	if raw, ok := byTag["raw-node-naive-auto"]; !ok || raw["server_port"] != 15432 {
+		t.Fatalf("expected raw-node-naive-auto on port 15432, got %+v", raw)
+	}
+	if mq, ok := byTag["node-naive-auto"]; !ok || mq["type"] != "masque" || mq["detour"] != "raw-node-naive-auto" || mq["tcp_only_detour"] != true {
+		t.Fatalf("expected masque outbound with tcp_only_detour=true, got %+v", mq)
+	}
+}

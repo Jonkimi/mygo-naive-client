@@ -113,6 +113,7 @@ type app struct {
 	resolvedNodeIPs  map[string][]net.IP
 	resolvedNodeMu   sync.RWMutex
 	dormantStartMu   sync.Mutex
+	gatewayMu        sync.Mutex
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -429,8 +430,8 @@ func (a *app) initSubsystems() {
 	binPath := a.resolveBinaryPath()
 	cfgDir := filepath.Join(a.userDataDir(), "configs")
 	a.mgr = runner.NewManager(binPath, cfgDir, func() {
-		if a.gateway != nil {
-			a.gateway.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+		if gw := a.getGateway(); gw != nil {
+			gw.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
 		}
 		a.dispatchUI(func() {
 			a.rebuildTrayMenu()
@@ -440,7 +441,7 @@ func (a *app) initSubsystems() {
 	a.appendSystemLog("INFO", "Client initialized (gateway port :%d, traffic mode: %s, log level: %s)", a.state.GatewayPort, a.state.TrafficMode, normalizeLogLevel(a.state.LogLevel))
 	a.mgr.PreStartChecker = func(svc config.Service) error {
 		if svc.EffectiveEngine() == config.EngineSingBox {
-			if a.gateway == nil {
+			if a.getGateway() == nil {
 				if a.state.GatewayEnabled {
 					if err := a.startGatewayWithFallback(); err != nil {
 						return fmt.Errorf("网关内核启动失败: %w", err)
@@ -449,20 +450,20 @@ func (a *app) initSubsystems() {
 					return errors.New("网关功能未开启，请先在设置中启用网关")
 				}
 			}
+		} else if svc.EnableWARP && !a.state.GatewayEnabled {
+			return errors.New("网关功能未开启，开启 WARP 链式代理需先在设置中启用网关")
 		}
 		return nil
 	}
 	a.mgr.ServiceDialer = func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error) {
-		if a.gateway == nil {
-			if a.state.GatewayEnabled {
-				if err := a.startGatewayWithFallback(); err != nil {
-					return nil, fmt.Errorf("网关内核启动失败: %w", err)
-				}
-			} else {
-				return nil, errors.New("gateway engine is not running")
-			}
+		if err := a.ensureGatewaySynced(); err != nil {
+			return nil, err
 		}
-		return a.gateway.DialNode(ctx, svc.ID, network, addr)
+		gw := a.getGateway()
+		if gw == nil {
+			return nil, errors.New("gateway engine is not running")
+		}
+		return gw.DialNode(ctx, svc.ID, network, addr)
 	}
 	if a.blocker != nil && a.blocker.Logger() != nil {
 		// Durations/errors are annotated after the entry is created; redraw Insights so they show up.
@@ -499,14 +500,29 @@ func (a *app) initSubsystems() {
 		if a.tracker != nil {
 			a.tracker.ResetNode(svc.ID)
 		}
+		if svc.EffectiveEngine() != config.EngineSingBox && a.state.GatewayEnabled && a.getGateway() != nil {
+			go func() {
+				_ = a.ensureGatewaySynced()
+			}()
+		}
 		if a.headless || !a.state.AutoProbeOnStart {
 			return
 		}
 		// Cold Start (Path A): Asynchronously probe the newly running service
 		// so its real end-to-end HTTPS RTT breaks initial tie in QualityTracker immediately.
 		go func() {
-			time.Sleep(200 * time.Millisecond)
+			if svc.EffectiveEngine() != config.EngineSingBox {
+				st := a.mgr.StatusOf(svc.ID)
+				if st.AllocatedPort > 0 {
+					a.waitLocalPortReady(svc.ID, st.AllocatedPort, 2*time.Second)
+				}
+			} else {
+				time.Sleep(200 * time.Millisecond)
+			}
 			if a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+				if svc.EnableWARP && a.state.GatewayEnabled {
+					_ = a.ensureGatewaySynced()
+				}
 				a.mgr.ProbeService(svc, a.probeURLForService(svc))
 			}
 		}()
@@ -1614,7 +1630,60 @@ func (a *app) nodeIPResolver() func(host string) []net.IP {
 }
 
 
+func (a *app) getGateway() *boxengine.Engine {
+	a.gatewayMu.Lock()
+	gw := a.gateway
+	a.gatewayMu.Unlock()
+	return gw
+}
+
+func (a *app) waitLocalPortReady(svcID string, port int, maxWait time.Duration) {
+	if port <= 0 {
+		return
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		if a.mgr == nil || a.mgr.StatusOf(svcID).State != runner.StateRunning {
+			return
+		}
+		conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (a *app) ensureGatewaySynced() error {
+	a.gatewayMu.Lock()
+	if !a.state.GatewayEnabled {
+		a.gatewayMu.Unlock()
+		return errors.New("gateway engine is not running")
+	}
+	if a.gateway != nil && a.gatewayConfigSignature() == a.lastGatewaySig {
+		a.gatewayMu.Unlock()
+		return nil
+	}
+	needSave, err := a.startGatewayWithFallbackLocked()
+	a.gatewayMu.Unlock()
+	if needSave {
+		a.saveState()
+	}
+	if err != nil && a.gateway == nil {
+		return fmt.Errorf("网关内核启动失败: %w", err)
+	}
+	return err
+}
+
 func (a *app) startGateway() error {
+	a.gatewayMu.Lock()
+	defer a.gatewayMu.Unlock()
+	return a.startGatewayLocked()
+}
+
+func (a *app) startGatewayLocked() error {
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
@@ -1911,18 +1980,20 @@ func (a *app) stopGateway() {
 	if a.sysproxy != nil {
 		_ = a.sysproxy.Unset()
 	}
+	a.gatewayMu.Lock()
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
 		a.lastGatewayErr = nil
 		a.lastGatewaySig = ""
 	}
-	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
-		a.tailnetMgr.BindEmbeddedEndpoint(nil)
-	}
 	if a.tunDevice != nil {
 		_ = a.tunDevice.Close()
 		a.tunDevice = nil
+	}
+	a.gatewayMu.Unlock()
+	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
+		a.tailnetMgr.BindEmbeddedEndpoint(nil)
 	}
 }
 
@@ -1945,6 +2016,7 @@ func (a *app) runSysproxyOp(op func()) {
 // Regression: closing the fd while the engine still owned it made sing-tun
 // fail with "UTUN_OPT_MAX_PENDING_PACKETS: invalid argument" when leaving TUN mode.
 func (a *app) releaseTunDevice() {
+	a.gatewayMu.Lock()
 	if a.gateway != nil {
 		_ = a.gateway.Stop()
 		a.gateway = nil
@@ -1955,18 +2027,29 @@ func (a *app) releaseTunDevice() {
 		_ = a.tunDevice.Close()
 		a.tunDevice = nil
 	}
+	a.gatewayMu.Unlock()
 }
 
 // startGatewayWithFallback starts the gateway and, if TUN mode fails (e.g. TUN helper
 // timeout or permission denial), cleans up the TUN device, falls back to "port" mode,
 // saves state, and restarts the gateway in port mode.
 func (a *app) startGatewayWithFallback() error {
-	err := a.startGateway()
+	a.gatewayMu.Lock()
+	needSave, err := a.startGatewayWithFallbackLocked()
+	a.gatewayMu.Unlock()
+	if needSave {
+		a.saveState()
+	}
+	return err
+}
+
+func (a *app) startGatewayWithFallbackLocked() (bool, error) {
+	err := a.startGatewayLocked()
 	if err == nil {
 		if a.win != nil {
 			a.win.Invalidate()
 		}
-		return nil
+		return false, nil
 	}
 	if a.state.TrafficMode == "tun" {
 		_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
@@ -1976,21 +2059,20 @@ func (a *app) startGatewayWithFallback() error {
 			a.tunDevice = nil
 		}
 		a.state.TrafficMode = "port"
-		fallbackErr := a.startGateway()
+		fallbackErr := a.startGatewayLocked()
 		a.toast("TUN Mode error: " + err.Error())
-		a.saveState()
 		if a.win != nil {
 			a.win.Invalidate()
 		}
 		if fallbackErr != nil {
-			return fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
+			return true, fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
 		}
-		return err
+		return true, err
 	}
 	if a.win != nil {
 		a.win.Invalidate()
 	}
-	return err
+	return false, err
 }
 
 func (a *app) appendGatewayLog(level, msg string) {
@@ -2473,18 +2555,21 @@ func (a *app) gatewayConfigSignature() string {
 func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
 	a.loadGeoDataIfPresent()
-	if a.gateway != nil {
+	a.gatewayMu.Lock()
+	gw := a.gateway
+	if gw != nil {
 		var allocPorts map[string]int
 		var activeIDs map[string]bool
 		if a.mgr != nil {
 			allocPorts = a.mgr.AllocatedPorts()
 			activeIDs = a.mgr.RunningServiceIDs()
 		}
-		a.gateway.UpdateNodes(a.state.Services, allocPorts, activeIDs)
+		gw.UpdateNodes(a.state.Services, allocPorts, activeIDs)
 		if !a.state.GatewayEnabled || a.gatewayConfigSignature() != a.lastGatewaySig {
-			_ = a.startGateway()
+			_ = a.startGatewayLocked()
 		}
 	}
+	a.gatewayMu.Unlock()
 }
 
 func (a *app) isBuiltinWarpNeeded() bool {

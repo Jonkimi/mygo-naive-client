@@ -664,3 +664,70 @@ func TestCloudflarePage_AttachedNodesHealth(t *testing.T) {
 		t.Errorf("expected StatusUnhealthy badge in attached nodes list")
 	}
 }
+
+// Regression: a Naive sidecar with auto loopback (:0) and EnableWARP must:
+// 1. Not prevent the gateway from building while stopped.
+// 2. Be rejected by PreStartChecker if GatewayEnabled is false.
+// 3. Dynamically sync its allocated port into sing-box outbounds (node-<id> + raw-node-<id>) when started.
+func TestNaiveWarp_DynamicPortSyncAndPreStartCheck(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:         "naive-warp-01",
+		Name:       "Naive + WARP",
+		Protocol:   config.ProtoNaive,
+		Engine:     config.EngineSidecar,
+		Listens:    []string{"socks://127.0.0.1:0"},
+		Proxies:    []string{"https://user:pass@example.com:443"},
+		EnableWARP: true,
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{naiveSvc})
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = false
+	a.saveState()
+	tt.Frame()
+
+	// 1. With GatewayEnabled == false, starting an EnableWARP sidecar must fail PreStartChecker
+	if err := a.mgr.Start(naiveSvc); err == nil {
+		t.Fatalf("expected Start to fail when GatewayEnabled is false for EnableWARP sidecar")
+	}
+
+	// 2. Enable gateway and start gateway BEFORE starting the :0 sidecar — must succeed
+	a.state.GatewayEnabled = true
+	a.saveState()
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway with stopped :0 sidecar failed: %v", err)
+	}
+	if a.getGateway() == nil {
+		t.Fatalf("expected gateway to be running")
+	}
+
+	// 3. Start the Naive sidecar -> allocates dynamic port -> sync gateway -> node outbound ready
+	if err := a.mgr.Start(naiveSvc); err != nil {
+		t.Fatalf("mgr.Start failed: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.mgr.StatusOf(naiveSvc.ID).State == runner.StateRunning {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	allocPort := a.mgr.AllocatedPorts()[naiveSvc.ID]
+	if allocPort <= 0 {
+		t.Fatalf("expected non-zero allocated port for started naive sidecar, got %d", allocPort)
+	}
+
+	if err := a.ensureGatewaySynced(); err != nil {
+		t.Fatalf("ensureGatewaySynced failed: %v", err)
+	}
+	gw := a.getGateway()
+	if gw == nil {
+		t.Fatalf("expected gateway after ensureGatewaySynced")
+	}
+	if _, ok := gw.GetOutbound("raw-node-" + naiveSvc.ID); !ok {
+		t.Errorf("expected raw-node-%s outbound in gateway after sidecar start", naiveSvc.ID)
+	}
+	if _, ok := gw.GetOutbound("node-" + naiveSvc.ID); !ok {
+		t.Errorf("expected node-%s masque outbound in gateway after sidecar start", naiveSvc.ID)
+	}
+}

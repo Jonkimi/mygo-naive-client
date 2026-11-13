@@ -51,6 +51,7 @@ type Account struct {
 	MASQUECertPEM    string `json:"masqueCertPem,omitempty"`
 	MASQUEIPv4       string `json:"masqueIpv4,omitempty"`
 	MASQUEIPv6       string `json:"masqueIpv6,omitempty"`
+	MASQUEEnrolled   bool   `json:"masqueEnrolled,omitempty"`
 }
 
 // IsRegistered returns true if an account has been registered for either WireGuard or MASQUE.

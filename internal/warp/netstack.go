@@ -2,14 +2,16 @@ package warp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
 	"strings"
-	"time"
 	"sync"
+	"time"
 
+	"github.com/miekg/dns"
 	"github.com/sagernet/gvisor/pkg/buffer"
 	"github.com/sagernet/gvisor/pkg/tcpip"
 	"github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet"
@@ -146,6 +148,9 @@ func (ns *Netstack) ReadPacket(ctx context.Context) ([]byte, error) {
 
 // DialContextTCP dials a TCP connection through the virtual user-space stack.
 func (ns *Netstack) DialContextTCP(ctx context.Context, dest string) (net.Conn, error) {
+	if ns.ctx.Err() != nil {
+		return nil, errors.New("tunnel closed")
+	}
 	host, portStr, err := net.SplitHostPort(dest)
 	if err != nil {
 		return nil, err
@@ -160,24 +165,54 @@ func (ns *Netstack) DialContextTCP(ctx context.Context, dest string) (net.Conn, 
 		return nil, err
 	}
 
+	return ns.dialIPTCP(ctx, addr, uint16(port))
+}
+
+func (ns *Netstack) dialIPTCP(ctx context.Context, addr netip.Addr, port uint16) (net.Conn, error) {
+	if ns.ctx.Err() != nil {
+		return nil, errors.New("tunnel closed")
+	}
+
 	var netProto tcpip.NetworkProtocolNumber
+	var laddr tcpip.FullAddress
 	if addr.Is4() {
 		netProto = ipv4.ProtocolNumber
+		if ns.IPv4.IsValid() {
+			laddr = tcpip.FullAddress{
+				NIC:  nicID,
+				Addr: tcpip.AddrFromSlice(ns.IPv4.AsSlice()),
+			}
+		}
 	} else {
 		netProto = ipv6.ProtocolNumber
+		if ns.IPv6.IsValid() {
+			laddr = tcpip.FullAddress{
+				NIC:  nicID,
+				Addr: tcpip.AddrFromSlice(ns.IPv6.AsSlice()),
+			}
+		}
 	}
 
 	fullAddr := tcpip.FullAddress{
 		NIC:  nicID,
 		Addr: tcpip.AddrFromSlice(addr.AsSlice()),
-		Port: uint16(port),
+		Port: port,
 	}
 
-	return gonet.DialContextTCP(ctx, ns.Stack, fullAddr, netProto)
+	// Tie dial lifetime to ns.ctx so a closed tunnel fails dialing immediately instead of waiting for ctx timeout.
+	dialCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopWatch := context.AfterFunc(ns.ctx, cancel)
+	defer stopWatch()
+
+	return gonet.DialTCPWithBind(dialCtx, ns.Stack, laddr, fullAddr, netProto)
 }
 
 // DialUDP dials a UDP pseudo-connection through the virtual user-space stack.
 func (ns *Netstack) DialUDP(ctx context.Context, dest string) (net.Conn, error) {
+	if ns.ctx.Err() != nil {
+		return nil, errors.New("tunnel closed")
+	}
 	host, portStr, err := net.SplitHostPort(dest)
 	if err != nil {
 		return nil, err
@@ -192,20 +227,41 @@ func (ns *Netstack) DialUDP(ctx context.Context, dest string) (net.Conn, error) 
 		return nil, err
 	}
 
+	return ns.dialIPUDP(addr, uint16(port))
+}
+
+func (ns *Netstack) dialIPUDP(addr netip.Addr, port uint16) (net.Conn, error) {
+	if ns.ctx.Err() != nil {
+		return nil, errors.New("tunnel closed")
+	}
+
 	var netProto tcpip.NetworkProtocolNumber
+	var laddr *tcpip.FullAddress
 	if addr.Is4() {
 		netProto = ipv4.ProtocolNumber
+		if ns.IPv4.IsValid() {
+			laddr = &tcpip.FullAddress{
+				NIC:  nicID,
+				Addr: tcpip.AddrFromSlice(ns.IPv4.AsSlice()),
+			}
+		}
 	} else {
 		netProto = ipv6.ProtocolNumber
+		if ns.IPv6.IsValid() {
+			laddr = &tcpip.FullAddress{
+				NIC:  nicID,
+				Addr: tcpip.AddrFromSlice(ns.IPv6.AsSlice()),
+			}
+		}
 	}
 
 	raddr := tcpip.FullAddress{
 		NIC:  nicID,
 		Addr: tcpip.AddrFromSlice(addr.AsSlice()),
-		Port: uint16(port),
+		Port: port,
 	}
 
-	return gonet.DialUDP(ns.Stack, nil, &raddr, netProto)
+	return gonet.DialUDP(ns.Stack, laddr, &raddr, netProto)
 }
 
 // Close closes the netstack and cancels internal routines.
@@ -226,21 +282,26 @@ func (ns *Netstack) resolveHostIP(ctx context.Context, host string) (netip.Addr,
 	if addr, err := netip.ParseAddr(host); err == nil {
 		return addr, nil
 	}
+	if strings.EqualFold(host, "localhost") {
+		return netip.MustParseAddr("127.0.0.1"), nil
+	}
+	if ns.ctx.Err() != nil {
+		return netip.Addr{}, errors.New("tunnel closed")
+	}
+
+	// Resolve inside the WARP tunnel via Cloudflare DNS to prevent host DNS leaks and poisoning.
+	if addr, err := ns.resolveInTunnelDNS(ctx, host); err == nil {
+		return addr, nil
+	} else if ns.ctx.Err() != nil || ctx.Err() != nil {
+		return netip.Addr{}, err
+	}
+
+	// Fallback to host system resolver only if the tunnel is still open and in-tunnel DNS did not answer.
 	netProto := "ip"
 	if ns.IPv4.IsValid() && (!ns.IPv6.IsValid() || ns.IPv6.IsUnspecified()) {
 		netProto = "ip4"
 	}
 	ips, err := net.DefaultResolver.LookupIP(ctx, netProto, host)
-	if err != nil || len(ips) == 0 {
-		r := &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 1000 * time.Millisecond}
-				return d.DialContext(ctx, "udp", "223.5.5.5:53")
-			},
-		}
-		ips, _ = r.LookupIP(ctx, netProto, host)
-	}
 	if len(ips) == 0 {
 		return netip.Addr{}, fmt.Errorf("failed to resolve host %q: %w", host, err)
 	}
@@ -258,4 +319,72 @@ func (ns *Netstack) resolveHostIP(ctx context.Context, host string) (netip.Addr,
 		return netip.Addr{}, fmt.Errorf("failed to parse resolved IP %q: %w", selected.String(), err)
 	}
 	return parsed, nil
+}
+
+func (ns *Netstack) resolveInTunnelDNS(ctx context.Context, host string) (netip.Addr, error) {
+	qtype := dns.TypeA
+	if !ns.IPv4.IsValid() && ns.IPv6.IsValid() {
+		qtype = dns.TypeAAAA
+	}
+
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(host), qtype)
+	msg.RecursionDesired = true
+
+	// 1. Try UDP 1.1.1.1:53 inside the tunnel
+	udpCtx, udpCancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	addr, err := ns.exchangeDNS(udpCtx, msg, netip.MustParseAddr("1.1.1.1"), false)
+	udpCancel()
+	if err == nil {
+		return addr, nil
+	}
+	if ns.ctx.Err() != nil || ctx.Err() != nil {
+		return netip.Addr{}, err
+	}
+
+	// 2. Fallback to TCP 1.0.0.1:53 inside the tunnel
+	tcpCtx, tcpCancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer tcpCancel()
+	return ns.exchangeDNS(tcpCtx, msg, netip.MustParseAddr("1.0.0.1"), true)
+}
+
+func (ns *Netstack) exchangeDNS(ctx context.Context, msg *dns.Msg, server netip.Addr, useTCP bool) (netip.Addr, error) {
+	var rawConn net.Conn
+	var err error
+	if useTCP {
+		rawConn, err = ns.dialIPTCP(ctx, server, 53)
+	} else {
+		rawConn, err = ns.dialIPUDP(server, 53)
+	}
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	defer rawConn.Close()
+
+	stopWatch := context.AfterFunc(ctx, func() {
+		_ = rawConn.Close()
+	})
+	defer stopWatch()
+
+	co := &dns.Conn{Conn: rawConn}
+	cli := &dns.Client{
+		Timeout: 1500 * time.Millisecond,
+	}
+	resp, _, err := cli.ExchangeWithConnContext(ctx, msg, co)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	for _, ans := range resp.Answer {
+		switch rr := ans.(type) {
+		case *dns.A:
+			if parsed, ok := netip.AddrFromSlice(rr.A.To4()); ok {
+				return parsed, nil
+			}
+		case *dns.AAAA:
+			if parsed, ok := netip.AddrFromSlice(rr.AAAA.To16()); ok {
+				return parsed, nil
+			}
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("no DNS records for %s", msg.Question[0].Name)
 }

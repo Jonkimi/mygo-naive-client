@@ -34,6 +34,15 @@ func TestClient_RegisterWireGuard_And_EnrollMASQUE(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
+			var patchData map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&patchData); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if patchData["tunnel_type"] != "masque" || patchData["key_type"] != "secp256r1" || patchData["name"] != "PC" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			resp := regResponse{
 				ID: "device-123",
 			}

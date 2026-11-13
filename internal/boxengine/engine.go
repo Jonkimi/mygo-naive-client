@@ -574,7 +574,7 @@ func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr stri
 		return nil, fmt.Errorf("invalid destination addr %q", addr)
 	}
 	isWarp := e.isWarpNode(cleanID)
-	if isWarp && dest.IsDomain() {
+	if isWarp && !e.isChainedWarpNode(cleanID) && dest.IsDomain() {
 		if ip, err := resolveHostIP(ctx, dest.Fqdn); err == nil {
 			dest = M.SocksaddrFrom(ip, dest.Port)
 		}
@@ -599,6 +599,21 @@ func (e *Engine) isWarpNode(nodeID string) bool {
 	for _, svc := range e.services {
 		if svc.ID == cleanID {
 			return svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+		}
+	}
+	return false
+}
+
+func (e *Engine) isChainedWarpNode(nodeID string) bool {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	if cleanID == config.BuiltinWarpServiceID {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, svc := range e.services {
+		if svc.ID == cleanID {
+			return svc.EffectiveProtocol() != config.ProtoWARP && svc.EnableWARP
 		}
 	}
 	return false
@@ -1064,15 +1079,13 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		}
 
 		if isSidecarService(svc) {
-			allocPort := 0
-			if allocatedPorts != nil && allocatedPorts[svc.ID] > 0 {
-				allocPort = allocatedPorts[svc.ID]
-			} else if listen := svc.PrimaryListen(); listen != "" {
-				if ep, err := config.ParseListenURI(listen); err == nil && ep.Port > 0 {
-					allocPort = ep.Port
-				}
-			}
+			allocPort, hasAutoZero := resolveSidecarPort(svc, allocatedPorts)
 			if allocPort <= 0 {
+				if hasAutoZero {
+					// Sidecar uses auto-allocated loopback port (:0) and is not currently running;
+					// skip creating its outbound until it starts and allocates a concrete port.
+					continue
+				}
 				return nil, fmt.Errorf("sidecar 节点 %q (%s) 缺少有效的本地监听端口，请检查配置或启动状态", svc.Name, svc.ID)
 			}
 			sidecarOb := map[string]any{
@@ -1102,6 +1115,21 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		}
 	}
 	return outbounds, nil
+}
+
+func resolveSidecarPort(svc config.Service, allocatedPorts map[string]int) (port int, hasAutoZero bool) {
+	if allocatedPorts != nil && allocatedPorts[svc.ID] > 0 {
+		return allocatedPorts[svc.ID], false
+	}
+	if listen := svc.PrimaryListen(); listen != "" {
+		if ep, err := config.ParseListenURI(listen); err == nil {
+			if ep.Port > 0 {
+				return ep.Port, false
+			}
+			return 0, true
+		}
+	}
+	return 0, false
 }
 
 func resolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mode {
@@ -1338,6 +1366,12 @@ func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 			}
 			detour := ""
 			if svc.EffectiveProtocol() != config.ProtoWARP && svc.EnableWARP {
+				if isSidecarService(svc) {
+					allocPort, _ := resolveSidecarPort(svc, opts.AllocatedPorts)
+					if allocPort <= 0 {
+						continue
+					}
+				}
 				detour = "raw-node-" + svc.ID
 			}
 			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)

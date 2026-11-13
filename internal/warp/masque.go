@@ -1,7 +1,6 @@
 package warp
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -9,12 +8,21 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
+	connectip "github.com/Diniboy1123/connect-ip-go"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/yosida95/uritemplate/v3"
 	"golang.org/x/net/http2"
+)
+
+const (
+	DefaultMASQUEConnectURI = "https://cloudflareaccess.com"
+	h3Timeout               = 2500 * time.Millisecond
+	h2Timeout               = 6000 * time.Millisecond
 )
 
 // Dialer abstracts upstream connection dialing (e.g. sing-box Outbound or net.Dialer).
@@ -45,13 +53,13 @@ func (f closerFunc) Close() error {
 
 // MASQUETunnel manages an active MASQUE tunnel to Cloudflare over HTTP/3 or HTTP/2.
 type MASQUETunnel struct {
-	Netstack    *Netstack
-	protocol    string // "h3" or "h2"
-	endpoint    string
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closer      io.Closer
-	closeOnce   sync.Once
+	Netstack  *Netstack
+	protocol  string // "h3" or "h2"
+	endpoint  string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closer    io.Closer
+	closeOnce sync.Once
 }
 
 func (t *MASQUETunnel) Protocol() string {
@@ -83,8 +91,8 @@ func (t *MASQUETunnel) Close() error {
 }
 
 // ConnectMASQUE establishes a Cloudflare Consumer MASQUE tunnel.
-// When tcpOnly is true or forceMode == "h2", it directly connects over HTTP/2 TCP.
-// Otherwise, it attempts HTTP/3 QUIC first, falling back to HTTP/2 if QUIC fails within 3 seconds.
+// When tcpOnly is true or forceH2 is true, it directly connects over HTTP/2 TCP.
+// Otherwise, it attempts HTTP/3 QUIC first, falling back to HTTP/2 if QUIC fails.
 func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Account, tcpOnly bool, forceH2 bool) (*MASQUETunnel, error) {
 	if dialer == nil {
 		dialer = &defaultDialer{}
@@ -104,7 +112,7 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 	tlsCfg := &tls.Config{
 		ServerName:         DefaultMASQUESNI,
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true, // Pinned endpoint / self-signed certificate handshake
+		InsecureSkipVerify: true, // Self-signed / Cloudflare Anycast endpoint verification
 	}
 
 	ipv4 := acc.MASQUEIPv4
@@ -123,9 +131,9 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 
-	// If forced to H2 or underlying transport is TCP-only, skip QUIC directly
+	// If forced to H2 or underlying transport is TCP-only, connect over HTTP/2 directly
 	if tcpOnly || forceH2 {
-		h2DialCtx, h2Cancel := context.WithTimeout(ctx, 3*time.Second)
+		h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
 		tun, err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 		h2Cancel()
 		if err != nil {
@@ -136,16 +144,16 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 		return tun, nil
 	}
 
-	// Try HTTP/3 with 1.5-second timeout
-	h3Ctx, h3Cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	// Try HTTP/3 with timeout
+	h3Ctx, h3Cancel := context.WithTimeout(ctx, h3Timeout)
 	tun, err := dialMASQUEH3(h3Ctx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 	h3Cancel()
 	if err == nil {
 		return tun, nil
 	}
 
-	// Fallback to HTTP/2 with 1.5-second timeout
-	h2DialCtx, h2Cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	// Fallback to HTTP/2
+	h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
 	tun, err = dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 	h2Cancel()
 	if err != nil {
@@ -160,77 +168,109 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	tlsCfg := baseTLS.Clone()
 	tlsCfg.NextProtos = []string{http3.NextProtoH3}
 
-	pConn, err := dialer.ListenPacket(ctx, "udp", "0.0.0.0:0")
+	// Use tunnelCtx for ListenPacket so cancelling the dial timeout context after handshake
+	// does not tear down the underlying proxy packet session.
+	pConn, err := dialer.ListenPacket(tunnelCtx, "udp", endpoint)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to listen packet for endpoint %s: %w", endpoint, err)
 	}
+
+	var dialMu sync.Mutex
+	dialSettled := false
+	stopListenWatch := context.AfterFunc(ctx, func() {
+		dialMu.Lock()
+		settled := dialSettled
+		dialMu.Unlock()
+		if !settled {
+			_ = pConn.Close()
+		}
+	})
+	defer func() {
+		dialMu.Lock()
+		dialSettled = true
+		dialMu.Unlock()
+		stopListenWatch()
+	}()
 
 	rAddr, err := net.ResolveUDPAddr("udp", endpoint)
 	if err != nil {
 		_ = pConn.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to resolve UDP address %s: %w", endpoint, err)
+	}
+
+	qTransport := &quic.Transport{
+		Conn:               pConn,
+		ConnectionIDLength: 20,
 	}
 
 	qCfg := &quic.Config{
 		EnableDatagrams: true,
+		KeepAlivePeriod: 15 * time.Second,
 	}
 
-	qConn, err := quic.Dial(ctx, pConn, rAddr, tlsCfg, qCfg)
+	qConn, err := qTransport.DialEarly(ctx, rAddr, tlsCfg, qCfg)
 	if err != nil {
+		_ = qTransport.Close()
 		_ = pConn.Close()
-		return nil, err
+		return nil, fmt.Errorf("QUIC dial failed: %w", err)
 	}
 
 	h3Tr := &http3.Transport{
-		EnableDatagrams: true,
-		TLSClientConfig: tlsCfg,
-		QUICConfig:      qCfg,
+		EnableDatagrams:    true,
+		DisableCompression: true,
+		AdditionalSettings: map[uint64]uint64{
+			0x276: 1, // SETTINGS_H3_DATAGRAM_00 required by Cloudflare
+		},
 	}
 
 	clientConn := h3Tr.NewClientConn(qConn)
 
-	select {
-	case <-clientConn.ReceivedSettings():
-	case <-ctx.Done():
-		_ = qConn.CloseWithError(0, "")
-		_ = pConn.Close()
-		return nil, ctx.Err()
-	}
-
-	reqStream, err := clientConn.OpenRequestStream(ctx)
+	template, err := uritemplate.New(DefaultMASQUEConnectURI)
 	if err != nil {
 		_ = qConn.CloseWithError(0, "")
+		_ = qTransport.Close()
 		_ = pConn.Close()
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(tunnelCtx, "CONNECT", "https://"+DefaultMASQUESNI+"/.well-known/masque/ip/*/*", nil)
+	additionalHeaders := http.Header{
+		"User-Agent": []string{""},
+	}
+
+	ipConn, rsp, err := connectip.Dial(ctx, clientConn, template, "cf-connect-ip", additionalHeaders, true)
 	if err != nil {
+		_ = h3Tr.Close()
 		_ = qConn.CloseWithError(0, "")
+		_ = qTransport.Close()
 		_ = pConn.Close()
-		return nil, err
+		return nil, fmt.Errorf("connect-ip HTTP/3 dial failed: %w", err)
 	}
-	req.Proto = "cf-connect-ip"
-	req.Header.Set("Capsule-Protocol", "?1")
-	req.Header.Set("CF-Connect-Proto", "cf-connect-ip")
+	if rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
+		_ = ipConn.Close()
+		_ = h3Tr.Close()
+		_ = qConn.CloseWithError(0, "")
+		_ = qTransport.Close()
+		_ = pConn.Close()
+		return nil, fmt.Errorf("HTTP/3 CONNECT rejected: %s", rsp.Status)
+	}
 
-	if err := reqStream.SendRequestHeader(req); err != nil {
-		_ = qConn.CloseWithError(0, "")
-		_ = pConn.Close()
-		return nil, err
-	}
-
-	resp, err := reqStream.ReadResponse()
-	if err != nil {
-		_ = qConn.CloseWithError(0, "")
-		_ = pConn.Close()
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_ = qConn.CloseWithError(0, "")
-		_ = pConn.Close()
-		return nil, fmt.Errorf("HTTP/3 CONNECT rejected: %s", resp.Status)
-	}
+	_ = ipConn.AdvertiseRoute(ctx, []connectip.IPRoute{
+		{
+			IPProtocol: 0,
+			StartIP:    netip.AddrFrom4([4]byte{}),
+			EndIP:      netip.AddrFrom4([4]byte{255, 255, 255, 255}),
+		},
+		{
+			IPProtocol: 0,
+			StartIP:    netip.AddrFrom16([16]byte{}),
+			EndIP: netip.AddrFrom16([16]byte{
+				255, 255, 255, 255,
+				255, 255, 255, 255,
+				255, 255, 255, 255,
+				255, 255, 255, 255,
+			}),
+		},
+	})
 
 	tun := &MASQUETunnel{
 		Netstack: ns,
@@ -239,112 +279,121 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		ctx:      tunnelCtx,
 		cancel:   cancel,
 		closer: closerFunc(func() error {
+			_ = ipConn.Close()
+			_ = h3Tr.Close()
 			_ = qConn.CloseWithError(0, "")
+			_ = qTransport.Close()
 			_ = pConn.Close()
 			return nil
 		}),
 	}
 
-	// Inbound datagram loop
-	go func() {
-		defer cancel()
-		for {
-			dg, err := reqStream.ReceiveDatagram(tunnelCtx)
-			if err != nil {
-				return
-			}
-			rawIP := dg
-			if len(rawIP) > 1 && rawIP[0] == 0 && (rawIP[1]>>4 == 4 || rawIP[1]>>4 == 6) {
-				rawIP = rawIP[1:]
-			}
-			_ = ns.InjectPacket(rawIP)
-		}
-	}()
-
-	// Outbound datagram loop
-	go func() {
-		defer cancel()
-		for {
-			pkt, err := ns.ReadPacket(tunnelCtx)
-			if err != nil {
-				return
-			}
-			var dg []byte
-			dg = append(dg, 0x00) // RFC 9297 Context ID 0
-			dg = append(pkt, 0x00)
-			_ = dg
-			outDg := make([]byte, 1+len(pkt))
-			outDg[0] = 0x00
-			copy(outDg[1:], pkt)
-			if err := reqStream.SendDatagram(outDg); err != nil {
-				return
-			}
-		}
-	}()
-
+	startTunnelLoops(tun, ipConn)
 	return tun, nil
 }
 
 func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseTLS *tls.Config, ns *Netstack, tunnelCtx context.Context, cancel context.CancelFunc) (*MASQUETunnel, error) {
 	tlsCfg := baseTLS.Clone()
-	tlsCfg.NextProtos = []string{http2.NextProtoTLS}
+	tlsCfg.NextProtos = []string{"h2"}
 
-	rawConn, err := dialer.DialContext(dialCtx, "tcp", endpoint)
+	var connMu sync.Mutex
+	var activeConn net.Conn
+
+	h2Tr := &http2.Transport{
+		DisableCompression: true,
+		ReadIdleTimeout:    30 * time.Second,
+		PingTimeout:        10 * time.Second,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			rawConn, err := dialer.DialContext(dialCtx, "tcp", endpoint)
+			if err != nil {
+				return nil, err
+			}
+			tlsConn := tls.Client(rawConn, tlsCfg)
+			if err := tlsConn.HandshakeContext(dialCtx); err != nil {
+				_ = rawConn.Close()
+				return nil, err
+			}
+			connMu.Lock()
+			activeConn = tlsConn
+			connMu.Unlock()
+			return tlsConn, nil
+		},
+	}
+	h2Client := &http.Client{
+		Transport: h2Tr,
+	}
+
+	template, err := uritemplate.New(DefaultMASQUEConnectURI)
 	if err != nil {
 		return nil, err
 	}
 
-	tlsConn := tls.Client(rawConn, tlsCfg)
-	if err := tlsConn.HandshakeContext(dialCtx); err != nil {
-		_ = rawConn.Close()
-		return nil, err
+	h2Headers := http.Header{
+		"User-Agent":       []string{""},
+		"cf-connect-proto": []string{"cf-connect-ip"},
+		"pq-enabled":       []string{"false"},
 	}
 
-	t2 := &http2.Transport{}
-	cc, err := t2.NewClientConn(tlsConn)
-	if err != nil {
-		_ = tlsConn.Close()
-		return nil, err
-	}
-
-	pr, pw := io.Pipe()
-
-	req, err := http.NewRequestWithContext(tunnelCtx, "CONNECT", "https://"+DefaultMASQUESNI+"/.well-known/masque/ip/*/*", pr)
-	if err != nil {
-		_ = cc.Close()
-		return nil, err
-	}
-	req.Proto = "cf-connect-ip"
-	req.Header.Set("Capsule-Protocol", "?1")
-	req.Header.Set("CF-Connect-Proto", "cf-connect-ip")
-	req.Header[":protocol"] = []string{"cf-connect-ip"}
-
-	respCh := make(chan *http.Response, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		r, err := cc.RoundTrip(req)
-		if err != nil {
-			errCh <- err
-			return
+	// reqCtx governs the long-lived HTTP/2 CONNECT stream (tied to tunnelCtx, NOT dialCtx).
+	// If dialCtx expires or is canceled before DialH2 finishes, reqCancel aborts the handshake.
+	// Once DialH2 succeeds, dialSettled=true ensures h2Cancel() does not kill the active stream.
+	reqCtx, reqCancel := context.WithCancel(tunnelCtx)
+	var dialMu sync.Mutex
+	dialSettled := false
+	stopDialWatch := context.AfterFunc(dialCtx, func() {
+		dialMu.Lock()
+		settled := dialSettled
+		dialMu.Unlock()
+		if !settled {
+			reqCancel()
 		}
-		respCh <- r
-	}()
+	})
 
-	var resp *http.Response
-	select {
-	case <-dialCtx.Done():
-		_ = cc.Close()
-		return nil, fmt.Errorf("HTTP/2 CONNECT handshake timed out: %w", dialCtx.Err())
-	case err := <-errCh:
-		_ = cc.Close()
-		return nil, err
-	case resp = <-respCh:
+	ipConn, rsp, err := connectip.DialH2(reqCtx, h2Client, template, h2Headers)
+	dialMu.Lock()
+	dialSettled = true
+	dialMu.Unlock()
+	stopDialWatch()
+
+	closeTransport := func() {
+		reqCancel()
+		h2Tr.CloseIdleConnections()
+		connMu.Lock()
+		c := activeConn
+		activeConn = nil
+		connMu.Unlock()
+		if c != nil {
+			_ = c.Close()
+		}
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_ = cc.Close()
-		return nil, fmt.Errorf("HTTP/2 CONNECT rejected: %s", resp.Status)
+	if err != nil {
+		closeTransport()
+		return nil, fmt.Errorf("connect-ip HTTP/2 dial failed: %w", err)
 	}
+	if rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
+		_ = ipConn.Close()
+		closeTransport()
+		return nil, fmt.Errorf("HTTP/2 CONNECT rejected: %s", rsp.Status)
+	}
+
+	_ = ipConn.AdvertiseRoute(dialCtx, []connectip.IPRoute{
+		{
+			IPProtocol: 0,
+			StartIP:    netip.AddrFrom4([4]byte{}),
+			EndIP:      netip.AddrFrom4([4]byte{255, 255, 255, 255}),
+		},
+		{
+			IPProtocol: 0,
+			StartIP:    netip.AddrFrom16([16]byte{}),
+			EndIP: netip.AddrFrom16([16]byte{
+				255, 255, 255, 255,
+				255, 255, 255, 255,
+				255, 255, 255, 255,
+				255, 255, 255, 255,
+			}),
+		},
+	})
 
 	tun := &MASQUETunnel{
 		Netstack: ns,
@@ -352,99 +401,48 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 		endpoint: endpoint,
 		ctx:      tunnelCtx,
 		cancel:   cancel,
-		closer:   cc,
+		closer: closerFunc(func() error {
+			_ = ipConn.Close()
+			closeTransport()
+			return nil
+		}),
 	}
 
-	// Inbound Capsule reader loop
-	go func() {
-		defer cancel()
-		defer resp.Body.Close()
-		defer pw.Close()
-		for {
-			capsuleType, err := readVarint(resp.Body)
-			if err != nil {
-				return
-			}
-			capsuleLen, err := readVarint(resp.Body)
-			if err != nil {
-				return
-			}
-			payload := make([]byte, capsuleLen)
-			if _, err := io.ReadFull(resp.Body, payload); err != nil {
-				return
-			}
-			if capsuleType == 0 { // DATAGRAM / IP_PACKET
-				rawIP := payload
-				if len(rawIP) > 1 && rawIP[0] == 0 && (rawIP[1]>>4 == 4 || rawIP[1]>>4 == 6) {
-					rawIP = rawIP[1:]
-				}
-				_ = ns.InjectPacket(rawIP)
-			}
-		}
-	}()
-
-	// Outbound Capsule writer loop
-	go func() {
-		defer cancel()
-		defer pw.Close()
-		var varintBuf bytes.Buffer
-		for {
-			pkt, err := ns.ReadPacket(tunnelCtx)
-			if err != nil {
-				return
-			}
-			varintBuf.Reset()
-			writeVarint(&varintBuf, 0) // Capsule Type: 0 (DATAGRAM)
-			writeVarint(&varintBuf, uint64(len(pkt)+1))
-			varintBuf.WriteByte(0x00) // Context ID 0
-			varintBuf.Write(pkt)
-
-			if _, err := pw.Write(varintBuf.Bytes()); err != nil {
-				return
-			}
-		}
-	}()
-
+	startTunnelLoops(tun, ipConn)
 	return tun, nil
 }
 
-func readVarint(r io.Reader) (uint64, error) {
-	var first [1]byte
-	if _, err := io.ReadFull(r, first[:]); err != nil {
-		return 0, err
-	}
-	prefix := first[0] >> 6
-	length := 1 << prefix
-	val := uint64(first[0] & 0x3f)
-	for i := 1; i < length; i++ {
-		var next [1]byte
-		if _, err := io.ReadFull(r, next[:]); err != nil {
-			return 0, err
+func startTunnelLoops(tun *MASQUETunnel, ipConn *connectip.Conn) {
+	// Inbound loop (ipConn -> Netstack)
+	go func() {
+		defer tun.Close()
+		buf := make([]byte, 65535)
+		for {
+			n, err := ipConn.ReadPacket(buf, true)
+			if err != nil {
+				return
+			}
+			if n > 0 {
+				_ = tun.Netstack.InjectPacket(buf[:n])
+			}
 		}
-		val = (val << 8) | uint64(next[0])
-	}
-	return val, nil
-}
+	}()
 
-func writeVarint(buf *bytes.Buffer, val uint64) {
-	if val < 64 {
-		buf.WriteByte(byte(val))
-	} else if val < 16384 {
-		buf.WriteByte(byte((val >> 8) | 0x40))
-		buf.WriteByte(byte(val))
-	} else if val < 1073741824 {
-		buf.WriteByte(byte((val >> 24) | 0x80))
-		buf.WriteByte(byte(val >> 16))
-		buf.WriteByte(byte(val >> 8))
-		buf.WriteByte(byte(val))
-	} else {
-		buf.WriteByte(byte((val >> 56) | 0xc0))
-		buf.WriteByte(byte(val >> 48))
-		buf.WriteByte(byte(val >> 40))
-		buf.WriteByte(byte(val >> 32))
-		buf.WriteByte(byte(val >> 24))
-		buf.WriteByte(byte(val >> 16))
-		buf.WriteByte(byte(val >> 8))
-		buf.WriteByte(byte(val))
-	}
+	// Outbound loop (Netstack -> ipConn)
+	go func() {
+		defer tun.Close()
+		for {
+			pkt, err := tun.Netstack.ReadPacket(tun.ctx)
+			if err != nil {
+				return
+			}
+			icmp, err := ipConn.WritePacket(pkt)
+			if err != nil {
+				return
+			}
+			if len(icmp) > 0 {
+				_ = tun.Netstack.InjectPacket(icmp)
+			}
+		}
+	}()
 }

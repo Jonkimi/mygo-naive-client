@@ -18,8 +18,8 @@ import (
 
 const (
 	DefaultAPIURL = "https://api.cloudflareclient.com"
-	clientUA      = "okhttp/3.12.1"
-	cfClientVer   = "a-6.30-3596"
+	clientUA      = "WARP for Android"
+	cfClientVer   = "a-6.35-4471"
 )
 
 // Client interacts with the Cloudflare WARP registration API.
@@ -228,8 +228,10 @@ func (c *Client) EnrollMASQUE(ctx context.Context, acc *Account) error {
 	}
 
 	patchBody := map[string]any{
-		"key":      pubPKIX,
-		"key_type": "secp256r1",
+		"key":         pubPKIX,
+		"key_type":    "secp256r1",
+		"tunnel_type": "masque",
+		"name":        "PC",
 	}
 	data, err := json.Marshal(patchBody)
 	if err != nil {
@@ -265,6 +267,7 @@ func (c *Client) EnrollMASQUE(ctx context.Context, acc *Account) error {
 	acc.MASQUEPrivateKey = priv
 	acc.MASQUEPublicKey = pubPKIX
 	acc.MASQUECertPEM = certPEM
+	acc.MASQUEEnrolled = true
 	if patchResp.Config.Interface.Addresses.V4 != "" {
 		acc.MASQUEIPv4 = patchResp.Config.Interface.Addresses.V4
 	} else {
@@ -339,8 +342,15 @@ func (c *Client) ProvisionAll(ctx context.Context, existing Account, licenseKey 
 		acc = *fresh
 	}
 
-	if acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "" || acc.MASQUEDeviceID == "" || acc.MASQUEDeviceID == acc.DeviceID {
-		_ = c.EnrollMASQUE(ctx, &acc)
+	// Backfill MASQUEEnrolled for legacy persisted accounts that already hold valid enrolled keys
+	if acc.MASQUEPrivateKey != "" && acc.MASQUECertPEM != "" && acc.MASQUEDeviceID != "" && acc.MASQUEDeviceID != acc.DeviceID {
+		acc.MASQUEEnrolled = true
+	}
+
+	if !acc.MASQUEEnrolled || acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "" || acc.MASQUEDeviceID == "" || acc.MASQUEDeviceID == acc.DeviceID {
+		if err := c.EnrollMASQUE(ctx, &acc); err != nil {
+			return acc, fmt.Errorf("failed to enroll MASQUE key: %w", err)
+		}
 	}
 
 	if licenseKey != "" {
