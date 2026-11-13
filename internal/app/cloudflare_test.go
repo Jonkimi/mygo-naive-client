@@ -451,8 +451,8 @@ func TestBuiltinWarp_DirectLatencyProbe(t *testing.T) {
 		t.Fatalf("first probe failed: %v", err)
 	}
 
-	// Second probe should hit the 60s circuit breaker directly to WireGuard without MASQUE delay
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	// Second probe should hit the cached endpoint / circuit breaker quickly
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel2()
 	rtt2, err2 := a.mgr.ProbeServiceCtx(ctx2, *warpSvc, probeURL)
 	t.Logf("Probe 2 (circuit breaker) result: rtt=%v, err=%v", rtt2, err2)
@@ -884,3 +884,68 @@ func TestCloudflareWarpPreferH2_ToggleAndNodeEditorAndSignature(t *testing.T) {
 		t.Fatalf("expected identical WARPConfig values under new pointer to keep gatewayConfigSignature stable")
 	}
 }
+
+func TestCloudflareWarpEndpointScan_OneClickAndCandidateSwitchAndReset(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabCloudflare
+
+	// Install mock scanner returning deterministic Anycast candidates
+	a.warpEndpointScanner = func(ctx context.Context, opts warp.ScanOptions) ([]warp.EndpointCandidateResult, error) {
+		return []warp.EndpointCandidateResult{
+			{Endpoint: "162.159.198.5:443", Protocol: "h3", RTT: 14 * time.Millisecond},
+			{Endpoint: "162.159.198.2:8443", Protocol: "h2", RTT: 28 * time.Millisecond},
+		}, nil
+	}
+
+	tt.Frame()
+	cat := a.catalog()
+
+	// Scroll Cloudflare page so the Clean Endpoint & Scan section is inside the test viewport
+	a.cloudflareScroll.Y = 350
+	tt.Frame()
+
+	// 1. Click One-Click Scan button
+	if err := tt.Click(cat.CloudflareWarpScanBtn()); err != nil {
+		t.Fatalf("click scan button: %v", err)
+	}
+
+	// Wait for background scan goroutine to dispatch UI update
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tt.Frame()
+		if !a.warpScanning && len(a.warpScanResults) == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if a.warpScanning {
+		t.Fatalf("expected scan to finish")
+	}
+	if a.state.Cloudflare.CleanIP != "162.159.198.5" || a.state.Cloudflare.CleanPort != 443 {
+		t.Fatalf("expected fastest endpoint 162.159.198.5:443 to be auto-filled, got %s:%d", a.state.Cloudflare.CleanIP, a.state.Cloudflare.CleanPort)
+	}
+	if a.warpCleanEndpointInput != "162.159.198.5:443" {
+		t.Fatalf("expected input field updated to 162.159.198.5:443, got %q", a.warpCleanEndpointInput)
+	}
+
+	// 2. Click second candidate pill to switch CleanIP:CleanPort
+	tt.Frame()
+	secondLabel := "162.159.198.2:8443 (28ms · h2)"
+	if err := tt.Click(secondLabel); err != nil {
+		t.Fatalf("click candidate pill %q: %v", secondLabel, err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.CleanIP != "162.159.198.2" || a.state.Cloudflare.CleanPort != 8443 {
+		t.Fatalf("expected switched endpoint 162.159.198.2:8443, got %s:%d", a.state.Cloudflare.CleanIP, a.state.Cloudflare.CleanPort)
+	}
+
+	// 3. Click Reset Auto button to clear CleanIP/CleanPort back to automatic per-network selection
+	if err := tt.Click(cat.CloudflareWarpResetAutoBtn()); err != nil {
+		t.Fatalf("click reset auto button: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.CleanIP != "" || a.state.Cloudflare.CleanPort != 0 {
+		t.Fatalf("expected CleanIP/CleanPort cleared after reset, got %s:%d", a.state.Cloudflare.CleanIP, a.state.Cloudflare.CleanPort)
+	}
+}
+

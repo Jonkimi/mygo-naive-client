@@ -43,6 +43,7 @@ type warpMasqueOutbound struct {
 	eng         *Engine
 
 	tun            *warp.MASQUETunnel
+	activeEndpoint string
 	masqueFailedAt time.Time
 	mu             sync.Mutex
 	closed         bool
@@ -57,6 +58,26 @@ func newWarpMasqueOutbound(ctx context.Context, router adapter.Router, logger lo
 		opts:        opts,
 		eng:         eng,
 	}, nil
+}
+
+func (w *warpMasqueOutbound) scopeKey() string {
+	if w.opts.Detour == "" {
+		return "direct"
+	}
+	return w.tag
+}
+
+// ActiveEndpoint returns the endpoint currently selected or configured for this MASQUE outbound.
+func (w *warpMasqueOutbound) ActiveEndpoint() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.activeEndpoint != "" {
+		return w.activeEndpoint
+	}
+	if strings.TrimSpace(w.opts.Endpoint) != "" {
+		return strings.TrimSpace(w.opts.Endpoint)
+	}
+	return ""
 }
 
 func (w *warpMasqueOutbound) Type() string {
@@ -228,11 +249,25 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 		}
 		connectCtx, connectCancel = context.WithTimeout(ctx, masqueTimeout)
 	}
-	tun, err := warp.ConnectMASQUEWithOptions(connectCtx, upstreamDialer, w.opts.Endpoint, acc, warp.MASQUEOptions{
+	mOpts := warp.MASQUEOptions{
 		TCPOnly:  w.opts.TCPOnlyDetour,
 		ForceH2:  w.opts.ForceH2,
 		PreferH2: w.opts.PreferH2,
-	})
+	}
+	explicitEP := strings.TrimSpace(w.opts.Endpoint)
+	var tun *warp.MASQUETunnel
+	var selectedEP string
+	var err error
+	if explicitEP != "" {
+		tun, err = warp.ConnectMASQUEWithOptions(connectCtx, upstreamDialer, explicitEP, acc, mOpts)
+		selectedEP = explicitEP
+	} else {
+		selector := warp.DefaultEndpointSelector()
+		if w.eng != nil && w.eng.endpointSelector != nil {
+			selector = w.eng.endpointSelector
+		}
+		tun, selectedEP, err = selector.SelectMASQUEAndConnect(connectCtx, w.scopeKey(), upstreamDialer, acc, mOpts)
+	}
 	if connectCancel != nil {
 		connectCancel()
 	}
@@ -242,16 +277,34 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	}
 	w.masqueFailedAt = time.Time{}
 	w.tun = tun
+	w.activeEndpoint = selectedEP
+	if explicitEP == "" && w.logger != nil && selectedEP != "" {
+		w.logger.InfoContext(ctx, fmt.Sprintf("MASQUE auto-selected endpoint %s (%s) for scope %s", selectedEP, tun.Protocol(), w.scopeKey()))
+	}
 	return tun, nil
 }
 
 func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
+	var failedEP string
 	w.mu.Lock()
 	if w.tun == tun {
 		w.tun = nil
+		failedEP = w.activeEndpoint
+		w.activeEndpoint = ""
 		w.masqueFailedAt = time.Now()
 	}
 	w.mu.Unlock()
+	if strings.TrimSpace(w.opts.Endpoint) == "" && failedEP != "" {
+		selector := warp.DefaultEndpointSelector()
+		if w.eng != nil && w.eng.endpointSelector != nil {
+			selector = w.eng.endpointSelector
+		}
+		selector.MarkFailed(warp.EndpointCacheKey{
+			ScopeKey: w.scopeKey(),
+			Mode:     warp.ModeMASQUE,
+			TCPOnly:  w.opts.TCPOnlyDetour || w.opts.ForceH2,
+		}, failedEP)
+	}
 	if tun != nil {
 		_ = tun.Close()
 	}
@@ -314,9 +367,9 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 		w.logger.DebugContext(ctx, fmt.Sprintf("MASQUE tunnel create failed after %v: %v", t1.Sub(t0), err))
 	}
 
-	ep := w.opts.Endpoint
+	ep := w.ActiveEndpoint()
 	if ep == "" {
-		ep = warp.DefaultMASQUEEndpoint
+		ep = "auto"
 	}
 
 	if fbOb := w.getFallbackOutbound(); fbOb != nil {
@@ -360,9 +413,9 @@ func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Soc
 		}
 	}
 
-	ep := w.opts.Endpoint
+	ep := w.ActiveEndpoint()
 	if ep == "" {
-		ep = warp.DefaultMASQUEEndpoint
+		ep = "auto"
 	}
 
 	if fbOb := w.getFallbackOutbound(); fbOb != nil {

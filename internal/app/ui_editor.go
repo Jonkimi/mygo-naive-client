@@ -918,7 +918,7 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 						}
 					}
 
-					labeledInput(c, p, "inp-warp-chained-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpCleanEndpointPlaceholder())
+					labeledInput(c, p, "inp-warp-chained-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpChainedEndpointPlaceholder())
 				}
 			})
 		}

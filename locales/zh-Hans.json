@@ -661,8 +661,28 @@
   "cloudflareWarpTransportWireGuardDesc": "直接使用传统 WireGuard（UDP 2408 端口 + 3 字节 Reserved 客户端标识）连接 WARP。协议开销小，适合 UDP 链路通畅的环境或搭配测速优选 WireGuard IP；不支持 NaiveProxy / HTTP 等纯 TCP 前置代理（会自动改走 MASQUE HTTP/2）。",
   "cloudflareWarpPreferH2": "MASQUE 优先使用 HTTP/2 (抗 UDP QoS 限速)",
   "cloudflareWarpPreferH2Desc": "开启后，MASQUE 将优先使用基于 TCP 443 的 HTTP/2 建立隧道，失败时再回退 HTTP/3 (QUIC)。推荐在运营商对 UDP 限速（QoS）或高丢包网络下开启。",
-  "cloudflareWarpCleanEndpoint": "优选 Anycast 端点",
-  "cloudflareWarpCleanEndpointPlaceholder": "留空使用默认 (162.159.198.2:443)",
+  "cloudflareWarpCleanEndpoint": "优选 Anycast 端点 (仅直连 WARP)",
+  "cloudflareWarpCleanEndpointPlaceholder": "留空自动并发优选本地最低延迟端点",
+  "cloudflareWarpCleanEndpointDesc": "仅作用于直连 WARP 节点（如内置 WARP）。代理链式开启 WARP 的节点默认各自通过自身落地代理独立自动优选节点所在国家的最佳端点。",
+  "cloudflareWarpChainedEndpointPlaceholder": "留空通过当前节点出口独立自动优选最佳端点（推荐）",
+  "cloudflareWarpScanBtn": "一键测速优选",
+  "cloudflareWarpScanningBtn": "测速中...",
+  "cloudflareWarpResetAutoBtn": "恢复自动",
+  "cloudflareWarpScanResultsTitle": "测速优选结果 (点击切换):",
+  "cloudflareWarpScanSuccess": "已优选最佳端点: {endpoint} ({ms}ms)",
+  "@cloudflareWarpScanSuccess": {
+    "placeholders": {
+      "endpoint": { "type": "String" },
+      "ms": { "type": "int" }
+    }
+  },
+  "cloudflareWarpScanEmpty": "当前本地网络未探测到可用的 Cloudflare WARP 端点",
+  "cloudflareWarpScanFailed": "端点测速失败: {err}",
+  "@cloudflareWarpScanFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
   "cloudflareWarpAttachedNodes": "已挂载 WARP 出口的节点",
   "cloudflareWarpNoAttachedNodes": "暂无节点启用 WARP 出口（可在节点编辑中开启）",
   "cloudflareTunnelTitle": "Zero Trust 隧道穿透",

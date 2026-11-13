@@ -75,6 +75,7 @@ type EngineOptions struct {
 
 	// Cloudflare integration (WARP egress & Tunnel ingress)
 	CloudflareConfig *warp.Config
+	EndpointSelector *warp.EndpointSelector
 
 	// Logging configuration
 	LogLevel string
@@ -157,6 +158,7 @@ type Engine struct {
 	onDemandStart     func(poolTag string)
 	onTelemetryUpdate func()
 	cloudflareConfig  *warp.Config
+	endpointSelector  *warp.EndpointSelector
 	logLevel          string
 	logWriter         *boxPlatformWriter
 	boxCtx            context.Context
@@ -205,6 +207,7 @@ func New(opts EngineOptions) (*Engine, error) {
 		onDemandStart:     opts.OnDemandStart,
 		onTelemetryUpdate: opts.OnTelemetryUpdate,
 		cloudflareConfig:  opts.CloudflareConfig,
+		endpointSelector:  opts.EndpointSelector,
 		logLevel:          normLvl,
 		logWriter:         newBoxPlatformWriter(parsedLvl, opts.OnLog),
 	}
@@ -302,6 +305,9 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 
 	outbound.Register[warpMasqueOptions](outboundReg, "masque", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, mOpts warpMasqueOptions) (adapter.Outbound, error) {
 		return newWarpMasqueOutbound(ctx, router, logger, tag, mOpts, eng)
+	})
+	outbound.Register[warpAutoWireGuardOptions](outboundReg, "warp-wg-auto", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, wgOpts warpAutoWireGuardOptions) (adapter.Outbound, error) {
+		return newWarpAutoWireGuardOutbound(ctx, router, logger, tag, wgOpts, eng)
 	})
 
 	var finalOutboundReg adapter.OutboundRegistry = outboundReg
@@ -633,25 +639,32 @@ func (e *Engine) isChainedWarpNode(nodeID string) bool {
 
 func (e *Engine) getWarpEndpoint(nodeID string) string {
 	cleanID := strings.TrimPrefix(nodeID, "node-")
+	if ob, ok := e.GetOutbound(cleanID); ok {
+		type activeEndpointProvider interface {
+			ActiveEndpoint() string
+		}
+		if p, ok := ob.(activeEndpointProvider); ok {
+			if ep := strings.TrimSpace(p.ActiveEndpoint()); ep != "" {
+				return ep
+			}
+		}
+	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	for _, svc := range e.services {
 		if svc.ID == cleanID {
-			if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
-				return strings.TrimSpace(svc.WARPConfig.Endpoint)
-			}
 			mode := resolveServiceWarpMode(svc, e.cloudflareConfig)
-			if e.cloudflareConfig != nil {
-				host, port := e.cloudflareConfig.ResolveEndpoint(mode)
-				return net.JoinHostPort(host, strconv.Itoa(port))
+			if ep := resolveExplicitWarpEndpoint(svc, e.cloudflareConfig, mode); ep != "" {
+				return ep
 			}
+			return "auto"
 		}
 	}
-	if e.cloudflareConfig != nil {
+	if e.cloudflareConfig != nil && strings.TrimSpace(e.cloudflareConfig.CleanIP) != "" {
 		host, port := e.cloudflareConfig.ResolveEndpoint(warp.ModeAuto)
 		return net.JoinHostPort(host, strconv.Itoa(port))
 	}
-	return warp.DefaultMASQUEEndpoint
+	return "auto"
 }
 
 // IsSidecar implements NodeProvider.
@@ -1076,9 +1089,16 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 	// Node outbounds
 	for _, svc := range opts.Services {
 		if svc.EffectiveProtocol() == config.ProtoWARP {
+			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
 			if isWarpWireGuard(svc, opts.CloudflareConfig) {
-				// Handled in buildEndpointsConfig as WireGuard endpoint
+				if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
+					outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, ""))
+				}
+				// Explicit endpoints are handled in buildEndpointsConfig as WireGuard endpoint.
 				continue
+			}
+			if mode == warp.ModeAuto && resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
+				outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, ""))
 			}
 			masqueOb := buildMasqueOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, "", false)
 			outbounds = append(outbounds, masqueOb)
@@ -1118,9 +1138,16 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 
 		if svc.EnableWARP {
 			isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
+			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
 			if isWarpWireGuard(svc, opts.CloudflareConfig) {
-				// Handled in buildEndpointsConfig as WireGuard endpoint
+				if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
+					outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, baseTag))
+				}
+				// Explicit endpoints are handled in buildEndpointsConfig as WireGuard endpoint.
 				continue
+			}
+			if !isTCPOnly && mode == warp.ModeAuto && resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
+				outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, baseTag))
 			}
 			masqueOb := buildMasqueOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, baseTag, isTCPOnly)
 			outbounds = append(outbounds, masqueOb)
@@ -1183,14 +1210,23 @@ func isWarpWireGuard(svc config.Service, globalCfg *warp.Config) bool {
 	return resolveServiceWarpMode(svc, globalCfg) == warp.ModeWireGuard
 }
 
-func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, detour string, tcpOnlyDetour bool) map[string]any {
-	endpoint := warp.DefaultMASQUEEndpoint
+// resolveExplicitWarpEndpoint returns the explicitly configured WARP endpoint for svc.
+// Global CleanIP/CleanPort applies ONLY to direct WARP nodes (ProtoWARP, including builtin-warp).
+// Chained proxy+WARP nodes (svc.EnableWARP) default to "" (runtime per-egress auto-selection)
+// unless the node itself has an explicit WARPConfig.Endpoint configured.
+func resolveExplicitWarpEndpoint(svc config.Service, globalCfg *warp.Config, mode warp.Mode) string {
 	if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
-		endpoint = strings.TrimSpace(svc.WARPConfig.Endpoint)
-	} else if globalCfg != nil && globalCfg.CleanIP != "" {
-		host, port := globalCfg.ResolveEndpoint(warp.ModeMASQUE)
-		endpoint = net.JoinHostPort(host, strconv.Itoa(port))
+		return strings.TrimSpace(svc.WARPConfig.Endpoint)
 	}
+	if svc.EffectiveProtocol() == config.ProtoWARP && globalCfg != nil && strings.TrimSpace(globalCfg.CleanIP) != "" {
+		host, port := globalCfg.ResolveEndpoint(mode)
+		return net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	return ""
+}
+
+func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, detour string, tcpOnlyDetour bool) map[string]any {
+	endpoint := resolveExplicitWarpEndpoint(svc, globalCfg, warp.ModeMASQUE)
 
 	privKey := ""
 	certPEM := ""
@@ -1251,17 +1287,15 @@ func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, 
 func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, tag, detour string) map[string]any {
 	peerHost := "162.159.192.1"
 	peerPort := 2408
-	if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
-		if h, pStr, err := net.SplitHostPort(strings.TrimSpace(svc.WARPConfig.Endpoint)); err == nil {
+	if explicitEP := resolveExplicitWarpEndpoint(svc, globalCfg, warp.ModeWireGuard); explicitEP != "" {
+		if h, pStr, err := net.SplitHostPort(explicitEP); err == nil {
 			peerHost = h
 			if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
 				peerPort = p
 			}
 		} else {
-			peerHost = strings.TrimSpace(svc.WARPConfig.Endpoint)
+			peerHost = explicitEP
 		}
-	} else if globalCfg != nil && globalCfg.CleanIP != "" {
-		peerHost, peerPort = globalCfg.ResolveEndpoint(warp.ModeWireGuard)
 	}
 
 	privKey := ""
@@ -1344,6 +1378,62 @@ func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, ta
 	return ep
 }
 
+func buildAutoWireGuardOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, detour string) map[string]any {
+	privKey := ""
+	peerPubKey := ""
+	var reserved []uint8
+	ipv4 := ""
+	ipv6 := ""
+
+	if svc.WARPConfig != nil {
+		if svc.WARPConfig.PrivateKey != "" {
+			privKey = svc.WARPConfig.PrivateKey
+		}
+		if svc.WARPConfig.PeerPubKey != "" {
+			peerPubKey = svc.WARPConfig.PeerPubKey
+		}
+		if len(svc.WARPConfig.Reserved) == 3 {
+			reserved = svc.WARPConfig.Reserved
+		}
+		if svc.WARPConfig.AddressIPv4 != "" {
+			ipv4 = svc.WARPConfig.AddressIPv4
+		}
+		if svc.WARPConfig.AddressIPv6 != "" {
+			ipv6 = svc.WARPConfig.AddressIPv6
+		}
+	}
+	if privKey == "" && globalCfg != nil {
+		privKey = globalCfg.Account.WGPrivateKey
+		if peerPubKey == "" {
+			peerPubKey = globalCfg.Account.WGPeerPublicKey
+		}
+		if len(reserved) != 3 && len(globalCfg.Account.Reserved) == 3 {
+			reserved = globalCfg.Account.Reserved
+		}
+		if ipv4 == "" {
+			ipv4 = globalCfg.Account.IPv4
+		}
+		if ipv6 == "" {
+			ipv6 = globalCfg.Account.IPv6
+		}
+	}
+
+	ob := map[string]any{
+		"type":         "warp-wg-auto",
+		"tag":          tag,
+		"private_key":  privKey,
+		"peer_pub_key": peerPubKey,
+		"reserved":     reserved,
+		"address_ipv4": ipv4,
+		"address_ipv6": ipv6,
+		"mtu":          uint32(warp.DefaultMTU),
+	}
+	if detour != "" {
+		ob["detour"] = detour
+	}
+	return ob
+}
+
 func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 	var endpoints []map[string]any
 	if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
@@ -1400,12 +1490,14 @@ func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 				detour = "raw-node-" + svc.ID
 			}
 			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
-			if mode == warp.ModeWireGuard {
-				wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)
-				endpoints = append(endpoints, wgEp)
-			} else if mode == warp.ModeAuto {
-				wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, detour)
-				endpoints = append(endpoints, wgEp)
+			if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) != "" {
+				if mode == warp.ModeWireGuard {
+					wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)
+					endpoints = append(endpoints, wgEp)
+				} else if mode == warp.ModeAuto {
+					wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, detour)
+					endpoints = append(endpoints, wgEp)
+				}
 			}
 		}
 	}

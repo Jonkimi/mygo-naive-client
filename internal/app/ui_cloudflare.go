@@ -2,8 +2,6 @@ package app
 
 import (
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -48,6 +46,7 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 
 		// 2. Body scrollable view
 		ui.Scroll(c.Key("cloudflare-page-scroll")).
+			TrackScroll(&a.cloudflareScroll).
 			Grow(1).Fill().
 			Padding(18, 20, 24, 20).Gap(14).
 			Children(func() {
@@ -273,30 +272,68 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 				})
 			}
 
-			// Clean Endpoint override
-			cleanVal := a.state.Cloudflare.CleanIP
-			if a.state.Cloudflare.CleanPort > 0 && cleanVal != "" {
-				cleanVal = fmt.Sprintf("%s:%d", cleanVal, a.state.Cloudflare.CleanPort)
-			}
-			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				inp := ui.TextInput(c.Key("input-warp-clean-endpoint"), &a.warpCleanEndpointInput).
-					Label(cat.CloudflareWarpCleanEndpoint()).
-					Placeholder(cat.CloudflareWarpCleanEndpointPlaceholder()).
-					Grow(1)
-				if inp.Changed() {
-					raw := strings.TrimSpace(a.warpCleanEndpointInput)
-					if raw == "" {
-						a.state.Cloudflare.CleanIP = ""
-						a.state.Cloudflare.CleanPort = 0
-					} else if h, pStr, err := net.SplitHostPort(raw); err == nil {
-						a.state.Cloudflare.CleanIP = h
-						if p, err := strconv.Atoi(pStr); err == nil {
-							a.state.Cloudflare.CleanPort = p
-						}
-					} else {
-						a.state.Cloudflare.CleanIP = raw
+			// Clean Endpoint override + One-Click Anycast Scan
+			ui.Column(c.Key("warp-clean-endpoint-section")).Gap(8).Children(func() {
+				ui.Row(c).AlignItems(ui.End).Gap(8).Children(func() {
+					inp := ui.TextInput(c.Key("input-warp-clean-endpoint"), &a.warpCleanEndpointInput).
+						Label(cat.CloudflareWarpCleanEndpoint()).
+						Placeholder(cat.CloudflareWarpCleanEndpointPlaceholder()).
+						Grow(1)
+					if inp.Changed() {
+						a.applyWarpCleanEndpoint(a.warpCleanEndpointInput)
 					}
-					a.saveState()
+
+					scanLabel := cat.CloudflareWarpScanBtn()
+					if a.warpScanning {
+						scanLabel = cat.CloudflareWarpScanningBtn()
+					}
+					scanBtn := ui.Button(c.Key("btn-warp-scan-endpoint"), scanLabel).
+						FontSize(12).Radius(6).
+						Background(p.accent).TextColor(ui.RGB(255, 255, 255)).
+						Padding(7, 12, 7, 12).
+						Disabled(a.warpScanning)
+					if scanBtn.Clicked() {
+						a.triggerWarpEndpointScan()
+					}
+
+					if strings.TrimSpace(a.warpCleanEndpointInput) != "" || strings.TrimSpace(a.state.Cloudflare.CleanIP) != "" {
+						resetBtn := ui.Button(c.Key("btn-warp-reset-auto"), cat.CloudflareWarpResetAutoBtn()).
+							FontSize(12).Radius(6).
+							Background(p.surface).Border(1, p.border).TextColor(p.textMuted).
+							Padding(7, 10, 7, 10)
+						if resetBtn.Clicked() {
+							a.applyWarpCleanEndpoint("")
+						}
+					}
+				})
+
+				ui.Text(c, cat.CloudflareWarpCleanEndpointDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+
+				if len(a.warpScanResults) > 0 {
+					ui.Column(c.Key("warp-scan-results")).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+						ui.Text(c, cat.CloudflareWarpScanResultsTitle()).FontSize(11).FontWeight(600).TextColor(p.textDim)
+						ui.Row(c).Wrap().Gap(6).Children(func() {
+							for idx, res := range a.warpScanResults {
+								selected := strings.TrimSpace(a.warpCleanEndpointInput) == res.Endpoint
+								bg := p.card
+								border := p.border
+								fg := p.text
+								if selected {
+									bg = p.accentBg
+									border = p.accent.Alpha(0.5)
+									fg = p.accent
+								}
+								label := fmt.Sprintf("%s (%dms · %s)", res.Endpoint, res.RTT.Milliseconds(), res.Protocol)
+								pillBtn := ui.Button(c.Key(fmt.Sprintf("btn-warp-candidate-%d", idx)), label).
+									FontSize(11).Radius(6).
+									Background(bg).Border(1, border).TextColor(fg).
+									Padding(4, 9, 4, 9)
+								if pillBtn.Clicked() {
+									a.applyWarpCleanEndpoint(res.Endpoint)
+								}
+							}
+						})
+					})
 				}
 			})
 

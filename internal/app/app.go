@@ -191,8 +191,12 @@ type app struct {
 
 	// Cloudflare workbench state
 	cloudflareSubTab       int
+	cloudflareScroll       ui.ScrollState
 	warpRegistering        bool
 	warpBindingLicense     bool
+	warpScanning           bool
+	warpScanResults        []warp.EndpointCandidateResult
+	warpEndpointScanner    func(context.Context, warp.ScanOptions) ([]warp.EndpointCandidateResult, error)
 	warpLicenseInput       string
 	warpCleanEndpointInput string
 	tunnelTokenInput       string
@@ -851,12 +855,31 @@ func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint 
 			return cat.WarpUnhealthyUnregisteredHint(), true, true
 		}
 
-		endpoint := warp.DefaultMASQUEEndpoint
-		if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
-			endpoint = strings.TrimSpace(svc.WARPConfig.Endpoint)
-		} else if a.state.Cloudflare.CleanIP != "" {
-			host, port := a.state.Cloudflare.ResolveEndpoint(warp.ModeAuto)
-			endpoint = net.JoinHostPort(host, strconv.Itoa(port))
+		endpoint := "auto"
+		if a.gateway != nil {
+			if ob, ok := a.gateway.GetOutbound(svc.ID); ok {
+				type activeEndpointProvider interface {
+					ActiveEndpoint() string
+				}
+				if p, ok := ob.(activeEndpointProvider); ok {
+					if ep := strings.TrimSpace(p.ActiveEndpoint()); ep != "" {
+						endpoint = ep
+					}
+				}
+			}
+		}
+		if endpoint == "auto" {
+			if ep := extractWarpServerEndpoint(rt.ProbeError + " " + rt.SpeedError); ep != "" {
+				endpoint = ep
+			}
+		}
+		if endpoint == "auto" {
+			if svc.WARPConfig != nil && strings.TrimSpace(svc.WARPConfig.Endpoint) != "" {
+				endpoint = strings.TrimSpace(svc.WARPConfig.Endpoint)
+			} else if svc.EffectiveProtocol() == config.ProtoWARP && a.state.Cloudflare.CleanIP != "" {
+				host, port := a.state.Cloudflare.ResolveEndpoint(warp.ModeAuto)
+				endpoint = net.JoinHostPort(host, strconv.Itoa(port))
+			}
 		}
 
 		if svc.EffectiveProtocol() == config.ProtoWARP {
@@ -873,6 +896,24 @@ func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint 
 		errText = cat.NodeDrawerCircuitTripped()
 	}
 	return errText, false, false
+}
+
+func extractWarpServerEndpoint(errText string) string {
+	const prefix = "warp server ("
+	idx := strings.Index(strings.ToLower(errText), prefix)
+	if idx < 0 {
+		return ""
+	}
+	rest := errText[idx+len(prefix):]
+	end := strings.IndexByte(rest, ')')
+	if end <= 0 {
+		return ""
+	}
+	ep := strings.TrimSpace(rest[:end])
+	if ep == "" || ep == "auto" {
+		return ""
+	}
+	return ep
 }
 
 func (a *app) triggerServiceProbe(svc config.Service) {
@@ -1355,6 +1396,82 @@ func (a *app) triggerWarpBindLicense() {
 			a.state.Cloudflare.Account.LicenseKey = key
 			a.saveState()
 			a.toast("WARP+ License 绑定成功: " + a.state.Cloudflare.Account.AccountType)
+		})
+	}()
+}
+
+func (a *app) applyWarpCleanEndpoint(raw string) {
+	raw = strings.TrimSpace(raw)
+	a.warpCleanEndpointInput = raw
+	if raw == "" {
+		a.state.Cloudflare.CleanIP = ""
+		a.state.Cloudflare.CleanPort = 0
+	} else if h, pStr, err := net.SplitHostPort(raw); err == nil {
+		a.state.Cloudflare.CleanIP = strings.Trim(h, "[]")
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			a.state.Cloudflare.CleanPort = p
+		} else {
+			a.state.Cloudflare.CleanPort = 0
+		}
+	} else {
+		a.state.Cloudflare.CleanIP = strings.Trim(raw, "[]")
+		a.state.Cloudflare.CleanPort = 0
+	}
+	a.saveState()
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+}
+
+func (a *app) triggerWarpEndpointScan() {
+	if a.warpScanning {
+		return
+	}
+	a.warpScanning = true
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+	mode := a.state.Cloudflare.DefaultMode
+	preferH2 := a.state.Cloudflare.MasquePreferH2
+	acc := a.state.Cloudflare.Account
+	scanner := a.warpEndpointScanner
+	if scanner == nil {
+		scanner = warp.ScanBestEndpoints
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		results, err := scanner(ctx, warp.ScanOptions{
+			Mode:           mode,
+			PreferH2:       preferH2,
+			Account:        &acc,
+			TopN:           5,
+			SampleCount:    24,
+			Concurrency:    12,
+			PerProbeTimout: 1800 * time.Millisecond,
+		})
+		a.dispatchUI(func() {
+			a.warpScanning = false
+			cat := a.catalog()
+			if err != nil {
+				a.toast(cat.CloudflareWarpScanFailed(err.Error()))
+				if a.win != nil {
+					a.win.Invalidate()
+				}
+				return
+			}
+			a.warpScanResults = results
+			if len(results) == 0 {
+				a.toast(cat.CloudflareWarpScanEmpty())
+				if a.win != nil {
+					a.win.Invalidate()
+				}
+				return
+			}
+			best := results[0]
+			a.applyWarpCleanEndpoint(best.Endpoint)
+			a.toast(cat.CloudflareWarpScanSuccess(best.Endpoint, int(best.RTT.Milliseconds())))
 		})
 	}()
 }

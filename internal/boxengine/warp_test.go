@@ -613,3 +613,91 @@ func TestDialNode_WarpErrorClassification(t *testing.T) {
 	_ = errors.Is
 }
 
+func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
+	globalCfg := &warp.Config{
+		CleanIP:     "162.159.198.9",
+		CleanPort:   8443,
+		DefaultMode: warp.ModeAuto,
+	}
+
+	directWarp := config.Service{
+		ID:       config.BuiltinWarpServiceID,
+		Name:     "Cloudflare WARP",
+		Protocol: config.ProtoWARP,
+	}
+	chainedUS := config.Service{
+		ID:         "us-node",
+		Name:       "US VLESS + WARP",
+		Protocol:   config.ProtoVLESS,
+		Server:     "us.example.com:443",
+		EnableWARP: true,
+	}
+	chainedJPExplicit := config.Service{
+		ID:         "jp-node",
+		Name:       "JP VLESS + WARP",
+		Protocol:   config.ProtoVLESS,
+		Server:     "jp.example.com:443",
+		EnableWARP: true,
+		WARPConfig: &config.WarpNodeConfig{
+			Endpoint: "162.159.198.12:443",
+		},
+	}
+
+	opts := EngineOptions{
+		Services:         []config.Service{directWarp, chainedUS, chainedJPExplicit},
+		CloudflareConfig: globalCfg,
+	}
+
+	outbounds, err := buildOutboundsConfig(opts, "direct", nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+
+	byTag := map[string]map[string]any{}
+	for _, ob := range outbounds {
+		if tag, ok := ob["tag"].(string); ok {
+			byTag[tag] = ob
+		}
+	}
+
+	// 1. Direct WARP inherits global CleanIP:CleanPort
+	if ep := byTag["node-"+config.BuiltinWarpServiceID]["endpoint"]; ep != "162.159.198.9:8443" {
+		t.Errorf("expected direct WARP to inherit global CleanIP 162.159.198.9:8443, got %v", ep)
+	}
+
+	// 2. Chained proxy+WARP without explicit endpoint must NOT inherit global CleanIP (stays empty for runtime per-egress auto-selection)
+	if ep := byTag["node-us-node"]["endpoint"]; ep != "" {
+		t.Errorf("expected chained node-us-node endpoint to be empty (auto-select), got %v", ep)
+	}
+	if wgAuto := byTag["wg-node-us-node"]; wgAuto == nil || wgAuto["type"] != "warp-wg-auto" {
+		t.Errorf("expected wg-node-us-node to use warp-wg-auto outbound, got %+v", wgAuto)
+	}
+
+	// 3. Chained proxy+WARP with explicit node-level endpoint keeps its explicit endpoint
+	if ep := byTag["node-jp-node"]["endpoint"]; ep != "162.159.198.12:443" {
+		t.Errorf("expected explicit chained node-jp-node endpoint 162.159.198.12:443, got %v", ep)
+	}
+	if wgAuto := byTag["wg-node-jp-node"]; wgAuto != nil {
+		t.Errorf("expected explicit chained node-jp-node NOT to generate warp-wg-auto outbound, got %+v", wgAuto)
+	}
+
+	// 4. Verify endpoints slice only contains static WireGuard endpoints for nodes with explicit endpoints
+	endpoints := buildEndpointsConfig(opts)
+	epTags := map[string]bool{}
+	for _, ep := range endpoints {
+		if tag, ok := ep["tag"].(string); ok {
+			epTags[tag] = true
+		}
+	}
+	if !epTags["wg-node-"+config.BuiltinWarpServiceID] {
+		t.Errorf("expected static WG endpoint for direct WARP with CleanIP")
+	}
+	if epTags["wg-node-us-node"] {
+		t.Errorf("expected NO static WG endpoint for auto-select chained us-node")
+	}
+	if !epTags["wg-node-jp-node"] {
+		t.Errorf("expected static WG endpoint for explicit jp-node")
+	}
+}
+
+

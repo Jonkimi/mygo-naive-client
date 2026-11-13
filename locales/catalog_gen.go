@@ -5660,26 +5660,126 @@ func (msgs Messages) CloudflareWarpPreferH2Desc() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpPreferH2Desc", nil)
 }
 
-// CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint"
+// CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint (Direct WARP)"
 // in the language the app shows.
 func CloudflareWarpCleanEndpoint() string { return In(i18n.Locale()).CloudflareWarpCleanEndpoint() }
 
-// CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint"
+// CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint (Direct WARP)"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpCleanEndpoint() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpCleanEndpoint", nil)
 }
 
-// CloudflareWarpCleanEndpointPlaceholder says "Leave blank for default (162.159.198.2:443)"
+// CloudflareWarpCleanEndpointPlaceholder says "Leave blank for automatic per-network optimization"
 // in the language the app shows.
 func CloudflareWarpCleanEndpointPlaceholder() string {
 	return In(i18n.Locale()).CloudflareWarpCleanEndpointPlaceholder()
 }
 
-// CloudflareWarpCleanEndpointPlaceholder says "Leave blank for default (162.159.198.2:443)"
+// CloudflareWarpCleanEndpointPlaceholder says "Leave blank for automatic per-network optimization"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpCleanEndpointPlaceholder() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpCleanEndpointPlaceholder", nil)
+}
+
+// CloudflareWarpCleanEndpointDesc says "Applies only to direct WARP nodes (such as Built-in Direct WARP). Chained proxy+WARP nodes automatically benchmark an…"
+// in the language the app shows.
+func CloudflareWarpCleanEndpointDesc() string {
+	return In(i18n.Locale()).CloudflareWarpCleanEndpointDesc()
+}
+
+// CloudflareWarpCleanEndpointDesc says "Applies only to direct WARP nodes (such as Built-in Direct WARP). Chained proxy+WARP nodes automatically benchmark an…"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpCleanEndpointDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpCleanEndpointDesc", nil)
+}
+
+// CloudflareWarpChainedEndpointPlaceholder says "Leave blank for auto-optimization via this proxy's egress (recommended)"
+// in the language the app shows.
+func CloudflareWarpChainedEndpointPlaceholder() string {
+	return In(i18n.Locale()).CloudflareWarpChainedEndpointPlaceholder()
+}
+
+// CloudflareWarpChainedEndpointPlaceholder says "Leave blank for auto-optimization via this proxy's egress (recommended)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpChainedEndpointPlaceholder() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpChainedEndpointPlaceholder", nil)
+}
+
+// CloudflareWarpScanBtn says "One-Click Scan"
+// in the language the app shows.
+func CloudflareWarpScanBtn() string { return In(i18n.Locale()).CloudflareWarpScanBtn() }
+
+// CloudflareWarpScanBtn says "One-Click Scan"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpScanBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanBtn", nil)
+}
+
+// CloudflareWarpScanningBtn says "Scanning..."
+// in the language the app shows.
+func CloudflareWarpScanningBtn() string { return In(i18n.Locale()).CloudflareWarpScanningBtn() }
+
+// CloudflareWarpScanningBtn says "Scanning..."
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpScanningBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanningBtn", nil)
+}
+
+// CloudflareWarpResetAutoBtn says "Auto"
+// in the language the app shows.
+func CloudflareWarpResetAutoBtn() string { return In(i18n.Locale()).CloudflareWarpResetAutoBtn() }
+
+// CloudflareWarpResetAutoBtn says "Auto"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpResetAutoBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpResetAutoBtn", nil)
+}
+
+// CloudflareWarpScanResultsTitle says "Top Available Endpoints (click to apply):"
+// in the language the app shows.
+func CloudflareWarpScanResultsTitle() string {
+	return In(i18n.Locale()).CloudflareWarpScanResultsTitle()
+}
+
+// CloudflareWarpScanResultsTitle says "Top Available Endpoints (click to apply):"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpScanResultsTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanResultsTitle", nil)
+}
+
+// CloudflareWarpScanSuccess says "Optimal endpoint selected: {endpoint} ({ms}ms)"
+// in the language the app shows.
+func CloudflareWarpScanSuccess(endpoint string, ms int) string {
+	return In(i18n.Locale()).CloudflareWarpScanSuccess(endpoint, ms)
+}
+
+// CloudflareWarpScanSuccess says "Optimal endpoint selected: {endpoint} ({ms}ms)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpScanSuccess(endpoint string, ms int) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanSuccess", map[string]any{"endpoint": endpoint, "ms": ms})
+}
+
+// CloudflareWarpScanEmpty says "No reachable Cloudflare WARP endpoints found on the current local network"
+// in the language the app shows.
+func CloudflareWarpScanEmpty() string { return In(i18n.Locale()).CloudflareWarpScanEmpty() }
+
+// CloudflareWarpScanEmpty says "No reachable Cloudflare WARP endpoints found on the current local network"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpScanEmpty() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanEmpty", nil)
+}
+
+// CloudflareWarpScanFailed says "Endpoint scan failed: {err}"
+// in the language the app shows.
+func CloudflareWarpScanFailed(err string) string {
+	return In(i18n.Locale()).CloudflareWarpScanFailed(err)
+}
+
+// CloudflareWarpScanFailed says "Endpoint scan failed: {err}"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpScanFailed(err string) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanFailed", map[string]any{"err": err})
 }
 
 // CloudflareWarpAttachedNodes says "Nodes with WARP Egress Enabled"

@@ -1772,8 +1772,31 @@ func TestEngine_WarpAutoFallbackConfig(t *testing.T) {
 		t.Errorf("expected wireguard_fallback to be 'wg-node-builtin-warp', got %v", masqueOb["wireguard_fallback"])
 	}
 
-	// 2. Verify companion WireGuard endpoint was built
-	endpoints := buildEndpointsConfig(opts)
+	// 2. Verify companion WireGuard auto-selection outbound was built when endpoint is auto
+	var wgOb map[string]any
+	for _, ob := range outbounds {
+		if ob["tag"] == "wg-node-"+config.BuiltinWarpServiceID {
+			wgOb = ob
+			break
+		}
+	}
+	if wgOb == nil {
+		t.Fatalf("expected wg-node-builtin-warp companion outbound in outbounds")
+	}
+	if wgOb["type"] != "warp-wg-auto" {
+		t.Errorf("expected outbound type 'warp-wg-auto', got %v", wgOb["type"])
+	}
+
+	// 3. When an explicit endpoint is set, companion static WireGuard endpoint is built in endpoints
+	optsExplicit := EngineOptions{
+		Services: []config.Service{warpSvc},
+		CloudflareConfig: &warp.Config{
+			DefaultMode: warp.ModeAuto,
+			CleanIP:     "162.159.192.5",
+			CleanPort:   2408,
+		},
+	}
+	endpoints := buildEndpointsConfig(optsExplicit)
 	var wgEp map[string]any
 	for _, ep := range endpoints {
 		if ep["tag"] == "wg-node-"+config.BuiltinWarpServiceID {
@@ -1782,7 +1805,7 @@ func TestEngine_WarpAutoFallbackConfig(t *testing.T) {
 		}
 	}
 	if wgEp == nil {
-		t.Fatalf("expected wg-node-builtin-warp companion endpoint in endpoints")
+		t.Fatalf("expected wg-node-builtin-warp companion endpoint in endpoints when explicit CleanIP is set")
 	}
 	if wgEp["type"] != "wireguard" {
 		t.Errorf("expected endpoint type 'wireguard', got %v", wgEp["type"])

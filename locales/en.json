@@ -677,8 +677,28 @@
   "cloudflareWarpTransportWireGuardDesc": "Connects directly via classic WireGuard over UDP port 2408 with Cloudflare's 3-byte reserved client ID. Low overhead for clean UDP networks or custom clean WireGuard IPs; does not support TCP-only upstream nodes (automatically switches to MASQUE H2).",
   "cloudflareWarpPreferH2": "Prefer HTTP/2 over TCP for MASQUE (Anti UDP QoS)",
   "cloudflareWarpPreferH2Desc": "Tries MASQUE over HTTP/2 (TCP 443) before HTTP/3 (QUIC), falling back to HTTP/3 if HTTP/2 fails. Recommended when your ISP throttles or drops UDP/QUIC traffic.",
-  "cloudflareWarpCleanEndpoint": "Clean Anycast Endpoint",
-  "cloudflareWarpCleanEndpointPlaceholder": "Leave blank for default (162.159.198.2:443)",
+  "cloudflareWarpCleanEndpoint": "Clean Anycast Endpoint (Direct WARP)",
+  "cloudflareWarpCleanEndpointPlaceholder": "Leave blank for automatic per-network optimization",
+  "cloudflareWarpCleanEndpointDesc": "Applies only to direct WARP nodes (such as Built-in Direct WARP). Chained proxy+WARP nodes automatically benchmark and select the lowest-RTT Anycast endpoint from each node's own country/egress.",
+  "cloudflareWarpChainedEndpointPlaceholder": "Leave blank for auto-optimization via this proxy's egress (recommended)",
+  "cloudflareWarpScanBtn": "One-Click Scan",
+  "cloudflareWarpScanningBtn": "Scanning...",
+  "cloudflareWarpResetAutoBtn": "Auto",
+  "cloudflareWarpScanResultsTitle": "Top Available Endpoints (click to apply):",
+  "cloudflareWarpScanSuccess": "Optimal endpoint selected: {endpoint} ({ms}ms)",
+  "@cloudflareWarpScanSuccess": {
+    "placeholders": {
+      "endpoint": { "type": "String" },
+      "ms": { "type": "int" }
+    }
+  },
+  "cloudflareWarpScanEmpty": "No reachable Cloudflare WARP endpoints found on the current local network",
+  "cloudflareWarpScanFailed": "Endpoint scan failed: {err}",
+  "@cloudflareWarpScanFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
   "cloudflareWarpAttachedNodes": "Nodes with WARP Egress Enabled",
   "cloudflareWarpNoAttachedNodes": "No nodes have WARP egress enabled (can be enabled in node editor)",
   "cloudflareTunnelTitle": "Zero Trust Tunnel Ingress",
