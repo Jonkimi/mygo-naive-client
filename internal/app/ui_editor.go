@@ -88,12 +88,13 @@ type editorForm struct {
 	externalURI string
 
 	// Cloudflare WARP
-	enableWARP     bool
-	warpModeIndex  int // 0: Auto (H3 ➔ H2), 1: MASQUE, 2: WireGuard
-	warpEndpoint   string
-	warpPrivateKey string
-	warpIPv4       string
-	warpIPv6       string
+	enableWARP         bool
+	warpModeIndex      int // 0: Auto (H3 ➔ H2), 1: MASQUE, 2: WireGuard
+	warpMasquePreferH2 bool
+	warpEndpoint       string
+	warpPrivateKey     string
+	warpIPv4           string
+	warpIPv6           string
 
 	// Advanced Naive fields
 	tunnelTimeout string
@@ -211,6 +212,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 	}
 
 	warpModeIdx := 0
+	warpMasquePreferH2 := a.state.Cloudflare.MasquePreferH2
 	warpEndpoint := ""
 	warpPrivKey := ""
 	warpIPv4 := ""
@@ -224,6 +226,9 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		case config.WarpTransportWireGuard:
 			warpModeIdx = 2
 		}
+		if svc.WARPConfig.MasquePreferH2 != nil {
+			warpMasquePreferH2 = *svc.WARPConfig.MasquePreferH2
+		}
 		warpEndpoint = svc.WARPConfig.Endpoint
 		warpPrivKey = svc.WARPConfig.PrivateKey
 		warpIPv4 = svc.WARPConfig.AddressIPv4
@@ -231,44 +236,45 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 	}
 
 	a.editor = editorForm{
-		open:           true,
-		isNew:          isNew,
-		tab:            0,
-		svcID:          svc.ID,
-		name:           svc.Name,
-		autoStart:      svc.AutoStart,
-		tagsInput:      strings.Join(svc.Tags, ", "),
-		protoIndex:     protoIdx,
-		engineIndex:    engineIdx,
-		autoLoopback:   autoLoop,
-		listenInput:    listens,
-		proxyInput:     proxies,
-		server:         svc.Server,
-		serverPort:     serverPortStr,
-		uuid:           svc.UUID,
-		password:       svc.Password,
-		securityIndex:  secIdx,
-		sni:            svc.SNI,
-		alpnInput:      strings.Join(svc.ALPN, ", "),
-		fingerprint:    fingerprint,
-		publicKey:      svc.PublicKey,
-		shortID:        svc.ShortID,
-		spiderX:        svc.SpiderX,
-		flowIndex:      flowIdx,
-		networkIndex:   netIdx,
-		path:           svc.Path,
-		host:           svc.Host,
-		serviceName:    svc.ServiceName,
-		method:         method,
-		congestionCtl:  congestion,
-		zeroRTT:        svc.ZeroRTTHandshake,
-		externalURI:    svc.ExternalURI,
-		enableWARP:     svc.EnableWARP,
-		warpModeIndex:  warpModeIdx,
-		warpEndpoint:   warpEndpoint,
-		warpPrivateKey: warpPrivKey,
-		warpIPv4:       warpIPv4,
-		warpIPv6:       warpIPv6,
+		open:               true,
+		isNew:              isNew,
+		tab:                0,
+		svcID:              svc.ID,
+		name:               svc.Name,
+		autoStart:          svc.AutoStart,
+		tagsInput:          strings.Join(svc.Tags, ", "),
+		protoIndex:         protoIdx,
+		engineIndex:        engineIdx,
+		autoLoopback:       autoLoop,
+		listenInput:        listens,
+		proxyInput:         proxies,
+		server:             svc.Server,
+		serverPort:         serverPortStr,
+		uuid:               svc.UUID,
+		password:           svc.Password,
+		securityIndex:      secIdx,
+		sni:                svc.SNI,
+		alpnInput:          strings.Join(svc.ALPN, ", "),
+		fingerprint:        fingerprint,
+		publicKey:          svc.PublicKey,
+		shortID:            svc.ShortID,
+		spiderX:            svc.SpiderX,
+		flowIndex:          flowIdx,
+		networkIndex:       netIdx,
+		path:               svc.Path,
+		host:               svc.Host,
+		serviceName:        svc.ServiceName,
+		method:             method,
+		congestionCtl:      congestion,
+		zeroRTT:            svc.ZeroRTTHandshake,
+		externalURI:        svc.ExternalURI,
+		enableWARP:         svc.EnableWARP,
+		warpModeIndex:      warpModeIdx,
+		warpMasquePreferH2: warpMasquePreferH2,
+		warpEndpoint:       warpEndpoint,
+		warpPrivateKey:     warpPrivKey,
+		warpIPv4:           warpIPv4,
+		warpIPv6:           warpIPv6,
 		concurrencyStr: conc,
 		tunnelTimeout:  tunnel,
 		idleTimeout:    idle,
@@ -320,13 +326,15 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 			case 2:
 				transport = config.WarpTransportWireGuard
 			}
+			preferH2 := a.editor.warpMasquePreferH2
 			s.EnableWARP = true
 			s.WARPConfig = &config.WarpNodeConfig{
-				Transport:   transport,
-				Endpoint:    strings.TrimSpace(a.editor.warpEndpoint),
-				PrivateKey:  strings.TrimSpace(a.editor.warpPrivateKey),
-				AddressIPv4: strings.TrimSpace(a.editor.warpIPv4),
-				AddressIPv6: strings.TrimSpace(a.editor.warpIPv6),
+				Transport:      transport,
+				MasquePreferH2: &preferH2,
+				Endpoint:       strings.TrimSpace(a.editor.warpEndpoint),
+				PrivateKey:     strings.TrimSpace(a.editor.warpPrivateKey),
+				AddressIPv4:    strings.TrimSpace(a.editor.warpIPv4),
+				AddressIPv6:    strings.TrimSpace(a.editor.warpIPv6),
 			}
 		}
 	}
@@ -341,6 +349,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		case 2:
 			transport = config.WarpTransportWireGuard
 		}
+		preferH2 := a.editor.warpMasquePreferH2
 		svc := config.Service{
 			ID:        a.editor.svcID,
 			Name:      strings.TrimSpace(a.editor.name),
@@ -349,11 +358,12 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 			Engine:    config.EngineSingBox,
 			Tags:      tags,
 			WARPConfig: &config.WarpNodeConfig{
-				Transport:   transport,
-				Endpoint:    strings.TrimSpace(a.editor.warpEndpoint),
-				PrivateKey:  strings.TrimSpace(a.editor.warpPrivateKey),
-				AddressIPv4: strings.TrimSpace(a.editor.warpIPv4),
-				AddressIPv6: strings.TrimSpace(a.editor.warpIPv6),
+				Transport:      transport,
+				MasquePreferH2: &preferH2,
+				Endpoint:       strings.TrimSpace(a.editor.warpEndpoint),
+				PrivateKey:     strings.TrimSpace(a.editor.warpPrivateKey),
+				AddressIPv4:    strings.TrimSpace(a.editor.warpIPv4),
+				AddressIPv6:    strings.TrimSpace(a.editor.warpIPv6),
 			},
 		}
 		if err := svc.Validate(); err != nil {
@@ -861,11 +871,21 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 				tagPill(c, "Sing-Box 原生", p.green, p.greenBg)
 			})
 
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.CloudflareWarpTransport()).FontSize(13).FontWeight(500).TextColor(p.text)
-				transportLabels := []string{"Auto (H3 ➔ H2)", "MASQUE", "WireGuard"}
-				segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, transportLabels)
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+					ui.Text(c, cat.CloudflareWarpTransport()).FontSize(13).FontWeight(500).TextColor(p.text)
+					transportLabels := []string{"Auto", "MASQUE", "WireGuard"}
+					segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, transportLabels)
+				})
+				a.renderWarpTransportGuide(c, p, "editor-warp-direct", a.editor.warpModeIndex, true)
 			})
+
+			if a.editor.warpModeIndex != 2 {
+				ui.Column(c).Gap(4).Padding(8, 10, 8, 10).Radius(6).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					switchRow(c, p, "inp-warp-direct-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
+					ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+				})
+			}
 
 			labeledInput(c, p, "inp-warp-direct-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpCleanEndpointPlaceholder())
 		}
@@ -881,11 +901,21 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 							ui.Text(c, cat.NodeEditorWarpNaiveNotice()).FontSize(11).TextColor(p.accent)
 						})
 					} else {
-						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-							ui.Text(c, cat.CloudflareWarpTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
-							transportLabels := []string{"Auto (H3 ➔ H2)", "MASQUE", "WireGuard"}
-							segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, transportLabels)
+						ui.Column(c).Gap(6).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+								ui.Text(c, cat.CloudflareWarpTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
+								transportLabels := []string{"Auto", "MASQUE", "WireGuard"}
+								segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, transportLabels)
+							})
+							a.renderWarpTransportGuide(c, p, "editor-warp-chained", a.editor.warpModeIndex, true)
 						})
+
+						if a.editor.warpModeIndex != 2 {
+							ui.Column(c).Gap(4).Padding(8, 10, 8, 10).Radius(6).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+								switchRow(c, p, "inp-warp-chained-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
+								ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+							})
+						}
 					}
 
 					labeledInput(c, p, "inp-warp-chained-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpCleanEndpointPlaceholder())

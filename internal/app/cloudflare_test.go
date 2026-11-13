@@ -798,3 +798,89 @@ func TestWARPNode_TransientProbeFailureStaysHealthy(t *testing.T) {
 	}
 }
 
+func TestCloudflareWarpTransport_ModeSelectionUpdatesState(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabCloudflare
+	tt.Frame()
+
+	cat := a.catalog()
+	if err := tt.Click(cat.CloudflareWarpTransportMasque()); err != nil {
+		t.Fatalf("click MASQUE mode: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.DefaultMode != warp.ModeMASQUE {
+		t.Fatalf("expected DefaultMode = %q, got %q", warp.ModeMASQUE, a.state.Cloudflare.DefaultMode)
+	}
+
+	if err := tt.Click(cat.CloudflareWarpTransportWireGuard()); err != nil {
+		t.Fatalf("click WireGuard mode: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.DefaultMode != warp.ModeWireGuard {
+		t.Fatalf("expected DefaultMode = %q, got %q", warp.ModeWireGuard, a.state.Cloudflare.DefaultMode)
+	}
+}
+
+func TestCloudflareWarpPreferH2_ToggleAndNodeEditorAndSignature(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabCloudflare
+	tt.Frame()
+
+	sigBefore := a.gatewayConfigSignature()
+	cat := a.catalog()
+
+	// Toggle Prefer H2 on Cloudflare page
+	if err := tt.Click(cat.CloudflareWarpPreferH2()); err != nil {
+		t.Fatalf("click CloudflareWarpPreferH2: %v", err)
+	}
+	tt.Frame()
+	if !a.state.Cloudflare.MasquePreferH2 {
+		t.Fatalf("expected Cloudflare.MasquePreferH2 to become true")
+	}
+	sigAfter := a.gatewayConfigSignature()
+	if sigBefore == sigAfter {
+		t.Fatalf("expected gatewayConfigSignature to change when MasquePreferH2 is toggled")
+	}
+
+	// Node editor inherits global MasquePreferH2 for new WARP nodes and persists per-node setting
+	a.openCreateServiceDialog()
+	tt.Frame()
+	for i, p := range editorProtocols {
+		if p == config.ProtoWARP {
+			a.editor.protoIndex = i
+			break
+		}
+	}
+	a.editor.name = "WARP H2 First"
+	svc, err := a.buildServiceFromEditor()
+	if err != nil {
+		t.Fatalf("buildServiceFromEditor failed: %v", err)
+	}
+	if svc.WARPConfig == nil || svc.WARPConfig.MasquePreferH2 == nil || !*svc.WARPConfig.MasquePreferH2 {
+		t.Fatalf("expected built WARP node to inherit MasquePreferH2=true, got %+v", svc.WARPConfig)
+	}
+
+	// Per-node toggle back to false overrides global setting and changes gatewayConfigSignature
+	falseVal := false
+	svc.WARPConfig.MasquePreferH2 = &falseVal
+	a.state.Services = append(a.state.Services, svc)
+	sigNodeFalse := a.gatewayConfigSignature()
+	trueVal := true
+	a.state.Services[len(a.state.Services)-1].WARPConfig.MasquePreferH2 = &trueVal
+	sigNodeTrue := a.gatewayConfigSignature()
+	if sigNodeFalse == sigNodeTrue {
+		t.Fatalf("expected gatewayConfigSignature to distinguish per-node MasquePreferH2 false vs true")
+	}
+
+	// Regression: changing WARPConfig struct pointer with identical field values must not change signature
+	// (otherwise syncBuiltinWarpService allocating a new WarpNodeConfig restarts the gateway and resets circuit breakers).
+	copyVal := true
+	a.state.Services[len(a.state.Services)-1].WARPConfig = &config.WarpNodeConfig{
+		Transport:      svc.WARPConfig.Transport,
+		MasquePreferH2: &copyVal,
+	}
+	sigCopy := a.gatewayConfigSignature()
+	if sigNodeTrue != sigCopy {
+		t.Fatalf("expected identical WARPConfig values under new pointer to keep gatewayConfigSignature stable")
+	}
+}

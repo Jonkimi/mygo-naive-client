@@ -1161,6 +1161,16 @@ func resolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mod
 	return warp.ModeAuto
 }
 
+func resolveServiceMasquePreferH2(svc config.Service, globalCfg *warp.Config) bool {
+	if svc.WARPConfig != nil && svc.WARPConfig.MasquePreferH2 != nil {
+		return *svc.WARPConfig.MasquePreferH2
+	}
+	if globalCfg != nil {
+		return globalCfg.MasquePreferH2
+	}
+	return false
+}
+
 func isWarpActive(svc config.Service) bool {
 	return svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
 }
@@ -1228,6 +1238,9 @@ func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, 
 	}
 	if tcpOnlyDetour {
 		ob["tcp_only_detour"] = true
+	}
+	if !tcpOnlyDetour && resolveServiceMasquePreferH2(svc, globalCfg) {
+		ob["prefer_h2"] = true
 	}
 	if !tcpOnlyDetour && resolveServiceWarpMode(svc, globalCfg) == warp.ModeAuto {
 		ob["wireguard_fallback"] = "wg-" + tag

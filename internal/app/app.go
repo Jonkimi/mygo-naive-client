@@ -2506,6 +2506,18 @@ func engineTrafficMode(mode string) string {
 }
 
 func (a *app) gatewayConfigSignature() string {
+	type warpConfigSig struct {
+		HasConfig      bool
+		Transport      config.WarpTransport
+		MasquePreferH2 string
+		Endpoint       string
+		PrivateKey     string
+		AddressIPv4    string
+		AddressIPv6    string
+		Reserved       []uint8
+		PeerPubKey     string
+		MTU            int
+	}
 	type svcSig struct {
 		ID          string
 		Engine      config.ExecutionEngine
@@ -2517,10 +2529,29 @@ func (a *app) gatewayConfigSignature() string {
 		Tags        []string
 		Listens     []string
 		EnableWARP  bool
-		WARPConfig  *config.WarpNodeConfig
+		WARPConfig  warpConfigSig
 	}
 	svcs := make([]svcSig, len(a.state.Services))
 	for i, s := range a.state.Services {
+		var wcSig warpConfigSig
+		if s.WARPConfig != nil {
+			preferH2 := "inherit"
+			if s.WARPConfig.MasquePreferH2 != nil {
+				preferH2 = strconv.FormatBool(*s.WARPConfig.MasquePreferH2)
+			}
+			wcSig = warpConfigSig{
+				HasConfig:      true,
+				Transport:      s.WARPConfig.Transport,
+				MasquePreferH2: preferH2,
+				Endpoint:       s.WARPConfig.Endpoint,
+				PrivateKey:     s.WARPConfig.PrivateKey,
+				AddressIPv4:    s.WARPConfig.AddressIPv4,
+				AddressIPv6:    s.WARPConfig.AddressIPv6,
+				Reserved:       s.WARPConfig.Reserved,
+				PeerPubKey:     s.WARPConfig.PeerPubKey,
+				MTU:            s.WARPConfig.MTU,
+			}
+		}
 		svcs[i] = svcSig{
 			ID:          s.ID,
 			Engine:      s.Engine,
@@ -2532,7 +2563,7 @@ func (a *app) gatewayConfigSignature() string {
 			Tags:        s.Tags,
 			Listens:     s.Listens,
 			EnableWARP:  s.EnableWARP,
-			WARPConfig:  s.WARPConfig,
+			WARPConfig:  wcSig,
 		}
 	}
 	var allocPorts map[string]int
@@ -2640,6 +2671,7 @@ func (a *app) syncBuiltinWarpService() {
 			warpTransport = config.WarpTransportWireGuard
 		}
 
+		preferH2 := a.state.Cloudflare.MasquePreferH2
 		warpSvc := config.Service{
 			ID:        config.BuiltinWarpServiceID,
 			Name:      nodeName,
@@ -2647,8 +2679,9 @@ func (a *app) syncBuiltinWarpService() {
 			Engine:    config.EngineSingBox,
 			AutoStart: true,
 			WARPConfig: &config.WarpNodeConfig{
-				Transport: warpTransport,
-				Endpoint:  cleanIP,
+				Transport:      warpTransport,
+				MasquePreferH2: &preferH2,
+				Endpoint:       cleanIP,
 			},
 		}
 
@@ -2661,6 +2694,7 @@ func (a *app) syncBuiltinWarpService() {
 				a.state.Services[foundIdx].WARPConfig = warpSvc.WARPConfig
 			} else {
 				a.state.Services[foundIdx].WARPConfig.Transport = warpTransport
+				a.state.Services[foundIdx].WARPConfig.MasquePreferH2 = &preferH2
 				a.state.Services[foundIdx].WARPConfig.Endpoint = cleanIP
 			}
 			warpSvc = a.state.Services[foundIdx]

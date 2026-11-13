@@ -49,14 +49,15 @@ const (
 
 // WarpNodeConfig holds optional per-node overrides for Cloudflare WARP egress.
 type WarpNodeConfig struct {
-	Transport   WarpTransport `json:"transport,omitempty"`   // "auto", "masque", "wireguard"
-	Endpoint    string        `json:"endpoint,omitempty"`    // clean IP:port (e.g. "162.159.192.1:2408" or "162.159.198.2:443")
-	PrivateKey  string        `json:"privateKey,omitempty"`  // custom private key override; empty uses global account
-	AddressIPv4 string        `json:"addressIpv4,omitempty"` // e.g. "172.16.0.2/32"
-	AddressIPv6 string        `json:"addressIpv6,omitempty"` // e.g. "2606:4700:110:.../128"
-	Reserved    []uint8       `json:"reserved,omitempty"`    // WireGuard 3-byte client_id
-	PeerPubKey  string        `json:"peerPubKey,omitempty"`
-	MTU         int           `json:"mtu,omitempty"`         // default 1280
+	Transport      WarpTransport `json:"transport,omitempty"`      // "auto", "masque", "wireguard"
+	MasquePreferH2 *bool         `json:"masquePreferH2,omitempty"` // nil inherits global Cloudflare setting; true tries HTTP/2 before HTTP/3
+	Endpoint       string        `json:"endpoint,omitempty"`       // clean IP:port (e.g. "162.159.192.1:2408" or "162.159.198.2:443")
+	PrivateKey     string        `json:"privateKey,omitempty"`     // custom private key override; empty uses global account
+	AddressIPv4    string        `json:"addressIpv4,omitempty"`    // e.g. "172.16.0.2/32"
+	AddressIPv6    string        `json:"addressIpv6,omitempty"`    // e.g. "2606:4700:110:.../128"
+	Reserved       []uint8       `json:"reserved,omitempty"`       // WireGuard 3-byte client_id
+	PeerPubKey     string        `json:"peerPubKey,omitempty"`
+	MTU            int           `json:"mtu,omitempty"`            // default 1280
 }
 
 // ExecutionEngine specifies which underlying engine handles the outbound node.

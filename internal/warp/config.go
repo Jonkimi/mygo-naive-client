@@ -73,10 +73,11 @@ type Config struct {
 	WarpEnabled       bool         `json:"warpEnabled"`
 	DirectWarpEnabled bool         `json:"directWarpEnabled,omitempty"` // true if direct traffic routes through built-in WARP
 	Account           Account      `json:"account"`
-	DefaultMode       Mode         `json:"defaultMode,omitempty"` // "auto", "masque", "wireguard"
-	CleanIP           string       `json:"cleanIp,omitempty"`     // clean Anycast IP override
-	CleanPort         int          `json:"cleanPort,omitempty"`   // clean Anycast Port override
-	ProbeURL          string       `json:"probeUrl,omitempty"`    // latency probe endpoint for WARP (default http://connect.rom.miui.com/generate_204)
+	DefaultMode       Mode         `json:"defaultMode,omitempty"`    // "auto", "masque", "wireguard"
+	MasquePreferH2    bool         `json:"masquePreferH2,omitempty"` // prefer HTTP/2 (TCP) before HTTP/3 (QUIC) for MASQUE
+	CleanIP           string       `json:"cleanIp,omitempty"`        // clean Anycast IP override
+	CleanPort         int          `json:"cleanPort,omitempty"`      // clean Anycast Port override
+	ProbeURL          string       `json:"probeUrl,omitempty"`       // latency probe endpoint for WARP (default http://connect.rom.miui.com/generate_204)
 	Tunnel            TunnelConfig `json:"tunnel"`
 }
 

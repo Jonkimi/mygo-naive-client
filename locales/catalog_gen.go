@@ -5546,6 +5546,30 @@ func (msgs Messages) CloudflareWarpTransportAuto() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAuto", nil)
 }
 
+// CloudflareWarpTransportAutoShort says "Auto (Recommended)"
+// in the language the app shows.
+func CloudflareWarpTransportAutoShort() string {
+	return In(i18n.Locale()).CloudflareWarpTransportAutoShort()
+}
+
+// CloudflareWarpTransportAutoShort says "Auto (Recommended)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportAutoShort() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAutoShort", nil)
+}
+
+// CloudflareWarpTransportAutoDesc says "Tries MASQUE over HTTP/3 (QUIC, 443) first, automatically falls back to pure-TCP MASQUE HTTP/2 (443) if UDP/QUIC is b…"
+// in the language the app shows.
+func CloudflareWarpTransportAutoDesc() string {
+	return In(i18n.Locale()).CloudflareWarpTransportAutoDesc()
+}
+
+// CloudflareWarpTransportAutoDesc says "Tries MASQUE over HTTP/3 (QUIC, 443) first, automatically falls back to pure-TCP MASQUE HTTP/2 (443) if UDP/QUIC is b…"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportAutoDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAutoDesc", nil)
+}
+
 // CloudflareWarpTransportMasque says "MASQUE (Proprietary HTTP/3 + HTTP/2)"
 // in the language the app shows.
 func CloudflareWarpTransportMasque() string { return In(i18n.Locale()).CloudflareWarpTransportMasque() }
@@ -5554,6 +5578,30 @@ func CloudflareWarpTransportMasque() string { return In(i18n.Locale()).Cloudflar
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportMasque() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasque", nil)
+}
+
+// CloudflareWarpTransportMasqueShort says "MASQUE (H3/H2)"
+// in the language the app shows.
+func CloudflareWarpTransportMasqueShort() string {
+	return In(i18n.Locale()).CloudflareWarpTransportMasqueShort()
+}
+
+// CloudflareWarpTransportMasqueShort says "MASQUE (H3/H2)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportMasqueShort() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasqueShort", nil)
+}
+
+// CloudflareWarpTransportMasqueDesc says "Forces Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback, never falls back to WireG…"
+// in the language the app shows.
+func CloudflareWarpTransportMasqueDesc() string {
+	return In(i18n.Locale()).CloudflareWarpTransportMasqueDesc()
+}
+
+// CloudflareWarpTransportMasqueDesc says "Forces Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback, never falls back to WireG…"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportMasqueDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasqueDesc", nil)
 }
 
 // CloudflareWarpTransportWireGuard says "WireGuard (UDP 2408 + Reserved)"
@@ -5566,6 +5614,50 @@ func CloudflareWarpTransportWireGuard() string {
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportWireGuard() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuard", nil)
+}
+
+// CloudflareWarpTransportWireGuardShort says "WireGuard (UDP)"
+// in the language the app shows.
+func CloudflareWarpTransportWireGuardShort() string {
+	return In(i18n.Locale()).CloudflareWarpTransportWireGuardShort()
+}
+
+// CloudflareWarpTransportWireGuardShort says "WireGuard (UDP)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportWireGuardShort() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuardShort", nil)
+}
+
+// CloudflareWarpTransportWireGuardDesc says "Connects directly via classic WireGuard over UDP port 2408 with Cloudflare's 3-byte reserved client ID. Low overhead …"
+// in the language the app shows.
+func CloudflareWarpTransportWireGuardDesc() string {
+	return In(i18n.Locale()).CloudflareWarpTransportWireGuardDesc()
+}
+
+// CloudflareWarpTransportWireGuardDesc says "Connects directly via classic WireGuard over UDP port 2408 with Cloudflare's 3-byte reserved client ID. Low overhead …"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportWireGuardDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuardDesc", nil)
+}
+
+// CloudflareWarpPreferH2 says "Prefer HTTP/2 over TCP for MASQUE (Anti UDP QoS)"
+// in the language the app shows.
+func CloudflareWarpPreferH2() string { return In(i18n.Locale()).CloudflareWarpPreferH2() }
+
+// CloudflareWarpPreferH2 says "Prefer HTTP/2 over TCP for MASQUE (Anti UDP QoS)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpPreferH2() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpPreferH2", nil)
+}
+
+// CloudflareWarpPreferH2Desc says "Tries MASQUE over HTTP/2 (TCP 443) before HTTP/3 (QUIC), falling back to HTTP/3 if HTTP/2 fails. Recommended when you…"
+// in the language the app shows.
+func CloudflareWarpPreferH2Desc() string { return In(i18n.Locale()).CloudflareWarpPreferH2Desc() }
+
+// CloudflareWarpPreferH2Desc says "Tries MASQUE over HTTP/2 (TCP 443) before HTTP/3 (QUIC), falling back to HTTP/3 if HTTP/2 fails. Recommended when you…"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpPreferH2Desc() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpPreferH2Desc", nil)
 }
 
 // CloudflareWarpCleanEndpoint says "Clean Anycast Endpoint"

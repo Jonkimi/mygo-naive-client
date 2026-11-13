@@ -90,6 +90,62 @@ func TestBuildOutboundsConfig_StandaloneWARP_MASQUE(t *testing.T) {
 	}
 }
 
+func TestBuildOutboundsConfig_MASQUEPreferH2(t *testing.T) {
+	globalOn := &warp.Config{
+		DefaultMode:    warp.ModeAuto,
+		MasquePreferH2: true,
+	}
+	boolFalse := false
+	svcInherit := config.Service{
+		ID:       "warp-inherit",
+		Name:     "Inherit Global",
+		Protocol: config.ProtoWARP,
+	}
+	svcOverrideOff := config.Service{
+		ID:       "warp-override-off",
+		Name:     "Override Off",
+		Protocol: config.ProtoWARP,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport:      config.WarpTransportMasque,
+			MasquePreferH2: &boolFalse,
+		},
+	}
+	naiveSvc := config.Service{
+		ID:         "naive-warp",
+		Name:       "Naive + WARP",
+		Protocol:   config.ProtoNaive,
+		Listens:    []string{"socks://127.0.0.1:1080"},
+		Proxies:    []string{"https://user:pass@naive.example.com"},
+		EnableWARP: true,
+	}
+
+	outbounds, err := buildOutboundsConfig(EngineOptions{
+		Services:         []config.Service{svcInherit, svcOverrideOff, naiveSvc},
+		AllocatedPorts:   map[string]int{"naive-warp": 1080},
+		CloudflareConfig: globalOn,
+	}, "PROXY_POOL", map[string]int{"naive-warp": 1080})
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+
+	byTag := make(map[string]map[string]any)
+	for _, ob := range outbounds {
+		if tag, ok := ob["tag"].(string); ok {
+			byTag[tag] = ob
+		}
+	}
+
+	if byTag["node-warp-inherit"]["prefer_h2"] != true {
+		t.Fatalf("expected inherited prefer_h2=true, got %+v", byTag["node-warp-inherit"])
+	}
+	if _, has := byTag["node-warp-override-off"]["prefer_h2"]; has {
+		t.Fatalf("expected explicit false override to omit prefer_h2, got %+v", byTag["node-warp-override-off"])
+	}
+	if _, has := byTag["node-naive-warp"]["prefer_h2"]; has || byTag["node-naive-warp"]["tcp_only_detour"] != true {
+		t.Fatalf("expected tcp_only_detour without prefer_h2 on naive node, got %+v", byTag["node-naive-warp"])
+	}
+}
+
 func TestBuildOutboundsAndEndpoints_StandaloneWARP_WireGuard(t *testing.T) {
 	svc := config.Service{
 		ID:       "warp-wg",

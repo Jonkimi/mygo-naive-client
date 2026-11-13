@@ -240,6 +240,109 @@ func TestConnectMASQUE_H2_LongLivedStreamAndLargePayload(t *testing.T) {
 	}
 }
 
+type trackingDialer struct {
+	networks []string
+}
+
+func (d *trackingDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	d.networks = append(d.networks, network)
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
+}
+
+func (d *trackingDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
+	d.networks = append(d.networks, network)
+	var lc net.ListenConfig
+	return lc.ListenPacket(ctx, "udp", "127.0.0.1:0")
+}
+
+func TestConnectMASQUEWithOptions_PreferH2TriesTCPBeforeUDP(t *testing.T) {
+	srvCert := generateTestServerCert(t)
+	rawLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer rawLn.Close()
+
+	tlsLn := tls.NewListener(rawLn, &tls.Config{
+		Certificates: []tls.Certificate{srvCert},
+		NextProtos:   []string{"h2"},
+	})
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		}),
+	}
+	_ = http2.ConfigureServer(srv, &http2.Server{})
+	go func() { _ = srv.Serve(tlsLn) }()
+	defer srv.Close()
+
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair failed: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+
+	d := &trackingDialer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	tun, err := ConnectMASQUEWithOptions(ctx, d, rawLn.Addr().String(), acc, MASQUEOptions{PreferH2: true})
+	if err != nil {
+		t.Fatalf("ConnectMASQUEWithOptions(PreferH2) failed: %v", err)
+	}
+	defer tun.Close()
+
+	if tun.Protocol() != "h2" {
+		t.Fatalf("expected protocol h2, got %s", tun.Protocol())
+	}
+	if len(d.networks) != 1 || d.networks[0] != "tcp" {
+		t.Fatalf("expected PreferH2 to dial tcp only when H2 succeeds, got %v", d.networks)
+	}
+}
+
+func TestConnectMASQUEWithOptions_PreferH2FallsBackToH3WhenTCPFails(t *testing.T) {
+	// Closed TCP port ensures TCP dial fails immediately so PreferH2 must fall back to UDP/H3.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair failed: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+
+	d := &trackingDialer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 3500*time.Millisecond)
+	defer cancel()
+
+	_, err = ConnectMASQUEWithOptions(ctx, d, addr, acc, MASQUEOptions{PreferH2: true})
+	if err == nil {
+		t.Fatalf("expected error against closed endpoint")
+	}
+	if !strings.Contains(err.Error(), "fallback to HTTP/3 failed") {
+		t.Fatalf("expected fallback to HTTP/3 error, got: %v", err)
+	}
+	if len(d.networks) < 2 || d.networks[0] != "tcp" || d.networks[1] != "udp" {
+		t.Fatalf("expected dial sequence [tcp udp], got %v", d.networks)
+	}
+}
+
 func generateTestServerCert(t *testing.T) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

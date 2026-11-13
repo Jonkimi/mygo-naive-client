@@ -26,6 +26,7 @@ type warpMasqueOptions struct {
 	Endpoint          string `json:"endpoint,omitempty"`
 	TCPOnlyDetour     bool   `json:"tcp_only_detour,omitempty"`
 	ForceH2           bool   `json:"force_h2,omitempty"`
+	PreferH2          bool   `json:"prefer_h2,omitempty"`
 	PrivateKey        string `json:"private_key,omitempty"`
 	CertPEM           string `json:"cert_pem,omitempty"`
 	IPv4              string `json:"ipv4,omitempty"`
@@ -220,9 +221,18 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	var connectCancel context.CancelFunc
 	if w.opts.WireGuardFallback != "" {
 		// Leave headroom inside caller's deadline for WireGuard fallback if MASQUE fails.
-		connectCtx, connectCancel = context.WithTimeout(ctx, 5*time.Second)
+		// PreferH2 needs enough time for both H2 (TCP) and H3 (QUIC) attempts.
+		masqueTimeout := 5 * time.Second
+		if w.opts.PreferH2 && !w.opts.TCPOnlyDetour && !w.opts.ForceH2 {
+			masqueTimeout = 9 * time.Second
+		}
+		connectCtx, connectCancel = context.WithTimeout(ctx, masqueTimeout)
 	}
-	tun, err := warp.ConnectMASQUE(connectCtx, upstreamDialer, w.opts.Endpoint, acc, w.opts.TCPOnlyDetour, w.opts.ForceH2)
+	tun, err := warp.ConnectMASQUEWithOptions(connectCtx, upstreamDialer, w.opts.Endpoint, acc, warp.MASQUEOptions{
+		TCPOnly:  w.opts.TCPOnlyDetour,
+		ForceH2:  w.opts.ForceH2,
+		PreferH2: w.opts.PreferH2,
+	})
 	if connectCancel != nil {
 		connectCancel()
 	}

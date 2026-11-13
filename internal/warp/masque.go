@@ -93,10 +93,25 @@ func (t *MASQUETunnel) Close() error {
 	return err
 }
 
+// MASQUEOptions controls how ConnectMASQUEWithOptions establishes the tunnel.
+type MASQUEOptions struct {
+	TCPOnly  bool // Upstream proxy only supports TCP; skip HTTP/3 and use HTTP/2 only.
+	ForceH2  bool // Force HTTP/2 only without falling back to HTTP/3.
+	PreferH2 bool // Try HTTP/2 first and fall back to HTTP/3 if HTTP/2 fails.
+}
+
 // ConnectMASQUE establishes a Cloudflare Consumer MASQUE tunnel.
 // When tcpOnly is true or forceH2 is true, it directly connects over HTTP/2 TCP.
 // Otherwise, it attempts HTTP/3 QUIC first, falling back to HTTP/2 if QUIC fails.
 func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Account, tcpOnly bool, forceH2 bool) (*MASQUETunnel, error) {
+	return ConnectMASQUEWithOptions(ctx, dialer, endpoint, acc, MASQUEOptions{
+		TCPOnly: tcpOnly,
+		ForceH2: forceH2,
+	})
+}
+
+// ConnectMASQUEWithOptions establishes a Cloudflare Consumer MASQUE tunnel with explicit protocol ordering options.
+func ConnectMASQUEWithOptions(ctx context.Context, dialer Dialer, endpoint string, acc *Account, opts MASQUEOptions) (*MASQUETunnel, error) {
 	if dialer == nil {
 		dialer = &defaultDialer{}
 	}
@@ -135,7 +150,7 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 
 	// If forced to H2 or underlying transport is TCP-only, connect over HTTP/2 directly
-	if tcpOnly || forceH2 {
+	if opts.TCPOnly || opts.ForceH2 {
 		h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
 		tun, err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 		h2Cancel()
@@ -147,12 +162,43 @@ func ConnectMASQUE(ctx context.Context, dialer Dialer, endpoint string, acc *Acc
 		return tun, nil
 	}
 
+	if opts.PreferH2 {
+		// Try HTTP/2 first (avoids UDP QoS throttling)
+		h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
+		tun, h2Err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
+		h2Cancel()
+		if h2Err == nil {
+			return tun, nil
+		}
+		if ctx.Err() != nil {
+			cancel()
+			_ = ns.Close()
+			return nil, fmt.Errorf("MASQUE HTTP/2 connection failed: %w", h2Err)
+		}
+
+		// Fallback to HTTP/3
+		h3Ctx, h3Cancel := context.WithTimeout(ctx, h3Timeout)
+		tun, h3Err := dialMASQUEH3(h3Ctx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
+		h3Cancel()
+		if h3Err != nil {
+			cancel()
+			_ = ns.Close()
+			return nil, fmt.Errorf("MASQUE HTTP/2 failed (%v) and fallback to HTTP/3 failed: %w", h2Err, h3Err)
+		}
+		return tun, nil
+	}
+
 	// Try HTTP/3 with timeout
 	h3Ctx, h3Cancel := context.WithTimeout(ctx, h3Timeout)
 	tun, err := dialMASQUEH3(h3Ctx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 	h3Cancel()
 	if err == nil {
 		return tun, nil
+	}
+	if ctx.Err() != nil {
+		cancel()
+		_ = ns.Close()
+		return nil, fmt.Errorf("MASQUE HTTP/3 connection failed: %w", err)
 	}
 
 	// Fallback to HTTP/2

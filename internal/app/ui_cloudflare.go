@@ -60,6 +60,57 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 	})
 }
 
+func (a *app) renderWarpTransportGuide(c *ui.Context, p palette, keyPrefix string, modeIdx int, compact bool) {
+	cat := a.catalog()
+	items := []struct {
+		idx   int
+		title string
+		desc  string
+	}{
+		{0, cat.CloudflareWarpTransportAutoShort(), cat.CloudflareWarpTransportAutoDesc()},
+		{1, cat.CloudflareWarpTransportMasqueShort(), cat.CloudflareWarpTransportMasqueDesc()},
+		{2, cat.CloudflareWarpTransportWireGuardShort(), cat.CloudflareWarpTransportWireGuardDesc()},
+	}
+
+	if compact {
+		cur := items[0]
+		if modeIdx >= 0 && modeIdx < len(items) {
+			cur = items[modeIdx]
+		}
+		ui.Column(c.Key(keyPrefix+"-guide")).
+			Gap(3).Padding(8, 10, 8, 10).Radius(6).
+			Background(p.surface).Border(1, p.borderSubtle).
+			Children(func() {
+				ui.Text(c, cur.title).FontSize(11).FontWeight(600).TextColor(p.accent)
+				ui.Text(c, cur.desc).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+			})
+		return
+	}
+
+	ui.Column(c.Key(keyPrefix+"-guide")).Gap(6).Children(func() {
+		for _, item := range items {
+			selected := item.idx == modeIdx
+			bg := p.surface
+			border := p.borderSubtle
+			titleColor := p.text
+			descColor := p.textMuted
+			if selected {
+				bg = p.accentBg
+				border = p.accent.Alpha(0.3)
+				titleColor = p.accent
+				descColor = p.text
+			}
+			ui.Column(c.Key(fmt.Sprintf("%s-guide-%d", keyPrefix, item.idx))).
+				Gap(3).Padding(8, 10, 8, 10).Radius(6).
+				Background(bg).Border(1, border).
+				Children(func() {
+					ui.Text(c, item.title).FontSize(11).FontWeight(600).TextColor(titleColor)
+					ui.Text(c, item.desc).FontSize(11).TextColor(descColor).LineHeight(1.4)
+				})
+		}
+	})
+}
+
 func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 	cat := a.catalog()
 	acc := a.state.Cloudflare.Account
@@ -208,6 +259,18 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 					a.state.Cloudflare.DefaultMode = warp.ModeWireGuard
 				}
 				a.saveState()
+			}
+
+			a.renderWarpTransportGuide(c, p, "warp-global-transport", curModeIdx, false)
+
+			// MASQUE Prefer HTTP/2 toggle (relevant for Auto and MASQUE modes)
+			if a.state.Cloudflare.DefaultMode != warp.ModeWireGuard {
+				ui.Column(c.Key("warp-prefer-h2-box")).Gap(4).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					if switchRow(c, p, "toggle-warp-prefer-h2", cat.CloudflareWarpPreferH2(), &a.state.Cloudflare.MasquePreferH2) {
+						a.saveState()
+					}
+					ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+				})
 			}
 
 			// Clean Endpoint override
