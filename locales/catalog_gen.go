@@ -5526,115 +5526,93 @@ func (msgs Messages) CloudflareWarpLicenseBinding() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpLicenseBinding", nil)
 }
 
-// CloudflareWarpTransport says "Default Transport Protocol"
+// CloudflareWarpTransport says "Direct / Local WARP Protocol"
 // in the language the app shows.
 func CloudflareWarpTransport() string { return In(i18n.Locale()).CloudflareWarpTransport() }
 
-// CloudflareWarpTransport says "Default Transport Protocol"
+// CloudflareWarpTransport says "Direct / Local WARP Protocol"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransport() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransport", nil)
 }
 
-// CloudflareWarpTransportAuto says "MASQUE Auto Fallback (H3 ➔ H2 Recommended)"
+// CloudflareWarpChainedTransport says "Proxy + WARP Default Protocol"
 // in the language the app shows.
-func CloudflareWarpTransportAuto() string { return In(i18n.Locale()).CloudflareWarpTransportAuto() }
+func CloudflareWarpChainedTransport() string {
+	return In(i18n.Locale()).CloudflareWarpChainedTransport()
+}
 
-// CloudflareWarpTransportAuto says "MASQUE Auto Fallback (H3 ➔ H2 Recommended)"
+// CloudflareWarpChainedTransport says "Proxy + WARP Default Protocol"
 // in the language of msgs.
-func (msgs Messages) CloudflareWarpTransportAuto() string {
-	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAuto", nil)
+func (msgs Messages) CloudflareWarpChainedTransport() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpChainedTransport", nil)
 }
 
-// CloudflareWarpTransportAutoShort says "Auto (Recommended)"
-// in the language the app shows.
-func CloudflareWarpTransportAutoShort() string {
-	return In(i18n.Locale()).CloudflareWarpTransportAutoShort()
-}
-
-// CloudflareWarpTransportAutoShort says "Auto (Recommended)"
-// in the language of msgs.
-func (msgs Messages) CloudflareWarpTransportAutoShort() string {
-	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAutoShort", nil)
-}
-
-// CloudflareWarpTransportAutoDesc says "Tries MASQUE over HTTP/3 (QUIC, 443) first, automatically falls back to pure-TCP MASQUE HTTP/2 (443) if UDP/QUIC is b…"
-// in the language the app shows.
-func CloudflareWarpTransportAutoDesc() string {
-	return In(i18n.Locale()).CloudflareWarpTransportAutoDesc()
-}
-
-// CloudflareWarpTransportAutoDesc says "Tries MASQUE over HTTP/3 (QUIC, 443) first, automatically falls back to pure-TCP MASQUE HTTP/2 (443) if UDP/QUIC is b…"
-// in the language of msgs.
-func (msgs Messages) CloudflareWarpTransportAutoDesc() string {
-	return Catalog.Format(msgs.locale, "cloudflareWarpTransportAutoDesc", nil)
-}
-
-// CloudflareWarpTransportMasque says "MASQUE (Proprietary HTTP/3 + HTTP/2)"
+// CloudflareWarpTransportMasque says "MASQUE (Anti-QoS / Censorship)"
 // in the language the app shows.
 func CloudflareWarpTransportMasque() string { return In(i18n.Locale()).CloudflareWarpTransportMasque() }
 
-// CloudflareWarpTransportMasque says "MASQUE (Proprietary HTTP/3 + HTTP/2)"
+// CloudflareWarpTransportMasque says "MASQUE (Anti-QoS / Censorship)"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportMasque() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasque", nil)
 }
 
-// CloudflareWarpTransportMasqueShort says "MASQUE (H3/H2)"
+// CloudflareWarpTransportMasqueShort says "MASQUE (443 H3/H2)"
 // in the language the app shows.
 func CloudflareWarpTransportMasqueShort() string {
 	return In(i18n.Locale()).CloudflareWarpTransportMasqueShort()
 }
 
-// CloudflareWarpTransportMasqueShort says "MASQUE (H3/H2)"
+// CloudflareWarpTransportMasqueShort says "MASQUE (443 H3/H2)"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportMasqueShort() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasqueShort", nil)
 }
 
-// CloudflareWarpTransportMasqueDesc says "Forces Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback, never falls back to WireG…"
+// CloudflareWarpTransportMasqueDesc says "Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback). Recommended for local/direct co…"
 // in the language the app shows.
 func CloudflareWarpTransportMasqueDesc() string {
 	return In(i18n.Locale()).CloudflareWarpTransportMasqueDesc()
 }
 
-// CloudflareWarpTransportMasqueDesc says "Forces Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback, never falls back to WireG…"
+// CloudflareWarpTransportMasqueDesc says "Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback). Recommended for local/direct co…"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportMasqueDesc() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasqueDesc", nil)
 }
 
-// CloudflareWarpTransportWireGuard says "WireGuard (UDP 2408 + Reserved)"
+// CloudflareWarpTransportWireGuard says "WireGuard (Lightweight UDP)"
 // in the language the app shows.
 func CloudflareWarpTransportWireGuard() string {
 	return In(i18n.Locale()).CloudflareWarpTransportWireGuard()
 }
 
-// CloudflareWarpTransportWireGuard says "WireGuard (UDP 2408 + Reserved)"
+// CloudflareWarpTransportWireGuard says "WireGuard (Lightweight UDP)"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportWireGuard() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuard", nil)
 }
 
-// CloudflareWarpTransportWireGuardShort says "WireGuard (UDP)"
+// CloudflareWarpTransportWireGuardShort says "WireGuard (Lightweight)"
 // in the language the app shows.
 func CloudflareWarpTransportWireGuardShort() string {
 	return In(i18n.Locale()).CloudflareWarpTransportWireGuardShort()
 }
 
-// CloudflareWarpTransportWireGuardShort says "WireGuard (UDP)"
+// CloudflareWarpTransportWireGuardShort says "WireGuard (Lightweight)"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportWireGuardShort() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuardShort", nil)
 }
 
-// CloudflareWarpTransportWireGuardDesc says "Connects directly via classic WireGuard over UDP port 2408 with Cloudflare's 3-byte reserved client ID. Low overhead …"
+// CloudflareWarpTransportWireGuardDesc says "Classic WireGuard over UDP with Cloudflare's 3-byte reserved client ID and 50+ anti-QoS ports. Lowest overhead and hi…"
 // in the language the app shows.
 func CloudflareWarpTransportWireGuardDesc() string {
 	return In(i18n.Locale()).CloudflareWarpTransportWireGuardDesc()
 }
 
-// CloudflareWarpTransportWireGuardDesc says "Connects directly via classic WireGuard over UDP port 2408 with Cloudflare's 3-byte reserved client ID. Low overhead …"
+// CloudflareWarpTransportWireGuardDesc says "Classic WireGuard over UDP with Cloudflare's 3-byte reserved client ID and 50+ anti-QoS ports. Lowest overhead and hi…"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportWireGuardDesc() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuardDesc", nil)
@@ -5748,16 +5726,16 @@ func (msgs Messages) CloudflareWarpScanResultsTitle() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpScanResultsTitle", nil)
 }
 
-// CloudflareWarpScanSuccess says "Optimal endpoint selected: {endpoint} ({ms}ms)"
+// CloudflareWarpScanSuccess says "Optimal endpoint selected: {endpoint} ({ms}ms, {loss}% loss)"
 // in the language the app shows.
-func CloudflareWarpScanSuccess(endpoint string, ms int) string {
-	return In(i18n.Locale()).CloudflareWarpScanSuccess(endpoint, ms)
+func CloudflareWarpScanSuccess(endpoint string, ms int, loss int) string {
+	return In(i18n.Locale()).CloudflareWarpScanSuccess(endpoint, ms, loss)
 }
 
-// CloudflareWarpScanSuccess says "Optimal endpoint selected: {endpoint} ({ms}ms)"
+// CloudflareWarpScanSuccess says "Optimal endpoint selected: {endpoint} ({ms}ms, {loss}% loss)"
 // in the language of msgs.
-func (msgs Messages) CloudflareWarpScanSuccess(endpoint string, ms int) string {
-	return Catalog.Format(msgs.locale, "cloudflareWarpScanSuccess", map[string]any{"endpoint": endpoint, "ms": ms})
+func (msgs Messages) CloudflareWarpScanSuccess(endpoint string, ms int, loss int) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpScanSuccess", map[string]any{"endpoint": endpoint, "ms": ms, "loss": loss})
 }
 
 // CloudflareWarpScanEmpty says "No reachable Cloudflare WARP endpoints found on the current local network"

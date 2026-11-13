@@ -73,12 +73,37 @@ type Config struct {
 	WarpEnabled       bool         `json:"warpEnabled"`
 	DirectWarpEnabled bool         `json:"directWarpEnabled,omitempty"` // true if direct traffic routes through built-in WARP
 	Account           Account      `json:"account"`
-	DefaultMode       Mode         `json:"defaultMode,omitempty"`    // "auto", "masque", "wireguard"
+	DefaultMode       Mode         `json:"defaultMode,omitempty"`    // direct WARP default mode: "masque" (default) or "wireguard"
+	ChainedMode       Mode         `json:"chainedMode,omitempty"`    // chained proxy+WARP default mode: "wireguard" (default) or "masque"
 	MasquePreferH2    bool         `json:"masquePreferH2,omitempty"` // prefer HTTP/2 (TCP) before HTTP/3 (QUIC) for MASQUE
-	CleanIP           string       `json:"cleanIp,omitempty"`        // clean Anycast IP override
-	CleanPort         int          `json:"cleanPort,omitempty"`      // clean Anycast Port override
+	CleanIP           string       `json:"cleanIp,omitempty"`        // clean Anycast IP override for direct WARP
+	CleanPort         int          `json:"cleanPort,omitempty"`      // clean Anycast Port override for direct WARP
 	ProbeURL          string       `json:"probeUrl,omitempty"`       // latency probe endpoint for WARP (default http://connect.rom.miui.com/generate_204)
 	Tunnel            TunnelConfig `json:"tunnel"`
+}
+
+// EffectiveDirectMode returns the protocol mode for direct WARP nodes (defaults to ModeMASQUE).
+func (c Config) EffectiveDirectMode() Mode {
+	switch c.DefaultMode {
+	case ModeWireGuard:
+		return ModeWireGuard
+	case ModeMASQUE:
+		return ModeMASQUE
+	default:
+		return ModeMASQUE
+	}
+}
+
+// EffectiveChainedMode returns the protocol mode for chained proxy+WARP nodes (defaults to ModeWireGuard).
+func (c Config) EffectiveChainedMode() Mode {
+	switch c.ChainedMode {
+	case ModeMASQUE:
+		return ModeMASQUE
+	case ModeWireGuard:
+		return ModeWireGuard
+	default:
+		return ModeWireGuard
+	}
 }
 
 // ResolveEndpoint returns host and port for WARP connections based on mode and clean IP overrides.

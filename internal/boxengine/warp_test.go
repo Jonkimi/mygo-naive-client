@@ -212,7 +212,8 @@ func TestBuildOutboundsConfig_ChainedProxy_EnableWARP(t *testing.T) {
 			"naive-node": 1080,
 		},
 		CloudflareConfig: &warp.Config{
-			DefaultMode: warp.ModeAuto,
+			DefaultMode: warp.ModeMASQUE,
+			ChainedMode: warp.ModeWireGuard,
 		},
 	}
 
@@ -228,18 +229,18 @@ func TestBuildOutboundsConfig_ChainedProxy_EnableWARP(t *testing.T) {
 		}
 	}
 
-	// Verify VLESS chaining: raw-node-vless-node -> node-vless-node
+	// Verify VLESS chaining: raw-node-vless-node -> node-vless-node (defaults to WireGuard via warp-wg-auto)
 	rawVless, ok := outboundByTag["raw-node-vless-node"]
 	if !ok || rawVless["type"] != "vless" {
 		t.Errorf("expected raw-node-vless-node of type vless, got %+v", rawVless)
 	}
 
 	warpVless, ok := outboundByTag["node-vless-node"]
-	if !ok || warpVless["type"] != "masque" || warpVless["detour"] != "raw-node-vless-node" {
-		t.Errorf("expected node-vless-node detouring to raw-node-vless-node, got %+v", warpVless)
+	if !ok || warpVless["type"] != "warp-wg-auto" || warpVless["detour"] != "raw-node-vless-node" {
+		t.Errorf("expected node-vless-node to default to warp-wg-auto detouring to raw-node-vless-node, got %+v", warpVless)
 	}
 
-	// Verify Naive Sidecar chaining: raw-node-naive-node -> node-naive-node with tcp_only_detour: true
+	// Verify Naive Sidecar chaining: raw-node-naive-node -> node-naive-node with MASQUE tcp_only_detour: true
 	rawNaive, ok := outboundByTag["raw-node-naive-node"]
 	if !ok || rawNaive["type"] != "socks" {
 		t.Errorf("expected raw-node-naive-node of type socks, got %+v", rawNaive)
@@ -247,7 +248,7 @@ func TestBuildOutboundsConfig_ChainedProxy_EnableWARP(t *testing.T) {
 
 	warpNaive, ok := outboundByTag["node-naive-node"]
 	if !ok || warpNaive["type"] != "masque" || warpNaive["detour"] != "raw-node-naive-node" {
-		t.Errorf("expected node-naive-node detouring to raw-node-naive-node, got %+v", warpNaive)
+		t.Errorf("expected node-naive-node detouring to raw-node-naive-node via masque, got %+v", warpNaive)
 	}
 	if warpNaive["tcp_only_detour"] != true {
 		t.Errorf("expected tcp_only_detour: true for Naive TCP sidecar node, got %+v", warpNaive["tcp_only_detour"])
@@ -617,13 +618,17 @@ func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
 	globalCfg := &warp.Config{
 		CleanIP:     "162.159.198.9",
 		CleanPort:   8443,
-		DefaultMode: warp.ModeAuto,
+		DefaultMode: warp.ModeMASQUE,
+		ChainedMode: warp.ModeMASQUE,
 	}
 
-	directWarp := config.Service{
+	directWarpWG := config.Service{
 		ID:       config.BuiltinWarpServiceID,
 		Name:     "Cloudflare WARP",
 		Protocol: config.ProtoWARP,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportWireGuard,
+		},
 	}
 	chainedUS := config.Service{
 		ID:         "us-node",
@@ -631,6 +636,16 @@ func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
 		Protocol:   config.ProtoVLESS,
 		Server:     "us.example.com:443",
 		EnableWARP: true,
+	}
+	chainedUSWG := config.Service{
+		ID:         "us-wg-node",
+		Name:       "US VLESS + WARP WG",
+		Protocol:   config.ProtoVLESS,
+		Server:     "us-wg.example.com:443",
+		EnableWARP: true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportWireGuard,
+		},
 	}
 	chainedJPExplicit := config.Service{
 		ID:         "jp-node",
@@ -644,7 +659,7 @@ func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
 	}
 
 	opts := EngineOptions{
-		Services:         []config.Service{directWarp, chainedUS, chainedJPExplicit},
+		Services:         []config.Service{directWarpWG, chainedUS, chainedUSWG, chainedJPExplicit},
 		CloudflareConfig: globalCfg,
 	}
 
@@ -660,25 +675,22 @@ func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
 		}
 	}
 
-	// 1. Direct WARP inherits global CleanIP:CleanPort
-	if ep := byTag["node-"+config.BuiltinWarpServiceID]["endpoint"]; ep != "162.159.198.9:8443" {
-		t.Errorf("expected direct WARP to inherit global CleanIP 162.159.198.9:8443, got %v", ep)
+	// 1. Direct WARP WG with CleanIP builds static WireGuard endpoint (no warp-wg-auto outbound)
+	if byTag["node-"+config.BuiltinWarpServiceID] != nil {
+		t.Errorf("expected direct WARP WG with CleanIP to use static endpoint instead of outbound, got %+v", byTag["node-"+config.BuiltinWarpServiceID])
 	}
 
 	// 2. Chained proxy+WARP without explicit endpoint must NOT inherit global CleanIP (stays empty for runtime per-egress auto-selection)
 	if ep := byTag["node-us-node"]["endpoint"]; ep != "" {
 		t.Errorf("expected chained node-us-node endpoint to be empty (auto-select), got %v", ep)
 	}
-	if wgAuto := byTag["wg-node-us-node"]; wgAuto == nil || wgAuto["type"] != "warp-wg-auto" {
-		t.Errorf("expected wg-node-us-node to use warp-wg-auto outbound, got %+v", wgAuto)
+	if wgAuto := byTag["node-us-wg-node"]; wgAuto == nil || wgAuto["type"] != "warp-wg-auto" {
+		t.Errorf("expected node-us-wg-node to use warp-wg-auto outbound, got %+v", wgAuto)
 	}
 
 	// 3. Chained proxy+WARP with explicit node-level endpoint keeps its explicit endpoint
 	if ep := byTag["node-jp-node"]["endpoint"]; ep != "162.159.198.12:443" {
 		t.Errorf("expected explicit chained node-jp-node endpoint 162.159.198.12:443, got %v", ep)
-	}
-	if wgAuto := byTag["wg-node-jp-node"]; wgAuto != nil {
-		t.Errorf("expected explicit chained node-jp-node NOT to generate warp-wg-auto outbound, got %+v", wgAuto)
 	}
 
 	// 4. Verify endpoints slice only contains static WireGuard endpoints for nodes with explicit endpoints
@@ -689,14 +701,11 @@ func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
 			epTags[tag] = true
 		}
 	}
-	if !epTags["wg-node-"+config.BuiltinWarpServiceID] {
-		t.Errorf("expected static WG endpoint for direct WARP with CleanIP")
+	if !epTags["node-"+config.BuiltinWarpServiceID] {
+		t.Errorf("expected static WG endpoint node-%s for direct WARP WG with CleanIP, got %v", config.BuiltinWarpServiceID, epTags)
 	}
-	if epTags["wg-node-us-node"] {
-		t.Errorf("expected NO static WG endpoint for auto-select chained us-node")
-	}
-	if !epTags["wg-node-jp-node"] {
-		t.Errorf("expected static WG endpoint for explicit jp-node")
+	if epTags["node-us-wg-node"] || epTags["wg-node-us-wg-node"] {
+		t.Errorf("expected NO static WG endpoint for auto-select chained us-wg-node")
 	}
 }
 

@@ -31,9 +31,10 @@ const (
 	defaultProbeTimeout     = 1500 * time.Millisecond
 	defaultRaceWindow       = 80 * time.Millisecond
 	defaultRuntimeBatch     = 8
-	defaultScanSamples      = 48
-	defaultScanConcurrency  = 16
+	defaultScanSamples      = 64
+	defaultScanConcurrency  = 24
 	defaultScanProbeTimeout = 1500 * time.Millisecond
+	defaultScanProbeRounds  = 3
 )
 
 var (
@@ -56,8 +57,15 @@ var (
 		"188.114.99.0/24",
 	}
 
-	// WireGuardPorts lists candidate ports for Cloudflare WireGuard connections.
-	WireGuardPorts = []int{2408, 500, 1701, 4500}
+	// WireGuardPorts lists Cloudflare's official WARP WireGuard UDP ports (including anti-QoS ports).
+	WireGuardPorts = []int{
+		2408, 500, 1701, 4500,
+		854, 859, 864, 878, 880, 890, 891, 894, 903, 908,
+		928, 934, 939, 942, 943, 945, 946, 955, 968, 987, 988,
+		1002, 1010, 1014, 1018, 1070, 1074, 1180, 1387, 1843, 2371, 2506,
+		3138, 3476, 3581, 3854, 4177, 4198, 4233, 5279, 5956,
+		7103, 7152, 7156, 7281, 7559, 8319, 8742, 8854, 8886,
+	}
 
 	// DefaultMASQUERuntimeCandidates provides a diverse cross-port/cross-IP starter pool.
 	DefaultMASQUERuntimeCandidates = []string{
@@ -78,9 +86,9 @@ var (
 		"162.159.195.1:2408",
 		"188.114.96.1:2408",
 		"188.114.97.1:500",
-		"188.114.98.1:1701",
-		"188.114.99.1:4500",
-		"162.159.192.2:500",
+		"188.114.98.1:4500",
+		"188.114.99.1:894",
+		"162.159.195.2:7103",
 	}
 )
 
@@ -91,11 +99,19 @@ type EndpointCacheKey struct {
 	TCPOnly  bool
 }
 
-// EndpointCandidateResult represents a probed WARP endpoint and its measured handshake RTT.
+// EndpointCandidateResult represents a probed WARP endpoint, its measured handshake RTT, and packet loss rate.
 type EndpointCandidateResult struct {
 	Endpoint string        `json:"endpoint"`
 	Protocol string        `json:"protocol"` // "h3", "h2", "wireguard"
 	RTT      time.Duration `json:"rtt"`
+	LossRate float64       `json:"lossRate"` // 0.0 .. 1.0
+	Sent     int           `json:"sent,omitempty"`
+	Received int           `json:"received,omitempty"`
+}
+
+// Score ranks endpoints by preferring low packet loss first and low RTT second.
+func (r EndpointCandidateResult) Score() time.Duration {
+	return r.RTT + time.Duration(r.LossRate*float64(2*time.Second))
 }
 
 // ScanOptions configures deep scanning of Cloudflare Anycast endpoints.
@@ -106,10 +122,11 @@ type ScanOptions struct {
 	Dialer         Dialer
 	Account        *Account
 	Candidates     []string      // optional explicit candidate override (useful in tests)
-	SampleCount    int           // defaults to 48 when Candidates is empty
-	Concurrency    int           // defaults to 16
+	SampleCount    int           // defaults to 64 when Candidates is empty
+	Concurrency    int           // defaults to 24
+	ProbeRounds    int           // defaults to 3; number of probe rounds for packet-loss measurement
 	PerProbeTimout time.Duration // defaults to 1500ms
-	TopN           int           // defaults to 5 (<=0 returns all)
+	TopN           int           // defaults to 8 (<=0 returns all)
 }
 
 type cachedEndpointEntry struct {
@@ -568,9 +585,13 @@ func scanBestEndpointsWithProbers(
 	if opts.SampleCount <= 0 {
 		opts.SampleCount = defaultScanSamples
 	}
+	rounds := opts.ProbeRounds
+	if rounds <= 0 {
+		rounds = defaultScanProbeRounds
+	}
 	mode := opts.Mode
-	if mode == "" {
-		mode = ModeAuto
+	if mode == "" || mode == ModeAuto {
+		mode = ModeMASQUE
 	}
 	if opts.TCPOnly && mode == ModeWireGuard {
 		mode = ModeMASQUE
@@ -593,6 +614,14 @@ func scanBestEndpointsWithProbers(
 		results []EndpointCandidateResult
 		lastErr error
 	)
+
+	// Stage 1: Fast initial sweep (1 probe per candidate) to filter reachable endpoints.
+	type initialHit struct {
+		endpoint string
+		protocol string
+		rtt      time.Duration
+	}
+	var hits []initialHit
 
 	sem := make(chan struct{}, opts.Concurrency)
 	var wg sync.WaitGroup
@@ -619,11 +648,7 @@ func scanBestEndpointsWithProbers(
 				if err != nil {
 					lastErr = err
 				} else {
-					results = append(results, EndpointCandidateResult{
-						Endpoint: endpoint,
-						Protocol: "wireguard",
-						RTT:      rtt,
-					})
+					hits = append(hits, initialHit{endpoint: endpoint, protocol: "wireguard", rtt: rtt})
 				}
 				mu.Unlock()
 				return
@@ -637,29 +662,100 @@ func scanBestEndpointsWithProbers(
 			if err != nil {
 				lastErr = err
 			} else {
-				results = append(results, EndpointCandidateResult{
-					Endpoint: endpoint,
-					Protocol: proto,
-					RTT:      rtt,
-				})
+				hits = append(hits, initialHit{endpoint: endpoint, protocol: proto, rtt: rtt})
 			}
 			mu.Unlock()
 		}(ep)
 	}
 	wg.Wait()
 
-	if len(results) == 0 {
+	if len(hits) == 0 {
 		if lastErr != nil {
 			return nil, fmt.Errorf("no reachable WARP endpoints found (%w)", lastErr)
 		}
 		return nil, errors.New("no reachable WARP endpoints found")
 	}
 
+	// Stage 2: Follow-up rounds on reachable endpoints (up to top 24 by initial RTT) to measure packet loss & average RTT.
+	sort.Slice(hits, func(i, j int) bool {
+		return hits[i].rtt < hits[j].rtt
+	})
+	verifyLimit := 24
+	if len(hits) < verifyLimit {
+		verifyLimit = len(hits)
+	}
+	verifyHits := hits[:verifyLimit]
+
+	var wg2 sync.WaitGroup
+	for _, h := range verifyHits {
+		wg2.Add(1)
+		go func(hit initialHit) {
+			defer wg2.Done()
+			sent := 1
+			received := 1
+			totalRTT := hit.rtt
+			proto := hit.protocol
+
+			cancelled := false
+			for r := 1; r < rounds && !cancelled; r++ {
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					cancelled = true
+				}
+				if cancelled {
+					break
+				}
+				sent++
+				pCtx, pCancel := context.WithTimeout(ctx, opts.PerProbeTimout)
+				if mode == ModeWireGuard {
+					rtt, err := wgProbe(pCtx, opts.Dialer, hit.endpoint, opts.Account)
+					if err == nil {
+						received++
+						totalRTT += rtt
+					}
+				} else {
+					p, rtt, err := masqueProbe(pCtx, opts.Dialer, hit.endpoint, opts.Account, MASQUEOptions{
+						TCPOnly:  opts.TCPOnly,
+						PreferH2: opts.PreferH2,
+					})
+					if err == nil {
+						received++
+						totalRTT += rtt
+						if p != "" {
+							proto = p
+						}
+					}
+				}
+				pCancel()
+				<-sem
+			}
+
+			avgRTT := totalRTT / time.Duration(received)
+			lossRate := float64(sent-received) / float64(sent)
+			mu.Lock()
+			results = append(results, EndpointCandidateResult{
+				Endpoint: hit.endpoint,
+				Protocol: proto,
+				RTT:      avgRTT,
+				LossRate: lossRate,
+				Sent:     sent,
+				Received: received,
+			})
+			mu.Unlock()
+		}(h)
+	}
+	wg2.Wait()
+
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].RTT == results[j].RTT {
-			return results[i].Endpoint < results[j].Endpoint
+		si, sj := results[i].Score(), results[j].Score()
+		if si == sj {
+			if results[i].RTT == results[j].RTT {
+				return results[i].Endpoint < results[j].Endpoint
+			}
+			return results[i].RTT < results[j].RTT
 		}
-		return results[i].RTT < results[j].RTT
+		return si < sj
 	})
 
 	if opts.TopN > 0 && len(results) > opts.TopN {

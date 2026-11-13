@@ -11,6 +11,7 @@ import (
 	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
+	"naive-client/internal/warp"
 )
 
 var editorProtocols = []config.Protocol{
@@ -211,7 +212,15 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		fingerprint = "chrome"
 	}
 
-	warpModeIdx := 0
+	warpModeIdx := 1 // Chained proxy+WARP defaults to WireGuard
+	if proto == config.ProtoWARP {
+		warpModeIdx = 0 // Direct/local WARP defaults to MASQUE
+		if a.state.Cloudflare.EffectiveDirectMode() == warp.ModeWireGuard {
+			warpModeIdx = 1
+		}
+	} else if a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
+		warpModeIdx = 0
+	}
 	warpMasquePreferH2 := a.state.Cloudflare.MasquePreferH2
 	warpEndpoint := ""
 	warpPrivKey := ""
@@ -219,12 +228,10 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 	warpIPv6 := ""
 	if svc.WARPConfig != nil {
 		switch svc.WARPConfig.Transport {
-		case config.WarpTransportAuto:
-			warpModeIdx = 0
 		case config.WarpTransportMasque:
-			warpModeIdx = 1
+			warpModeIdx = 0
 		case config.WarpTransportWireGuard:
-			warpModeIdx = 2
+			warpModeIdx = 1
 		}
 		if svc.WARPConfig.MasquePreferH2 != nil {
 			warpMasquePreferH2 = *svc.WARPConfig.MasquePreferH2
@@ -317,14 +324,9 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 
 	attachWARP := func(s *config.Service) {
 		if a.editor.enableWARP {
-			var transport config.WarpTransport
-			switch a.editor.warpModeIndex {
-			case 0:
-				transport = config.WarpTransportAuto
-			case 1:
+			transport := config.WarpTransportWireGuard
+			if a.editor.warpModeIndex == 0 {
 				transport = config.WarpTransportMasque
-			case 2:
-				transport = config.WarpTransportWireGuard
 			}
 			preferH2 := a.editor.warpMasquePreferH2
 			s.EnableWARP = true
@@ -340,13 +342,8 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 	}
 
 	if proto == config.ProtoWARP {
-		var transport config.WarpTransport
-		switch a.editor.warpModeIndex {
-		case 0:
-			transport = config.WarpTransportAuto
-		case 1:
-			transport = config.WarpTransportMasque
-		case 2:
+		transport := config.WarpTransportMasque
+		if a.editor.warpModeIndex == 1 {
 			transport = config.WarpTransportWireGuard
 		}
 		preferH2 := a.editor.warpMasquePreferH2
@@ -874,13 +871,13 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 					ui.Text(c, cat.CloudflareWarpTransport()).FontSize(13).FontWeight(500).TextColor(p.text)
-					transportLabels := []string{"Auto", "MASQUE", "WireGuard"}
+					transportLabels := []string{"MASQUE", "WireGuard"}
 					segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, transportLabels)
 				})
 				a.renderWarpTransportGuide(c, p, "editor-warp-direct", a.editor.warpModeIndex, true)
 			})
 
-			if a.editor.warpModeIndex != 2 {
+			if a.editor.warpModeIndex == 0 {
 				ui.Column(c).Gap(4).Padding(8, 10, 8, 10).Radius(6).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
 					switchRow(c, p, "inp-warp-direct-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
 					ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
@@ -892,7 +889,15 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 
 		if proto != config.ProtoWARP {
 			ui.Column(c).Gap(8).Padding(12).Radius(8).Background(p.card).Border(1, p.borderSubtle).Children(func() {
-				switchRow(c, p, "inp-enable-warp-toggle", cat.NodeEditorEnableWarp(), &a.editor.enableWARP)
+				if switchRow(c, p, "inp-enable-warp-toggle", cat.NodeEditorEnableWarp(), &a.editor.enableWARP) {
+					if a.editor.enableWARP {
+						if a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
+							a.editor.warpModeIndex = 0
+						} else {
+							a.editor.warpModeIndex = 1
+						}
+					}
+				}
 				ui.Text(c, cat.NodeEditorEnableWarpDesc()).FontSize(11).TextColor(p.textMuted)
 
 				if a.editor.enableWARP {
@@ -903,14 +908,14 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 					} else {
 						ui.Column(c).Gap(6).Children(func() {
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-								ui.Text(c, cat.CloudflareWarpTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
-								transportLabels := []string{"Auto", "MASQUE", "WireGuard"}
+								ui.Text(c, cat.CloudflareWarpChainedTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
+								transportLabels := []string{"MASQUE", "WireGuard"}
 								segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, transportLabels)
 							})
 							a.renderWarpTransportGuide(c, p, "editor-warp-chained", a.editor.warpModeIndex, true)
 						})
 
-						if a.editor.warpModeIndex != 2 {
+						if a.editor.warpModeIndex == 0 {
 							ui.Column(c).Gap(4).Padding(8, 10, 8, 10).Radius(6).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
 								switchRow(c, p, "inp-warp-chained-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
 								ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)

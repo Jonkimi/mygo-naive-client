@@ -150,7 +150,8 @@ func defaultPersistedState() PersistedState {
 		TailnetAdvertiseExit:    false,
 		TailnetAdvertiseRoutes:  []string{},
 		Cloudflare: warp.Config{
-			DefaultMode: warp.ModeAuto,
+			DefaultMode: warp.ModeMASQUE,
+			ChainedMode: warp.ModeWireGuard,
 			Tunnel: warp.TunnelConfig{
 				HAConnections: 4,
 				Protocol:      "auto",
@@ -340,6 +341,12 @@ func (a *app) loadState() {
 	if st.InstalledGeodataTag == "" && a.localGeodataVersion != "" {
 		st.InstalledGeodataTag = a.localGeodataVersion
 		needsResave = true
+	}
+	if st.Cloudflare.DefaultMode == "" || st.Cloudflare.DefaultMode == warp.ModeAuto {
+		st.Cloudflare.DefaultMode = warp.ModeMASQUE
+	}
+	if st.Cloudflare.ChainedMode == "" || st.Cloudflare.ChainedMode == warp.ModeAuto {
+		st.Cloudflare.ChainedMode = warp.ModeWireGuard
 	}
 
 	if len(st.Services) == 0 {

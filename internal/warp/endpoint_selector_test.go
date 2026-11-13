@@ -182,6 +182,10 @@ func TestEndpointSelector_WireGuardProbeAndPacket(t *testing.T) {
 }
 
 func TestScanBestEndpoints_SortsTopNAndSamplesCIDRs(t *testing.T) {
+	if len(WireGuardPorts) < 50 {
+		t.Fatalf("expected 50+ official Cloudflare WireGuard UDP ports, got %d", len(WireGuardPorts))
+	}
+
 	sampledMASQUE := sampleMASQUECandidates(16)
 	if len(sampledMASQUE) != 16 {
 		t.Fatalf("expected 16 sampled MASQUE candidates, got %d", len(sampledMASQUE))
@@ -197,10 +201,17 @@ func TestScanBestEndpoints_SortsTopNAndSamplesCIDRs(t *testing.T) {
 		t.Fatalf("expected 12 sampled WG candidates, got %d", len(sampledWG))
 	}
 
+	var slowCalls atomic.Int32
 	fakeMASQUE := func(ctx context.Context, dialer Dialer, endpoint string, acc *Account, mOpts MASQUEOptions) (string, time.Duration, error) {
 		switch endpoint {
 		case "ep-slow":
-			return "h3", 120 * time.Millisecond, nil
+			// 1st probe succeeds with low RTT (10ms), follow-up 2 probes drop -> 66.7% loss!
+			// Score = 10ms + 0.667*2000ms = ~1343ms, so it must rank BELOW ep-mid (0% loss, 45ms).
+			n := slowCalls.Add(1)
+			if n == 1 {
+				return "h3", 10 * time.Millisecond, nil
+			}
+			return "", 0, errors.New("packet loss")
 		case "ep-fast":
 			return "h2", 18 * time.Millisecond, nil
 		case "ep-mid":
@@ -214,17 +225,21 @@ func TestScanBestEndpoints_SortsTopNAndSamplesCIDRs(t *testing.T) {
 	}
 
 	results, err := scanBestEndpointsWithProbers(context.Background(), ScanOptions{
-		Mode:       ModeMASQUE,
-		Candidates: []string{"ep-slow", "ep-dead", "ep-fast", "ep-mid"},
-		TopN:       2,
+		Mode:        ModeMASQUE,
+		Candidates:  []string{"ep-slow", "ep-dead", "ep-fast", "ep-mid"},
+		ProbeRounds: 3,
+		TopN:        3,
 	}, fakeMASQUE, fakeWG)
 	if err != nil {
 		t.Fatalf("scanBestEndpointsWithProbers failed: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected TopN=2 results, got %d", len(results))
+	if len(results) != 3 {
+		t.Fatalf("expected TopN=3 results, got %d", len(results))
 	}
-	if results[0].Endpoint != "ep-fast" || results[1].Endpoint != "ep-mid" {
-		t.Errorf("expected sorted [ep-fast, ep-mid], got %+v", results)
+	if results[0].Endpoint != "ep-fast" || results[1].Endpoint != "ep-mid" || results[2].Endpoint != "ep-slow" {
+		t.Errorf("expected sorted [ep-fast (0%% loss), ep-mid (0%% loss), ep-slow (lossy)], got %+v", results)
+	}
+	if results[0].LossRate != 0 || results[2].LossRate <= 0.5 {
+		t.Errorf("expected ep-fast loss=0 and ep-slow loss>0.5, got %+v", results)
 	}
 }

@@ -55,13 +55,40 @@ func isBypassSafe(ip net.IP) bool {
 	return true
 }
 
+func isBypassSafeCIDR(ipNet *net.IPNet) bool {
+	if ipNet == nil {
+		return false
+	}
+	ones, bits := ipNet.Mask.Size()
+	if ones == 0 || bits == 0 {
+		return false
+	}
+	return isBypassSafe(ipNet.IP)
+}
+
 // SetupRoutes installs default 0/1 and 128/1 routes on Linux pointing to the TUN interface,
-// and installs specific direct routes for excludeIPs.
+// and installs specific direct routes for excludeIPs (hosts and CIDRs).
 func SetupRoutes(name string, excludeIPs []string) error {
 	_ = TeardownRoutes(name, excludeIPs)
 
-	for _, ipStr := range excludeIPs {
-		ip := net.ParseIP(strings.TrimSpace(ipStr))
+	for _, entry := range excludeIPs {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "/") {
+			_, ipNet, err := net.ParseCIDR(trimmed)
+			if err != nil || !isBypassSafeCIDR(ipNet) {
+				continue
+			}
+			if ipNet.IP.To4() != nil {
+				_ = exec.Command("ip", "route", "add", ipNet.String(), "scope", "link").Run()
+			} else {
+				_ = exec.Command("ip", "-6", "route", "add", ipNet.String(), "scope", "link").Run()
+			}
+			continue
+		}
+		ip := net.ParseIP(trimmed)
 		if !isBypassSafe(ip) {
 			continue
 		}
@@ -84,10 +111,26 @@ func SetupRoutes(name string, excludeIPs []string) error {
 	return nil
 }
 
-// TeardownRoutes removes default 0/1 and 128/1 routes and host routes on Linux.
+// TeardownRoutes removes default 0/1 and 128/1 routes and host/subnet routes on Linux.
 func TeardownRoutes(name string, excludeIPs []string) error {
-	for _, ipStr := range excludeIPs {
-		ip := net.ParseIP(strings.TrimSpace(ipStr))
+	for _, entry := range excludeIPs {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "/") {
+			_, ipNet, err := net.ParseCIDR(trimmed)
+			if err != nil || !isBypassSafeCIDR(ipNet) {
+				continue
+			}
+			if ipNet.IP.To4() != nil {
+				_ = exec.Command("ip", "route", "del", ipNet.String()).Run()
+			} else {
+				_ = exec.Command("ip", "-6", "route", "del", ipNet.String()).Run()
+			}
+			continue
+		}
+		ip := net.ParseIP(trimmed)
 		if !isBypassSafe(ip) {
 			continue
 		}

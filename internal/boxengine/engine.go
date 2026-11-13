@@ -990,7 +990,15 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		// Exclude loopback addresses from TUN capture so 127.0.0.1 is never trapped in TUN
 		excludes = append(excludes, "127.0.0.0/8", "::1/128")
 		// Exclude Cloudflare WARP Anycast endpoints so local WARP clients do not loop into TUN
-		excludes = append(excludes, "162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24", "162.159.198.0/24", "162.159.200.0/24", "162.159.204.0/24")
+		excludes = append(excludes,
+			"162.159.192.0/24",
+			"162.159.193.0/24",
+			"162.159.195.0/24",
+			"162.159.198.0/24",
+			"162.159.200.0/24",
+			"162.159.204.0/24",
+			"188.114.96.0/22",
+		)
 		if opts.TailnetMode == tailnet.ModeHost {
 			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
@@ -1172,6 +1180,10 @@ func resolveSidecarPort(svc config.Service, allocatedPorts map[string]int) (port
 }
 
 func resolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mode {
+	isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
+	if isTCPOnly {
+		return warp.ModeMASQUE
+	}
 	if svc.WARPConfig != nil && svc.WARPConfig.Transport != "" {
 		switch svc.WARPConfig.Transport {
 		case config.WarpTransportWireGuard:
@@ -1179,13 +1191,29 @@ func resolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mod
 		case config.WarpTransportMasque:
 			return warp.ModeMASQUE
 		case config.WarpTransportAuto:
-			return warp.ModeAuto
+			// Legacy persisted "auto": preserve smart default per node role
+			if svc.EffectiveProtocol() == config.ProtoWARP {
+				if globalCfg != nil {
+					return globalCfg.EffectiveDirectMode()
+				}
+				return warp.ModeMASQUE
+			}
+			if globalCfg != nil {
+				return globalCfg.EffectiveChainedMode()
+			}
+			return warp.ModeWireGuard
 		}
 	}
-	if globalCfg != nil && globalCfg.DefaultMode != "" {
-		return globalCfg.DefaultMode
+	if svc.EffectiveProtocol() == config.ProtoWARP {
+		if globalCfg != nil {
+			return globalCfg.EffectiveDirectMode()
+		}
+		return warp.ModeMASQUE
 	}
-	return warp.ModeAuto
+	if globalCfg != nil {
+		return globalCfg.EffectiveChainedMode()
+	}
+	return warp.ModeWireGuard
 }
 
 func resolveServiceMasquePreferH2(svc config.Service, globalCfg *warp.Config) bool {

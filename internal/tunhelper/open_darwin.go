@@ -73,17 +73,48 @@ func isBypassSafe(ip net.IP) bool {
 	return true
 }
 
+func isBypassSafeCIDR(ipNet *net.IPNet) bool {
+	if ipNet == nil {
+		return false
+	}
+	ones, bits := ipNet.Mask.Size()
+	if ones == 0 || bits == 0 {
+		return false
+	}
+	return isBypassSafe(ipNet.IP)
+}
+
 // SetupRoutes configures system routes (0/1 and 128/1) pointing to the utun interface on macOS,
-// installs direct host routes for excludeIPs to bypass the TUN interface,
+// installs direct host/subnet routes for excludeIPs to bypass the TUN interface,
 // and installs a high-priority DynamicStore DNS entry for Split DNS hijacking.
 func SetupRoutes(name string, excludeIPs []string) error {
 	_ = teardownRoutesInternal(name, excludeIPs, false)
 
 	gw, iface := getDefaultGateway()
 
-	// 1. Install specific host routes for node IPs to bypass TUN directly via physical gateway
-	for _, ipStr := range excludeIPs {
-		ip := net.ParseIP(strings.TrimSpace(ipStr))
+	// 1. Install specific host/subnet routes for node and Anycast IPs to bypass TUN directly via physical gateway
+	for _, entry := range excludeIPs {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "/") {
+			_, ipNet, err := net.ParseCIDR(trimmed)
+			if err != nil || !isBypassSafeCIDR(ipNet) {
+				continue
+			}
+			if ipNet.IP.To4() != nil {
+				if gw != "" {
+					_ = exec.Command("route", "-q", "-n", "add", "-net", ipNet.String(), gw).Run()
+				} else if iface != "" {
+					_ = exec.Command("route", "-q", "-n", "add", "-net", ipNet.String(), "-interface", iface).Run()
+				}
+			} else if iface != "" {
+				_ = exec.Command("route", "-q", "-n", "add", "-inet6", ipNet.String(), "-interface", iface).Run()
+			}
+			continue
+		}
+		ip := net.ParseIP(trimmed)
 		if !isBypassSafe(ip) {
 			continue
 		}
@@ -136,8 +167,24 @@ func teardownRoutesInternal(name string, excludeIPs []string, flushDNS bool) err
 		cleanupStaleDarwinDNS()
 	}
 
-	for _, ipStr := range excludeIPs {
-		ip := net.ParseIP(strings.TrimSpace(ipStr))
+	for _, entry := range excludeIPs {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "/") {
+			_, ipNet, err := net.ParseCIDR(trimmed)
+			if err != nil || !isBypassSafeCIDR(ipNet) {
+				continue
+			}
+			if ipNet.IP.To4() != nil {
+				_ = exec.Command("route", "-q", "-n", "delete", "-net", ipNet.String()).Run()
+			} else {
+				_ = exec.Command("route", "-q", "-n", "delete", "-inet6", ipNet.String()).Run()
+			}
+			continue
+		}
+		ip := net.ParseIP(trimmed)
 		if !isBypassSafe(ip) {
 			continue
 		}

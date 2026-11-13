@@ -649,16 +649,14 @@
   "cloudflareWarpLicenseTitle": "WARP+ License 密钥",
   "cloudflareWarpLicenseBindBtn": "绑定 License",
   "cloudflareWarpLicenseBinding": "正在绑定...",
-  "cloudflareWarpTransport": "默认传输协议",
-  "cloudflareWarpTransportAuto": "MASQUE 自动回退 (H3 ➔ H2 推荐)",
-  "cloudflareWarpTransportAutoShort": "Auto (自动回退 · 推荐)",
-  "cloudflareWarpTransportAutoDesc": "优先使用基于 QUIC 的 MASQUE HTTP/3（443 端口）；若当前网络或前置节点阻断 UDP/QUIC，自动降级为纯 TCP 的 MASQUE HTTP/2（443 端口）；若仍失败且支持 UDP，再兜底切换至 WireGuard（2408 端口）。适合绝大多数网络环境。",
-  "cloudflareWarpTransportMasque": "MASQUE (专有 HTTP/3 + HTTP/2)",
+  "cloudflareWarpTransport": "本地 / 直连 WARP 默认协议",
+  "cloudflareWarpChainedTransport": "代理链式 WARP 默认协议",
+  "cloudflareWarpTransportMasque": "MASQUE (抗封锁 / 抗 QoS)",
   "cloudflareWarpTransportMasqueShort": "MASQUE (443 伪装)",
-  "cloudflareWarpTransportMasqueDesc": "强制仅使用 Cloudflare 专有 MASQUE 协议（优先 HTTP/3，失败回退至 HTTP/2，不切换 WireGuard）。流量走 443 端口伪装成常规 HTTPS，适合 UDP 2408 被屏蔽的环境，且兼容 NaiveProxy / HTTP 等纯 TCP 前置代理。",
-  "cloudflareWarpTransportWireGuard": "WireGuard (UDP 2408 + Reserved)",
-  "cloudflareWarpTransportWireGuardShort": "WireGuard (UDP 2408)",
-  "cloudflareWarpTransportWireGuardDesc": "直接使用传统 WireGuard（UDP 2408 端口 + 3 字节 Reserved 客户端标识）连接 WARP。协议开销小，适合 UDP 链路通畅的环境或搭配测速优选 WireGuard IP；不支持 NaiveProxy / HTTP 等纯 TCP 前置代理（会自动改走 MASQUE HTTP/2）。",
+  "cloudflareWarpTransportMasqueDesc": "使用 Cloudflare 专有 MASQUE 协议（443 端口 HTTP/3 + HTTP/2 回退），伪装为常规 HTTPS 流量。适合国内本地直连应对运营商 UDP QoS 或审查阻断，也是 NaiveProxy / HTTP 等纯 TCP 前置代理的唯一可用协议。",
+  "cloudflareWarpTransportWireGuard": "WireGuard (轻量优选)",
+  "cloudflareWarpTransportWireGuardShort": "WireGuard (轻量 UDP)",
+  "cloudflareWarpTransportWireGuardDesc": "使用轻量级 WireGuard（支持 50+ Cloudflare 官方抗 QoS UDP 端口 + 3 字节 Reserved）。协议开销极低、吞吐高，推荐用于代理链式节点后接 WARP（纯 TCP 前置节点仍会自动使用 MASQUE HTTP/2）。",
   "cloudflareWarpPreferH2": "MASQUE 优先使用 HTTP/2 (抗 UDP QoS 限速)",
   "cloudflareWarpPreferH2Desc": "开启后，MASQUE 将优先使用基于 TCP 443 的 HTTP/2 建立隧道，失败时再回退 HTTP/3 (QUIC)。推荐在运营商对 UDP 限速（QoS）或高丢包网络下开启。",
   "cloudflareWarpCleanEndpoint": "优选 Anycast 端点 (仅直连 WARP)",
@@ -669,11 +667,12 @@
   "cloudflareWarpScanningBtn": "测速中...",
   "cloudflareWarpResetAutoBtn": "恢复自动",
   "cloudflareWarpScanResultsTitle": "测速优选结果 (点击切换):",
-  "cloudflareWarpScanSuccess": "已优选最佳端点: {endpoint} ({ms}ms)",
+  "cloudflareWarpScanSuccess": "已优选最佳端点: {endpoint} ({ms}ms, 丢包 {loss}%)",
   "@cloudflareWarpScanSuccess": {
     "placeholders": {
       "endpoint": { "type": "String" },
-      "ms": { "type": "int" }
+      "ms": { "type": "int" },
+      "loss": { "type": "int" }
     }
   },
   "cloudflareWarpScanEmpty": "当前本地网络未探测到可用的 Cloudflare WARP 端点",

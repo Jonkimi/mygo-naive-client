@@ -128,7 +128,7 @@ func TestNodeEditor_CreateDirectWARPNode(t *testing.T) {
 
 	a.editor.name = "My Direct WARP"
 	a.editor.protoIndex = warpProtoIndex
-	a.editor.warpModeIndex = 1 // MASQUE
+	a.editor.warpModeIndex = 0 // MASQUE (index 0 for direct WARP)
 	a.editor.warpEndpoint = "162.159.198.2:443"
 
 	svc, err := a.buildServiceFromEditor()
@@ -160,8 +160,8 @@ func TestNodeEditor_EnableWARPOnProxyNode(t *testing.T) {
 	tt.Frame()
 
 	a.editor.enableWARP = true
-	a.editor.warpModeIndex = 0 // Auto
-	a.editor.warpEndpoint = "162.159.198.2:443"
+	a.editor.warpModeIndex = 1 // WireGuard (default for chained proxy+WARP)
+	a.editor.warpEndpoint = "162.159.192.1:2408"
 
 	updated, err := a.buildServiceFromEditor()
 	if err != nil {
@@ -171,8 +171,8 @@ func TestNodeEditor_EnableWARPOnProxyNode(t *testing.T) {
 	if !updated.EnableWARP {
 		t.Errorf("expected EnableWARP to be true")
 	}
-	if updated.WARPConfig == nil || updated.WARPConfig.Transport != config.WarpTransportAuto {
-		t.Errorf("expected WarpTransportAuto, got %+v", updated.WARPConfig)
+	if updated.WARPConfig == nil || updated.WARPConfig.Transport != config.WarpTransportWireGuard {
+		t.Errorf("expected WarpTransportWireGuard, got %+v", updated.WARPConfig)
 	}
 }
 
@@ -889,11 +889,11 @@ func TestCloudflareWarpEndpointScan_OneClickAndCandidateSwitchAndReset(t *testin
 	a, tt, _ := newTestApp(t, nil)
 	a.activeTab = TabCloudflare
 
-	// Install mock scanner returning deterministic Anycast candidates
+	// Install mock scanner returning deterministic Anycast candidates with loss rate
 	a.warpEndpointScanner = func(ctx context.Context, opts warp.ScanOptions) ([]warp.EndpointCandidateResult, error) {
 		return []warp.EndpointCandidateResult{
-			{Endpoint: "162.159.198.5:443", Protocol: "h3", RTT: 14 * time.Millisecond},
-			{Endpoint: "162.159.198.2:8443", Protocol: "h2", RTT: 28 * time.Millisecond},
+			{Endpoint: "162.159.198.5:443", Protocol: "h3", RTT: 14 * time.Millisecond, LossRate: 0},
+			{Endpoint: "162.159.198.2:8443", Protocol: "h2", RTT: 28 * time.Millisecond, LossRate: 0.33},
 		}, nil
 	}
 
@@ -930,7 +930,7 @@ func TestCloudflareWarpEndpointScan_OneClickAndCandidateSwitchAndReset(t *testin
 
 	// 2. Click second candidate pill to switch CleanIP:CleanPort
 	tt.Frame()
-	secondLabel := "162.159.198.2:8443 (28ms · h2)"
+	secondLabel := "162.159.198.2:8443 (28ms · 33% loss · h2)"
 	if err := tt.Click(secondLabel); err != nil {
 		t.Fatalf("click candidate pill %q: %v", secondLabel, err)
 	}
@@ -946,6 +946,24 @@ func TestCloudflareWarpEndpointScan_OneClickAndCandidateSwitchAndReset(t *testin
 	tt.Frame()
 	if a.state.Cloudflare.CleanIP != "" || a.state.Cloudflare.CleanPort != 0 {
 		t.Fatalf("expected CleanIP/CleanPort cleared after reset, got %s:%d", a.state.Cloudflare.CleanIP, a.state.Cloudflare.CleanPort)
+	}
+}
+
+func TestCollectNodeServerIPs_IncludesWARPAnycastCIDRs(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	ips := a.collectNodeServerIPs()
+	wantCIDRs := []string{"162.159.192.0/24", "162.159.198.0/24", "188.114.96.0/22"}
+	for _, want := range wantCIDRs {
+		found := false
+		for _, got := range ips {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %s in collectNodeServerIPs(), got %v", want, ips)
+		}
 	}
 }
 

@@ -66,9 +66,8 @@ func (a *app) renderWarpTransportGuide(c *ui.Context, p palette, keyPrefix strin
 		title string
 		desc  string
 	}{
-		{0, cat.CloudflareWarpTransportAutoShort(), cat.CloudflareWarpTransportAutoDesc()},
-		{1, cat.CloudflareWarpTransportMasqueShort(), cat.CloudflareWarpTransportMasqueDesc()},
-		{2, cat.CloudflareWarpTransportWireGuardShort(), cat.CloudflareWarpTransportWireGuardDesc()},
+		{0, cat.CloudflareWarpTransportMasqueShort(), cat.CloudflareWarpTransportMasqueDesc()},
+		{1, cat.CloudflareWarpTransportWireGuardShort(), cat.CloudflareWarpTransportWireGuardDesc()},
 	}
 
 	if compact {
@@ -231,39 +230,50 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 		Children(func() {
 			ui.Text(c, cat.CloudflareWarpTransport()).FontSize(14).FontWeight(600).TextColor(p.text)
 
-			// Transport Mode
+			// Direct / Local WARP Transport Mode (default: MASQUE)
 			curModeIdx := 0
-			switch a.state.Cloudflare.DefaultMode {
-			case warp.ModeAuto:
-				curModeIdx = 0
-			case warp.ModeMASQUE:
+			if a.state.Cloudflare.EffectiveDirectMode() == warp.ModeWireGuard {
 				curModeIdx = 1
-			case warp.ModeWireGuard:
-				curModeIdx = 2
 			}
 
 			transportLabels := []string{
-				cat.CloudflareWarpTransportAuto(),
 				cat.CloudflareWarpTransportMasque(),
 				cat.CloudflareWarpTransportWireGuard(),
 			}
 
 			if segmentedControl(c.Key("warp-mode-segmented"), p, &curModeIdx, transportLabels) {
-				switch curModeIdx {
-				case 0:
-					a.state.Cloudflare.DefaultMode = warp.ModeAuto
-				case 1:
-					a.state.Cloudflare.DefaultMode = warp.ModeMASQUE
-				case 2:
+				if curModeIdx == 1 {
 					a.state.Cloudflare.DefaultMode = warp.ModeWireGuard
+				} else {
+					a.state.Cloudflare.DefaultMode = warp.ModeMASQUE
 				}
 				a.saveState()
 			}
 
 			a.renderWarpTransportGuide(c, p, "warp-global-transport", curModeIdx, false)
 
-			// MASQUE Prefer HTTP/2 toggle (relevant for Auto and MASQUE modes)
-			if a.state.Cloudflare.DefaultMode != warp.ModeWireGuard {
+			// Chained Proxy + WARP Default Protocol (default: WireGuard)
+			ui.Column(c.Key("warp-chained-mode-box")).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+					ui.Text(c, cat.CloudflareWarpChainedTransport()).FontSize(12).FontWeight(600).TextColor(p.text)
+					chainedIdx := 1
+					if a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
+						chainedIdx = 0
+					}
+					if segmentedControl(c.Key("warp-chained-mode-segmented"), p, &chainedIdx, []string{"MASQUE", "WireGuard"}) {
+						if chainedIdx == 0 {
+							a.state.Cloudflare.ChainedMode = warp.ModeMASQUE
+						} else {
+							a.state.Cloudflare.ChainedMode = warp.ModeWireGuard
+						}
+						a.saveState()
+					}
+				})
+				ui.Text(c, cat.CloudflareWarpTransportWireGuardDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+			})
+
+			// MASQUE Prefer HTTP/2 toggle (relevant when either role uses MASQUE)
+			if a.state.Cloudflare.EffectiveDirectMode() == warp.ModeMASQUE || a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
 				ui.Column(c.Key("warp-prefer-h2-box")).Gap(4).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
 					if switchRow(c, p, "toggle-warp-prefer-h2", cat.CloudflareWarpPreferH2(), &a.state.Cloudflare.MasquePreferH2) {
 						a.saveState()
@@ -323,7 +333,8 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 									border = p.accent.Alpha(0.5)
 									fg = p.accent
 								}
-								label := fmt.Sprintf("%s (%dms · %s)", res.Endpoint, res.RTT.Milliseconds(), res.Protocol)
+								lossPct := int(res.LossRate*100 + 0.5)
+								label := fmt.Sprintf("%s (%dms · %d%% loss · %s)", res.Endpoint, res.RTT.Milliseconds(), lossPct, res.Protocol)
 								pillBtn := ui.Button(c.Key(fmt.Sprintf("btn-warp-candidate-%d", idx)), label).
 									FontSize(11).Radius(6).
 									Background(bg).Border(1, border).TextColor(fg).

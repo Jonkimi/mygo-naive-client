@@ -1431,7 +1431,7 @@ func (a *app) triggerWarpEndpointScan() {
 	if a.win != nil {
 		a.win.Invalidate()
 	}
-	mode := a.state.Cloudflare.DefaultMode
+	mode := a.state.Cloudflare.EffectiveDirectMode()
 	preferH2 := a.state.Cloudflare.MasquePreferH2
 	acc := a.state.Cloudflare.Account
 	scanner := a.warpEndpointScanner
@@ -1440,16 +1440,18 @@ func (a *app) triggerWarpEndpointScan() {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		results, err := scanner(ctx, warp.ScanOptions{
 			Mode:           mode,
 			PreferH2:       preferH2,
 			Account:        &acc,
-			TopN:           5,
-			SampleCount:    24,
-			Concurrency:    12,
-			PerProbeTimout: 1800 * time.Millisecond,
+			Dialer:         warp.NewBypassTUNDialer(),
+			TopN:           8,
+			SampleCount:    64,
+			Concurrency:    24,
+			ProbeRounds:    3,
+			PerProbeTimout: 1500 * time.Millisecond,
 		})
 		a.dispatchUI(func() {
 			a.warpScanning = false
@@ -1471,7 +1473,8 @@ func (a *app) triggerWarpEndpointScan() {
 			}
 			best := results[0]
 			a.applyWarpCleanEndpoint(best.Endpoint)
-			a.toast(cat.CloudflareWarpScanSuccess(best.Endpoint, int(best.RTT.Milliseconds())))
+			lossPct := int(best.LossRate*100 + 0.5)
+			a.toast(cat.CloudflareWarpScanSuccess(best.Endpoint, int(best.RTT.Milliseconds()), lossPct))
 		})
 	}()
 }
@@ -1661,9 +1664,20 @@ func (a *app) collectNodeServerIPs() []string {
 			addHost(d)
 		}
 	}
-	// Exclude Cloudflare WARP Anycast endpoints from TUN routing to prevent routing loops for local WARP
-	for _, warpIP := range []string{"162.159.200.1", "162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.198.2", "162.159.204.1"} {
-		addHost(warpIP)
+	// Exclude Cloudflare WARP Anycast subnets from TUN routing to prevent routing loops for local WARP and scans
+	for _, warpCIDR := range []string{
+		"162.159.192.0/24",
+		"162.159.193.0/24",
+		"162.159.195.0/24",
+		"162.159.198.0/24",
+		"162.159.200.0/24",
+		"162.159.204.0/24",
+		"188.114.96.0/22",
+	} {
+		if !seen[warpCIDR] {
+			seen[warpCIDR] = true
+			ips = append(ips, warpCIDR)
+		}
 	}
 	if a.state.Cloudflare.CleanIP != "" {
 		addHost(a.state.Cloudflare.CleanIP)
@@ -2780,11 +2794,8 @@ func (a *app) syncBuiltinWarpService() {
 			cleanIP = fmt.Sprintf("%s:%d", cleanIP, a.state.Cloudflare.CleanPort)
 		}
 
-		warpTransport := config.WarpTransportAuto
-		switch a.state.Cloudflare.DefaultMode {
-		case warp.ModeMASQUE:
-			warpTransport = config.WarpTransportMasque
-		case warp.ModeWireGuard:
+		warpTransport := config.WarpTransportMasque
+		if a.state.Cloudflare.EffectiveDirectMode() == warp.ModeWireGuard {
 			warpTransport = config.WarpTransportWireGuard
 		}
 
