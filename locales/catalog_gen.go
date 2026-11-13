@@ -5472,13 +5472,13 @@ func (msgs Messages) CloudflareWarpAccountNotRegistered() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpAccountNotRegistered", nil)
 }
 
-// CloudflareWarpAccountRegisterBtn says "One-Click Register / Refresh"
+// CloudflareWarpAccountRegisterBtn says "One-Click Register"
 // in the language the app shows.
 func CloudflareWarpAccountRegisterBtn() string {
 	return In(i18n.Locale()).CloudflareWarpAccountRegisterBtn()
 }
 
-// CloudflareWarpAccountRegisterBtn says "One-Click Register / Refresh"
+// CloudflareWarpAccountRegisterBtn says "One-Click Register"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpAccountRegisterBtn() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpAccountRegisterBtn", nil)
@@ -5494,6 +5494,82 @@ func CloudflareWarpAccountRegistering() string {
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpAccountRegistering() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpAccountRegistering", nil)
+}
+
+// CloudflareWarpRefreshBtn says "Refresh Credentials"
+// in the language the app shows.
+func CloudflareWarpRefreshBtn() string { return In(i18n.Locale()).CloudflareWarpRefreshBtn() }
+
+// CloudflareWarpRefreshBtn says "Refresh Credentials"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpRefreshBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpRefreshBtn", nil)
+}
+
+// CloudflareWarpLicenseToggleBtn says "WARP+ Key"
+// in the language the app shows.
+func CloudflareWarpLicenseToggleBtn() string {
+	return In(i18n.Locale()).CloudflareWarpLicenseToggleBtn()
+}
+
+// CloudflareWarpLicenseToggleBtn says "WARP+ Key"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpLicenseToggleBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpLicenseToggleBtn", nil)
+}
+
+// CloudflareWarpLicensePlaceholder says "26-character WARP+ License Key"
+// in the language the app shows.
+func CloudflareWarpLicensePlaceholder() string {
+	return In(i18n.Locale()).CloudflareWarpLicensePlaceholder()
+}
+
+// CloudflareWarpLicensePlaceholder says "26-character WARP+ License Key"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpLicensePlaceholder() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpLicensePlaceholder", nil)
+}
+
+// CloudflareWarpMetricDevice says "Device ID"
+// in the language the app shows.
+func CloudflareWarpMetricDevice() string { return In(i18n.Locale()).CloudflareWarpMetricDevice() }
+
+// CloudflareWarpMetricDevice says "Device ID"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpMetricDevice() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpMetricDevice", nil)
+}
+
+// CloudflareWarpFreeTierBadge says "Free"
+// in the language the app shows.
+func CloudflareWarpFreeTierBadge() string { return In(i18n.Locale()).CloudflareWarpFreeTierBadge() }
+
+// CloudflareWarpFreeTierBadge says "Free"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpFreeTierBadge() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpFreeTierBadge", nil)
+}
+
+// CloudflareWarpUnlimitedBadge says "WARP+ Unlimited"
+// in the language the app shows.
+func CloudflareWarpUnlimitedBadge() string { return In(i18n.Locale()).CloudflareWarpUnlimitedBadge() }
+
+// CloudflareWarpUnlimitedBadge says "WARP+ Unlimited"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpUnlimitedBadge() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpUnlimitedBadge", nil)
+}
+
+// CloudflareWarpUnregisteredHint says "Not registered yet. Click One-Click Register or enable any WARP feature to register automatically."
+// in the language the app shows.
+func CloudflareWarpUnregisteredHint() string {
+	return In(i18n.Locale()).CloudflareWarpUnregisteredHint()
+}
+
+// CloudflareWarpUnregisteredHint says "Not registered yet. Click One-Click Register or enable any WARP feature to register automatically."
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpUnregisteredHint() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpUnregisteredHint", nil)
 }
 
 // CloudflareWarpLicenseTitle says "WARP+ License Key"
@@ -5526,23 +5602,57 @@ func (msgs Messages) CloudflareWarpLicenseBinding() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpLicenseBinding", nil)
 }
 
-// CloudflareWarpTransport says "Direct / Local WARP Protocol"
+// CloudflareWarpDirectSectionTitle says "Direct Local WARP (Direct ➔ WARP)"
+// in the language the app shows.
+func CloudflareWarpDirectSectionTitle() string {
+	return In(i18n.Locale()).CloudflareWarpDirectSectionTitle()
+}
+
+// CloudflareWarpDirectSectionTitle says "Direct Local WARP (Direct ➔ WARP)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpDirectSectionTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpDirectSectionTitle", nil)
+}
+
+// CloudflareWarpChainedSectionTitle says "Chained Proxy WARP (Proxy ➔ WARP)"
+// in the language the app shows.
+func CloudflareWarpChainedSectionTitle() string {
+	return In(i18n.Locale()).CloudflareWarpChainedSectionTitle()
+}
+
+// CloudflareWarpChainedSectionTitle says "Chained Proxy WARP (Proxy ➔ WARP)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpChainedSectionTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpChainedSectionTitle", nil)
+}
+
+// CloudflareWarpDirectBadge says "WARP Direct"
+// in the language the app shows.
+func CloudflareWarpDirectBadge() string { return In(i18n.Locale()).CloudflareWarpDirectBadge() }
+
+// CloudflareWarpDirectBadge says "WARP Direct"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpDirectBadge() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpDirectBadge", nil)
+}
+
+// CloudflareWarpTransport says "Direct Transport Protocol"
 // in the language the app shows.
 func CloudflareWarpTransport() string { return In(i18n.Locale()).CloudflareWarpTransport() }
 
-// CloudflareWarpTransport says "Direct / Local WARP Protocol"
+// CloudflareWarpTransport says "Direct Transport Protocol"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransport() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransport", nil)
 }
 
-// CloudflareWarpChainedTransport says "Proxy + WARP Default Protocol"
+// CloudflareWarpChainedTransport says "Chained Default Protocol"
 // in the language the app shows.
 func CloudflareWarpChainedTransport() string {
 	return In(i18n.Locale()).CloudflareWarpChainedTransport()
 }
 
-// CloudflareWarpChainedTransport says "Proxy + WARP Default Protocol"
+// CloudflareWarpChainedTransport says "Chained Default Protocol"
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpChainedTransport() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpChainedTransport", nil)
@@ -5582,6 +5692,18 @@ func (msgs Messages) CloudflareWarpTransportMasqueDesc() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasqueDesc", nil)
 }
 
+// CloudflareWarpTransportMasqueSummary says "MASQUE (443 H3/H2): HTTPS-disguised transport to bypass ISP UDP QoS; required for TCP-only upstream proxies."
+// in the language the app shows.
+func CloudflareWarpTransportMasqueSummary() string {
+	return In(i18n.Locale()).CloudflareWarpTransportMasqueSummary()
+}
+
+// CloudflareWarpTransportMasqueSummary says "MASQUE (443 H3/H2): HTTPS-disguised transport to bypass ISP UDP QoS; required for TCP-only upstream proxies."
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportMasqueSummary() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportMasqueSummary", nil)
+}
+
 // CloudflareWarpTransportWireGuard says "WireGuard (Lightweight UDP)"
 // in the language the app shows.
 func CloudflareWarpTransportWireGuard() string {
@@ -5616,6 +5738,18 @@ func CloudflareWarpTransportWireGuardDesc() string {
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpTransportWireGuardDesc() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuardDesc", nil)
+}
+
+// CloudflareWarpTransportWireGuardSummary says "WireGuard (UDP): Minimal overhead and high throughput; ideal for chained proxy nodes (TCP-only proxies auto-use MASQU…"
+// in the language the app shows.
+func CloudflareWarpTransportWireGuardSummary() string {
+	return In(i18n.Locale()).CloudflareWarpTransportWireGuardSummary()
+}
+
+// CloudflareWarpTransportWireGuardSummary says "WireGuard (UDP): Minimal overhead and high throughput; ideal for chained proxy nodes (TCP-only proxies auto-use MASQU…"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpTransportWireGuardSummary() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpTransportWireGuardSummary", nil)
 }
 
 // CloudflareWarpPreferH2 says "Prefer HTTP/2 over TCP for MASQUE (Anti UDP QoS)"
@@ -5682,6 +5816,30 @@ func CloudflareWarpChainedEndpointPlaceholder() string {
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpChainedEndpointPlaceholder() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpChainedEndpointPlaceholder", nil)
+}
+
+// CloudflareWarpEndpointModeAuto says "Auto Optimize"
+// in the language the app shows.
+func CloudflareWarpEndpointModeAuto() string {
+	return In(i18n.Locale()).CloudflareWarpEndpointModeAuto()
+}
+
+// CloudflareWarpEndpointModeAuto says "Auto Optimize"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpEndpointModeAuto() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpEndpointModeAuto", nil)
+}
+
+// CloudflareWarpEndpointModeManual says "Manual Override"
+// in the language the app shows.
+func CloudflareWarpEndpointModeManual() string {
+	return In(i18n.Locale()).CloudflareWarpEndpointModeManual()
+}
+
+// CloudflareWarpEndpointModeManual says "Manual Override"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpEndpointModeManual() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpEndpointModeManual", nil)
 }
 
 // CloudflareWarpScanBtn says "One-Click Scan"
@@ -5780,6 +5938,108 @@ func (msgs Messages) CloudflareWarpNoAttachedNodes() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpNoAttachedNodes", nil)
 }
 
+// CloudflareWarpAdvancedTitle says "Advanced Network Settings"
+// in the language the app shows.
+func CloudflareWarpAdvancedTitle() string { return In(i18n.Locale()).CloudflareWarpAdvancedTitle() }
+
+// CloudflareWarpAdvancedTitle says "Advanced Network Settings"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpAdvancedTitle() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpAdvancedTitle", nil)
+}
+
+// CloudflareWarpCustomizedBadge says "Customized"
+// in the language the app shows.
+func CloudflareWarpCustomizedBadge() string { return In(i18n.Locale()).CloudflareWarpCustomizedBadge() }
+
+// CloudflareWarpCustomizedBadge says "Customized"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpCustomizedBadge() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpCustomizedBadge", nil)
+}
+
+// CloudflareWarpResetDefaultBtn says "Reset Default"
+// in the language the app shows.
+func CloudflareWarpResetDefaultBtn() string { return In(i18n.Locale()).CloudflareWarpResetDefaultBtn() }
+
+// CloudflareWarpResetDefaultBtn says "Reset Default"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpResetDefaultBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpResetDefaultBtn", nil)
+}
+
+// CloudflareWarpToastCopiedDeviceID says "Device ID copied"
+// in the language the app shows.
+func CloudflareWarpToastCopiedDeviceID() string {
+	return In(i18n.Locale()).CloudflareWarpToastCopiedDeviceID()
+}
+
+// CloudflareWarpToastCopiedDeviceID says "Device ID copied"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpToastCopiedDeviceID() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpToastCopiedDeviceID", nil)
+}
+
+// CloudflareWarpToastRegFailed says "WARP registration failed: {err}"
+// in the language the app shows.
+func CloudflareWarpToastRegFailed(err string) string {
+	return In(i18n.Locale()).CloudflareWarpToastRegFailed(err)
+}
+
+// CloudflareWarpToastRegFailed says "WARP registration failed: {err}"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpToastRegFailed(err string) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpToastRegFailed", map[string]any{"err": err})
+}
+
+// CloudflareWarpToastRegSuccess says "WARP credentials registered: {ip}"
+// in the language the app shows.
+func CloudflareWarpToastRegSuccess(ip string) string {
+	return In(i18n.Locale()).CloudflareWarpToastRegSuccess(ip)
+}
+
+// CloudflareWarpToastRegSuccess says "WARP credentials registered: {ip}"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpToastRegSuccess(ip string) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpToastRegSuccess", map[string]any{"ip": ip})
+}
+
+// CloudflareWarpToastLicenseEmpty says "License key cannot be empty"
+// in the language the app shows.
+func CloudflareWarpToastLicenseEmpty() string {
+	return In(i18n.Locale()).CloudflareWarpToastLicenseEmpty()
+}
+
+// CloudflareWarpToastLicenseEmpty says "License key cannot be empty"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpToastLicenseEmpty() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpToastLicenseEmpty", nil)
+}
+
+// CloudflareWarpToastLicenseFailed says "Failed to bind License: {err}"
+// in the language the app shows.
+func CloudflareWarpToastLicenseFailed(err string) string {
+	return In(i18n.Locale()).CloudflareWarpToastLicenseFailed(err)
+}
+
+// CloudflareWarpToastLicenseFailed says "Failed to bind License: {err}"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpToastLicenseFailed(err string) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpToastLicenseFailed", map[string]any{"err": err})
+}
+
+// CloudflareWarpToastLicenseSuccess says "WARP+ License bound: {accountType}"
+// in the language the app shows.
+func CloudflareWarpToastLicenseSuccess(accountType string) string {
+	return In(i18n.Locale()).CloudflareWarpToastLicenseSuccess(accountType)
+}
+
+// CloudflareWarpToastLicenseSuccess says "WARP+ License bound: {accountType}"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpToastLicenseSuccess(accountType string) string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpToastLicenseSuccess", map[string]any{"accountType": accountType})
+}
+
 // CloudflareTunnelTitle says "Zero Trust Tunnel Ingress"
 // in the language the app shows.
 func CloudflareTunnelTitle() string { return In(i18n.Locale()).CloudflareTunnelTitle() }
@@ -5798,6 +6058,62 @@ func CloudflareTunnelEnable() string { return In(i18n.Locale()).CloudflareTunnel
 // in the language of msgs.
 func (msgs Messages) CloudflareTunnelEnable() string {
 	return Catalog.Format(msgs.locale, "cloudflareTunnelEnable", nil)
+}
+
+// CloudflareTunnelStatusWaiting says "Waiting for Gateway / Token"
+// in the language the app shows.
+func CloudflareTunnelStatusWaiting() string { return In(i18n.Locale()).CloudflareTunnelStatusWaiting() }
+
+// CloudflareTunnelStatusWaiting says "Waiting for Gateway / Token"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelStatusWaiting() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelStatusWaiting", nil)
+}
+
+// CloudflareTunnelNeedGatewayHint says "Unified Gateway is not running. Start Gateway to bring Tunnel online."
+// in the language the app shows.
+func CloudflareTunnelNeedGatewayHint() string {
+	return In(i18n.Locale()).CloudflareTunnelNeedGatewayHint()
+}
+
+// CloudflareTunnelNeedGatewayHint says "Unified Gateway is not running. Start Gateway to bring Tunnel online."
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelNeedGatewayHint() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelNeedGatewayHint", nil)
+}
+
+// CloudflareTunnelNeedTokenHint says "Tunnel is enabled. Paste a Tunnel Token below to connect."
+// in the language the app shows.
+func CloudflareTunnelNeedTokenHint() string { return In(i18n.Locale()).CloudflareTunnelNeedTokenHint() }
+
+// CloudflareTunnelNeedTokenHint says "Tunnel is enabled. Paste a Tunnel Token below to connect."
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelNeedTokenHint() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelNeedTokenHint", nil)
+}
+
+// CloudflareTunnelEnableGatewayBtn says "Start Gateway"
+// in the language the app shows.
+func CloudflareTunnelEnableGatewayBtn() string {
+	return In(i18n.Locale()).CloudflareTunnelEnableGatewayBtn()
+}
+
+// CloudflareTunnelEnableGatewayBtn says "Start Gateway"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelEnableGatewayBtn() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelEnableGatewayBtn", nil)
+}
+
+// CloudflareTunnelGatewayStartFailed says "Failed to start Gateway: {err}"
+// in the language the app shows.
+func CloudflareTunnelGatewayStartFailed(err string) string {
+	return In(i18n.Locale()).CloudflareTunnelGatewayStartFailed(err)
+}
+
+// CloudflareTunnelGatewayStartFailed says "Failed to start Gateway: {err}"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelGatewayStartFailed(err string) string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelGatewayStartFailed", map[string]any{"err": err})
 }
 
 // CloudflareTunnelToken says "Tunnel Token"
@@ -5822,6 +6138,46 @@ func (msgs Messages) CloudflareTunnelTokenPlaceholder() string {
 	return Catalog.Format(msgs.locale, "cloudflareTunnelTokenPlaceholder", nil)
 }
 
+// CloudflareTunnelPasteToken says "Paste Token"
+// in the language the app shows.
+func CloudflareTunnelPasteToken() string { return In(i18n.Locale()).CloudflareTunnelPasteToken() }
+
+// CloudflareTunnelPasteToken says "Paste Token"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelPasteToken() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelPasteToken", nil)
+}
+
+// CloudflareTunnelToastPasted says "Tunnel Token pasted"
+// in the language the app shows.
+func CloudflareTunnelToastPasted() string { return In(i18n.Locale()).CloudflareTunnelToastPasted() }
+
+// CloudflareTunnelToastPasted says "Tunnel Token pasted"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelToastPasted() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelToastPasted", nil)
+}
+
+// CloudflareTunnelShowToken says "Show"
+// in the language the app shows.
+func CloudflareTunnelShowToken() string { return In(i18n.Locale()).CloudflareTunnelShowToken() }
+
+// CloudflareTunnelShowToken says "Show"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelShowToken() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelShowToken", nil)
+}
+
+// CloudflareTunnelHideToken says "Hide"
+// in the language the app shows.
+func CloudflareTunnelHideToken() string { return In(i18n.Locale()).CloudflareTunnelHideToken() }
+
+// CloudflareTunnelHideToken says "Hide"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelHideToken() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelHideToken", nil)
+}
+
 // CloudflareTunnelProtocol says "Tunnel Protocol"
 // in the language the app shows.
 func CloudflareTunnelProtocol() string { return In(i18n.Locale()).CloudflareTunnelProtocol() }
@@ -5830,6 +6186,16 @@ func CloudflareTunnelProtocol() string { return In(i18n.Locale()).CloudflareTunn
 // in the language of msgs.
 func (msgs Messages) CloudflareTunnelProtocol() string {
 	return Catalog.Format(msgs.locale, "cloudflareTunnelProtocol", nil)
+}
+
+// CloudflareTunnelProtocolDesc says "Choose transport between cloudflared and Cloudflare edge (Auto recommended)"
+// in the language the app shows.
+func CloudflareTunnelProtocolDesc() string { return In(i18n.Locale()).CloudflareTunnelProtocolDesc() }
+
+// CloudflareTunnelProtocolDesc says "Choose transport between cloudflared and Cloudflare edge (Auto recommended)"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelProtocolDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelProtocolDesc", nil)
 }
 
 // CloudflareTunnelHAConnections says "HA Connections"
@@ -5850,6 +6216,18 @@ func CloudflareTunnelPostQuantum() string { return In(i18n.Locale()).CloudflareT
 // in the language of msgs.
 func (msgs Messages) CloudflareTunnelPostQuantum() string {
 	return Catalog.Format(msgs.locale, "cloudflareTunnelPostQuantum", nil)
+}
+
+// CloudflareTunnelPostQuantumDesc says "Enable hybrid post-quantum key agreement for tunnel connections"
+// in the language the app shows.
+func CloudflareTunnelPostQuantumDesc() string {
+	return In(i18n.Locale()).CloudflareTunnelPostQuantumDesc()
+}
+
+// CloudflareTunnelPostQuantumDesc says "Enable hybrid post-quantum key agreement for tunnel connections"
+// in the language of msgs.
+func (msgs Messages) CloudflareTunnelPostQuantumDesc() string {
+	return Catalog.Format(msgs.locale, "cloudflareTunnelPostQuantumDesc", nil)
 }
 
 // CloudflareTunnelConnected says "Connected"

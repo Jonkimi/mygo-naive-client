@@ -644,25 +644,39 @@
   "cloudflareWarpAccountTitle": "WARP 设备与凭证",
   "cloudflareWarpAccountRegistered": "已注册",
   "cloudflareWarpAccountNotRegistered": "未注册",
-  "cloudflareWarpAccountRegisterBtn": "一键注册 / 刷新凭证",
+  "cloudflareWarpAccountRegisterBtn": "一键注册",
   "cloudflareWarpAccountRegistering": "正在注册...",
+  "cloudflareWarpRefreshBtn": "刷新凭证",
+  "cloudflareWarpLicenseToggleBtn": "WARP+ 密钥",
+  "cloudflareWarpLicensePlaceholder": "输入 26 位 WARP+ License 密钥",
+  "cloudflareWarpMetricDevice": "设备 ID",
+  "cloudflareWarpFreeTierBadge": "Free",
+  "cloudflareWarpUnlimitedBadge": "WARP+ Unlimited",
+  "cloudflareWarpUnregisteredHint": "尚未注册设备凭证，点击右上角「一键注册」或开启任意 WARP 功能时将自动完成注册。",
   "cloudflareWarpLicenseTitle": "WARP+ License 密钥",
   "cloudflareWarpLicenseBindBtn": "绑定 License",
   "cloudflareWarpLicenseBinding": "正在绑定...",
-  "cloudflareWarpTransport": "本地 / 直连 WARP 默认协议",
-  "cloudflareWarpChainedTransport": "代理链式 WARP 默认协议",
+  "cloudflareWarpDirectSectionTitle": "本机直连 WARP (Direct ➔ WARP)",
+  "cloudflareWarpChainedSectionTitle": "代理链式 WARP (Proxy ➔ WARP)",
+  "cloudflareWarpDirectBadge": "WARP 直连",
+  "cloudflareWarpTransport": "直连传输协议",
+  "cloudflareWarpChainedTransport": "代理链式默认协议",
   "cloudflareWarpTransportMasque": "MASQUE (抗封锁 / 抗 QoS)",
   "cloudflareWarpTransportMasqueShort": "MASQUE (443 伪装)",
   "cloudflareWarpTransportMasqueDesc": "使用 Cloudflare 专有 MASQUE 协议（443 端口 HTTP/3 + HTTP/2 回退），伪装为常规 HTTPS 流量。适合国内本地直连应对运营商 UDP QoS 或审查阻断，也是 NaiveProxy / HTTP 等纯 TCP 前置代理的唯一可用协议。",
+  "cloudflareWarpTransportMasqueSummary": "MASQUE (443 伪装)：伪装为常规 HTTPS，适合直连抗 UDP QoS；也是 NaiveProxy 等纯 TCP 前置的唯一协议。",
   "cloudflareWarpTransportWireGuard": "WireGuard (轻量优选)",
   "cloudflareWarpTransportWireGuardShort": "WireGuard (轻量 UDP)",
   "cloudflareWarpTransportWireGuardDesc": "使用轻量级 WireGuard（支持 50+ Cloudflare 官方抗 QoS UDP 端口 + 3 字节 Reserved）。协议开销极低、吞吐高，推荐用于代理链式节点后接 WARP（纯 TCP 前置节点仍会自动使用 MASQUE HTTP/2）。",
+  "cloudflareWarpTransportWireGuardSummary": "WireGuard (轻量 UDP)：低开销高吞吐，推荐用于代理链式节点后接 WARP（纯 TCP 前置将自动使用 MASQUE H2）。",
   "cloudflareWarpPreferH2": "MASQUE 优先使用 HTTP/2 (抗 UDP QoS 限速)",
   "cloudflareWarpPreferH2Desc": "开启后，MASQUE 将优先使用基于 TCP 443 的 HTTP/2 建立隧道，失败时再回退 HTTP/3 (QUIC)。推荐在运营商对 UDP 限速（QoS）或高丢包网络下开启。",
   "cloudflareWarpCleanEndpoint": "优选 Anycast 端点 (仅直连 WARP)",
   "cloudflareWarpCleanEndpointPlaceholder": "留空自动并发优选本地最低延迟端点",
   "cloudflareWarpCleanEndpointDesc": "仅作用于直连 WARP 节点（如内置 WARP）。代理链式开启 WARP 的节点默认各自通过自身落地代理独立自动优选节点所在国家的最佳端点。",
   "cloudflareWarpChainedEndpointPlaceholder": "留空通过当前节点出口独立自动优选最佳端点（推荐）",
+  "cloudflareWarpEndpointModeAuto": "自动优选",
+  "cloudflareWarpEndpointModeManual": "手动指定",
   "cloudflareWarpScanBtn": "一键测速优选",
   "cloudflareWarpScanningBtn": "测速中...",
   "cloudflareWarpResetAutoBtn": "恢复自动",
@@ -684,13 +698,58 @@
   },
   "cloudflareWarpAttachedNodes": "已挂载 WARP 出口的节点",
   "cloudflareWarpNoAttachedNodes": "暂无节点启用 WARP 出口（可在节点编辑中开启）",
+  "cloudflareWarpAdvancedTitle": "高级网络参数",
+  "cloudflareWarpCustomizedBadge": "已自定义",
+  "cloudflareWarpResetDefaultBtn": "恢复默认",
+  "cloudflareWarpToastCopiedDeviceID": "已复制设备 ID",
+  "cloudflareWarpToastRegFailed": "WARP 注册失败: {err}",
+  "@cloudflareWarpToastRegFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
+  "cloudflareWarpToastRegSuccess": "WARP 凭证注册成功: {ip}",
+  "@cloudflareWarpToastRegSuccess": {
+    "placeholders": {
+      "ip": { "type": "String" }
+    }
+  },
+  "cloudflareWarpToastLicenseEmpty": "License 密钥不能为空",
+  "cloudflareWarpToastLicenseFailed": "绑定 License 失败: {err}",
+  "@cloudflareWarpToastLicenseFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
+  "cloudflareWarpToastLicenseSuccess": "WARP+ License 绑定成功: {accountType}",
+  "@cloudflareWarpToastLicenseSuccess": {
+    "placeholders": {
+      "accountType": { "type": "String" }
+    }
+  },
   "cloudflareTunnelTitle": "Zero Trust 隧道穿透",
   "cloudflareTunnelEnable": "启用 Cloudflare Tunnel 入站",
+  "cloudflareTunnelStatusWaiting": "等待网关或 Token",
+  "cloudflareTunnelNeedGatewayHint": "统一网关尚未运行，启动网关后 Tunnel 即可上线。",
+  "cloudflareTunnelNeedTokenHint": "已启用隧道，请在下方粘贴 Tunnel Token 以建立连接。",
+  "cloudflareTunnelEnableGatewayBtn": "启动网关",
+  "cloudflareTunnelGatewayStartFailed": "启动网关失败: {err}",
+  "@cloudflareTunnelGatewayStartFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
   "cloudflareTunnelToken": "Tunnel Token",
   "cloudflareTunnelTokenPlaceholder": "粘贴 Cloudflare Zero Trust 控制台生成的隧道 Token",
+  "cloudflareTunnelPasteToken": "粘贴 Token",
+  "cloudflareTunnelToastPasted": "已粘贴 Tunnel Token",
+  "cloudflareTunnelShowToken": "显示",
+  "cloudflareTunnelHideToken": "隐藏",
   "cloudflareTunnelProtocol": "隧道连接协议",
+  "cloudflareTunnelProtocolDesc": "选择与 Cloudflare 边缘节点建立隧道的传输协议（推荐 Auto）",
   "cloudflareTunnelHAConnections": "高可用连接数",
   "cloudflareTunnelPostQuantum": "后量子混合加密",
+  "cloudflareTunnelPostQuantumDesc": "为隧道连接启用抗量子混合密钥协商",
   "cloudflareTunnelConnected": "已连接",
   "cloudflareTunnelDisconnected": "未连接",
   "nodeEditorEnableWarp": "启用 WARP 出口匿名",

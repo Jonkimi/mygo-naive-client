@@ -660,25 +660,39 @@
   "cloudflareWarpAccountTitle": "WARP Device & Credentials",
   "cloudflareWarpAccountRegistered": "Registered",
   "cloudflareWarpAccountNotRegistered": "Not Registered",
-  "cloudflareWarpAccountRegisterBtn": "One-Click Register / Refresh",
+  "cloudflareWarpAccountRegisterBtn": "One-Click Register",
   "cloudflareWarpAccountRegistering": "Registering...",
+  "cloudflareWarpRefreshBtn": "Refresh Credentials",
+  "cloudflareWarpLicenseToggleBtn": "WARP+ Key",
+  "cloudflareWarpLicensePlaceholder": "26-character WARP+ License Key",
+  "cloudflareWarpMetricDevice": "Device ID",
+  "cloudflareWarpFreeTierBadge": "Free",
+  "cloudflareWarpUnlimitedBadge": "WARP+ Unlimited",
+  "cloudflareWarpUnregisteredHint": "Not registered yet. Click One-Click Register or enable any WARP feature to register automatically.",
   "cloudflareWarpLicenseTitle": "WARP+ License Key",
   "cloudflareWarpLicenseBindBtn": "Bind License",
   "cloudflareWarpLicenseBinding": "Binding...",
-  "cloudflareWarpTransport": "Direct / Local WARP Protocol",
-  "cloudflareWarpChainedTransport": "Proxy + WARP Default Protocol",
+  "cloudflareWarpDirectSectionTitle": "Direct Local WARP (Direct ➔ WARP)",
+  "cloudflareWarpChainedSectionTitle": "Chained Proxy WARP (Proxy ➔ WARP)",
+  "cloudflareWarpDirectBadge": "WARP Direct",
+  "cloudflareWarpTransport": "Direct Transport Protocol",
+  "cloudflareWarpChainedTransport": "Chained Default Protocol",
   "cloudflareWarpTransportMasque": "MASQUE (Anti-QoS / Censorship)",
   "cloudflareWarpTransportMasqueShort": "MASQUE (443 H3/H2)",
   "cloudflareWarpTransportMasqueDesc": "Cloudflare's proprietary MASQUE protocol over port 443 (HTTP/3 with HTTP/2 fallback). Recommended for local/direct connections to bypass ISP UDP QoS or censorship, and required for TCP-only upstream proxies (NaiveProxy / HTTP).",
+  "cloudflareWarpTransportMasqueSummary": "MASQUE (443 H3/H2): HTTPS-disguised transport to bypass ISP UDP QoS; required for TCP-only upstream proxies.",
   "cloudflareWarpTransportWireGuard": "WireGuard (Lightweight UDP)",
   "cloudflareWarpTransportWireGuardShort": "WireGuard (Lightweight)",
   "cloudflareWarpTransportWireGuardDesc": "Classic WireGuard over UDP with Cloudflare's 3-byte reserved client ID and 50+ anti-QoS ports. Lowest overhead and highest throughput; recommended as the default for chained proxy+WARP nodes (automatically uses MASQUE H2 on TCP-only proxies).",
+  "cloudflareWarpTransportWireGuardSummary": "WireGuard (UDP): Minimal overhead and high throughput; ideal for chained proxy nodes (TCP-only proxies auto-use MASQUE H2).",
   "cloudflareWarpPreferH2": "Prefer HTTP/2 over TCP for MASQUE (Anti UDP QoS)",
   "cloudflareWarpPreferH2Desc": "Tries MASQUE over HTTP/2 (TCP 443) before HTTP/3 (QUIC), falling back to HTTP/3 if HTTP/2 fails. Recommended when your ISP throttles or drops UDP/QUIC traffic.",
   "cloudflareWarpCleanEndpoint": "Clean Anycast Endpoint (Direct WARP)",
   "cloudflareWarpCleanEndpointPlaceholder": "Leave blank for automatic per-network optimization",
   "cloudflareWarpCleanEndpointDesc": "Applies only to direct WARP nodes (such as Built-in Direct WARP). Chained proxy+WARP nodes automatically benchmark and select the lowest-RTT Anycast endpoint from each node's own country/egress.",
   "cloudflareWarpChainedEndpointPlaceholder": "Leave blank for auto-optimization via this proxy's egress (recommended)",
+  "cloudflareWarpEndpointModeAuto": "Auto Optimize",
+  "cloudflareWarpEndpointModeManual": "Manual Override",
   "cloudflareWarpScanBtn": "One-Click Scan",
   "cloudflareWarpScanningBtn": "Scanning...",
   "cloudflareWarpResetAutoBtn": "Auto",
@@ -700,13 +714,58 @@
   },
   "cloudflareWarpAttachedNodes": "Nodes with WARP Egress Enabled",
   "cloudflareWarpNoAttachedNodes": "No nodes have WARP egress enabled (can be enabled in node editor)",
+  "cloudflareWarpAdvancedTitle": "Advanced Network Settings",
+  "cloudflareWarpCustomizedBadge": "Customized",
+  "cloudflareWarpResetDefaultBtn": "Reset Default",
+  "cloudflareWarpToastCopiedDeviceID": "Device ID copied",
+  "cloudflareWarpToastRegFailed": "WARP registration failed: {err}",
+  "@cloudflareWarpToastRegFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
+  "cloudflareWarpToastRegSuccess": "WARP credentials registered: {ip}",
+  "@cloudflareWarpToastRegSuccess": {
+    "placeholders": {
+      "ip": { "type": "String" }
+    }
+  },
+  "cloudflareWarpToastLicenseEmpty": "License key cannot be empty",
+  "cloudflareWarpToastLicenseFailed": "Failed to bind License: {err}",
+  "@cloudflareWarpToastLicenseFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
+  "cloudflareWarpToastLicenseSuccess": "WARP+ License bound: {accountType}",
+  "@cloudflareWarpToastLicenseSuccess": {
+    "placeholders": {
+      "accountType": { "type": "String" }
+    }
+  },
   "cloudflareTunnelTitle": "Zero Trust Tunnel Ingress",
   "cloudflareTunnelEnable": "Enable Cloudflare Tunnel Ingress",
+  "cloudflareTunnelStatusWaiting": "Waiting for Gateway / Token",
+  "cloudflareTunnelNeedGatewayHint": "Unified Gateway is not running. Start Gateway to bring Tunnel online.",
+  "cloudflareTunnelNeedTokenHint": "Tunnel is enabled. Paste a Tunnel Token below to connect.",
+  "cloudflareTunnelEnableGatewayBtn": "Start Gateway",
+  "cloudflareTunnelGatewayStartFailed": "Failed to start Gateway: {err}",
+  "@cloudflareTunnelGatewayStartFailed": {
+    "placeholders": {
+      "err": { "type": "String" }
+    }
+  },
   "cloudflareTunnelToken": "Tunnel Token",
   "cloudflareTunnelTokenPlaceholder": "Paste Tunnel Token from Cloudflare Zero Trust dashboard",
+  "cloudflareTunnelPasteToken": "Paste Token",
+  "cloudflareTunnelToastPasted": "Tunnel Token pasted",
+  "cloudflareTunnelShowToken": "Show",
+  "cloudflareTunnelHideToken": "Hide",
   "cloudflareTunnelProtocol": "Tunnel Protocol",
+  "cloudflareTunnelProtocolDesc": "Choose transport between cloudflared and Cloudflare edge (Auto recommended)",
   "cloudflareTunnelHAConnections": "HA Connections",
   "cloudflareTunnelPostQuantum": "Post-Quantum Cryptography",
+  "cloudflareTunnelPostQuantumDesc": "Enable hybrid post-quantum key agreement for tunnel connections",
   "cloudflareTunnelConnected": "Connected",
   "cloudflareTunnelDisconnected": "Disconnected",
   "nodeEditorEnableWarp": "Enable WARP Egress Anonymity",

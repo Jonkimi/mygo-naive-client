@@ -195,6 +195,8 @@ type app struct {
 	warpRegistering        bool
 	warpBindingLicense     bool
 	warpScanning           bool
+	warpShowLicenseForm    bool
+	warpShowAdvanced       bool
 	warpScanResults        []warp.EndpointCandidateResult
 	warpEndpointScanner    func(context.Context, warp.ScanOptions) ([]warp.EndpointCandidateResult, error)
 	warpLicenseInput       string
@@ -1346,13 +1348,14 @@ func (a *app) triggerWarpRegister() {
 		defer cancel()
 		acc, err := cli.ProvisionAll(ctx, a.state.Cloudflare.Account, a.warpLicenseInput)
 		a.dispatchUI(func() {
+			cat := a.catalog()
 			if err != nil {
-				a.toast("WARP 注册失败: " + err.Error())
+				a.toast(cat.CloudflareWarpToastRegFailed(err.Error()))
 				return
 			}
 			a.state.Cloudflare.Account = acc
 			a.saveState()
-			a.toast("WARP 凭证注册成功: " + acc.IPv4)
+			a.toast(cat.CloudflareWarpToastRegSuccess(acc.IPv4))
 			for _, svc := range a.state.Services {
 				if (svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP) && a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
 					a.mgr.ProbeService(svc, a.probeURLForService(svc))
@@ -1365,7 +1368,7 @@ func (a *app) triggerWarpRegister() {
 func (a *app) triggerWarpBindLicense() {
 	key := strings.TrimSpace(a.warpLicenseInput)
 	if key == "" {
-		a.toast("License 密钥不能为空")
+		a.toast(a.catalog().CloudflareWarpToastLicenseEmpty())
 		return
 	}
 	if a.warpBindingLicense {
@@ -1389,13 +1392,15 @@ func (a *app) triggerWarpBindLicense() {
 		defer cancel()
 		err := cli.BindLicense(ctx, &a.state.Cloudflare.Account, key)
 		a.dispatchUI(func() {
+			cat := a.catalog()
 			if err != nil {
-				a.toast("绑定 License 失败: " + err.Error())
+				a.toast(cat.CloudflareWarpToastLicenseFailed(err.Error()))
 				return
 			}
 			a.state.Cloudflare.Account.LicenseKey = key
+			a.warpShowLicenseForm = false
 			a.saveState()
-			a.toast("WARP+ License 绑定成功: " + a.state.Cloudflare.Account.AccountType)
+			a.toast(cat.CloudflareWarpToastLicenseSuccess(a.state.Cloudflare.Account.AccountType))
 		})
 	}()
 }

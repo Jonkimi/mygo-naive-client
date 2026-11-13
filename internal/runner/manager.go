@@ -237,11 +237,12 @@ func (m *Manager) ensureInstanceLocked(id string) *instance {
 // SetStatusForTest overrides the status of a service for testing purposes.
 func (m *Manager) SetStatusForTest(id string, st Status) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	inst := m.ensureInstanceLocked(id)
 	inst.status = st
-	if m.onChange != nil {
-		m.onChange()
+	onChange := m.onChange
+	m.mu.Unlock()
+	if onChange != nil {
+		onChange()
 	}
 }
 

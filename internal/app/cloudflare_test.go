@@ -967,3 +967,162 @@ func TestCollectNodeServerIPs_IncludesWARPAnycastCIDRs(t *testing.T) {
 	}
 }
 
+func TestCloudflarePage_ProgressiveDisclosureAndAttachedNodeDrawer(t *testing.T) {
+	chainedSvc := config.Service{
+		ID:         "vless-warp-drawer",
+		Name:       "JP-VLESS-WARP",
+		Protocol:   config.ProtoVLESS,
+		Server:     "jp.example.com",
+		ServerPort: 443,
+		UUID:       "11111111-2222-3333-4444-555555555555",
+		EnableWARP: true,
+	}
+	a, tt, _ := newTestApp(t, []config.Service{chainedSvc})
+	a.activeTab = TabCloudflare
+	tt.SetSize(960, 900)
+	tt.Frame()
+
+	cat := a.catalog()
+
+	// 1. License form and Advanced settings are collapsed by default
+	if _, ok := tt.Find(cat.CloudflareWarpLicenseBindBtn()); ok {
+		t.Fatalf("expected license bind form to be collapsed initially")
+	}
+	if _, ok := tt.Find(cat.CloudflareWarpProbeURL()); ok {
+		t.Fatalf("expected advanced probe URL input to be collapsed initially")
+	}
+
+	// 2. Toggle WARP+ License form open
+	if err := tt.Click(cat.CloudflareWarpLicenseToggleBtn()); err != nil {
+		t.Fatalf("click license toggle: %v", err)
+	}
+	tt.Frame()
+	if !a.warpShowLicenseForm {
+		t.Fatalf("expected warpShowLicenseForm to be true")
+	}
+	if _, ok := tt.Find(cat.CloudflareWarpLicenseBindBtn()); !ok {
+		t.Fatalf("expected license bind button after expanding form")
+	}
+	// Collapse it again so below-the-fold layout stays reachable
+	if err := tt.Click(cat.CloudflareWarpLicenseToggleBtn()); err != nil {
+		t.Fatalf("collapse license toggle: %v", err)
+	}
+	tt.Frame()
+
+	// 3. Chained default protocol switches summary dynamically
+	if !tt.HasText(cat.CloudflareWarpTransportWireGuardSummary()) {
+		t.Fatalf("expected WireGuard chained summary initially")
+	}
+	if err := tt.Click("MASQUE"); err != nil {
+		t.Fatalf("click chained MASQUE segment: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.ChainedMode != warp.ModeMASQUE {
+		t.Fatalf("expected ChainedMode = %q, got %q", warp.ModeMASQUE, a.state.Cloudflare.ChainedMode)
+	}
+	if !tt.HasText(cat.CloudflareWarpTransportMasqueSummary()) {
+		t.Fatalf("expected MASQUE chained summary after switching segment")
+	}
+
+	// 4. Scroll down to attached nodes and Advanced settings
+	a.cloudflareScroll.Y = 450
+	tt.Frame()
+
+	// Click attached node row -> opens NodeDrawer for that service
+	if err := tt.Click("JP-VLESS-WARP"); err != nil {
+		t.Fatalf("click attached node row: %v", err)
+	}
+	tt.Frame()
+	if a.activeNodeDrawerID != chainedSvc.ID {
+		t.Fatalf("expected activeNodeDrawerID = %q, got %q", chainedSvc.ID, a.activeNodeDrawerID)
+	}
+	a.activeNodeDrawerID = ""
+	tt.Frame()
+
+	// 5. Expand Advanced Network Settings and verify ProbeURL persistence + reset
+	if err := tt.Click(cat.CloudflareWarpAdvancedTitle()); err != nil {
+		t.Fatalf("click advanced settings header: %v", err)
+	}
+	tt.Frame()
+	if !a.warpShowAdvanced {
+		t.Fatalf("expected warpShowAdvanced = true")
+	}
+	a.cloudflareScroll.Y = 550
+	tt.Frame()
+
+	probeRect, ok := tt.Find(cat.CloudflareWarpProbeURL())
+	if !ok {
+		t.Fatalf("expected probe URL label after expanding advanced settings")
+	}
+	// Click inside the TextInput directly below the Probe URL label
+	tt.ClickAt(probeRect.X+60, probeRect.Y+probeRect.H+16)
+	tt.Type("http://example.com/204")
+	tt.Frame()
+	if a.state.Cloudflare.ProbeURL != "http://example.com/204" {
+		t.Fatalf("expected ProbeURL persisted, got %q", a.state.Cloudflare.ProbeURL)
+	}
+	if err := tt.Click(cat.CloudflareWarpResetDefaultBtn()); err != nil {
+		t.Fatalf("click reset probe URL: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.ProbeURL != "" {
+		t.Fatalf("expected ProbeURL cleared after reset, got %q", a.state.Cloudflare.ProbeURL)
+	}
+}
+
+func TestCloudflareTunnelView_GatewayHintPasteAndIdleBudget(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabCloudflare
+	a.cloudflareSubTab = 1
+	a.state.GatewayEnabled = false
+	a.saveState()
+	tt.Frame()
+
+	cat := a.catalog()
+
+	// 1. Enable Tunnel while Gateway is off -> shows need-gateway banner
+	if err := tt.Click(cat.CloudflareTunnelEnable()); err != nil {
+		t.Fatalf("click tunnel enable: %v", err)
+	}
+	tt.Frame()
+	if !a.state.Cloudflare.Tunnel.Enabled {
+		t.Fatalf("expected Tunnel.Enabled = true")
+	}
+	if !tt.HasText(cat.CloudflareTunnelNeedGatewayHint()) {
+		t.Fatalf("expected gateway dependency hint when GatewayEnabled is false")
+	}
+
+	// 2. Paste Tunnel Token from clipboard
+	a.clipboardMem = "tok-paste-987654"
+	if err := tt.Click(cat.CloudflareTunnelPasteToken()); err != nil {
+		t.Fatalf("click paste tunnel token: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.Tunnel.Token != "tok-paste-987654" {
+		t.Fatalf("expected pasted token, got %q", a.state.Cloudflare.Tunnel.Token)
+	}
+
+	// 3. Toggle token visibility
+	if err := tt.Click(cat.CloudflareTunnelShowToken()); err != nil {
+		t.Fatalf("click show token: %v", err)
+	}
+	tt.Frame()
+	if !a.tunnelTokenVisible {
+		t.Fatalf("expected tunnelTokenVisible = true")
+	}
+
+	// 4. Verify idle frame budget on both Cloudflare subtabs
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatalf("idle Cloudflare Tunnel view should not continuously request animation frames")
+	}
+	a.cloudflareSubTab = 0
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatalf("idle Cloudflare WARP view should not continuously request animation frames")
+	}
+}
+
+
