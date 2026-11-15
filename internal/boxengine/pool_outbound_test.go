@@ -1156,3 +1156,249 @@ func TestPoolOutbound_NonTLS_RelaxedTimeout(t *testing.T) {
 	}
 }
 
+// Regression: when sidecar node outbounds are wrapped by blockerOutbound (as done by
+// blockerOutboundRegistry.CreateOutbound), the 1-4ms local loopback dial must not prematurely
+// consume sourceKey and overwrite the real remote TTFB RTT measured by wrapFirstRTTConn.
+func TestPoolOutbound_BlockerWrappedSidecarRecordsRealRTT(t *testing.T) {
+	t.Run("pool sidecar candidate wrapped by blockerOutbound", func(t *testing.T) {
+		bl := blocker.NewEngine(blocker.Options{})
+		bl.Logger().SetDedupWindow(0)
+
+		logID := bl.Logger().RecordWithChain("api.example.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> node-test")
+		bl.Logger().BindSourceConn("127.0.0.1:54321", logID)
+
+		clientConn, serverConn := net.Pipe()
+		defer clientConn.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer serverConn.Close()
+			buf := make([]byte, 64)
+			_, _ = serverConn.Read(buf)
+			time.Sleep(40 * time.Millisecond)
+			_, _ = serverConn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		}()
+
+		provider := &testNodeProvider{
+			candidates: map[string][]string{
+				"PROXY_POOL": {"test"},
+			},
+			sidecars: map[string]bool{
+				"test":      true,
+				"node-test": true,
+			},
+		}
+		rawSidecar := &funcMockOutbound{
+			tag: "node-test",
+			dialFn: func() (net.Conn, error) {
+				time.Sleep(1 * time.Millisecond)
+				return clientConn, nil
+			},
+		}
+		provider.nodes = map[string]adapter.Outbound{
+			"test": &blockerOutbound{
+				Outbound: rawSidecar,
+				blocker:  bl,
+				provider: provider,
+			},
+		}
+
+		poolOb := NewPoolOutbound(PoolOutboundOptions{
+			Tag:          "PROXY_POOL",
+			PoolTag:      "PROXY_POOL",
+			NodeProvider: provider,
+			Blocker:      bl,
+		})
+
+		inboundCtx := &adapter.InboundContext{
+			Source: M.ParseSocksaddr("127.0.0.1:54321"),
+		}
+		ctx := adapter.WithContext(context.Background(), inboundCtx)
+		conn, err := poolOb.DialContext(ctx, "tcp", M.ParseSocksaddr("api.example.com:80"))
+		if err != nil {
+			t.Fatalf("DialContext failed: %v", err)
+		}
+		defer conn.Close()
+
+		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+			t.Fatalf("Write failed: %v", err)
+		}
+		resp := make([]byte, 64)
+		if n, err := conn.Read(resp); err != nil || n == 0 {
+			t.Fatalf("Read failed: n=%d, err=%v", n, err)
+		}
+		<-done
+
+		entries := bl.Logger().GetEntries(10)
+		if len(entries) == 0 {
+			t.Fatalf("expected log entries")
+		}
+		if entries[0].Duration < 35*time.Millisecond {
+			t.Errorf("expected real TTFB duration >= 35ms (not 1-4ms loopback dial), got %v", entries[0].Duration)
+		}
+		if entries[0].Error != "" {
+			t.Errorf("expected no error on log entry, got %q", entries[0].Error)
+		}
+	})
+
+	t.Run("pool failover does not consume sourceKey on first candidate failure", func(t *testing.T) {
+		bl := blocker.NewEngine(blocker.Options{})
+		bl.Logger().SetDedupWindow(0)
+
+		logID := bl.Logger().RecordWithChain("failover.example.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> PROXY_POOL -> node-2")
+		bl.Logger().BindSourceConn("127.0.0.1:54322", logID)
+
+		clientConn, serverConn := net.Pipe()
+		defer clientConn.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer serverConn.Close()
+			buf := make([]byte, 64)
+			_, _ = serverConn.Read(buf)
+			time.Sleep(40 * time.Millisecond)
+			_, _ = serverConn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		}()
+
+		provider := &testNodeProvider{
+			candidates: map[string][]string{
+				"PROXY_POOL": {"node-1", "node-2"},
+			},
+			sidecars: map[string]bool{
+				"node-1": true,
+				"node-2": true,
+			},
+		}
+		tried1 := false
+		cand1 := &funcMockOutbound{
+			tag: "node-1",
+			dialFn: func() (net.Conn, error) {
+				tried1 = true
+				return nil, errors.New("connection refused")
+			},
+		}
+		cand2 := &funcMockOutbound{
+			tag: "node-2",
+			dialFn: func() (net.Conn, error) {
+				time.Sleep(1 * time.Millisecond)
+				return clientConn, nil
+			},
+		}
+		provider.nodes = map[string]adapter.Outbound{
+			"node-1": &blockerOutbound{Outbound: cand1, blocker: bl, provider: provider},
+			"node-2": &blockerOutbound{Outbound: cand2, blocker: bl, provider: provider},
+		}
+
+		poolOb := NewPoolOutbound(PoolOutboundOptions{
+			Tag:          "PROXY_POOL",
+			PoolTag:      "PROXY_POOL",
+			NodeProvider: provider,
+			Blocker:      bl,
+		})
+
+		inboundCtx := &adapter.InboundContext{
+			Source: M.ParseSocksaddr("127.0.0.1:54322"),
+		}
+		ctx := adapter.WithContext(context.Background(), inboundCtx)
+		conn, err := poolOb.DialContext(ctx, "tcp", M.ParseSocksaddr("failover.example.com:80"))
+		if err != nil {
+			t.Fatalf("DialContext failed: %v", err)
+		}
+		defer conn.Close()
+
+		if !tried1 {
+			t.Fatalf("expected candidate 1 to be tried before failover")
+		}
+		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+			t.Fatalf("Write failed: %v", err)
+		}
+		resp := make([]byte, 64)
+		if n, err := conn.Read(resp); err != nil || n == 0 {
+			t.Fatalf("Read failed: n=%d, err=%v", n, err)
+		}
+		<-done
+
+		entries := bl.Logger().GetEntries(10)
+		if len(entries) == 0 {
+			t.Fatalf("expected log entries")
+		}
+		if entries[0].Error != "" {
+			t.Errorf("expected empty error after successful failover, got %q", entries[0].Error)
+		}
+		if entries[0].Duration < 35*time.Millisecond {
+			t.Errorf("expected real TTFB duration >= 35ms after failover, got %v", entries[0].Duration)
+		}
+	})
+
+	t.Run("direct-routed sidecar outbound measures real TTFB", func(t *testing.T) {
+		bl := blocker.NewEngine(blocker.Options{})
+		bl.Logger().SetDedupWindow(0)
+
+		logID := bl.Logger().RecordWithChain("direct-node.example.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "domain(direct-node.example.com) -> node-test")
+		bl.Logger().BindSourceConn("127.0.0.1:54323", logID)
+
+		clientConn, serverConn := net.Pipe()
+		defer clientConn.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer serverConn.Close()
+			buf := make([]byte, 64)
+			_, _ = serverConn.Read(buf)
+			time.Sleep(40 * time.Millisecond)
+			_, _ = serverConn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		}()
+
+		provider := &testNodeProvider{
+			sidecars: map[string]bool{
+				"test":      true,
+				"node-test": true,
+			},
+		}
+		directSidecar := &blockerOutbound{
+			Outbound: &funcMockOutbound{
+				tag: "node-test",
+				dialFn: func() (net.Conn, error) {
+					time.Sleep(1 * time.Millisecond)
+					return clientConn, nil
+				},
+			},
+			blocker:  bl,
+			provider: provider,
+		}
+
+		inboundCtx := &adapter.InboundContext{
+			Source: M.ParseSocksaddr("127.0.0.1:54323"),
+		}
+		ctx := adapter.WithContext(context.Background(), inboundCtx)
+		conn, err := directSidecar.DialContext(ctx, "tcp", M.ParseSocksaddr("direct-node.example.com:80"))
+		if err != nil {
+			t.Fatalf("DialContext failed: %v", err)
+		}
+		defer conn.Close()
+
+		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
+			t.Fatalf("Write failed: %v", err)
+		}
+		resp := make([]byte, 64)
+		if n, err := conn.Read(resp); err != nil || n == 0 {
+			t.Fatalf("Read failed: n=%d, err=%v", n, err)
+		}
+		<-done
+
+		entries := bl.Logger().GetEntries(10)
+		if len(entries) == 0 {
+			t.Fatalf("expected log entries")
+		}
+		if entries[0].Duration < 35*time.Millisecond {
+			t.Errorf("expected direct-routed sidecar duration >= 35ms, got %v", entries[0].Duration)
+		}
+		if entries[0].Error != "" {
+			t.Errorf("expected no error on log entry, got %q", entries[0].Error)
+		}
+	})
+}
+

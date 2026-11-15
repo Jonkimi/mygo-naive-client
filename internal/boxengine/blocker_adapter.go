@@ -169,8 +169,9 @@ func (t *blockerDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.M
 // blockerOutbound wraps an outbound to intercept blocked connections before dialing remote.
 type blockerOutbound struct {
 	adapter.Outbound
-	blocker *blocker.Engine
-	fm      *telemetry.FailureMonitor
+	blocker  *blocker.Engine
+	fm       *telemetry.FailureMonitor
+	provider NodeProvider
 }
 
 func shouldAnnotateDirectOutbound(ob adapter.Outbound) bool {
@@ -192,7 +193,7 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 	start := time.Now()
 	conn, err := o.Outbound.DialContext(ctx, network, destination)
 	rtt := time.Since(start)
-	annotate := shouldAnnotateDirectOutbound(o.Outbound)
+	annotate := !isPoolDialContext(ctx) && shouldAnnotateDirectOutbound(o.Outbound)
 	if err != nil && !errors.Is(err, syscall.EPERM) {
 		if o.blocker != nil && o.blocker.Logger() != nil && annotate {
 			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
@@ -212,7 +213,25 @@ func (o *blockerOutbound) DialContext(ctx context.Context, network string, desti
 			})
 		}
 	} else if err == nil && annotate {
-		if o.blocker != nil && o.blocker.Logger() != nil {
+		isSidecar := network == "tcp" && o.provider != nil && strings.HasPrefix(o.Outbound.Tag(), "node-") && o.provider.IsSidecar(o.Outbound.Tag())
+		if isSidecar {
+			sourceKey := ""
+			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
+				sourceKey = inboundCtx.Source.String()
+			}
+			if sourceKey != "" && o.blocker != nil && o.blocker.Logger() != nil {
+				conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
+					if o.blocker == nil || o.blocker.Logger() == nil || sourceKey == "" {
+						return
+					}
+					if firstErr != nil {
+						o.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
+					} else {
+						o.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
+					}
+				})
+			}
+		} else if o.blocker != nil && o.blocker.Logger() != nil {
 			if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
 				if rtt <= 0 {
 					rtt = time.Microsecond
@@ -230,7 +249,7 @@ func (o *blockerOutbound) ListenPacket(ctx context.Context, destination M.Socksa
 		return nil, syscall.EPERM
 	}
 	conn, err := o.Outbound.ListenPacket(ctx, destination)
-	if o.blocker != nil && o.blocker.Logger() != nil && shouldAnnotateDirectOutbound(o.Outbound) {
+	if o.blocker != nil && o.blocker.Logger() != nil && !isPoolDialContext(ctx) && shouldAnnotateDirectOutbound(o.Outbound) {
 		if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
 			if err != nil {
 				o.blocker.Logger().AnnotateBySource(inboundCtx.Source.String(), formatConnectionError(err))
@@ -258,6 +277,7 @@ type blockerOutboundRegistry struct {
 	underlying adapter.OutboundRegistry
 	blocker    *blocker.Engine
 	fm         *telemetry.FailureMonitor
+	provider   NodeProvider
 }
 
 func (r *blockerOutboundRegistry) OptionTypes() []string {
@@ -276,7 +296,7 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 	if tag == "block" || outboundType == "block" {
 		return &rejectOutbound{Outbound: ob}, nil
 	}
-	if strings.HasPrefix(tag, "raw-node-") {
+	if strings.HasPrefix(tag, "raw-node-") || strings.HasPrefix(tag, "wg-node-") {
 		return ob, nil
 	}
 	if r.blocker == nil && r.fm == nil {
@@ -286,6 +306,7 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 		Outbound: ob,
 		blocker:  r.blocker,
 		fm:       r.fm,
+		provider: r.provider,
 	}, nil
 }
 

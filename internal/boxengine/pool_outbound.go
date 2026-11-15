@@ -19,6 +19,20 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
+type poolDialContextKey struct{}
+
+func withPoolDial(ctx context.Context) context.Context {
+	return context.WithValue(ctx, poolDialContextKey{}, true)
+}
+
+func isPoolDialContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(poolDialContextKey{}).(bool)
+	return v
+}
+
 // NodeProvider abstracts the dynamic discovery of active nodes and their Outbounds.
 type NodeProvider interface {
 	GetCandidates(poolTag string) []string
@@ -237,6 +251,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 	}
 
 	ordered := p.orderCandidates(candidates, targetHost)
+	dialCtx := withPoolDial(ctx)
 	var lastErr error
 
 	for _, candID := range ordered {
@@ -251,7 +266,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		}
 
 		start := time.Now()
-		conn, err := ob.DialContext(ctx, network, destination)
+		conn, err := ob.DialContext(dialCtx, network, destination)
 		rtt := time.Since(start)
 
 		if err != nil {
@@ -402,6 +417,7 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	}
 
 	ordered := p.orderCandidates(candidates, targetHost)
+	packetCtx := withPoolDial(ctx)
 	var lastErr error
 
 	for _, candID := range ordered {
@@ -410,7 +426,7 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 			continue
 		}
 
-		conn, err := ob.ListenPacket(ctx, destination)
+		conn, err := ob.ListenPacket(packetCtx, destination)
 		if err == nil {
 			// UDP has no handshake RTT; leave Duration empty (UI shows the UDP tag).
 			unbindUDP()

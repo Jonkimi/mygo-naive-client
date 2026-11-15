@@ -316,6 +316,7 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			underlying: outboundReg,
 			blocker:    eng.blocker,
 			fm:         eng.failureMonitor,
+			provider:   eng,
 		}
 	}
 
@@ -674,7 +675,18 @@ func (e *Engine) IsSidecar(nodeID string) bool {
 	defer e.mu.RUnlock()
 	for _, svc := range e.services {
 		if svc.ID == cleanID {
-			return isSidecarService(svc)
+			if isSidecarService(svc) {
+				return true
+			}
+			if svc.EffectiveKind() == config.KindExternalProxy && svc.ExternalURI != "" {
+				if u, err := url.Parse(svc.ExternalURI); err == nil {
+					host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+					if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+						return true
+					}
+				}
+			}
+			return false
 		}
 	}
 	return false
