@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/routing"
 	"naive-client/internal/telemetry"
 
 	mDNS "github.com/miekg/dns"
@@ -483,6 +484,33 @@ func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound a
 		break
 	}
 	if pool, ok := current.(*PoolOutbound); ok {
+		targets := pool.Targets()
+		if len(targets) == 1 && targets[0].Kind == routing.TargetNode && !pool.FallbackToPool() {
+			candID := pool.SelectCandidate(target)
+			if candID == "" {
+				candID = targets[0].Value
+			}
+			nodeName := candID
+			if nodeNameResolver != nil {
+				if resolved := nodeNameResolver(candID); resolved != "" {
+					nodeName = resolved
+				}
+			}
+			if nodeName != "" {
+				out := rulePart + " -> " + nodeName
+				if isChainedWarp != nil && isChainedWarp(candID) {
+					out += " -> WARP"
+				}
+				return out
+			}
+		}
+		if strings.HasPrefix(outboundPart, "POOL:") {
+			if pool.DispatchPolicy() == routing.DispatchOrder {
+				chain = rulePart + " -> POOL(order)"
+			} else {
+				chain = rulePart + " -> POOL"
+			}
+		}
 		if candID := pool.SelectCandidate(target); candID != "" {
 			nodeName := candID
 			if nodeNameResolver != nil {
@@ -508,14 +536,14 @@ func formatDNSChain(serverTag string, blocked bool, blockerRule string) string {
 		}
 		return "block -> 0.0.0.0"
 	}
-	switch serverTag {
-	case "domestic-doh":
+	switch {
+	case serverTag == "domestic-doh":
 		return "direct -> domestic-doh"
-	case "remote-doh":
-		return "proxy -> remote-doh"
-	case "tailscale-dns", "tailscale-host-dns":
+	case serverTag == "remote-doh" || strings.HasPrefix(serverTag, "remote-doh-"):
+		return "proxy -> " + serverTag
+	case serverTag == "tailscale-dns" || serverTag == "tailscale-host-dns":
 		return "tailnet -> " + serverTag
-	case "bootstrap-dns":
+	case serverTag == "bootstrap-dns":
 		return "bootstrap -> direct"
 	default:
 		if serverTag != "" {

@@ -2,12 +2,10 @@ package app
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/routing"
-	"naive-client/internal/runner"
 )
 
 func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
@@ -17,6 +15,10 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 
 	cat := a.catalog()
 	hasGeo := a.hasGeoData()
+	var runningIDs map[string]bool
+	if a.mgr != nil {
+		runningIDs = a.mgr.RunningServiceIDs()
+	}
 
 	var targetRule routing.Rule
 	var ruleIndex int = -1
@@ -136,90 +138,71 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 								})
 								ui.Text(c, cat.RuleDrawerDescDirect()).FontSize(11).TextColor(p.textMuted)
 
-							case routing.ActionWarp:
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-									statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
-									tagPill(c, cat.RoutingWarpLanProtected(), p.green, p.greenBg)
-									tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+							default:
+								targets := targetRule.Action.NormalizedTargets()
+								res := a.resolveActionTargets(targetRule.Action, runningIDs)
+
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+									a.renderActionBadges(c, p, targetRule, isFinal, runningIDs)
 								})
-								ui.Text(c, cat.RuleDrawerDescWarp()).FontSize(11).TextColor(p.textMuted)
 
-							case routing.ActionProxyTag:
-								tags := targetRule.Action.GetTags()
-								activeNodes := a.activeNodesForTags(tags)
-								var tagLabels []string
-								for _, t := range tags {
-									tagLabels = append(tagLabels, "#"+t)
-								}
-								tagDisplay := strings.Join(tagLabels, ", ")
-								if tagDisplay == "" {
-									tagDisplay = "#Proxy"
-								}
-
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-									if activeNodes > 0 {
-										statusBadge(c, fmt.Sprintf("%s (%d 在线)", tagDisplay, activeNodes), p.accentText, p.accentBg)
+								if len(targets) == 0 {
+									if res.OnlineCount > 0 {
+										ui.Text(c, cat.RuleDrawerDescProxyPool()).FontSize(11).TextColor(p.textMuted)
 									} else {
-										statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
+										ui.Text(c, cat.RuleDrawerDescProxyPoolEmpty()).FontSize(11).TextColor(p.amber)
 									}
-									tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
-								})
-
-								// Matched tags & online nodes
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-									ui.Text(c, cat.RuleDrawerActionTags()+":").FontSize(12).FontWeight(600).TextColor(p.text)
-									for _, t := range tags {
-										tagPill(c, "#"+t, p.accentText, p.accentBg)
-									}
-								})
-
-								if activeNodes > 0 {
-									ui.Text(c, cat.RuleDrawerNodesOnline(fmt.Sprint(activeNodes))).FontSize(11).TextColor(p.accentText)
-									var matchedNames []string
-									for _, svc := range a.state.Services {
-										if a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-											for _, st := range svc.Tags {
-												matched := false
-												for _, tg := range tags {
-													if strings.EqualFold(strings.TrimSpace(st), strings.TrimSpace(tg)) {
-														matchedNames = append(matchedNames, svc.Name)
-														matched = true
-														break
+								} else {
+									isOrder := targetRule.Action.EffectiveDispatchPolicy() == routing.DispatchOrder
+									ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+										ui.Text(c, cat.RuleDrawerTargetsTitle()+":").FontSize(12).FontWeight(600).TextColor(p.text)
+										for idx, t := range targets {
+											if idx > 0 && isOrder && len(targets) > 1 {
+												ui.Text(c, "→").FontSize(11).TextColor(p.textDim)
+											}
+											if t.Kind == routing.TargetNode {
+												if svc, ok := a.serviceOrBuiltinWarp(t.Value); ok {
+													tagPill(c, svc.Name, p.text, p.surface)
+													if svc.EnableWARP {
+														tagPill(c, "+WARP", p.green, p.greenBg)
 													}
+												} else {
+													tagPill(c, t.Value+" ("+cat.RuleTargetMissingNode()+")", p.amber, p.amberBg)
 												}
-												if matched {
-													break
-												}
+											} else {
+												tagPill(c, "#"+t.Value, p.accentText, p.accentBg)
 											}
 										}
+									})
+
+									ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+										ui.Text(c, cat.RuleDrawerDispatchTitle()+":").FontSize(11).TextColor(p.textDim)
+										if isOrder {
+											tagPill(c, cat.RuleDispatchOrder(), p.accentText, p.accentBg)
+										} else {
+											tagPill(c, cat.RuleDispatchSmart(), p.accentText, p.accentBg)
+										}
+										if targetRule.Action.FallbackToPool {
+											tagPill(c, cat.RuleTargetFallbackBadge(), p.amber, p.amberBg)
+										} else {
+											tagPill(c, cat.RuleTargetStrictBadge(), p.green, p.greenBg)
+										}
+									})
+
+									if res.OnlineCount > 0 {
+										ui.Text(c, cat.RuleDrawerNodesOnline(fmt.Sprint(res.OnlineCount))).FontSize(11).TextColor(p.accentText)
+									} else {
+										ui.Text(c, cat.RuleDrawerNoNodesOnline()).FontSize(11).TextColor(p.amber)
 									}
-									if len(matchedNames) > 0 {
-										ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-											ui.Text(c, cat.RuleDrawerActiveNodes()+":").FontSize(11).TextColor(p.textDim)
-											for _, name := range matchedNames {
-												tagPill(c, name, p.text, p.surface)
-											}
-										})
-									}
-								} else {
-									ui.Text(c, cat.RuleDrawerNoNodesOnline()).FontSize(11).TextColor(p.amber)
 								}
 
-							default:
-								activeCount := a.activeRunningCount()
-								label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-									if activeCount > 0 {
-										statusBadge(c, label, p.green, p.greenBg)
-									} else {
-										statusBadge(c, label, p.amber, p.amberBg)
-									}
-									tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
-								})
-								if activeCount > 0 {
-									ui.Text(c, cat.RuleDrawerDescProxyPool()).FontSize(11).TextColor(p.textMuted)
-								} else {
-									ui.Text(c, cat.RuleDrawerDescProxyPoolEmpty()).FontSize(11).TextColor(p.amber)
+								if len(res.OnlineNodes) > 0 {
+									ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+										ui.Text(c, cat.RuleDrawerCandidatesTitle()+":").FontSize(11).TextColor(p.textDim)
+										for _, svc := range res.OnlineNodes {
+											tagPill(c, svc.Name, p.text, p.surface)
+										}
+									})
 								}
 							}
 						})

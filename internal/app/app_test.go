@@ -1453,7 +1453,20 @@ func TestGateway_EndToEndProxyAndTelemetry(t *testing.T) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				io.Copy(c, c)
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if n > 0 {
+						// Exceed minValidFirstRTT (2ms) so localhost sidecar TTFB is recorded in tracker.
+						time.Sleep(5 * time.Millisecond)
+						if _, wErr := c.Write(buf[:n]); wErr != nil {
+							return
+						}
+					}
+					if err != nil {
+						return
+					}
+				}
 			}(conn)
 		}
 	}()
@@ -1807,7 +1820,7 @@ func TestRoutingWorkbench_RuleConfigurationCRUD(t *testing.T) {
 
 	a.ruleEditor.name = "My Custom Work Rule"
 	a.ruleEditor.domainsInput = "custom-corp.net\ngit.custom-corp.net"
-	a.ruleEditor.actionIndex = 2 // DIRECT
+	a.ruleEditor.actionIndex = 1 // DIRECT
 	a.saveRuleEditor()
 	tt.Frame()
 
@@ -2150,7 +2163,7 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 
 	a.ruleEditor.name = "China Traffic"
 	addTag(&a.ruleEditor.geoips, "cn")
-	a.ruleEditor.actionIndex = 2 // DIRECT
+	a.ruleEditor.actionIndex = 1 // DIRECT
 	a.saveRuleEditor()
 	tt.Frame()
 
@@ -2223,15 +2236,15 @@ func TestRouting_TargetTagsMultiChips(t *testing.T) {
 	a.openCreateRuleDialog()
 	tt.Frame()
 
-	// Target tag should default to blank
-	if len(a.ruleEditor.tags) != 0 {
-		t.Fatalf("expected tags to default to blank, got %v", a.ruleEditor.tags)
+	// Target should default to blank (global pool)
+	if len(a.ruleEditor.targets) != 0 {
+		t.Fatalf("expected targets to default to blank, got %v", a.ruleEditor.targets)
 	}
 
-	addTag(&a.ruleEditor.tags, "AI")
-	addTag(&a.ruleEditor.tags, "US")
-	if len(a.ruleEditor.tags) != 2 {
-		t.Fatalf("expected 2 tags in editor, got %v", a.ruleEditor.tags)
+	a.toggleTargetRef(routing.TargetTag, "AI")
+	a.toggleTargetRef(routing.TargetTag, "US")
+	if len(a.ruleEditor.targets) != 2 {
+		t.Fatalf("expected 2 targets in editor, got %v", a.ruleEditor.targets)
 	}
 
 	a.ruleEditor.name = "Multi-tag rule"
@@ -2251,7 +2264,7 @@ func TestRouting_TargetTagsMultiChips(t *testing.T) {
 		t.Fatalf("expected 3 distinct service tags, got %v", known)
 	}
 
-	// Verify saving with blank tags preserves empty tags without injecting "AI"
+	// Verify saving with blank targets preserves empty targets (PROXY_POOL) without injecting "AI"
 	a.openCreateRuleDialog()
 	tt.Frame()
 	a.ruleEditor.name = "Blank tag rule"
@@ -2260,8 +2273,8 @@ func TestRouting_TargetTagsMultiChips(t *testing.T) {
 	tt.Frame()
 
 	blankRule := a.state.RoutingRules[len(a.state.RoutingRules)-1]
-	if len(blankRule.Action.GetTags()) != 0 {
-		t.Fatalf("expected 0 tags on blank tag rule, got %v", blankRule.Action.GetTags())
+	if len(blankRule.Action.GetTags()) != 0 || len(blankRule.Action.NormalizedTargets()) != 0 {
+		t.Fatalf("expected 0 tags/targets on blank target rule, got %+v", blankRule.Action)
 	}
 }
 
@@ -2291,8 +2304,8 @@ func TestRouting_FinalFallbackCardAndDialog(t *testing.T) {
 		t.Fatalf("expected edit dialog title %q", a.catalog().EditFinalRule())
 	}
 
-	// 3. Change outbound action to DIRECT (index 2)
-	a.ruleEditor.actionIndex = 2 // DIRECT
+	// 3. Change outbound action to DIRECT (index 1 in 3-way control)
+	a.ruleEditor.actionIndex = 1 // DIRECT
 	a.saveRuleEditor()
 	tt.Frame()
 
@@ -2303,19 +2316,19 @@ func TestRouting_FinalFallbackCardAndDialog(t *testing.T) {
 		t.Fatalf("expected RoutingFinal.Type to be DIRECT, got %v", a.state.RoutingFinal.Type)
 	}
 
-	// 4. Re-open and set to Tag Pool with custom tags
+	// 4. Re-open and set to Proxy with custom tag targets
 	a.openEditFinalRuleDialog()
 	tt.Frame()
 
-	a.ruleEditor.actionIndex = 0 // Tag Pool
-	a.ruleEditor.tags = nil
-	addTag(&a.ruleEditor.tags, "HK")
-	addTag(&a.ruleEditor.tags, "US")
+	a.ruleEditor.actionIndex = 0 // Proxy
+	a.ruleEditor.targets = nil
+	a.toggleTargetRef(routing.TargetTag, "HK")
+	a.toggleTargetRef(routing.TargetTag, "US")
 	a.saveRuleEditor()
 	tt.Frame()
 
-	if a.state.RoutingFinal.Type != routing.ActionProxyTag {
-		t.Fatalf("expected RoutingFinal.Type to be PROXY_TAG, got %v", a.state.RoutingFinal.Type)
+	if a.state.RoutingFinal.Type != routing.ActionProxyPool {
+		t.Fatalf("expected RoutingFinal.Type to be PROXY_POOL with Targets, got %v", a.state.RoutingFinal.Type)
 	}
 	tags := a.state.RoutingFinal.GetTags()
 	if len(tags) != 2 || tags[0] != "HK" || tags[1] != "US" {
@@ -2524,16 +2537,16 @@ func TestRouting_PresetProtectionAndFallbackInPresetGroup(t *testing.T) {
 		t.Fatalf("custom rule was not deleted")
 	}
 
-	// 5. Preset Rule Group should have 6 items (5 presets + 1 fallback)
+	// 5. Preset Rule Group should have 7 items (6 presets + 1 fallback)
 	if !tt.HasText(a.catalog().RoutingCustomSection()) {
 		t.Fatalf("expected custom rules section title %q", a.catalog().RoutingCustomSection())
 	}
 	if !tt.HasText(a.catalog().RoutingPresetsSection()) {
 		t.Fatalf("expected preset rules section title %q", a.catalog().RoutingPresetsSection())
 	}
-	// Preset count badge should be "6"
-	if !tt.HasText("6") {
-		t.Fatalf("expected preset count badge '6' in preset section header")
+	// Preset count badge should be "7"
+	if !tt.HasText("7") {
+		t.Fatalf("expected preset count badge '7' in preset section header")
 	}
 	if !tt.HasText(a.catalog().RoutingFinalFallback()) {
 		t.Fatalf("expected fallback card title %q", a.catalog().RoutingFinalFallback())
@@ -2541,8 +2554,8 @@ func TestRouting_PresetProtectionAndFallbackInPresetGroup(t *testing.T) {
 	if !tt.HasText("FINAL") {
 		t.Fatalf("expected 'FINAL' badge on fallback card")
 	}
-	if !tt.HasText("直连") {
-		t.Fatalf("expected '直连' preset rule in preset group")
+	if !tt.HasText(a.catalog().PresetRuleBypassLan()) || !tt.HasText(a.catalog().PresetRuleCnDirect()) {
+		t.Fatalf("expected LAN Direct and China Direct preset rules in preset group")
 	}
 }
 
@@ -3385,6 +3398,189 @@ func (m mockCloser) Close() error {
 	}
 	return nil
 }
+
+func TestRouting_UnifiedTargetPickerOrderAndMissingNodeWarning(t *testing.T) {
+	p1 := freeLocalPort(t)
+	p2 := freeLocalPort(t)
+	svcs := []config.Service{
+		{
+			ID:      "svc-dedicated",
+			Name:    "US-Dedicated",
+			Tags:    []string{"US"},
+			Listens: []string{fmt.Sprintf("socks://127.0.0.1:%d", p1)},
+			Proxies: []string{"https://u:p@us.example.com:443"},
+		},
+		{
+			ID:      "svc-ai-pool",
+			Name:    "JP-AI",
+			Tags:    []string{"AI"},
+			Listens: []string{fmt.Sprintf("socks://127.0.0.1:%d", p2)},
+			Proxies: []string{"https://u:p@jp.example.com:443"},
+		},
+	}
+
+	a, tt, _ := newTestApp(t, svcs)
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	// 1. Open create dialog -> Proxy (index 0), blank targets (PROXY_POOL), smart policy, strict isolation
+	a.openCreateRuleDialog()
+	tt.Frame()
+	if a.ruleEditor.actionIndex != 0 || len(a.ruleEditor.targets) != 0 || !a.ruleEditor.strictIsolation {
+		t.Fatalf("unexpected initial rule editor state: %+v", a.ruleEditor)
+	}
+
+	// Resident Cloudflare WARP node and Candidate Dispatch Mode are visible when targets are empty;
+	// strict isolation toggle appears once specific targets are selected.
+	cat := a.catalog()
+	if !tt.HasText(cat.BuiltinWarpNodeName()) {
+		t.Fatalf("expected resident %q node in unified target picker", cat.BuiltinWarpNodeName())
+	}
+	if !tt.HasText(cat.RuleDispatchPolicyLabel()) {
+		t.Fatalf("expected %q to be visible under Proxy even when targets are empty", cat.RuleDispatchPolicyLabel())
+	}
+	if _, found := tt.Find("toggle-rule-strict-isolation"); found {
+		t.Fatalf("did not expect strict isolation switch while targets are empty")
+	}
+
+	// Pick mixed targets: node svc-dedicated + tag #AI + node builtin-warp, set order mode & reorder
+	if err := tt.Click("pick-node-svc-dedicated"); err != nil {
+		t.Fatalf("click pick-node-svc-dedicated: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText(cat.RuleStrictIsolationLabel()) {
+		t.Fatalf("expected %q to appear once a target is selected", cat.RuleStrictIsolationLabel())
+	}
+	if err := tt.Click("pick-tag-AI"); err != nil {
+		t.Fatalf("click pick-tag-AI: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("pick-node-" + config.BuiltinWarpServiceID); err != nil {
+		t.Fatalf("click pick-node-builtin-warp: %v", err)
+	}
+	tt.Frame()
+
+	a.ruleEditor.dispatchPolicy = routing.DispatchOrder
+	a.moveTargetRef(1, -1) // Swap #AI ahead of svc-dedicated
+	a.ruleEditor.name = "Hybrid AI Rule"
+	a.ruleEditor.domainsInput = "claude.ai"
+	a.saveRuleEditor()
+	tt.Frame()
+
+	created := a.state.RoutingRules[len(a.state.RoutingRules)-1]
+	if created.Action.EffectiveDispatchPolicy() != routing.DispatchOrder {
+		t.Fatalf("expected order dispatch policy, got %s", created.Action.EffectiveDispatchPolicy())
+	}
+	if created.Action.FallbackToPool {
+		t.Fatalf("expected FallbackToPool=false (strict isolation) by default")
+	}
+	if len(created.Action.Targets) != 3 ||
+		created.Action.Targets[0] != (routing.TargetRef{Kind: routing.TargetTag, Value: "AI"}) ||
+		created.Action.Targets[1] != (routing.TargetRef{Kind: routing.TargetNode, Value: "svc-dedicated"}) ||
+		created.Action.Targets[2] != (routing.TargetRef{Kind: routing.TargetNode, Value: config.BuiltinWarpServiceID}) {
+		t.Fatalf("unexpected saved targets: %+v", created.Action.Targets)
+	}
+
+	// Targeting builtin-warp in an enabled rule triggers builtin-warp service injection
+	if !a.isBuiltinWarpNeeded() {
+		t.Fatalf("expected isBuiltinWarpNeeded()=true when rule targets builtin-warp")
+	}
+
+	// Card renders order arrows and target pills
+	if !tt.HasText("→") || !tt.HasText("US-Dedicated") || !tt.HasText("#AI") {
+		t.Fatalf("expected ordered target pills and arrow on rule card, got texts: %v", tt.Texts())
+	}
+
+	// 2. Delete svc-dedicated -> missing-node warning badge appears on card, drawer, and editor
+	var remaining []config.Service
+	for _, s := range a.state.Services {
+		if s.ID != "svc-dedicated" {
+			remaining = append(remaining, s)
+		}
+	}
+	a.state.Services = remaining
+	a.saveState()
+	tt.Frame()
+
+	if !tt.HasText("svc-dedicated (" + cat.RuleTargetMissingNode() + ")") {
+		t.Fatalf("expected missing-node warning on rule card")
+	}
+
+	a.activeRuleDrawerID = created.ID
+	tt.Frame()
+	if !tt.HasText(cat.RuleTargetMissingNode()) {
+		t.Fatalf("expected missing-node warning in rule drawer")
+	}
+	a.activeRuleDrawerID = ""
+
+	a.openEditRuleDialog(created)
+	tt.Frame()
+	if !tt.HasText(cat.RuleTargetMissingNode()) {
+		t.Fatalf("expected missing-node warning in rule editor dialog")
+	}
+}
+
+func TestRouting_DirectWarpToggleInRuleEditor(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabRouting
+	tt.Frame()
+
+	var cnRule, lanRule routing.Rule
+	for _, r := range a.state.RoutingRules {
+		switch r.ID {
+		case "preset-cn-direct":
+			cnRule = r
+		case "preset-lan-direct":
+			lanRule = r
+		}
+	}
+
+	// 1. Edit preset-lan-direct: Direct tab should NOT expose Direct -> WARP switch
+	a.openEditRuleDialog(lanRule)
+	tt.Frame()
+	if a.ruleEditor.actionIndex != 1 {
+		t.Fatalf("expected preset-lan-direct to open on Direct (1), got %d", a.ruleEditor.actionIndex)
+	}
+	if _, found := tt.Find("toggle-rule-direct-warp"); found {
+		t.Fatalf("preset-lan-direct must not expose toggle-rule-direct-warp")
+	}
+	a.ruleEditor.open = false
+	tt.Frame()
+
+	// 2. Edit preset-cn-direct: Direct tab exposes toggle-rule-direct-warp; enabling it saves builtin-warp target
+	a.openEditRuleDialog(cnRule)
+	tt.Frame()
+	if a.ruleEditor.actionIndex != 1 || a.ruleEditor.directWarp {
+		t.Fatalf("expected preset-cn-direct to open on Direct with directWarp=false")
+	}
+	if err := tt.Click("toggle-rule-direct-warp"); err != nil {
+		t.Fatalf("click toggle-rule-direct-warp: %v", err)
+	}
+	tt.Frame()
+	if !a.ruleEditor.directWarp {
+		t.Fatalf("expected directWarp=true after toggle")
+	}
+	a.saveRuleEditor()
+	tt.Frame()
+
+	if !a.isCnDirectWarpEnabled() || !a.isBuiltinWarpNeeded() {
+		t.Fatalf("expected preset-cn-direct to target builtin-warp and sync Cloudflare toggle")
+	}
+
+	// 3. Re-opening preset-cn-direct shows Direct tab with directWarp=true and domestic DoH badge on card
+	for _, r := range a.state.RoutingRules {
+		if r.ID == "preset-cn-direct" {
+			cnRule = r
+			break
+		}
+	}
+	a.openEditRuleDialog(cnRule)
+	tt.Frame()
+	if a.ruleEditor.actionIndex != 1 || !a.ruleEditor.directWarp {
+		t.Fatalf("expected re-opened preset-cn-direct to show Direct tab with directWarp=true, got idx=%d directWarp=%v", a.ruleEditor.actionIndex, a.ruleEditor.directWarp)
+	}
+}
+
 
 
 

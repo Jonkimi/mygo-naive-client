@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/routing"
 	"naive-client/internal/telemetry"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -1401,4 +1402,127 @@ func TestPoolOutbound_BlockerWrappedSidecarRecordsRealRTT(t *testing.T) {
 		}
 	})
 }
+
+func TestPoolOutbound_UnifiedTargetsOrderFailoverAndIsolation(t *testing.T) {
+	t.Run("order policy tries tiers strictly and fails over on dial failure or circuit breaker", func(t *testing.T) {
+		tracker := telemetry.NewTracker()
+		// Make tag node much faster in EWMA than tier1 node to prove order policy ignores cross-tier EWMA.
+		tracker.RecordDial("tier2-ai", "example.com", 10*time.Millisecond, nil)
+		tracker.RecordDial("tier1-node", "example.com", 200*time.Millisecond, nil)
+
+		var attempts []string
+		makeNode := func(id string, fail bool) *funcMockOutbound {
+			return &funcMockOutbound{
+				tag: "node-" + id,
+				dialFn: func() (net.Conn, error) {
+					attempts = append(attempts, id)
+					if fail {
+						return nil, errors.New("dial error")
+					}
+					c1, _ := net.Pipe()
+					return c1, nil
+				},
+			}
+		}
+
+		tier1 := makeNode("tier1-node", false)
+		tier2 := makeNode("tier2-ai", false)
+		poolNode := makeNode("pool-extra", false)
+
+		provider := &testNodeProvider{
+			candidates: map[string][]string{
+				"node:tier1-node": {"tier1-node"},
+				"AI":              {"tier2-ai"},
+				"PROXY_POOL":      {"tier1-node", "tier2-ai", "pool-extra"},
+			},
+			nodes: map[string]adapter.Outbound{
+				"tier1-node": tier1,
+				"tier2-ai":   tier2,
+				"pool-extra": poolNode,
+			},
+		}
+
+		pool := NewPoolOutbound(PoolOutboundOptions{
+			Tag: "POOL:test-order",
+			Targets: []routing.TargetRef{
+				{Kind: routing.TargetNode, Value: "tier1-node"},
+				{Kind: routing.TargetTag, Value: "AI"},
+			},
+			DispatchPolicy: routing.DispatchOrder,
+			FallbackToPool: false,
+			Tracker:        tracker,
+			NodeProvider:   provider,
+		})
+
+		// 1. Healthy tier1 runs first even though tier2 has lower EWMA.
+		conn, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("api.openai.com:443"))
+		if err != nil {
+			t.Fatalf("DialContext failed: %v", err)
+		}
+		_ = conn.Close()
+		if len(attempts) != 1 || attempts[0] != "tier1-node" {
+			t.Fatalf("expected tier1-node to be attempted first, got %v", attempts)
+		}
+
+		// 2. When tier1 trips circuit breaker, tier2 healthy runs before tier1.
+		attempts = nil
+		tracker.RecordDial("tier1-node", "api.openai.com", 0, errors.New("fail 1"))
+		tracker.RecordDial("tier1-node", "api.openai.com", 0, errors.New("fail 2"))
+		tracker.RecordDial("tier1-node", "api.openai.com", 0, errors.New("fail 3"))
+		if !tracker.GetScore("tier1-node").IsBroken {
+			t.Fatalf("expected tier1-node circuit breaker to trip")
+		}
+
+		conn2, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("api.openai.com:443"))
+		if err != nil {
+			t.Fatalf("DialContext after trip failed: %v", err)
+		}
+		_ = conn2.Close()
+		if len(attempts) != 1 || attempts[0] != "tier2-ai" {
+			t.Fatalf("expected failover to tier2-ai when tier1-node tripped, got %v", attempts)
+		}
+	})
+
+	t.Run("strict isolation fails closed when targets unavailable unless FallbackToPool is true", func(t *testing.T) {
+		poolNode := &funcMockOutbound{
+			tag: "node-pool-only",
+			dialFn: func() (net.Conn, error) {
+				c1, _ := net.Pipe()
+				return c1, nil
+			},
+		}
+		provider := &testNodeProvider{
+			candidates: map[string][]string{
+				"node:missing": nil,
+				"PROXY_POOL":   {"pool-only"},
+			},
+			nodes: map[string]adapter.Outbound{
+				"pool-only": poolNode,
+			},
+		}
+
+		strictPool := NewPoolOutbound(PoolOutboundOptions{
+			Tag:            "POOL:strict",
+			Targets:        []routing.TargetRef{{Kind: routing.TargetNode, Value: "missing"}},
+			FallbackToPool: false,
+			NodeProvider:   provider,
+		})
+		if _, err := strictPool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("secret.internal:443")); err == nil {
+			t.Fatalf("expected strict isolation pool to fail closed without leaking to PROXY_POOL")
+		}
+
+		fallbackPool := NewPoolOutbound(PoolOutboundOptions{
+			Tag:            "POOL:fallback",
+			Targets:        []routing.TargetRef{{Kind: routing.TargetNode, Value: "missing"}},
+			FallbackToPool: true,
+			NodeProvider:   provider,
+		})
+		conn, err := fallbackPool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("fallback.internal:443"))
+		if err != nil {
+			t.Fatalf("expected fallback pool to succeed via PROXY_POOL, got %v", err)
+		}
+		_ = conn.Close()
+	})
+}
+
 

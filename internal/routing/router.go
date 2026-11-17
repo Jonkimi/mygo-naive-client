@@ -52,15 +52,147 @@ func isLocalDomain(host string) bool {
 	return false
 }
 
-type RouteAction struct {
-	Type      ActionType `json:"type"`
-	Tag       string     `json:"tag,omitempty"`
-	Tags      []string   `json:"tags,omitempty"`
-	ServiceID string     `json:"serviceId,omitempty"`
-	ExitNode  string     `json:"exitNode,omitempty"`
+type TargetKind string
+
+const (
+	TargetNode TargetKind = "node"
+	TargetTag  TargetKind = "tag"
+)
+
+type TargetRef struct {
+	Kind  TargetKind `json:"kind"`
+	Value string     `json:"value"`
 }
 
-func (a RouteAction) GetTags() []string {
+const (
+	DispatchSmart       = "smart"
+	DispatchOrder       = "order"
+	BuiltinWarpTargetID = "builtin-warp"
+)
+
+type RouteAction struct {
+	Type           ActionType  `json:"type"`
+	Tag            string      `json:"tag,omitempty"`
+	Tags           []string    `json:"tags,omitempty"`
+	ServiceID      string      `json:"serviceId,omitempty"`
+	ExitNode       string      `json:"exitNode,omitempty"`
+	Targets        []TargetRef `json:"targets,omitempty"`
+	DispatchPolicy string      `json:"dispatchPolicy,omitempty"`
+	FallbackToPool bool        `json:"fallbackToPool,omitempty"`
+}
+
+// NormalizeTargets cleans and deduplicates target refs while preserving declaration order.
+func NormalizeTargets(targets []TargetRef) []TargetRef {
+	if len(targets) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(targets))
+	out := make([]TargetRef, 0, len(targets))
+	for _, t := range targets {
+		kind := TargetKind(strings.ToLower(strings.TrimSpace(string(t.Kind))))
+		val := strings.TrimSpace(t.Value)
+		if kind == TargetTag {
+			val = strings.TrimSpace(strings.TrimPrefix(val, "#"))
+		}
+		if val == "" || (kind != TargetNode && kind != TargetTag) {
+			continue
+		}
+		dedupKey := string(kind) + ":" + val
+		if kind == TargetTag {
+			dedupKey = string(kind) + ":" + strings.ToLower(val)
+		}
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+		out = append(out, TargetRef{Kind: kind, Value: val})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// NormalizedTargets returns the ordered list of node/tag targets for this action,
+// seamlessly normalizing legacy ActionProxyTag, ActionProxyService, and ActionWarp fields.
+func (a RouteAction) NormalizedTargets() []TargetRef {
+	if len(a.Targets) > 0 {
+		return NormalizeTargets(a.Targets)
+	}
+	switch a.Type {
+	case ActionWarp:
+		return []TargetRef{{Kind: TargetNode, Value: BuiltinWarpTargetID}}
+	case ActionProxyService:
+		if svcID := strings.TrimSpace(a.ServiceID); svcID != "" {
+			return []TargetRef{{Kind: TargetNode, Value: svcID}}
+		}
+	case ActionProxyTag:
+		var out []TargetRef
+		for _, t := range a.legacyTags() {
+			out = append(out, TargetRef{Kind: TargetTag, Value: t})
+		}
+		return NormalizeTargets(out)
+	}
+	return nil
+}
+
+// EffectiveDispatchPolicy returns "order" if explicitly set, otherwise "smart".
+func (a RouteAction) EffectiveDispatchPolicy() string {
+	if strings.EqualFold(strings.TrimSpace(a.DispatchPolicy), DispatchOrder) {
+		return DispatchOrder
+	}
+	return DispatchSmart
+}
+
+// IsProxyAction reports whether this action routes traffic through proxy/WARP outbounds.
+func (a RouteAction) IsProxyAction() bool {
+	switch a.Type {
+	case ActionProxyPool, ActionProxyTag, ActionProxyService, ActionWarp:
+		return true
+	case ActionDirect, ActionBlock, ActionTailnet, ActionTailnetExit:
+		return false
+	default:
+		return len(a.Targets) > 0
+	}
+}
+
+// TargetsNode reports whether the normalized target list explicitly includes nodeID.
+func (a RouteAction) TargetsNode(nodeID string) bool {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return false
+	}
+	for _, t := range a.NormalizedTargets() {
+		if t.Kind == TargetNode && t.Value == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+// NewProxyAction constructs a unified proxy RouteAction from ordered targets, dispatch policy, and fallback setting.
+func NewProxyAction(targets []TargetRef, policy string, fallbackToPool bool) RouteAction {
+	clean := NormalizeTargets(targets)
+	if len(clean) == 0 {
+		return RouteAction{Type: ActionProxyPool}
+	}
+	act := RouteAction{
+		Type:           ActionProxyPool,
+		Targets:        clean,
+		FallbackToPool: fallbackToPool,
+	}
+	if strings.EqualFold(strings.TrimSpace(policy), DispatchOrder) {
+		act.DispatchPolicy = DispatchOrder
+	}
+	return act
+}
+
+// NewWarpTargetAction constructs a RouteAction targeting the built-in Cloudflare WARP node.
+func NewWarpTargetAction() RouteAction {
+	return NewProxyAction([]TargetRef{{Kind: TargetNode, Value: BuiltinWarpTargetID}}, DispatchSmart, false)
+}
+
+func (a RouteAction) legacyTags() []string {
 	if len(a.Tags) > 0 {
 		return a.Tags
 	}
@@ -68,6 +200,19 @@ func (a RouteAction) GetTags() []string {
 		return []string{a.Tag}
 	}
 	return nil
+}
+
+func (a RouteAction) GetTags() []string {
+	if len(a.Targets) > 0 {
+		var tags []string
+		for _, t := range a.NormalizedTargets() {
+			if t.Kind == TargetTag {
+				tags = append(tags, t.Value)
+			}
+		}
+		return tags
+	}
+	return a.legacyTags()
 }
 
 type Rule struct {
@@ -287,11 +432,10 @@ func DefaultPresets() []Rule {
 		},
 		{
 			ID:          "preset-lan-direct",
-			Name:        "直连",
-			Description: "直连，不走代理",
+			Name:        "局域网直连",
+			Description: "局域网、内网与本地主机域名直连，不走代理",
 			Enabled:     true,
-			GeoSite:     []string{"cn"},
-			GeoIP:       []string{"cn", "private"},
+			GeoIP:       []string{"private"},
 			IPCidr: []string{
 				"127.0.0.0/8",
 				"10.0.0.0/8",
@@ -308,6 +452,15 @@ func DefaultPresets() []Rule {
 				"internal",
 				"lan",
 			},
+			Action: RouteAction{Type: ActionDirect},
+		},
+		{
+			ID:          "preset-cn-direct",
+			Name:        "大陆直连",
+			Description: "中国大陆域名与 IP 直连（可编辑为 WARP 或指定节点）",
+			Enabled:     true,
+			GeoSite:     []string{"cn"},
+			GeoIP:       []string{"cn"},
 			Action:      RouteAction{Type: ActionDirect},
 		},
 	}

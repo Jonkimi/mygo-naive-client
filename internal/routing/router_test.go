@@ -90,11 +90,35 @@ func TestRouter_MatchRulesAndFinalAction(t *testing.T) {
 	}
 }
 
-// Tests that DefaultPresets returns the standard set of 5 preset rule groups (merged LAN and CN direct) and direct LAN matches.
+// Tests that DefaultPresets returns the 6 preset rule groups (including split LAN Direct and CN Direct) and direct LAN matches.
 func TestRouter_DefaultPresets(t *testing.T) {
 	presets := DefaultPresets()
-	if len(presets) != 5 {
-		t.Fatalf("expected 5 default preset rules, got %d", len(presets))
+	if len(presets) != 6 {
+		t.Fatalf("expected 6 default preset rules, got %d", len(presets))
+	}
+
+	var lanRule, cnRule *Rule
+	for i := range presets {
+		if presets[i].ID == "preset-lan-direct" {
+			lanRule = &presets[i]
+		} else if presets[i].ID == "preset-cn-direct" {
+			cnRule = &presets[i]
+		}
+	}
+	if lanRule == nil || cnRule == nil {
+		t.Fatalf("expected both preset-lan-direct and preset-cn-direct in DefaultPresets")
+	}
+	if len(lanRule.GeoSite) != 0 {
+		t.Fatalf("expected preset-lan-direct to have no GeoSite, got %v", lanRule.GeoSite)
+	}
+	if len(lanRule.GeoIP) != 1 || lanRule.GeoIP[0] != "private" {
+		t.Fatalf("expected preset-lan-direct GeoIP ['private'], got %v", lanRule.GeoIP)
+	}
+	if len(cnRule.GeoSite) != 1 || cnRule.GeoSite[0] != "cn" {
+		t.Fatalf("expected preset-cn-direct GeoSite ['cn'], got %v", cnRule.GeoSite)
+	}
+	if len(cnRule.GeoIP) != 1 || cnRule.GeoIP[0] != "cn" {
+		t.Fatalf("expected preset-cn-direct GeoIP ['cn'], got %v", cnRule.GeoIP)
 	}
 
 	r := NewRouter(presets, RouteAction{Type: ActionProxyPool})
@@ -112,9 +136,53 @@ func TestRouter_DefaultPresets(t *testing.T) {
 	}
 	for _, target := range testTargets {
 		act, ruleName := r.Match(target)
-		if act.Type != ActionDirect || ruleName != "直连" {
-			t.Fatalf("target %s should match '直连' ActionDirect, got %+v from rule %s", target, act, ruleName)
+		if act.Type != ActionDirect || ruleName != "局域网直连" {
+			t.Fatalf("target %s should match '局域网直连' ActionDirect, got %+v from rule %s", target, act, ruleName)
 		}
+	}
+}
+
+func TestRouteAction_NormalizedTargetsAndLegacyCompat(t *testing.T) {
+	// 1. Legacy ActionWarp normalizes to builtin-warp node target
+	warpAct := RouteAction{Type: ActionWarp}
+	if !warpAct.TargetsNode(BuiltinWarpTargetID) {
+		t.Fatalf("expected legacy ActionWarp to target %s", BuiltinWarpTargetID)
+	}
+
+	// 2. Legacy ActionProxyService normalizes to single node target
+	svcAct := RouteAction{Type: ActionProxyService, ServiceID: "svc-us-1"}
+	nt := svcAct.NormalizedTargets()
+	if len(nt) != 1 || nt[0].Kind != TargetNode || nt[0].Value != "svc-us-1" {
+		t.Fatalf("expected single node target svc-us-1, got %+v", nt)
+	}
+
+	// 3. Legacy ActionProxyTag normalizes to deduplicated tag targets
+	tagAct := RouteAction{Type: ActionProxyTag, Tag: "AI", Tags: []string{"#AI", "ai", "US"}}
+	ntTag := tagAct.NormalizedTargets()
+	if len(ntTag) != 2 || ntTag[0] != (TargetRef{Kind: TargetTag, Value: "AI"}) || ntTag[1] != (TargetRef{Kind: TargetTag, Value: "US"}) {
+		t.Fatalf("expected deduplicated tags [AI, US], got %+v", ntTag)
+	}
+
+	// 4. Unified NewProxyAction preserves mixed node+tag order, policy, and fallback
+	mixed := NewProxyAction([]TargetRef{
+		{Kind: TargetNode, Value: "svc-us-1"},
+		{Kind: TargetTag, Value: "#AI"},
+		{Kind: TargetNode, Value: "svc-us-1"},
+	}, DispatchOrder, true)
+	if mixed.Type != ActionProxyPool || mixed.EffectiveDispatchPolicy() != DispatchOrder || !mixed.FallbackToPool {
+		t.Fatalf("unexpected mixed action metadata: %+v", mixed)
+	}
+	if len(mixed.Targets) != 2 || mixed.Targets[0].Value != "svc-us-1" || mixed.Targets[1].Value != "AI" {
+		t.Fatalf("unexpected normalized mixed targets: %+v", mixed.Targets)
+	}
+	if tags := mixed.GetTags(); len(tags) != 1 || tags[0] != "AI" {
+		t.Fatalf("expected GetTags() to return ['AI'], got %v", tags)
+	}
+
+	// 5. Empty targets produces global PROXY_POOL without fallback flag
+	empty := NewProxyAction(nil, DispatchOrder, true)
+	if empty.Type != ActionProxyPool || len(empty.Targets) != 0 || empty.FallbackToPool {
+		t.Fatalf("expected clean global PROXY_POOL action, got %+v", empty)
 	}
 }
 

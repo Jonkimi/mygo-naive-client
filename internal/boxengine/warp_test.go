@@ -255,30 +255,42 @@ func TestBuildOutboundsConfig_ChainedProxy_EnableWARP(t *testing.T) {
 	}
 }
 
-func TestBuildRouteConfig_ActionWarpAndLANDirectProtection(t *testing.T) {
-	ruleWarp := routing.Rule{
-		ID:       "preset-lan-direct",
-		Name:     "直连",
-		Enabled:  true,
-		GeoSite:  []string{"cn"},
-		GeoIP:    []string{"cn", "private"},
-		IPCidr:   []string{"192.168.1.0/24", "114.114.114.114/32"},
-		Action:   routing.RouteAction{Type: routing.ActionWarp},
+func TestBuildRouteConfig_SplitPresetsWarpAndLANDirectProtection(t *testing.T) {
+	ruleLan := routing.Rule{
+		ID:           "preset-lan-direct",
+		Name:         "局域网直连",
+		Enabled:      true,
+		GeoIP:        []string{"private"},
+		IPCidr:       []string{"192.168.1.0/24"},
+		DomainSuffix: []string{"local", "lan"},
+		Action:       routing.RouteAction{Type: routing.ActionDirect},
+	}
+	ruleCnWarp := routing.Rule{
+		ID:      "preset-cn-direct",
+		Name:    "大陆直连",
+		Enabled: true,
+		GeoSite: []string{"cn"},
+		GeoIP:   []string{"cn"},
+		IPCidr:  []string{"114.114.114.114/32"},
+		Action:  routing.NewWarpTargetAction(),
 	}
 
 	opts := EngineOptions{
-		Rules:       []routing.Rule{ruleWarp},
-		FinalAction: string(routing.ActionWarp),
+		Rules:      []routing.Rule{ruleLan, ruleCnWarp},
+		FinalRoute: routing.NewWarpTargetAction(),
 	}
 
-	// 1. Check resolveRouteOutbound & resolveFinalOutbound
-	outbound := resolveRouteOutbound(routing.RouteAction{Type: routing.ActionWarp}, "")
-	if outbound != "node-builtin-warp" {
-		t.Errorf("expected node-builtin-warp, got %s", outbound)
+	// 1. Check resolveRouteOutbound & resolveFinalOutbound route builtin-warp through PoolOutbound
+	wantWarpPool := resolveRouteOutbound(routing.NewWarpTargetAction(), "")
+	if !strings.HasPrefix(wantWarpPool, "POOL:") {
+		t.Fatalf("expected PoolOutbound tag for builtin-warp, got %s", wantWarpPool)
+	}
+	if legacyWarpPool := resolveRouteOutbound(routing.RouteAction{Type: routing.ActionWarp}, ""); legacyWarpPool != wantWarpPool {
+		t.Errorf("expected legacy ActionWarp to normalize to %s, got %s", wantWarpPool, legacyWarpPool)
 	}
 	finalOutbound := resolveFinalOutbound(opts)
-	if finalOutbound != "node-builtin-warp" {
-		t.Errorf("expected node-builtin-warp for final outbound, got %s", finalOutbound)
+	if finalOutbound != wantWarpPool {
+		t.Errorf("expected %s for final outbound, got %s", wantWarpPool, finalOutbound)
 	}
 
 	// 2. Check route config
@@ -288,7 +300,7 @@ func TestBuildRouteConfig_ActionWarpAndLANDirectProtection(t *testing.T) {
 		t.Fatalf("expected generated sing-box rules, got %v", routeMap["rules"])
 	}
 
-	// Ensure Rule 0.25 (RFC1918 CIDRs) is present and routes to direct
+	// Ensure Rule 0.25 (RFC1918 CIDRs) and preset-lan-direct route to direct
 	var foundLANDirect bool
 	for _, r := range rules {
 		if r["outbound"] == "direct" {
@@ -306,38 +318,40 @@ func TestBuildRouteConfig_ActionWarpAndLANDirectProtection(t *testing.T) {
 		t.Errorf("expected RFC1918 LAN direct protection rule in sing-box route config")
 	}
 
-	// Ensure user rule with ActionWarp routes to node-builtin-warp, but excludes geoip-private and 192.168.1.0/24
+	// Ensure preset-cn-direct routes to builtin-warp PoolOutbound
 	var foundWarpRuleSet bool
 	var foundWarpCIDR bool
 	for _, r := range rules {
-		if r["outbound"] == "node-builtin-warp" {
-			if rsets, ok := r["rule_set"].([]string); ok {
+		if r["outbound"] == wantWarpPool {
+			if _, ok := r["rule_set"].([]string); ok {
 				foundWarpRuleSet = true
-				for _, rs := range rsets {
-					if rs == "geoip-private" {
-						t.Errorf("geoip-private should NOT be in node-builtin-warp rule_set: %v", rsets)
-					}
-				}
 			}
-			if cidrs, ok := r["ip_cidr"].([]string); ok {
+			if _, ok := r["ip_cidr"].([]string); ok {
 				foundWarpCIDR = true
-				for _, c := range cidrs {
-					if c == "192.168.1.0/24" {
-						t.Errorf("private CIDR 192.168.1.0/24 should NOT be in node-builtin-warp ip_cidr: %v", cidrs)
-					}
-				}
 			}
 		}
 	}
-	if !foundWarpRuleSet {
-		t.Errorf("expected node-builtin-warp rule_set rule in route config")
-	}
-	if !foundWarpCIDR {
-		t.Errorf("expected node-builtin-warp ip_cidr rule in route config")
+	if !foundWarpRuleSet || !foundWarpCIDR {
+		t.Errorf("expected builtin-warp PoolOutbound rules in route config (ruleSet=%v, cidr=%v)", foundWarpRuleSet, foundWarpCIDR)
 	}
 
-	// 3. Check DNS config: ActionWarp routes to domestic-doh
+	// 3. Check DNS config:
+	// - preset-cn-direct targeting builtin-warp is a domestic rule -> domestic-doh
+	// - FinalRoute targeting builtin-warp -> remote-doh detours via wantWarpPool (WARP-only setup)
 	dnsMap := buildDNSConfig(opts, finalOutbound, nil)
+	if dnsMap["final"] != "remote-doh" {
+		t.Errorf("expected dns final remote-doh when FinalRoute targets builtin-warp, got %v", dnsMap["final"])
+	}
+	servers := dnsMap["servers"].([]map[string]any)
+	var remoteDetour any
+	for _, s := range servers {
+		if s["tag"] == "remote-doh" {
+			remoteDetour = s["detour"]
+		}
+	}
+	if remoteDetour != wantWarpPool {
+		t.Errorf("expected remote-doh detour %s in WARP-only setup, got %v", wantWarpPool, remoteDetour)
+	}
 	dnsRules, ok := dnsMap["rules"].([]map[string]any)
 	if !ok {
 		t.Fatalf("expected dns rules, got %v", dnsMap["rules"])
@@ -345,12 +359,17 @@ func TestBuildRouteConfig_ActionWarpAndLANDirectProtection(t *testing.T) {
 	var foundDomesticRule bool
 	for _, dr := range dnsRules {
 		if dr["server"] == "domestic-doh" {
-			foundDomesticRule = true
-			break
+			if rsets, ok := dr["rule_set"].([]string); ok {
+				for _, rs := range rsets {
+					if rs == "geosite-cn" {
+						foundDomesticRule = true
+					}
+				}
+			}
 		}
 	}
 	if !foundDomesticRule {
-		t.Errorf("expected ActionWarp to route domain DNS lookups to domestic-doh")
+		t.Errorf("expected preset-cn-direct targeting builtin-warp to route geosite-cn DNS lookups to domestic-doh")
 	}
 }
 

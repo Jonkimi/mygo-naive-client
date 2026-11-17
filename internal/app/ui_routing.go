@@ -6,41 +6,155 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/config"
 	"naive-client/internal/routing"
 )
+
+type resolvedTargetNode struct {
+	Service config.Service
+	Online  bool
+	Missing bool
+	MissingID string
+}
+
+type targetResolution struct {
+	CandidateIDs    []string
+	OnlineNodes     []config.Service
+	OnlineCount     int
+	MissingNodeIDs  []string
+	FallbackOnline  int
+}
+
+func (a *app) serviceOrBuiltinWarp(id string) (config.Service, bool) {
+	for _, s := range a.state.Services {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	if id == config.BuiltinWarpServiceID {
+		cat := a.catalog()
+		name := cat.BuiltinWarpNodeName()
+		if name == "" {
+			name = "Cloudflare WARP"
+		}
+		return config.Service{
+			ID:       config.BuiltinWarpServiceID,
+			Name:     name,
+			Protocol: config.ProtoWARP,
+			Engine:   config.EngineSingBox,
+		}, true
+	}
+	return config.Service{}, false
+}
+
+func (a *app) allSelectableNodes() []config.Service {
+	var list []config.Service
+	var builtin *config.Service
+	for _, s := range a.state.Services {
+		if s.IsBuiltinWarp() {
+			cp := s
+			builtin = &cp
+			continue
+		}
+		list = append(list, s)
+	}
+	if builtin != nil {
+		list = append(list, *builtin)
+	} else {
+		if bw, ok := a.serviceOrBuiltinWarp(config.BuiltinWarpServiceID); ok {
+			list = append(list, bw)
+		}
+	}
+	return list
+}
+
+func (a *app) resolveActionTargets(act routing.RouteAction, precomputedRunning ...map[string]bool) targetResolution {
+	var running map[string]bool
+	if len(precomputedRunning) > 0 && precomputedRunning[0] != nil {
+		running = precomputedRunning[0]
+	} else if a.mgr != nil {
+		running = a.mgr.RunningServiceIDs()
+	}
+
+	var res targetResolution
+	if !act.IsProxyAction() {
+		return res
+	}
+
+	targets := act.NormalizedTargets()
+	seenCand := make(map[string]bool)
+	addOnlineSvc := func(s config.Service) {
+		if seenCand[s.ID] {
+			return
+		}
+		if running[s.ID] {
+			seenCand[s.ID] = true
+			res.CandidateIDs = append(res.CandidateIDs, s.ID)
+			res.OnlineNodes = append(res.OnlineNodes, s)
+			res.OnlineCount++
+		}
+	}
+
+	if len(targets) == 0 {
+		for _, s := range a.state.Services {
+			if s.IsBuiltinWarp() {
+				continue
+			}
+			addOnlineSvc(s)
+		}
+		return res
+	}
+
+	seenMissing := make(map[string]bool)
+	for _, t := range targets {
+		switch t.Kind {
+		case routing.TargetNode:
+			svc, ok := a.serviceOrBuiltinWarp(t.Value)
+			if !ok {
+				if !seenMissing[t.Value] {
+					seenMissing[t.Value] = true
+					res.MissingNodeIDs = append(res.MissingNodeIDs, t.Value)
+				}
+				continue
+			}
+			addOnlineSvc(svc)
+		case routing.TargetTag:
+			for _, s := range a.state.Services {
+				for _, st := range s.Tags {
+					if strings.EqualFold(strings.TrimSpace(st), strings.TrimSpace(t.Value)) {
+						addOnlineSvc(s)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if act.FallbackToPool {
+		for _, s := range a.state.Services {
+			if s.IsBuiltinWarp() || seenCand[s.ID] {
+				continue
+			}
+			if running[s.ID] {
+				seenCand[s.ID] = true
+				res.CandidateIDs = append(res.CandidateIDs, s.ID)
+				res.OnlineNodes = append(res.OnlineNodes, s)
+				res.FallbackOnline++
+			}
+		}
+	}
+	return res
+}
 
 func (a *app) activeNodesForTags(tags []string, precomputedRunning ...map[string]bool) int {
 	if a.mgr == nil || len(tags) == 0 {
 		return 0
 	}
-	var running map[string]bool
-	if len(precomputedRunning) > 0 && precomputedRunning[0] != nil {
-		running = precomputedRunning[0]
-	} else {
-		running = a.mgr.RunningServiceIDs()
+	var refs []routing.TargetRef
+	for _, t := range tags {
+		refs = append(refs, routing.TargetRef{Kind: routing.TargetTag, Value: t})
 	}
-	if len(running) == 0 {
-		return 0
-	}
-	count := 0
-	for _, svc := range a.state.Services {
-		if running[svc.ID] {
-			for _, t := range svc.Tags {
-				matched := false
-				for _, targetTag := range tags {
-					if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(targetTag)) {
-						count++
-						matched = true
-						break
-					}
-				}
-				if matched {
-					break
-				}
-			}
-		}
-	}
-	return count
+	return a.resolveActionTargets(routing.NewProxyAction(refs, routing.DispatchSmart, false), precomputedRunning...).OnlineCount
 }
 
 func (a *app) allKnownServiceTags() []string {
@@ -59,78 +173,31 @@ func (a *app) allKnownServiceTags() []string {
 }
 
 func (a *app) preferredNodeForAction(act routing.RouteAction, targetHost string, precomputedRunning ...map[string]bool) string {
-	if a.tracker == nil || a.mgr == nil {
+	if a.tracker == nil || a.mgr == nil || !act.IsProxyAction() {
 		return ""
 	}
-	if act.Type != routing.ActionProxyTag && act.Type != routing.ActionProxyPool && act.Type != routing.ActionWarp {
-		return ""
-	}
-	var running map[string]bool
-	if len(precomputedRunning) > 0 && precomputedRunning[0] != nil {
-		running = precomputedRunning[0]
-	} else {
-		running = a.mgr.RunningServiceIDs()
-	}
-	if len(running) == 0 {
-		return ""
-	}
-	var candidates []string
-	switch act.Type {
-	case routing.ActionWarp:
-		for _, s := range a.state.Services {
-			if s.IsBuiltinWarp() && running[s.ID] {
-				candidates = append(candidates, s.ID)
-			}
-		}
-	case routing.ActionProxyTag:
-		tags := act.GetTags()
-		for _, s := range a.state.Services {
-			if running[s.ID] {
-				for _, t := range s.Tags {
-					matched := false
-					for _, targetTag := range tags {
-						if strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(targetTag)) {
-							candidates = append(candidates, s.ID)
-							matched = true
-							break
-						}
-					}
-					if matched {
-						break
-					}
-				}
-			}
-		}
-	case routing.ActionProxyPool:
-		for _, s := range a.state.Services {
-			if running[s.ID] {
-				candidates = append(candidates, s.ID)
-			}
-		}
-	}
-	if len(candidates) == 0 {
+	res := a.resolveActionTargets(act, precomputedRunning...)
+	if len(res.CandidateIDs) == 0 {
 		return ""
 	}
 	if targetHost == "" {
 		targetHost = "example.com"
 	}
-	bestID, sc, ok := a.tracker.PeekBest(candidates, targetHost)
+	bestID, sc, ok := a.tracker.PeekBest(res.CandidateIDs, targetHost)
 	if !ok {
 		return ""
 	}
-	for _, s := range a.state.Services {
-		if s.ID == bestID {
-			if sc.EWMA > 0 {
-				return fmt.Sprintf("驻留: %s (%dms)", s.Name, max(1, sc.EWMA.Milliseconds()))
-			}
-			return fmt.Sprintf("驻留: %s", s.Name)
+	if s, found := a.serviceOrBuiltinWarp(bestID); found {
+		if sc.EWMA > 0 {
+			return fmt.Sprintf("驻留: %s (%dms)", s.Name, max(1, sc.EWMA.Milliseconds()))
 		}
+		return fmt.Sprintf("驻留: %s", s.Name)
 	}
 	return ""
 }
 
 func (a *app) preferredNodeForRule(rule routing.Rule, precomputedRunning ...map[string]bool) string {
-	if rule.Action.Type != routing.ActionProxyTag && rule.Action.Type != routing.ActionProxyPool {
+	if !rule.Action.IsProxyAction() {
 		return ""
 	}
 	targetHost := "example.com"
@@ -140,14 +207,63 @@ func (a *app) preferredNodeForRule(rule routing.Rule, precomputedRunning ...map[
 	return a.preferredNodeForAction(rule.Action, targetHost, precomputedRunning...)
 }
 
+func isRuleDomesticDNS(rule routing.Rule) bool {
+	if rule.ID == "preset-lan-direct" || rule.ID == "preset-cn-direct" {
+		return true
+	}
+	if rule.Action.Type == routing.ActionDirect {
+		return true
+	}
+	if rule.Action.TargetsNode(config.BuiltinWarpServiceID) {
+		for _, gs := range rule.GeoSite {
+			clean := strings.ToLower(strings.TrimSpace(gs))
+			if clean == "cn" || clean == "geolocation-cn" || clean == "tld-cn" {
+				return true
+			}
+		}
+		for _, gi := range rule.GeoIP {
+			if strings.EqualFold(strings.TrimSpace(gi), "cn") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isSingleWarpTarget(act routing.RouteAction) bool {
+	targets := act.NormalizedTargets()
+	return len(targets) == 1 &&
+		targets[0].Kind == routing.TargetNode &&
+		targets[0].Value == config.BuiltinWarpServiceID &&
+		!act.FallbackToPool
+}
+
+func isDirectWarpRule(rule routing.Rule) bool {
+	return isSingleWarpTarget(rule.Action) && isRuleDomesticDNS(rule)
+}
+
+func topActionIndexForRouteAction(act routing.RouteAction) int {
+	switch act.Type {
+	case routing.ActionDirect:
+		return 1
+	case routing.ActionBlock:
+		return 2
+	default:
+		return 0
+	}
+}
+
 func (a *app) openCreateRuleDialog() {
 	a.ruleEditor = ruleEditorForm{
-		open:        true,
-		isNew:       true,
-		ruleID:      fmt.Sprintf("rule-%d", len(a.state.RoutingRules)+1),
-		name:        fmt.Sprintf("分流规则 %d", len(a.state.RoutingRules)+1),
-		actionIndex: 0,
-		tags:        nil,
+		open:           true,
+		isNew:          true,
+		ruleID:         fmt.Sprintf("rule-%d", len(a.state.RoutingRules)+1),
+		name:           fmt.Sprintf("分流规则 %d", len(a.state.RoutingRules)+1),
+		actionIndex:     0,
+		directWarp:      false,
+		targets:         nil,
+		dispatchPolicy:  routing.DispatchSmart,
+		strictIsolation: true,
 	}
 	if a.win != nil {
 		a.win.Invalidate()
@@ -155,42 +271,38 @@ func (a *app) openCreateRuleDialog() {
 }
 
 func (a *app) openEditRuleDialog(rule routing.Rule) {
-	actionIdx := 0
-	switch rule.Action.Type {
-	case routing.ActionProxyTag:
-		actionIdx = 0
-	case routing.ActionProxyPool:
-		actionIdx = 1
-	case routing.ActionDirect:
-		actionIdx = 2
-	case routing.ActionWarp:
-		actionIdx = 3
-	case routing.ActionBlock:
-		actionIdx = 4
-	}
-
 	initTab := 0
-	if len(rule.GeoSite) == 0 && len(rule.GeoIP) == 0 && (len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0) {
+	if len(rule.GeoSite) == 0 && len(rule.GeoIP) == 0 && (len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0 || len(rule.DomainFull) > 0) {
 		initTab = 1
 	}
 
-	tags := rule.Action.GetTags()
+	actionIdx := topActionIndexForRouteAction(rule.Action)
+	directWarp := false
+	targets := rule.Action.NormalizedTargets()
+	if isDirectWarpRule(rule) {
+		actionIdx = 1
+		directWarp = true
+		targets = nil
+	}
 
 	a.ruleEditor = ruleEditorForm{
-		open:          true,
-		isNew:         false,
-		ruleID:        rule.ID,
-		name:          a.localizedRuleName(rule),
-		desc:          a.localizedRuleDescription(rule),
-		actionIndex:   actionIdx,
-		tags:          tags,
+		open:             true,
+		isNew:            false,
+		ruleID:           rule.ID,
+		name:             a.localizedRuleName(rule),
+		desc:             a.localizedRuleDescription(rule),
+		actionIndex:      actionIdx,
+		directWarp:       directWarp,
+		targets:          targets,
+		dispatchPolicy:   rule.Action.EffectiveDispatchPolicy(),
+		strictIsolation:  !rule.Action.FallbackToPool,
 		domainsInput:     strings.Join(rule.DomainSuffix, "\n"),
 		fullDomainsInput: strings.Join(rule.DomainFull, "\n"),
 		cidrsInput:       strings.Join(rule.IPCidr, "\n"),
-		keywordsInput: strings.Join(rule.DomainKeyword, ", "),
-		geosites:      append([]string(nil), rule.GeoSite...),
-		geoips:        append([]string(nil), rule.GeoIP...),
-		tab:           initTab,
+		keywordsInput:    strings.Join(rule.DomainKeyword, ", "),
+		geosites:         append([]string(nil), rule.GeoSite...),
+		geoips:           append([]string(nil), rule.GeoIP...),
+		tab:              initTab,
 	}
 	if a.win != nil {
 		a.win.Invalidate()
@@ -199,31 +311,17 @@ func (a *app) openEditRuleDialog(rule routing.Rule) {
 
 func (a *app) openEditFinalRuleDialog() {
 	cat := a.catalog()
-	actionIdx := 1
-	switch a.state.RoutingFinal.Type {
-	case routing.ActionProxyTag:
-		actionIdx = 0
-	case routing.ActionProxyPool:
-		actionIdx = 1
-	case routing.ActionDirect:
-		actionIdx = 2
-	case routing.ActionWarp:
-		actionIdx = 3
-	case routing.ActionBlock:
-		actionIdx = 4
-	}
-
-	tags := a.state.RoutingFinal.GetTags()
-
 	a.ruleEditor = ruleEditorForm{
-		open:        true,
-		isNew:       false,
-		isFinal:     true,
-		ruleID:      "final-fallback",
-		name:        cat.RoutingFinalFallback(),
-		desc:        cat.RoutingFinalDesc(),
-		actionIndex: actionIdx,
-		tags:        tags,
+		open:           true,
+		isNew:          false,
+		isFinal:        true,
+		ruleID:         "final-fallback",
+		name:           cat.RoutingFinalFallback(),
+		desc:           cat.RoutingFinalDesc(),
+		actionIndex:    topActionIndexForRouteAction(a.state.RoutingFinal),
+		targets:         a.state.RoutingFinal.NormalizedTargets(),
+		dispatchPolicy:  a.state.RoutingFinal.EffectiveDispatchPolicy(),
+		strictIsolation: !a.state.RoutingFinal.FallbackToPool,
 	}
 	if a.win != nil {
 		a.win.Invalidate()
@@ -260,14 +358,13 @@ func (a *app) resetRoutingPresets() {
 }
 
 func (a *app) cycleFinalAction() {
-	switch a.state.RoutingFinal.Type {
-	case routing.ActionProxyPool:
+	if a.state.RoutingFinal.Type == routing.ActionProxyPool && len(a.state.RoutingFinal.NormalizedTargets()) == 0 {
 		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionDirect}
-	case routing.ActionDirect:
-		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionWarp}
-	case routing.ActionWarp:
-		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyTag, Tag: "AI", Tags: []string{"AI"}}
-	default:
+	} else if a.state.RoutingFinal.Type == routing.ActionDirect {
+		a.state.RoutingFinal = routing.NewWarpTargetAction()
+	} else if a.state.RoutingFinal.TargetsNode(config.BuiltinWarpServiceID) {
+		a.state.RoutingFinal = routing.NewProxyAction([]routing.TargetRef{{Kind: routing.TargetTag, Value: "AI"}}, routing.DispatchSmart, false)
+	} else {
 		a.state.RoutingFinal = routing.RouteAction{Type: routing.ActionProxyPool}
 	}
 	a.saveState()
@@ -495,28 +592,406 @@ func (a *app) renderChipsTagInput(
 	})
 }
 
+func (a *app) hasTargetRef(kind routing.TargetKind, value string) bool {
+	for _, t := range a.ruleEditor.targets {
+		if t.Kind != kind {
+			continue
+		}
+		if kind == routing.TargetTag && strings.EqualFold(t.Value, value) {
+			return true
+		}
+		if kind == routing.TargetNode && t.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) toggleTargetRef(kind routing.TargetKind, value string) {
+	value = strings.TrimSpace(value)
+	if kind == routing.TargetTag {
+		value = strings.TrimSpace(strings.TrimPrefix(value, "#"))
+	}
+	if value == "" {
+		return
+	}
+	for i, t := range a.ruleEditor.targets {
+		if t.Kind != kind {
+			continue
+		}
+		match := (kind == routing.TargetNode && t.Value == value) || (kind == routing.TargetTag && strings.EqualFold(t.Value, value))
+		if match {
+			a.ruleEditor.targets = append(a.ruleEditor.targets[:i], a.ruleEditor.targets[i+1:]...)
+			return
+		}
+	}
+	a.ruleEditor.targets = append(a.ruleEditor.targets, routing.TargetRef{Kind: kind, Value: value})
+}
+
+func (a *app) addTargetFromQuery(raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	if strings.HasPrefix(raw, "#") {
+		tag := strings.TrimSpace(strings.TrimPrefix(raw, "#"))
+		if tag != "" && !a.hasTargetRef(routing.TargetTag, tag) {
+			a.ruleEditor.targets = append(a.ruleEditor.targets, routing.TargetRef{Kind: routing.TargetTag, Value: tag})
+		}
+		return
+	}
+	clean := strings.TrimSpace(strings.TrimPrefix(raw, "@"))
+	for _, svc := range a.allSelectableNodes() {
+		if strings.EqualFold(svc.Name, clean) || svc.ID == clean {
+			if !a.hasTargetRef(routing.TargetNode, svc.ID) {
+				a.ruleEditor.targets = append(a.ruleEditor.targets, routing.TargetRef{Kind: routing.TargetNode, Value: svc.ID})
+			}
+			return
+		}
+	}
+	if !a.hasTargetRef(routing.TargetTag, clean) {
+		a.ruleEditor.targets = append(a.ruleEditor.targets, routing.TargetRef{Kind: routing.TargetTag, Value: clean})
+	}
+}
+
+func (a *app) moveTargetRef(idx int, delta int) {
+	next := idx + delta
+	if idx < 0 || idx >= len(a.ruleEditor.targets) || next < 0 || next >= len(a.ruleEditor.targets) {
+		return
+	}
+	a.ruleEditor.targets[idx], a.ruleEditor.targets[next] = a.ruleEditor.targets[next], a.ruleEditor.targets[idx]
+}
+
+func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[string]bool) {
+	cat := a.catalog()
+	isOrder := a.ruleEditor.dispatchPolicy == routing.DispatchOrder
+
+	ui.Column(c.Key("rule-proxy-target-picker")).Gap(10).Children(func() {
+		// Header row: Label + Mode Pill + Clear button
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Text(c, cat.RuleTargetLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
+				if len(a.ruleEditor.targets) == 0 {
+					tagPill(c, cat.RoutingProxyPool(), p.accentText, p.accentBg)
+				} else {
+					tagPill(c, fmt.Sprintf("%d", len(a.ruleEditor.targets)), p.accentText, p.accentBg)
+				}
+			})
+			if len(a.ruleEditor.targets) > 0 {
+				clearBtn := ui.ButtonBase(c.Key("btn-clear-rule-targets")).
+					Label(cat.RuleTargetClearAll()).
+					Radius(4).PaddingX(8).PaddingY(2).
+					Background(p.elevated).Border(1, p.borderSubtle).
+					Children(func() {
+						ui.Text(c, cat.RuleTargetClearAll()).FontSize(11).TextColor(p.textMuted)
+					})
+				if clearBtn.Clicked() {
+					a.ruleEditor.targets = nil
+					a.ruleEditor.targetQuery = ""
+				}
+			}
+		})
+
+		// Unified Chip Box + Quick-Pick Palette
+		ui.Column(c.Key("rule-target-picker-box")).
+			Gap(8).Padding(10).Radius(8).
+			Background(p.surface).Border(1, p.borderSubtle).
+			Children(func() {
+				// Selected Chips + Inline Query Input
+				ui.Row(c.Key("rule-target-chips-row")).
+					AlignItems(ui.Center).Gap(6).Wrap().
+					Children(func() {
+						for idx, t := range a.ruleEditor.targets {
+							chipIdx := idx
+							ref := t
+							chipKey := fmt.Sprintf("rule-target-chip-%d-%s-%s", chipIdx, ref.Kind, ref.Value)
+							isNode := ref.Kind == routing.TargetNode
+
+							var labelText string
+							var svc config.Service
+							var foundSvc bool
+							var missing bool
+							var online bool
+							if isNode {
+								svc, foundSvc = a.serviceOrBuiltinWarp(ref.Value)
+								if !foundSvc {
+									missing = true
+									labelText = ref.Value
+								} else {
+									labelText = svc.Name
+									online = runningIDs[svc.ID]
+								}
+							} else {
+								labelText = "#" + ref.Value
+							}
+
+							chipBg := p.accentBg
+							chipBorder := p.accent.Alpha(0.35)
+							chipText := p.accentText
+							if isNode && missing {
+								chipBg = p.amberBg
+								chipBorder = p.amber.Alpha(0.5)
+								chipText = p.amber
+							} else if isNode {
+								chipBg = p.elevated
+								chipBorder = p.borderSubtle
+								chipText = p.text
+							}
+
+							ui.Row(c.Key(chipKey)).
+								AlignItems(ui.Center).Gap(4).
+								PaddingX(7).PaddingY(3).Radius(5).
+								Background(chipBg).Border(1, chipBorder).
+								Children(func() {
+									if isOrder && len(a.ruleEditor.targets) > 1 {
+										ui.Text(c, fmt.Sprintf("%d.", chipIdx+1)).FontSize(10).FontWeight(700).TextColor(p.textDim)
+									}
+									if isNode {
+										dotCol := p.textDim.Alpha(0.45)
+										if missing {
+											dotCol = p.amber
+										} else if online {
+											dotCol = p.green
+										}
+										ui.Box(c).Size(6, 6).Radius(3).Background(dotCol)
+									}
+									ui.Text(c, labelText).FontSize(11).FontWeight(500).TextColor(chipText)
+									if isNode && foundSvc && svc.EnableWARP {
+										tagPill(c, "+WARP", p.green, p.greenBg)
+									}
+									if isNode && missing {
+										tagPill(c, cat.RuleTargetMissingNode(), p.amber, p.amberBg)
+									}
+									if isOrder && len(a.ruleEditor.targets) > 1 {
+										if chipIdx > 0 {
+											leftBtn := ui.ButtonBase(c.Key(chipKey + "-left")).
+												Label("move-left-" + ref.Value).
+												Radius(3).PaddingX(3).Background(ui.Transparent).
+												Children(func() {
+													ui.Text(c, "‹").FontSize(11).FontWeight(700).TextColor(p.textDim)
+												})
+											if leftBtn.Clicked() {
+												a.moveTargetRef(chipIdx, -1)
+											}
+										}
+										if chipIdx < len(a.ruleEditor.targets)-1 {
+											rightBtn := ui.ButtonBase(c.Key(chipKey + "-right")).
+												Label("move-right-" + ref.Value).
+												Radius(3).PaddingX(3).Background(ui.Transparent).
+												Children(func() {
+													ui.Text(c, "›").FontSize(11).FontWeight(700).TextColor(p.textDim)
+												})
+											if rightBtn.Clicked() {
+												a.moveTargetRef(chipIdx, 1)
+											}
+										}
+									}
+									delBtn := ui.ButtonBase(c.Key(fmt.Sprintf("rule-target-del-%s-%s", ref.Kind, ref.Value))).
+										Label("del-target-" + ref.Value).
+										Radius(999).PaddingX(2).Background(ui.Transparent).
+										Children(func() {
+											ui.Text(c, "×").FontSize(11).FontWeight(700).TextColor(p.textDim)
+										})
+									if delBtn.Clicked() {
+										a.toggleTargetRef(ref.Kind, ref.Value)
+									}
+								})
+						}
+
+						placeholder := cat.RuleTargetHintEmpty()
+						if len(a.ruleEditor.targets) > 0 {
+							placeholder = cat.RuleTargetHintMore()
+						}
+						inp := ui.TextInput(c.Key("rule-set-target-input"), &a.ruleEditor.targetQuery).
+							Label(cat.RuleTargetLabel()).
+							Placeholder(placeholder).
+							Height(24).Radius(4).FontSize(11).Grow(1).MinWidth(160).
+							Background(ui.Transparent).Border(0, ui.Transparent)
+
+						if strings.Contains(a.ruleEditor.targetQuery, ",") || strings.Contains(a.ruleEditor.targetQuery, "\n") {
+							for _, pt := range parseCommaOrLines(a.ruleEditor.targetQuery) {
+								a.addTargetFromQuery(pt)
+							}
+							a.ruleEditor.targetQuery = ""
+						} else if inp.Submitted() && strings.TrimSpace(a.ruleEditor.targetQuery) != "" {
+							a.addTargetFromQuery(a.ruleEditor.targetQuery)
+							a.ruleEditor.targetQuery = ""
+						}
+					})
+
+				ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+
+				// Group A: Direct Node Suggestions
+				q := strings.ToLower(strings.TrimSpace(a.ruleEditor.targetQuery))
+				nodeQuery := q
+				if strings.HasPrefix(nodeQuery, "@") {
+					nodeQuery = strings.TrimSpace(strings.TrimPrefix(nodeQuery, "@"))
+				}
+				nodes := a.allSelectableNodes()
+				var visibleNodes []config.Service
+				for _, svc := range nodes {
+					if strings.HasPrefix(q, "#") {
+						continue
+					}
+					if nodeQuery != "" {
+						protoStr := strings.ToLower(string(svc.EffectiveProtocol()))
+						if !strings.Contains(strings.ToLower(svc.Name), nodeQuery) &&
+							!strings.Contains(strings.ToLower(svc.ID), nodeQuery) &&
+							!strings.Contains(protoStr, nodeQuery) {
+							continue
+						}
+					}
+					visibleNodes = append(visibleNodes, svc)
+				}
+
+				ui.Column(c.Key("rule-pick-nodes-group")).Gap(5).Children(func() {
+					ui.Text(c, cat.RuleTargetNodesGroup()).FontSize(11).FontWeight(500).TextColor(p.textMuted)
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+						for _, svc := range visibleNodes {
+							s := svc
+							selected := a.hasTargetRef(routing.TargetNode, s.ID)
+							online := runningIDs[s.ID]
+							bg := p.elevated
+							bd := p.borderSubtle
+							if selected {
+								bg = p.accentBg
+								bd = p.accent.Alpha(0.5)
+							}
+							btn := ui.ButtonBase(c.Key("rule-pick-node-" + s.ID)).
+								Label("pick-node-" + s.ID).
+								Radius(5).PaddingX(8).PaddingY(4).
+								Background(bg).Border(1, bd).
+								Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+										dotCol := p.textDim.Alpha(0.45)
+										if online {
+											dotCol = p.green
+										}
+										ui.Box(c).Size(6, 6).Radius(3).Background(dotCol)
+										ui.Text(c, s.Name).FontSize(11).FontWeight(500).TextColor(p.text)
+										protoLabel := strings.ToUpper(string(s.EffectiveProtocol()))
+										ui.Text(c, protoLabel).FontSize(9).TextColor(p.textDim)
+										if s.IsBuiltinWarp() {
+											tagPill(c, cat.TagBuiltin(), p.green, p.greenBg)
+										} else if s.EnableWARP {
+											tagPill(c, "+WARP", p.green, p.greenBg)
+										}
+									})
+								})
+							if btn.Clicked() {
+								a.toggleTargetRef(routing.TargetNode, s.ID)
+								a.ruleEditor.targetQuery = ""
+							}
+						}
+					})
+				})
+
+				// Group B: Tag Pool Suggestions
+				allTags := a.allKnownServiceTags()
+				tagFilter := strings.TrimSpace(strings.TrimPrefix(q, "#"))
+				var visibleTags []string
+				for _, t := range allTags {
+					if tagFilter == "" || strings.Contains(strings.ToLower(t), tagFilter) {
+						visibleTags = append(visibleTags, t)
+					}
+				}
+				if len(visibleTags) > 0 {
+					ui.Column(c.Key("rule-pick-tags-group")).Gap(5).Children(func() {
+						ui.Text(c, cat.RuleTargetTagsGroup()).FontSize(11).FontWeight(500).TextColor(p.textMuted)
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+							for _, t := range visibleTags {
+								tagVal := t
+								selected := a.hasTargetRef(routing.TargetTag, tagVal)
+								bg := p.elevated
+								bd := p.borderSubtle
+								txt := p.accentText
+								if selected {
+									bg = p.accentBg
+									bd = p.accent.Alpha(0.5)
+								}
+								btn := ui.ButtonBase(c.Key("rule-pick-tag-" + tagVal)).
+									Label("pick-tag-" + tagVal).
+									Radius(5).PaddingX(8).PaddingY(3).
+									Background(bg).Border(1, bd).
+									Children(func() {
+										ui.Text(c, "#"+tagVal).FontSize(11).FontWeight(500).TextColor(txt)
+									})
+								if btn.Clicked() {
+									a.toggleTargetRef(routing.TargetTag, tagVal)
+									a.ruleEditor.targetQuery = ""
+								}
+							}
+						})
+					})
+				}
+			})
+
+		// Dispatch Policy & Isolation Bar (Dispatch mode always visible under Proxy; Isolation shown when specific targets are selected)
+		ui.Column(c.Key("rule-policy-bar")).
+			Gap(8).Padding(10).Radius(8).
+			Background(p.surface).Border(1, p.borderSubtle).
+			Children(func() {
+				polIdx := 0
+				if a.ruleEditor.dispatchPolicy == routing.DispatchOrder {
+					polIdx = 1
+				}
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Column(c).Grow(1).Gap(2).Children(func() {
+						ui.Text(c, cat.RuleDispatchPolicyLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
+						desc := cat.RuleDispatchSmartDesc()
+						if polIdx == 1 {
+							desc = cat.RuleDispatchOrderDesc()
+						}
+						ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
+					})
+					if segmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
+						if polIdx == 1 {
+							a.ruleEditor.dispatchPolicy = routing.DispatchOrder
+						} else {
+							a.ruleEditor.dispatchPolicy = routing.DispatchSmart
+						}
+					}
+				})
+
+				if len(a.ruleEditor.targets) > 0 {
+					ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+
+					ui.Column(c.Key("rule-isolation-row")).Gap(3).Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+							ui.Text(c, cat.RuleStrictIsolationLabel()).FontSize(12).FontWeight(500).TextColor(p.text).Grow(1)
+							ui.Switch(c.Key("toggle-rule-strict-isolation"), &a.ruleEditor.strictIsolation).
+								Label("toggle-rule-strict-isolation")
+						})
+						isoDesc := cat.RuleFallbackStrictDesc()
+						if !a.ruleEditor.strictIsolation {
+							isoDesc = cat.RuleFallbackOpenDesc()
+						}
+						ui.Text(c, isoDesc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
+					})
+				}
+			})
+	})
+}
+
 func (a *app) saveRuleEditor() {
 	var act routing.RouteAction
 	switch a.ruleEditor.actionIndex {
 	case 0:
-		tags := append([]string(nil), a.ruleEditor.tags...)
-		if q := strings.TrimSpace(a.ruleEditor.tagQuery); q != "" {
+		targets := append([]routing.TargetRef(nil), a.ruleEditor.targets...)
+		if q := strings.TrimSpace(a.ruleEditor.targetQuery); q != "" {
 			for _, pt := range parseCommaOrLines(q) {
-				addTag(&tags, pt)
+				a.addTargetFromQuery(pt)
 			}
+			targets = append([]routing.TargetRef(nil), a.ruleEditor.targets...)
 		}
-		var firstTag string
-		if len(tags) > 0 {
-			firstTag = tags[0]
-		}
-		act = routing.RouteAction{Type: routing.ActionProxyTag, Tag: firstTag, Tags: tags}
+		act = routing.NewProxyAction(targets, a.ruleEditor.dispatchPolicy, !a.ruleEditor.strictIsolation)
 	case 1:
-		act = routing.RouteAction{Type: routing.ActionProxyPool}
+		if a.ruleEditor.directWarp && a.ruleEditor.ruleID != "preset-lan-direct" {
+			act = routing.NewWarpTargetAction()
+		} else {
+			act = routing.RouteAction{Type: routing.ActionDirect}
+		}
 	case 2:
-		act = routing.RouteAction{Type: routing.ActionDirect}
-	case 3:
-		act = routing.RouteAction{Type: routing.ActionWarp}
-	case 4:
 		act = routing.RouteAction{Type: routing.ActionBlock}
 	}
 
@@ -589,9 +1064,6 @@ func (a *app) saveRuleEditor() {
 				a.state.RoutingRules[i].GeoSite = geosites
 				a.state.RoutingRules[i].GeoIP = geoips
 				a.state.RoutingRules[i].Action = act
-				if a.ruleEditor.ruleID == "preset-lan-direct" {
-					a.state.Cloudflare.DirectWarpEnabled = (act.Type == routing.ActionWarp)
-				}
 				break
 			}
 		}
@@ -603,6 +1075,96 @@ func (a *app) saveRuleEditor() {
 	a.toast("分流规则已更新")
 	if a.win != nil {
 		a.win.Invalidate()
+	}
+}
+
+func (a *app) renderActionBadges(c *ui.Context, p palette, rule routing.Rule, isFinal bool, runningIDs map[string]bool) {
+	cat := a.catalog()
+	act := rule.Action
+	switch act.Type {
+	case routing.ActionBlock:
+		statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
+	case routing.ActionDirect:
+		statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
+		tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+	default:
+		targets := act.NormalizedTargets()
+		res := a.resolveActionTargets(act, runningIDs)
+		if len(targets) == 0 {
+			activeCount := res.OnlineCount
+			if activeCount == 0 && !a.isBuiltinWarpNeeded() {
+				activeCount = a.activeRunningCount()
+			}
+			label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
+			if activeCount > 0 {
+				statusBadge(c, label, p.green, p.greenBg)
+			} else {
+				statusBadge(c, label, p.amber, p.amberBg)
+			}
+			tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
+		} else {
+			allTags := true
+			var tagLabels []string
+			for _, t := range targets {
+				if t.Kind != routing.TargetTag {
+					allTags = false
+					break
+				}
+				tagLabels = append(tagLabels, "#"+t.Value)
+			}
+			isOrder := act.EffectiveDispatchPolicy() == routing.DispatchOrder && len(targets) > 1
+			if !isFinal && isSingleWarpTarget(act) && isRuleDomesticDNS(rule) {
+				if res.OnlineCount > 0 {
+					statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
+				} else {
+					statusBadge(c, cat.RoutingWarp(), p.amber, p.amberBg)
+				}
+			} else if allTags && !isOrder {
+				tagDisplay := strings.Join(tagLabels, ", ")
+				label := fmt.Sprintf("%s (%d 在线)", tagDisplay, res.OnlineCount)
+				if res.OnlineCount > 0 {
+					statusBadge(c, label, p.accentText, p.accentBg)
+				} else {
+					statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
+				}
+			} else {
+				for idx, t := range targets {
+					if idx > 0 && isOrder {
+						ui.Text(c, "→").FontSize(11).TextColor(p.textDim)
+					}
+					if t.Kind == routing.TargetNode {
+						if svc, ok := a.serviceOrBuiltinWarp(t.Value); ok {
+							fg, bg := p.textMuted, p.elevated
+							if runningIDs[svc.ID] {
+								fg, bg = p.green, p.greenBg
+							}
+							tagPill(c, svc.Name, fg, bg)
+							if svc.EnableWARP {
+								tagPill(c, "+WARP", p.green, p.greenBg)
+							}
+						} else {
+							tagPill(c, t.Value+" ("+cat.RuleTargetMissingNode()+")", p.amber, p.amberBg)
+						}
+					} else {
+						tagPill(c, "#"+t.Value, p.accentText, p.accentBg)
+					}
+				}
+				onlineLabel := fmt.Sprintf("%d 在线", res.OnlineCount)
+				if res.OnlineCount > 0 {
+					statusBadge(c, onlineLabel, p.green, p.greenBg)
+				} else {
+					statusBadge(c, onlineLabel, p.amber, p.amberBg)
+				}
+			}
+			if !isFinal && isRuleDomesticDNS(rule) {
+				tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
+			} else {
+				tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
+			}
+			if act.FallbackToPool {
+				tagPill(c, cat.RuleTargetFallbackBadge(), p.textMuted, p.elevated)
+			}
+		}
 	}
 }
 
@@ -681,45 +1243,7 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 
 			// Line 3: Outbound Action Badge + Criteria Tags
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-				// Outbound Action Badge
-				switch rule.Action.Type {
-				case routing.ActionBlock:
-					statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
-				case routing.ActionDirect:
-					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
-					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
-				case routing.ActionWarp:
-					statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
-					tagPill(c, cat.RoutingWarpLanProtected(), p.green, p.greenBg)
-					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
-				case routing.ActionProxyTag:
-					tags := rule.Action.GetTags()
-					activeNodes := a.activeNodesForTags(tags, runningIDs)
-					var tagLabels []string
-					for _, t := range tags {
-						tagLabels = append(tagLabels, "#"+t)
-					}
-					tagDisplay := strings.Join(tagLabels, ", ")
-					if tagDisplay == "" {
-						tagDisplay = "#AI"
-					}
-					label := fmt.Sprintf("%s (%d 在线)", tagDisplay, activeNodes)
-					if activeNodes > 0 {
-						statusBadge(c, label, p.accentText, p.accentBg)
-					} else {
-						statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
-					}
-					tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
-				default:
-					activeCount := a.activeRunningCount()
-					label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
-					if activeCount > 0 {
-						statusBadge(c, label, p.green, p.greenBg)
-					} else {
-						statusBadge(c, label, p.amber, p.amberBg)
-					}
-					tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
-				}
+				a.renderActionBadges(c, p, rule, false, runningIDs)
 
 				// If GeoData is missing and rule has Geo criteria, show status badge
 				if rule.Enabled && hasGeoCriteria && !hasGeo {
@@ -963,45 +1487,9 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[s
 			ui.Text(c, cat.RoutingFinalDesc()).FontSize(11).TextColor(p.textMuted)
 
 			// Line 3: Outbound Action Badge
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				switch a.state.RoutingFinal.Type {
-				case routing.ActionBlock:
-					statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
-				case routing.ActionDirect:
-					statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
-					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
-				case routing.ActionWarp:
-					statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
-					tagPill(c, cat.RoutingWarpLanProtected(), p.green, p.greenBg)
-					tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
-				case routing.ActionProxyTag:
-					tags := a.state.RoutingFinal.GetTags()
-					activeNodes := a.activeNodesForTags(tags, runningIDs)
-					var tagLabels []string
-					for _, t := range tags {
-						tagLabels = append(tagLabels, "#"+t)
-					}
-					tagDisplay := strings.Join(tagLabels, ", ")
-					if tagDisplay == "" {
-						tagDisplay = "#AI"
-					}
-					label := fmt.Sprintf("%s (%d 在线)", tagDisplay, activeNodes)
-					if activeNodes > 0 {
-						statusBadge(c, label, p.accentText, p.accentBg)
-					} else {
-						statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
-					}
-					tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
-				default:
-					activeCount := a.activeRunningCount()
-					label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
-					if activeCount > 0 {
-						statusBadge(c, label, p.green, p.greenBg)
-					} else {
-						statusBadge(c, label, p.amber, p.amberBg)
-					}
-					tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
-				}
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+				finalRule := routing.Rule{ID: "final", Action: a.state.RoutingFinal}
+				a.renderActionBadges(c, p, finalRule, true, runningIDs)
 
 				if pref := a.preferredNodeForAction(a.state.RoutingFinal, "", runningIDs); pref != "" {
 					tagPill(c, pref, p.accentText, p.accentBg)
@@ -1012,11 +1500,15 @@ func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[s
 
 func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 	cat := a.catalog()
+	var runningIDs map[string]bool
+	if a.mgr != nil {
+		runningIDs = a.mgr.RunningServiceIDs()
+	}
 
 	ui.DialogBase(c.Key("rule-editor-dialog"), &a.ruleEditor.open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
 		panel.Column().
-			Width(540).
+			Width(560).MaxHeight(660).
 			Padding(20).Gap(14).
 			Radius(14).Background(p.card).Border(1, p.border).
 			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
@@ -1035,64 +1527,98 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 					}
 				})
 
-				// Action selector
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					actions := []string{cat.RoutingTagPool(), cat.RoutingProxyPool(), cat.RoutingDirect(), cat.RoutingWarp(), cat.RoutingBlock()}
-					segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
-					switch a.ruleEditor.actionIndex {
-					case 2: // Direct
-						ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim)
-					case 3: // WARP Direct
-						ui.Text(c, cat.RuleActionWarpHint()).FontSize(11).TextColor(p.green)
-					case 0, 1: // Tag Pool or Proxy Pool
-						ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim)
-					}
-				})
+				ui.Scroll(c.Key("rule-editor-scroll")).
+					TrackScroll(&a.ruleEditor.scroll).
+					Grow(1).MinHeight(0).
+					Gap(12).
+					Children(func() {
+						if !a.ruleEditor.isFinal {
+							// Row 1: Rule Name & Optional Description (pinned identity header)
+							ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+								ui.Column(c).Grow(1).Children(func() {
+									labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
+								})
+								ui.Column(c).Grow(1).Children(func() {
+									labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
+								})
+							})
+						} else {
+							ui.Text(c, cat.RoutingFinalDesc()).FontSize(11).TextColor(p.textMuted)
+						}
 
-				if a.ruleEditor.actionIndex == 0 {
-					a.renderChipsTagInput(c, p, "rule-set-tag", cat.RuleTagLabel(), &a.ruleEditor.tags, &a.ruleEditor.tagQuery, cat.RuleTagHint(), a.allKnownServiceTags(), false)
-				}
-
-				if a.ruleEditor.isFinal {
-					ui.Text(c, cat.RoutingFinalDesc()).FontSize(11).TextColor(p.textMuted)
-				} else {
-					// Name & Description row
-					ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-						ui.Column(c).Grow(1).Children(func() {
-							labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
+						// 3-Way Top-Level Action Selector
+						ui.Column(c).Gap(6).Children(func() {
+							ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+							actions := []string{cat.RoutingProxy(), cat.RoutingDirect(), cat.RoutingBlock()}
+							segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
+							switch a.ruleEditor.actionIndex {
+							case 0: // Proxy
+								ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim)
+							case 1: // Direct
+								if a.ruleEditor.ruleID == "preset-lan-direct" {
+									ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim)
+								}
+							case 2: // Block
+								ui.Text(c, cat.RuleDrawerDescBlock()).FontSize(11).TextColor(p.red)
+							}
 						})
-						ui.Column(c).Grow(1).Children(func() {
-							labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
-						})
+
+						if a.ruleEditor.actionIndex == 0 {
+							a.renderProxyTargetPicker(c, p, runningIDs)
+						} else if a.ruleEditor.actionIndex == 1 && a.ruleEditor.ruleID != "preset-lan-direct" {
+							ui.Column(c.Key("rule-direct-warp-box")).
+								Gap(8).Padding(10).Radius(8).
+								Background(p.surface).Border(1, p.borderSubtle).
+								Children(func() {
+									ui.Column(c).Gap(4).Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+											ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
+												ui.Text(c, cat.RuleDirectWarpTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+												if a.ruleEditor.directWarp {
+													tagPill(c, cat.RoutingWarp(), p.green, p.greenBg)
+												}
+											})
+											ui.Switch(c.Key("toggle-rule-direct-warp"), &a.ruleEditor.directWarp).Label("toggle-rule-direct-warp")
+										})
+										ui.Text(c, cat.RuleDirectWarpDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
+									})
+									ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+									if a.ruleEditor.directWarp {
+										ui.Text(c, cat.RuleActionWarpHint()).FontSize(11).TextColor(p.green).LineHeight(1.35)
+									} else {
+										ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
+									}
+								})
+						}
+
+						if !a.ruleEditor.isFinal {
+							// Criteria Tabs (GeoData vs Domains & IPs)
+							segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
+								cat.RuleTabGeoData(),
+								cat.RuleTabCriteria(),
+							})
+
+							if a.ruleEditor.tab == 0 {
+								// GeoSite tags chip-input
+								a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags(), true)
+
+								// GeoIP tags chip-input
+								a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags(), true)
+							} else {
+								// Domain suffixes
+								labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
+
+								// Full domains
+								labeledTextArea(c, p, "rule-set-full-domains", "完整域名 (精确匹配)", &a.ruleEditor.fullDomainsInput, "每行一个完整域名，例如：api.example.com", 2, 3)
+
+								// IP-CIDRs
+								labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
+
+								// Keywords
+								labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
+							}
+						}
 					})
-
-					// Criteria Tabs (GeoData vs Domains & IPs)
-					segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
-						cat.RuleTabGeoData(),
-						cat.RuleTabCriteria(),
-					})
-
-					if a.ruleEditor.tab == 0 {
-						// GeoSite tags chip-input
-						a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags(), true)
-
-						// GeoIP tags chip-input
-						a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags(), true)
-					} else {
-						// Domain suffixes
-						labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
-
-						// Full domains
-						labeledTextArea(c, p, "rule-set-full-domains", "完整域名 (精确匹配)", &a.ruleEditor.fullDomainsInput, "每行一个完整域名，例如：api.example.com", 2, 3)
-
-						// IP-CIDRs
-						labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
-
-						// Keywords
-						labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
-					}
-				}
 
 				// Error display
 				if a.ruleEditor.errText != "" {

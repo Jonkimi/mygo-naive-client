@@ -286,6 +286,16 @@ func (msgs Messages) RoutingFinalAlwaysActive() string {
 	return Catalog.Format(msgs.locale, "routingFinalAlwaysActive", nil)
 }
 
+// RoutingProxy says "Proxy"
+// in the language the app shows.
+func RoutingProxy() string { return In(i18n.Locale()).RoutingProxy() }
+
+// RoutingProxy says "Proxy"
+// in the language of msgs.
+func (msgs Messages) RoutingProxy() string {
+	return Catalog.Format(msgs.locale, "routingProxy", nil)
+}
+
 // RoutingTagPool says "Tag Pool"
 // in the language the app shows.
 func RoutingTagPool() string { return In(i18n.Locale()).RoutingTagPool() }
@@ -1150,24 +1160,44 @@ func (msgs Messages) PresetRuleGFWDesc() string {
 	return Catalog.Format(msgs.locale, "presetRuleGFWDesc", nil)
 }
 
-// PresetRuleBypassLan says "Direct"
+// PresetRuleBypassLan says "LAN Direct"
 // in the language the app shows.
 func PresetRuleBypassLan() string { return In(i18n.Locale()).PresetRuleBypassLan() }
 
-// PresetRuleBypassLan says "Direct"
+// PresetRuleBypassLan says "LAN Direct"
 // in the language of msgs.
 func (msgs Messages) PresetRuleBypassLan() string {
 	return Catalog.Format(msgs.locale, "presetRuleBypassLan", nil)
 }
 
-// PresetRuleBypassLanDesc says "Direct connection, bypass proxy"
+// PresetRuleBypassLanDesc says "Direct connection for private LAN subnets and local domains"
 // in the language the app shows.
 func PresetRuleBypassLanDesc() string { return In(i18n.Locale()).PresetRuleBypassLanDesc() }
 
-// PresetRuleBypassLanDesc says "Direct connection, bypass proxy"
+// PresetRuleBypassLanDesc says "Direct connection for private LAN subnets and local domains"
 // in the language of msgs.
 func (msgs Messages) PresetRuleBypassLanDesc() string {
 	return Catalog.Format(msgs.locale, "presetRuleBypassLanDesc", nil)
+}
+
+// PresetRuleCnDirect says "China Direct"
+// in the language the app shows.
+func PresetRuleCnDirect() string { return In(i18n.Locale()).PresetRuleCnDirect() }
+
+// PresetRuleCnDirect says "China Direct"
+// in the language of msgs.
+func (msgs Messages) PresetRuleCnDirect() string {
+	return Catalog.Format(msgs.locale, "presetRuleCnDirect", nil)
+}
+
+// PresetRuleCnDirectDesc says "Direct connection for mainland China domains and IPs (editable to WARP)"
+// in the language the app shows.
+func PresetRuleCnDirectDesc() string { return In(i18n.Locale()).PresetRuleCnDirectDesc() }
+
+// PresetRuleCnDirectDesc says "Direct connection for mainland China domains and IPs (editable to WARP)"
+// in the language of msgs.
+func (msgs Messages) PresetRuleCnDirectDesc() string {
+	return Catalog.Format(msgs.locale, "presetRuleCnDirectDesc", nil)
 }
 
 // UpdateGeoData says "Update GeoData"
@@ -6466,4 +6496,244 @@ func NodeUnhealthyDiagnosticTitle() string { return In(i18n.Locale()).NodeUnheal
 // in the language of msgs.
 func (msgs Messages) NodeUnhealthyDiagnosticTitle() string {
 	return Catalog.Format(msgs.locale, "nodeUnhealthyDiagnosticTitle", nil)
+}
+
+// RuleTargetLabel says "Outbound Targets (Nodes or Tags)"
+// in the language the app shows.
+func RuleTargetLabel() string { return In(i18n.Locale()).RuleTargetLabel() }
+
+// RuleTargetLabel says "Outbound Targets (Nodes or Tags)"
+// in the language of msgs.
+func (msgs Messages) RuleTargetLabel() string {
+	return Catalog.Format(msgs.locale, "ruleTargetLabel", nil)
+}
+
+// RuleTargetClearAll says "Clear (Global Pool)"
+// in the language the app shows.
+func RuleTargetClearAll() string { return In(i18n.Locale()).RuleTargetClearAll() }
+
+// RuleTargetClearAll says "Clear (Global Pool)"
+// in the language of msgs.
+func (msgs Messages) RuleTargetClearAll() string {
+	return Catalog.Format(msgs.locale, "ruleTargetClearAll", nil)
+}
+
+// RuleTargetHintEmpty says "Leave blank for global pool; type #tag or node name..."
+// in the language the app shows.
+func RuleTargetHintEmpty() string { return In(i18n.Locale()).RuleTargetHintEmpty() }
+
+// RuleTargetHintEmpty says "Leave blank for global pool; type #tag or node name..."
+// in the language of msgs.
+func (msgs Messages) RuleTargetHintEmpty() string {
+	return Catalog.Format(msgs.locale, "ruleTargetHintEmpty", nil)
+}
+
+// RuleTargetHintMore says "Add more #tags or nodes..."
+// in the language the app shows.
+func RuleTargetHintMore() string { return In(i18n.Locale()).RuleTargetHintMore() }
+
+// RuleTargetHintMore says "Add more #tags or nodes..."
+// in the language of msgs.
+func (msgs Messages) RuleTargetHintMore() string {
+	return Catalog.Format(msgs.locale, "ruleTargetHintMore", nil)
+}
+
+// RuleTargetNodesGroup says "Select Nodes"
+// in the language the app shows.
+func RuleTargetNodesGroup() string { return In(i18n.Locale()).RuleTargetNodesGroup() }
+
+// RuleTargetNodesGroup says "Select Nodes"
+// in the language of msgs.
+func (msgs Messages) RuleTargetNodesGroup() string {
+	return Catalog.Format(msgs.locale, "ruleTargetNodesGroup", nil)
+}
+
+// RuleTargetTagsGroup says "Match by Tag Pool"
+// in the language the app shows.
+func RuleTargetTagsGroup() string { return In(i18n.Locale()).RuleTargetTagsGroup() }
+
+// RuleTargetTagsGroup says "Match by Tag Pool"
+// in the language of msgs.
+func (msgs Messages) RuleTargetTagsGroup() string {
+	return Catalog.Format(msgs.locale, "ruleTargetTagsGroup", nil)
+}
+
+// RuleTargetMissingNode says "Node Missing"
+// in the language the app shows.
+func RuleTargetMissingNode() string { return In(i18n.Locale()).RuleTargetMissingNode() }
+
+// RuleTargetMissingNode says "Node Missing"
+// in the language of msgs.
+func (msgs Messages) RuleTargetMissingNode() string {
+	return Catalog.Format(msgs.locale, "ruleTargetMissingNode", nil)
+}
+
+// RuleDispatchPolicyLabel says "Candidate Dispatch Mode"
+// in the language the app shows.
+func RuleDispatchPolicyLabel() string { return In(i18n.Locale()).RuleDispatchPolicyLabel() }
+
+// RuleDispatchPolicyLabel says "Candidate Dispatch Mode"
+// in the language of msgs.
+func (msgs Messages) RuleDispatchPolicyLabel() string {
+	return Catalog.Format(msgs.locale, "ruleDispatchPolicyLabel", nil)
+}
+
+// RuleDispatchSmart says "Smart EWMA"
+// in the language the app shows.
+func RuleDispatchSmart() string { return In(i18n.Locale()).RuleDispatchSmart() }
+
+// RuleDispatchSmart says "Smart EWMA"
+// in the language of msgs.
+func (msgs Messages) RuleDispatchSmart() string {
+	return Catalog.Format(msgs.locale, "ruleDispatchSmart", nil)
+}
+
+// RuleDispatchOrder says "Ordered Failover"
+// in the language the app shows.
+func RuleDispatchOrder() string { return In(i18n.Locale()).RuleDispatchOrder() }
+
+// RuleDispatchOrder says "Ordered Failover"
+// in the language of msgs.
+func (msgs Messages) RuleDispatchOrder() string {
+	return Catalog.Format(msgs.locale, "ruleDispatchOrder", nil)
+}
+
+// RuleDispatchSmartDesc says "Merges matched nodes and dynamically picks the healthiest one by EWMA latency and affinity."
+// in the language the app shows.
+func RuleDispatchSmartDesc() string { return In(i18n.Locale()).RuleDispatchSmartDesc() }
+
+// RuleDispatchSmartDesc says "Merges matched nodes and dynamically picks the healthiest one by EWMA latency and affinity."
+// in the language of msgs.
+func (msgs Messages) RuleDispatchSmartDesc() string {
+	return Catalog.Format(msgs.locale, "ruleDispatchSmartDesc", nil)
+}
+
+// RuleDispatchOrderDesc says "Tries targets strictly from left to right; fails over only when prior tier fails or trips."
+// in the language the app shows.
+func RuleDispatchOrderDesc() string { return In(i18n.Locale()).RuleDispatchOrderDesc() }
+
+// RuleDispatchOrderDesc says "Tries targets strictly from left to right; fails over only when prior tier fails or trips."
+// in the language of msgs.
+func (msgs Messages) RuleDispatchOrderDesc() string {
+	return Catalog.Format(msgs.locale, "ruleDispatchOrderDesc", nil)
+}
+
+// RuleFallbackToPoolLabel says "Fallback to Global Pool when unavailable"
+// in the language the app shows.
+func RuleFallbackToPoolLabel() string { return In(i18n.Locale()).RuleFallbackToPoolLabel() }
+
+// RuleFallbackToPoolLabel says "Fallback to Global Pool when unavailable"
+// in the language of msgs.
+func (msgs Messages) RuleFallbackToPoolLabel() string {
+	return Catalog.Format(msgs.locale, "ruleFallbackToPoolLabel", nil)
+}
+
+// RuleStrictIsolationLabel says "Strict Block When Targets Unavailable (Prevent IP Leak)"
+// in the language the app shows.
+func RuleStrictIsolationLabel() string { return In(i18n.Locale()).RuleStrictIsolationLabel() }
+
+// RuleStrictIsolationLabel says "Strict Block When Targets Unavailable (Prevent IP Leak)"
+// in the language of msgs.
+func (msgs Messages) RuleStrictIsolationLabel() string {
+	return Catalog.Format(msgs.locale, "ruleStrictIsolationLabel", nil)
+}
+
+// RuleStrictIsolationEmptyDesc says "Global pool is active; select specific nodes or tags above to configure strict isolation vs. pool fallback."
+// in the language the app shows.
+func RuleStrictIsolationEmptyDesc() string { return In(i18n.Locale()).RuleStrictIsolationEmptyDesc() }
+
+// RuleStrictIsolationEmptyDesc says "Global pool is active; select specific nodes or tags above to configure strict isolation vs. pool fallback."
+// in the language of msgs.
+func (msgs Messages) RuleStrictIsolationEmptyDesc() string {
+	return Catalog.Format(msgs.locale, "ruleStrictIsolationEmptyDesc", nil)
+}
+
+// RuleFallbackStrictDesc says "Turn off to automatically fall back to the global proxy pool when all specified targets are offline."
+// in the language the app shows.
+func RuleFallbackStrictDesc() string { return In(i18n.Locale()).RuleFallbackStrictDesc() }
+
+// RuleFallbackStrictDesc says "Turn off to automatically fall back to the global proxy pool when all specified targets are offline."
+// in the language of msgs.
+func (msgs Messages) RuleFallbackStrictDesc() string {
+	return Catalog.Format(msgs.locale, "ruleFallbackStrictDesc", nil)
+}
+
+// RuleFallbackOpenDesc says "Strict block disabled: automatically falls back to the global proxy pool if all specified targets fail."
+// in the language the app shows.
+func RuleFallbackOpenDesc() string { return In(i18n.Locale()).RuleFallbackOpenDesc() }
+
+// RuleFallbackOpenDesc says "Strict block disabled: automatically falls back to the global proxy pool if all specified targets fail."
+// in the language of msgs.
+func (msgs Messages) RuleFallbackOpenDesc() string {
+	return Catalog.Format(msgs.locale, "ruleFallbackOpenDesc", nil)
+}
+
+// RuleTargetFallbackBadge says "Pool Fallback"
+// in the language the app shows.
+func RuleTargetFallbackBadge() string { return In(i18n.Locale()).RuleTargetFallbackBadge() }
+
+// RuleTargetFallbackBadge says "Pool Fallback"
+// in the language of msgs.
+func (msgs Messages) RuleTargetFallbackBadge() string {
+	return Catalog.Format(msgs.locale, "ruleTargetFallbackBadge", nil)
+}
+
+// RuleTargetStrictBadge says "Strict Isolation"
+// in the language the app shows.
+func RuleTargetStrictBadge() string { return In(i18n.Locale()).RuleTargetStrictBadge() }
+
+// RuleTargetStrictBadge says "Strict Isolation"
+// in the language of msgs.
+func (msgs Messages) RuleTargetStrictBadge() string {
+	return Catalog.Format(msgs.locale, "ruleTargetStrictBadge", nil)
+}
+
+// RuleDrawerTargetsTitle says "Configured Targets"
+// in the language the app shows.
+func RuleDrawerTargetsTitle() string { return In(i18n.Locale()).RuleDrawerTargetsTitle() }
+
+// RuleDrawerTargetsTitle says "Configured Targets"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerTargetsTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerTargetsTitle", nil)
+}
+
+// RuleDrawerDispatchTitle says "Dispatch & Isolation"
+// in the language the app shows.
+func RuleDrawerDispatchTitle() string { return In(i18n.Locale()).RuleDrawerDispatchTitle() }
+
+// RuleDrawerDispatchTitle says "Dispatch & Isolation"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDispatchTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDispatchTitle", nil)
+}
+
+// RuleDrawerCandidatesTitle says "Resolved Candidate Nodes"
+// in the language the app shows.
+func RuleDrawerCandidatesTitle() string { return In(i18n.Locale()).RuleDrawerCandidatesTitle() }
+
+// RuleDrawerCandidatesTitle says "Resolved Candidate Nodes"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerCandidatesTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerCandidatesTitle", nil)
+}
+
+// RuleDirectWarpTitle says "Route via Cloudflare WARP (Direct ➔ WARP)"
+// in the language the app shows.
+func RuleDirectWarpTitle() string { return In(i18n.Locale()).RuleDirectWarpTitle() }
+
+// RuleDirectWarpTitle says "Route via Cloudflare WARP (Direct ➔ WARP)"
+// in the language of msgs.
+func (msgs Messages) RuleDirectWarpTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDirectWarpTitle", nil)
+}
+
+// RuleDirectWarpDesc says "Routes matched direct traffic through the built-in Cloudflare WARP node to hide your real ISP IP while keeping local …"
+// in the language the app shows.
+func RuleDirectWarpDesc() string { return In(i18n.Locale()).RuleDirectWarpDesc() }
+
+// RuleDirectWarpDesc says "Routes matched direct traffic through the built-in Cloudflare WARP node to hide your real ISP IP while keeping local …"
+// in the language of msgs.
+func (msgs Messages) RuleDirectWarpDesc() string {
+	return Catalog.Format(msgs.locale, "ruleDirectWarpDesc", nil)
 }

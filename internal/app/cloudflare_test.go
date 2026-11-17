@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -228,14 +229,8 @@ func TestBuiltinWarp_LifecycleAndRuleSync(t *testing.T) {
 		}
 	}
 
-	// 1. Set preset-lan-direct action to ActionWarp and saveState
-	for i := range a.state.RoutingRules {
-		if a.state.RoutingRules[i].ID == "preset-lan-direct" {
-			a.state.RoutingRules[i].Action = routing.RouteAction{Type: routing.ActionWarp}
-			break
-		}
-	}
-	a.saveState()
+	// 1. Set preset-cn-direct to target builtin-warp and saveState
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	// Verify builtin-warp now exists in services
@@ -256,15 +251,8 @@ func TestBuiltinWarp_LifecycleAndRuleSync(t *testing.T) {
 		t.Errorf("expected builtin-warp to be running")
 	}
 
-	// 2. Switch preset-lan-direct back to ActionDirect and saveState
-	for i := range a.state.RoutingRules {
-		if a.state.RoutingRules[i].ID == "preset-lan-direct" {
-			a.state.RoutingRules[i].Action = routing.RouteAction{Type: routing.ActionDirect}
-			break
-		}
-	}
-	a.state.Cloudflare.DirectWarpEnabled = false
-	a.saveState()
+	// 2. Switch preset-cn-direct back to ActionDirect and saveState
+	a.setCnDirectWarpEnabled(false)
 	tt.Frame()
 
 	// Verify builtin-warp is stopped and removed
@@ -277,15 +265,8 @@ func TestBuiltinWarp_LifecycleAndRuleSync(t *testing.T) {
 		t.Errorf("expected builtin-warp to be stopped")
 	}
 
-	// 3. Toggle DirectWarpEnabled via Cloudflare settings
-	a.state.Cloudflare.DirectWarpEnabled = true
-	for i := range a.state.RoutingRules {
-		if a.state.RoutingRules[i].ID == "preset-lan-direct" {
-			a.state.RoutingRules[i].Action = routing.RouteAction{Type: routing.ActionWarp}
-			break
-		}
-	}
-	a.saveState()
+	// 3. Re-enable via Cloudflare Direct -> WARP toggle helper (single source of truth on preset-cn-direct)
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	var foundAgain bool
@@ -296,7 +277,7 @@ func TestBuiltinWarp_LifecycleAndRuleSync(t *testing.T) {
 		}
 	}
 	if !foundAgain {
-		t.Fatalf("expected builtin-warp to re-appear when DirectWarpEnabled is true")
+		t.Fatalf("expected builtin-warp to re-appear when preset-cn-direct targets builtin-warp")
 	}
 }
 
@@ -337,8 +318,7 @@ func TestDirectWARP_DefaultProbeURL(t *testing.T) {
 
 func TestBuiltinWarp_NodeNameAndDisabledDelete(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	var found *config.Service
@@ -403,8 +383,7 @@ func TestBuiltinWarp_DirectLatencyProbe(t *testing.T) {
 	a.state.GatewayPort = freePort
 	a.state.LogLevel = "debug"
 	a.warpRegistering = true
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	var warpSvc *config.Service
@@ -476,8 +455,7 @@ func TestBuiltinWarp_DirectLatencyProbe(t *testing.T) {
 
 func TestDirectWARP_UnhealthyStatusAndDiagnostics(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	var warpSvc *config.Service
@@ -558,8 +536,7 @@ func TestDirectWARP_UnhealthyStatusAndDiagnostics(t *testing.T) {
 
 func TestNodeDrawer_UnhealthyReflected(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	var warpSvc *config.Service
@@ -630,8 +607,7 @@ func TestDownloadSpeedFailure_TriggersUnhealthy(t *testing.T) {
 
 func TestCloudflarePage_AttachedNodesHealth(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	var warpSvc *config.Service
@@ -750,8 +726,7 @@ func TestWARPNode_TransientProbeFailureStaysHealthy(t *testing.T) {
 	}
 
 	a, tt, _ := newTestApp(t, []config.Service{chainedSvc, directWarp})
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	// 1. Single probe timeout on target URL -> must stay healthy
@@ -1124,5 +1099,100 @@ func TestCloudflareTunnelView_GatewayHintPasteAndIdleBudget(t *testing.T) {
 		t.Fatalf("idle Cloudflare WARP view should not continuously request animation frames")
 	}
 }
+
+func TestCloudflare_PresetSplitMigrationAndSingleSourceToggle(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// 1. Simulate legacy state.json where preset-lan-direct had ActionWarp + DirectWarpEnabled=true and preset-cn-direct was absent.
+	legacyState := PersistedState{
+		Language:    "zh-Hans",
+		GatewayPort: freeLocalPort(t),
+		Cloudflare: warp.Config{
+			DirectWarpEnabled: true,
+		},
+		RoutingRules: []routing.Rule{
+			{
+				ID:      "preset-block-ads",
+				Name:    "广告拦截",
+				Enabled: true,
+				GeoSite: []string{"category-ads-all"},
+				Action:  routing.RouteAction{Type: routing.ActionBlock},
+			},
+			{
+				ID:           "preset-lan-direct",
+				Name:         "直连",
+				Enabled:      true,
+				GeoSite:      []string{"cn"},
+				GeoIP:        []string{"cn", "private"},
+				IPCidr:       []string{"192.168.0.0/16"},
+				DomainSuffix: []string{"local"},
+				Action:       routing.RouteAction{Type: routing.ActionWarp},
+			},
+		},
+	}
+	rawLegacy, err := json.Marshal(legacyState)
+	if err != nil {
+		t.Fatalf("marshal legacyState: %v", err)
+	}
+	if err := os.WriteFile(a.stateFilePath(), rawLegacy, 0o600); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+
+	// Reload from disk to exercise loadState() migration
+	a.warpRegistering = true
+	a.loadState()
+	tt.Frame()
+
+	if a.state.Cloudflare.DirectWarpEnabled {
+		t.Fatalf("expected legacy DirectWarpEnabled to be cleared after migration")
+	}
+
+	var lanRule, cnRule *routing.Rule
+	for i := range a.state.RoutingRules {
+		switch a.state.RoutingRules[i].ID {
+		case "preset-lan-direct":
+			lanRule = &a.state.RoutingRules[i]
+		case "preset-cn-direct":
+			cnRule = &a.state.RoutingRules[i]
+		}
+	}
+	if lanRule == nil || cnRule == nil {
+		t.Fatalf("expected both preset-lan-direct and preset-cn-direct after migration")
+	}
+	if lanRule.Action.Type != routing.ActionDirect {
+		t.Fatalf("expected preset-lan-direct restored to ActionDirect, got %+v", lanRule.Action)
+	}
+	if len(lanRule.GeoSite) != 0 || len(lanRule.GeoIP) != 1 || lanRule.GeoIP[0] != "private" {
+		t.Fatalf("expected preset-lan-direct split to LAN-only criteria, got GeoSite=%v GeoIP=%v", lanRule.GeoSite, lanRule.GeoIP)
+	}
+	if !cnRule.Action.TargetsNode(config.BuiltinWarpServiceID) {
+		t.Fatalf("expected preset-cn-direct migrated to target builtin-warp, got %+v", cnRule.Action)
+	}
+	if !a.isCnDirectWarpEnabled() || !a.isBuiltinWarpNeeded() {
+		t.Fatalf("expected isCnDirectWarpEnabled and isBuiltinWarpNeeded to reflect migrated preset-cn-direct")
+	}
+
+	// 2. Toggle Direct -> WARP switch on Cloudflare tab and verify preset-cn-direct updates directly.
+	a.activeTab = TabCloudflare
+	a.cloudflareSubTab = 0
+	tt.Frame()
+	if err := tt.Click("toggle-direct-warp-takeover"); err != nil {
+		t.Fatalf("click toggle-direct-warp-takeover: %v", err)
+	}
+	tt.Frame()
+
+	if a.isCnDirectWarpEnabled() || a.isBuiltinWarpNeeded() {
+		t.Fatalf("expected Direct -> WARP toggle off to clear builtin-warp from preset-cn-direct")
+	}
+	for _, r := range a.state.RoutingRules {
+		if r.ID == "preset-cn-direct" && r.Action.Type != routing.ActionDirect {
+			t.Fatalf("expected preset-cn-direct to revert to ActionDirect, got %+v", r.Action)
+		}
+		if r.ID == "preset-lan-direct" && r.Action.Type != routing.ActionDirect {
+			t.Fatalf("expected preset-lan-direct to remain ActionDirect, got %+v", r.Action)
+		}
+	}
+}
+
 
 

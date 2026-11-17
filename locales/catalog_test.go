@@ -34,8 +34,11 @@ func TestCatalogLanguages(t *testing.T) {
 	if en.PresetRuleGFW() != "GFW Proxy" {
 		t.Fatalf("expected 'GFW Proxy', got %q", en.PresetRuleGFW())
 	}
-	if en.PresetRuleBypassLan() != "Direct" {
-		t.Fatalf("expected 'Direct', got %q", en.PresetRuleBypassLan())
+	if en.PresetRuleBypassLan() != "LAN Direct" {
+		t.Fatalf("expected 'LAN Direct', got %q", en.PresetRuleBypassLan())
+	}
+	if en.PresetRuleCnDirect() != "China Direct" {
+		t.Fatalf("expected 'China Direct', got %q", en.PresetRuleCnDirect())
 	}
 	if en.TagBuiltin() != "Built-in" {
 		t.Fatalf("expected 'Built-in', got %q", en.TagBuiltin())
@@ -92,8 +95,11 @@ func TestCatalogLanguages(t *testing.T) {
 	if zh.PresetRuleGFW() != "GFW 专线" {
 		t.Fatalf("expected 'GFW 专线', got %q", zh.PresetRuleGFW())
 	}
-	if zh.PresetRuleBypassLan() != "直连" {
-		t.Fatalf("expected '直连', got %q", zh.PresetRuleBypassLan())
+	if zh.PresetRuleBypassLan() != "局域网直连" {
+		t.Fatalf("expected '局域网直连', got %q", zh.PresetRuleBypassLan())
+	}
+	if zh.PresetRuleCnDirect() != "大陆直连" {
+		t.Fatalf("expected '大陆直连', got %q", zh.PresetRuleCnDirect())
 	}
 	if zh.TagBuiltin() != "内置" {
 		t.Fatalf("expected '内置', got %q", zh.TagBuiltin())

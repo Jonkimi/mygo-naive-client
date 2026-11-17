@@ -394,6 +394,8 @@ func (a *app) loadState() {
 	} else {
 		var cleanedRules []routing.Rule
 		hasLanDirect := false
+		hasCnDirect := false
+		lanHadWarp := false
 		for i := range st.RoutingRules {
 			r := st.RoutingRules[i]
 			if r.ID == "preset-telegram" {
@@ -404,15 +406,30 @@ func (a *app) loadState() {
 				r.Action = routing.RouteAction{Type: routing.ActionProxyTag, Tag: "GFW", Tags: []string{"GFW"}}
 			}
 			if r.ID == "preset-cn-direct" {
-				// Merged into preset-lan-direct ("直连")
-				continue
+				hasCnDirect = true
+				r.Name = "大陆直连"
+				r.Description = "中国大陆域名与 IP 直连（可编辑为 WARP 或指定节点）"
+				if len(r.GeoSite) == 0 {
+					r.GeoSite = []string{"cn"}
+				}
+				if len(r.GeoIP) == 0 {
+					r.GeoIP = []string{"cn"}
+				}
+				if r.Action.Type == routing.ActionWarp {
+					r.Action = routing.NewWarpTargetAction()
+					needsResave = true
+				}
 			}
 			if r.ID == "preset-lan-direct" {
 				hasLanDirect = true
-				r.Name = "直连"
-				r.Description = "直连，不走代理"
-				r.GeoSite = []string{"cn"}
-				r.GeoIP = []string{"cn", "private"}
+				if r.Action.Type == routing.ActionWarp || r.Action.TargetsNode(config.BuiltinWarpServiceID) {
+					lanHadWarp = true
+					needsResave = true
+				}
+				r.Name = "局域网直连"
+				r.Description = "局域网、内网与本地主机域名直连，不走代理"
+				r.GeoSite = nil
+				r.GeoIP = []string{"private"}
 				if len(r.IPCidr) == 0 {
 					r.IPCidr = []string{
 						"127.0.0.0/8",
@@ -432,6 +449,10 @@ func (a *app) loadState() {
 						"internal",
 						"lan",
 					}
+				}
+				if r.Action.Type != routing.ActionDirect {
+					r.Action = routing.RouteAction{Type: routing.ActionDirect}
+					needsResave = true
 				}
 			}
 			switch r.ID {
@@ -454,7 +475,37 @@ func (a *app) loadState() {
 			cleanedRules = append(cleanedRules, r)
 		}
 		if !hasLanDirect {
-			cleanedRules = append(cleanedRules, routing.DefaultPresets()[4])
+			for _, def := range routing.DefaultPresets() {
+				if def.ID == "preset-lan-direct" {
+					cleanedRules = append(cleanedRules, def)
+					needsResave = true
+					break
+				}
+			}
+		}
+		if !hasCnDirect {
+			for _, def := range routing.DefaultPresets() {
+				if def.ID == "preset-cn-direct" {
+					if lanHadWarp || st.Cloudflare.DirectWarpEnabled {
+						def.Action = routing.NewWarpTargetAction()
+					}
+					cleanedRules = append(cleanedRules, def)
+					needsResave = true
+					break
+				}
+			}
+		} else if lanHadWarp || st.Cloudflare.DirectWarpEnabled {
+			for i := range cleanedRules {
+				if cleanedRules[i].ID == "preset-cn-direct" && cleanedRules[i].Action.Type == routing.ActionDirect {
+					cleanedRules[i].Action = routing.NewWarpTargetAction()
+					needsResave = true
+					break
+				}
+			}
+		}
+		if st.Cloudflare.DirectWarpEnabled {
+			st.Cloudflare.DirectWarpEnabled = false
+			needsResave = true
 		}
 		st.RoutingRules = cleanedRules
 		for _, r := range st.RoutingRules {

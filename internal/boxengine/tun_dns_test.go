@@ -447,4 +447,135 @@ func TestEngine_DNSReverseMappingRestoresNonSNISSHDomain(t *testing.T) {
 	}
 }
 
+func TestEngine_PerRuleRemoteDoHDetourAndPoolWrapping(t *testing.T) {
+	eng := &Engine{
+		services: []config.Service{
+			{ID: "svc-us", Name: "US Node", Protocol: config.ProtoVLESS, Server: "us.example.com", ServerPort: 443, UUID: "11111111-1111-1111-1111-111111111111", Tags: []string{"US"}},
+			{ID: config.BuiltinWarpServiceID, Name: "Cloudflare WARP", Protocol: config.ProtoWARP},
+		},
+		activeIDs: map[string]bool{
+			"svc-us":                    true,
+			config.BuiltinWarpServiceID: true,
+		},
+	}
+
+	// 1. PROXY_POOL excludes builtin-warp, while explicit node:builtin-warp includes it.
+	poolCands := eng.GetCandidates("PROXY_POOL")
+	if len(poolCands) != 1 || poolCands[0] != "svc-us" {
+		t.Fatalf("expected PROXY_POOL to contain only svc-us, got %v", poolCands)
+	}
+	warpCands := eng.GetCandidates("node:" + config.BuiltinWarpServiceID)
+	if len(warpCands) != 1 || warpCands[0] != config.BuiltinWarpServiceID {
+		t.Fatalf("expected explicit node:builtin-warp to resolve builtin-warp, got %v", warpCands)
+	}
+
+	// 2. Single-node and builtin-warp rules wrap in PoolOutbound and emit scoped remote-doh-* servers.
+	usAction := routing.NewProxyAction([]routing.TargetRef{{Kind: routing.TargetNode, Value: "svc-us"}}, routing.DispatchSmart, false)
+	warpOverseasAction := routing.NewWarpTargetAction()
+	cnWarpAction := routing.NewWarpTargetAction()
+
+	opts := EngineOptions{
+		TrafficMode: "tun",
+		Services:    eng.services,
+		Rules: []routing.Rule{
+			{
+				ID:           "rule-us-node",
+				Enabled:      true,
+				DomainSuffix: []string{"us-only.example.com"},
+				Action:       usAction,
+			},
+			{
+				ID:           "rule-warp-overseas",
+				Enabled:      true,
+				DomainSuffix: []string{"openai.com"},
+				Action:       warpOverseasAction,
+			},
+			{
+				ID:      "preset-cn-direct",
+				Enabled: true,
+				GeoSite: []string{"cn"},
+				Action:  cnWarpAction,
+			},
+		},
+		FinalRoute: routing.RouteAction{Type: routing.ActionProxyPool},
+	}
+
+	ctx := createBoxContext(context.Background(), eng)
+	boxOpts, err := eng.buildConfig(ctx, opts, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+	_ = boxOpts
+
+	finalOutbound := resolveFinalOutbound(opts)
+	outbounds, err := buildOutboundsConfig(opts, finalOutbound, nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+	usOutboundTag := resolveRouteOutbound(usAction, "")
+	warpOutboundTag := resolveRouteOutbound(warpOverseasAction, "")
+	if !strings.HasPrefix(usOutboundTag, "POOL:") || !strings.HasPrefix(warpOutboundTag, "POOL:") {
+		t.Fatalf("expected POOL: tags for single-node & warp rules, got us=%q warp=%q", usOutboundTag, warpOutboundTag)
+	}
+	foundUSPool, foundWarpPool := false, false
+	for _, ob := range outbounds {
+		if ob["type"] == "pool" && ob["tag"] == usOutboundTag {
+			foundUSPool = true
+		}
+		if ob["type"] == "pool" && ob["tag"] == warpOutboundTag {
+			foundWarpPool = true
+		}
+	}
+	if !foundUSPool || !foundWarpPool {
+		t.Fatalf("expected pool outbounds registered for single-node (%v) and builtin-warp (%v)", foundUSPool, foundWarpPool)
+	}
+
+	dnsCfg := buildDNSConfig(opts, finalOutbound, nil)
+	servers := dnsCfg["servers"].([]map[string]any)
+	serverDetours := make(map[string]string)
+	for _, s := range servers {
+		tag, _ := s["tag"].(string)
+		detour, _ := s["detour"].(string)
+		serverDetours[tag] = detour
+		if strings.HasPrefix(tag, "remote-doh") && s["domain_resolver"] != "bootstrap-dns" {
+			t.Errorf("expected %s to use bootstrap-dns domain_resolver, got %v", tag, s["domain_resolver"])
+		}
+	}
+
+	wantUSDNS := remoteDoHTagForOutbound(usOutboundTag)
+	wantWarpDNS := remoteDoHTagForOutbound(warpOutboundTag)
+	if serverDetours[wantUSDNS] != usOutboundTag {
+		t.Errorf("expected %s detour=%s, got %q", wantUSDNS, usOutboundTag, serverDetours[wantUSDNS])
+	}
+	if serverDetours[wantWarpDNS] != warpOutboundTag {
+		t.Errorf("expected %s detour=%s, got %q", wantWarpDNS, warpOutboundTag, serverDetours[wantWarpDNS])
+	}
+
+	dnsRules := dnsCfg["rules"].([]map[string]any)
+	var matchedUS, matchedOpenAI, matchedCN bool
+	for _, dr := range dnsRules {
+		if doms, ok := dr["domain_suffix"].([]string); ok {
+			for _, d := range doms {
+				if d == "us-only.example.com" && dr["server"] == wantUSDNS {
+					matchedUS = true
+				}
+				if d == "openai.com" && dr["server"] == wantWarpDNS {
+					matchedOpenAI = true
+				}
+			}
+		}
+		if rsets, ok := dr["rule_set"].([]string); ok {
+			for _, rs := range rsets {
+				if rs == "geosite-cn" && dr["server"] == "domestic-doh" {
+					matchedCN = true
+				}
+			}
+		}
+	}
+	if !matchedUS || !matchedOpenAI || !matchedCN {
+		t.Errorf("DNS rule mismatch: us=%v openai=%v cn=%v (rules=%+v)", matchedUS, matchedOpenAI, matchedCN, dnsRules)
+	}
+}
+
+
 

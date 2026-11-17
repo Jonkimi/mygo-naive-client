@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/routing"
 	"naive-client/internal/telemetry"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -44,6 +45,9 @@ type NodeProvider interface {
 type PoolOutboundOptions struct {
 	Tag               string
 	PoolTag           string
+	Targets           []routing.TargetRef
+	DispatchPolicy    string
+	FallbackToPool    bool
 	Tracker           *telemetry.Tracker
 	FailureMonitor    *telemetry.FailureMonitor
 	NodeProvider      NodeProvider
@@ -55,6 +59,9 @@ type PoolOutboundOptions struct {
 type PoolOutbound struct {
 	tag               string
 	poolTag           string
+	targets           []routing.TargetRef
+	dispatchPolicy    string
+	fallbackToPool    bool
 	tracker           *telemetry.Tracker
 	failureMonitor    *telemetry.FailureMonitor
 	provider          NodeProvider
@@ -65,15 +72,34 @@ type PoolOutbound struct {
 
 // NewPoolOutbound creates a new adaptive proxy pool outbound.
 func NewPoolOutbound(opts PoolOutboundOptions) *PoolOutbound {
+	policy := routing.DispatchSmart
+	if strings.EqualFold(strings.TrimSpace(opts.DispatchPolicy), routing.DispatchOrder) {
+		policy = routing.DispatchOrder
+	}
 	return &PoolOutbound{
 		tag:               opts.Tag,
 		poolTag:           opts.PoolTag,
+		targets:           routing.NormalizeTargets(opts.Targets),
+		dispatchPolicy:    policy,
+		fallbackToPool:    opts.FallbackToPool,
 		tracker:           opts.Tracker,
 		failureMonitor:    opts.FailureMonitor,
 		provider:          opts.NodeProvider,
 		onTelemetryUpdate: opts.OnTelemetryUpdate,
 		blocker:           opts.Blocker,
 	}
+}
+
+func (p *PoolOutbound) Targets() []routing.TargetRef {
+	return append([]routing.TargetRef(nil), p.targets...)
+}
+
+func (p *PoolOutbound) DispatchPolicy() string {
+	return p.dispatchPolicy
+}
+
+func (p *PoolOutbound) FallbackToPool() bool {
+	return p.fallbackToPool
 }
 
 func (p *PoolOutbound) Type() string {
@@ -142,20 +168,105 @@ func (p *PoolOutbound) orderCandidates(candidates []string, targetHost string) [
 	return ordered
 }
 
+func (p *PoolOutbound) candidatesForTarget(t routing.TargetRef) []string {
+	if p.provider == nil {
+		return nil
+	}
+	switch t.Kind {
+	case routing.TargetNode:
+		return p.provider.GetCandidates("node:" + t.Value)
+	case routing.TargetTag:
+		return p.provider.GetCandidates(t.Value)
+	default:
+		return nil
+	}
+}
+
+func (p *PoolOutbound) isCandidateBroken(candID string) bool {
+	if p.tracker == nil {
+		return false
+	}
+	return p.tracker.GetScore(candID).IsBroken
+}
+
+func (p *PoolOutbound) resolveOrderedCandidates(targetHost string) []string {
+	if p.provider == nil {
+		return nil
+	}
+	if len(p.targets) == 0 {
+		tagKey := p.poolTag
+		if tagKey == "" {
+			tagKey = p.tag
+		}
+		candidates := p.provider.GetCandidates(tagKey)
+		if len(candidates) == 0 {
+			return nil
+		}
+		return p.orderCandidates(candidates, targetHost)
+	}
+
+	seen := make(map[string]bool)
+	dedup := func(list []string) []string {
+		var out []string
+		for _, id := range list {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+		return out
+	}
+
+	if p.dispatchPolicy == routing.DispatchOrder {
+		var healthyOrdered []string
+		var brokenOrdered []string
+		appendTier := func(cands []string) {
+			if len(cands) == 0 {
+				return
+			}
+			var healthy, broken []string
+			for _, id := range cands {
+				if p.isCandidateBroken(id) {
+					broken = append(broken, id)
+				} else {
+					healthy = append(healthy, id)
+				}
+			}
+			if len(healthy) > 0 {
+				healthyOrdered = append(healthyOrdered, p.orderCandidates(healthy, targetHost)...)
+			}
+			if len(broken) > 0 {
+				brokenOrdered = append(brokenOrdered, p.orderCandidates(broken, targetHost)...)
+			}
+		}
+
+		for _, t := range p.targets {
+			appendTier(dedup(p.candidatesForTarget(t)))
+		}
+		if p.fallbackToPool {
+			appendTier(dedup(p.provider.GetCandidates("PROXY_POOL")))
+		}
+		return append(healthyOrdered, brokenOrdered...)
+	}
+
+	var primary []string
+	for _, t := range p.targets {
+		primary = append(primary, dedup(p.candidatesForTarget(t))...)
+	}
+	ordered := p.orderCandidates(primary, targetHost)
+	if p.fallbackToPool {
+		fb := dedup(p.provider.GetCandidates("PROXY_POOL"))
+		if len(fb) > 0 {
+			ordered = append(ordered, p.orderCandidates(fb, targetHost)...)
+		}
+	}
+	return ordered
+}
+
 // SelectCandidate returns the top-ranked candidate node ID for targetHost in this pool.
 func (p *PoolOutbound) SelectCandidate(targetHost string) string {
-	if p.provider == nil {
-		return ""
-	}
-	tagKey := p.poolTag
-	if tagKey == "" {
-		tagKey = p.tag
-	}
-	candidates := p.provider.GetCandidates(tagKey)
-	if len(candidates) == 0 {
-		return ""
-	}
-	ordered := p.orderCandidates(candidates, targetHost)
+	ordered := p.resolveOrderedCandidates(targetHost)
 	if len(ordered) == 0 {
 		return ""
 	}
@@ -219,18 +330,18 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		sourceKey = inboundCtx.Source.String()
 	}
 
+	targetHost := extractTargetHost(ctx, destination)
+	if p.blocker != nil && targetHost != "" && p.blocker.ShouldBlock(targetHost) {
+		return nil, syscall.EPERM
+	}
+
 	tagKey := p.poolTag
 	if tagKey == "" {
 		tagKey = p.tag
 	}
 
-	candidates := p.provider.GetCandidates(tagKey)
-
-	targetHost := extractTargetHost(ctx, destination)
-	if p.blocker != nil && targetHost != "" && p.blocker.ShouldBlock(targetHost) {
-		return nil, syscall.EPERM
-	}
-	if len(candidates) == 0 {
+	ordered := p.resolveOrderedCandidates(targetHost)
+	if len(ordered) == 0 {
 		err := fmt.Errorf("no active proxy candidates available for pool %s", tagKey)
 		if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 			p.blocker.Logger().AnnotateBySource(sourceKey, "节点未启动")
@@ -250,7 +361,6 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		return nil, err
 	}
 
-	ordered := p.orderCandidates(candidates, targetHost)
 	dialCtx := withPoolDial(ctx)
 	var lastErr error
 
@@ -388,13 +498,6 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 		return nil, errors.New("node provider is nil")
 	}
 
-	tagKey := p.poolTag
-	if tagKey == "" {
-		tagKey = p.tag
-	}
-
-	candidates := p.provider.GetCandidates(tagKey)
-
 	udpSourceKey := ""
 	if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
 		udpSourceKey = inboundCtx.Source.String()
@@ -409,14 +512,20 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	if p.blocker != nil && targetHost != "" && p.blocker.ShouldBlock(targetHost) {
 		return nil, syscall.EPERM
 	}
-	if len(candidates) == 0 {
+
+	tagKey := p.poolTag
+	if tagKey == "" {
+		tagKey = p.tag
+	}
+
+	ordered := p.resolveOrderedCandidates(targetHost)
+	if len(ordered) == 0 {
 		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 			p.blocker.Logger().AnnotateBySource(udpSourceKey, "节点未启动")
 		}
 		return nil, fmt.Errorf("no active proxy candidates for UDP packet in pool %s", tagKey)
 	}
 
-	ordered := p.orderCandidates(candidates, targetHost)
 	packetCtx := withPoolDial(ctx)
 	var lastErr error
 

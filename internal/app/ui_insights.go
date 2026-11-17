@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/routing"
 	"naive-client/locales"
 )
 
@@ -782,21 +783,23 @@ func ternaryColor(cond bool, a, b ui.Color) ui.Color {
 }
 
 func (a *app) openCreateRuleDialogWithTarget(target string, recommendedAction string) {
-	actionIdx := 1 // PROXY_POOL by default
+	actionIdx := 0 // Proxy by default
 	if recommendedAction == "DIRECT" {
-		actionIdx = 2
+		actionIdx = 1
 	} else if recommendedAction == "BLOCK" {
-		actionIdx = 3
+		actionIdx = 2
 	}
 	a.activeTab = TabRouting
 	a.ruleEditor = ruleEditorForm{
-		open:         true,
-		isNew:        true,
-		ruleID:       fmt.Sprintf("rule-%d", len(a.state.RoutingRules)+1),
-		name:         "分流修复: " + target,
-		actionIndex:  actionIdx,
-		domainsInput: target,
-		tab:          1, // Custom domains tab
+		open:           true,
+		isNew:          true,
+		ruleID:         fmt.Sprintf("rule-%d", len(a.state.RoutingRules)+1),
+		name:           "分流修复: " + target,
+		actionIndex:     actionIdx,
+		dispatchPolicy:  routing.DispatchSmart,
+		strictIsolation: true,
+		domainsInput:    target,
+		tab:            1, // Custom domains tab
 	}
 	if a.win != nil {
 		a.win.Invalidate()

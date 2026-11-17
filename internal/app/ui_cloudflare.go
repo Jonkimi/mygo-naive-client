@@ -12,6 +12,43 @@ import (
 	"naive-client/internal/warp"
 )
 
+func (a *app) isCnDirectWarpEnabled() bool {
+	for _, r := range a.state.RoutingRules {
+		if r.ID == "preset-cn-direct" {
+			return r.Enabled && r.Action.TargetsNode(config.BuiltinWarpServiceID)
+		}
+	}
+	return false
+}
+
+func (a *app) setCnDirectWarpEnabled(enabled bool) {
+	idx := -1
+	for i := range a.state.RoutingRules {
+		if a.state.RoutingRules[i].ID == "preset-cn-direct" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		for _, def := range routing.DefaultPresets() {
+			if def.ID == "preset-cn-direct" {
+				a.state.RoutingRules = append(a.state.RoutingRules, def)
+				idx = len(a.state.RoutingRules) - 1
+				break
+			}
+		}
+	}
+	if idx >= 0 {
+		if enabled {
+			a.state.RoutingRules[idx].Enabled = true
+			a.state.RoutingRules[idx].Action = routing.NewWarpTargetAction()
+		} else {
+			a.state.RoutingRules[idx].Action = routing.RouteAction{Type: routing.ActionDirect}
+		}
+	}
+	a.saveState()
+}
+
 func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 	cat := a.catalog()
 
@@ -35,7 +72,7 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 							} else {
 								statusBadge(c, cat.CloudflareWarpAccountNotRegistered(), p.textDim, p.elevated)
 							}
-							if a.state.Cloudflare.DirectWarpEnabled {
+							if a.isCnDirectWarpEnabled() {
 								tagPill(c, "Direct ➔ WARP", p.green, p.greenBg)
 							}
 						} else {
@@ -226,12 +263,13 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 		Gap(12).Padding(16).Radius(10).
 		Background(p.card).Border(1, p.borderSubtle).
 		Children(func() {
-			// Section title + Master Direct -> WARP switch
+			// Section title + Master Direct -> WARP switch (single source of truth on preset-cn-direct)
+			cnWarp := a.isCnDirectWarpEnabled()
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 				ui.Column(c).Grow(1).Gap(3).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 						ui.Text(c, cat.CloudflareDirectWarpTakeover()).FontSize(14).FontWeight(600).TextColor(p.text)
-						if a.state.Cloudflare.DirectWarpEnabled {
+						if cnWarp {
 							tagPill(c, cat.RoutingWarp(), p.green, p.greenBg)
 						} else {
 							tagPill(c, cat.RoutingDirect(), p.textDim, p.surface)
@@ -240,18 +278,8 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 					ui.Text(c, cat.CloudflareDirectWarpTakeoverDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
 				})
 
-				if switchRow(c, p, "toggle-direct-warp-takeover", "", &a.state.Cloudflare.DirectWarpEnabled) {
-					for i := range a.state.RoutingRules {
-						if a.state.RoutingRules[i].ID == "preset-lan-direct" {
-							if a.state.Cloudflare.DirectWarpEnabled {
-								a.state.RoutingRules[i].Action = routing.RouteAction{Type: routing.ActionWarp}
-							} else {
-								a.state.RoutingRules[i].Action = routing.RouteAction{Type: routing.ActionDirect}
-							}
-							break
-						}
-					}
-					a.saveState()
+				if ui.Switch(c.Key("toggle-direct-warp-takeover"), &cnWarp).Label("toggle-direct-warp-takeover").Changed() {
+					a.setCnDirectWarpEnabled(cnWarp)
 				}
 			})
 

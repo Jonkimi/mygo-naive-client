@@ -288,8 +288,7 @@ func TestInProcessNodes_PersistListenSummaryAcrossRestart(t *testing.T) {
 	}
 
 	a, tt, _ := newTestApp(t, []config.Service{inprocessNode})
-	a.state.Cloudflare.DirectWarpEnabled = true
-	a.saveState()
+	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
 	// 1. Initially, should show "sing-box (in-process)"

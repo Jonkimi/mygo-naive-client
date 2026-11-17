@@ -64,26 +64,29 @@ type deleteDialogState struct {
 }
 
 type ruleEditorForm struct {
-	open          bool
-	isNew         bool
-	isFinal       bool
-	ruleID        string
-	name          string
-	desc          string
-	actionIndex   int // 0: PROXY_TAG, 1: PROXY_POOL, 2: DIRECT, 3: BLOCK
-	tag           string
-	tags          []string
-	tagQuery         string
+	open             bool
+	isNew            bool
+	isFinal          bool
+	ruleID           string
+	name             string
+	desc             string
+	actionIndex      int // 0: Proxy, 1: Direct, 2: Block
+	directWarp       bool
+	targets          []routing.TargetRef
+	targetQuery      string
+	dispatchPolicy   string // "smart" or "order"
+	strictIsolation  bool   // true = fail-closed (FallbackToPool=false)
 	domainsInput     string
 	fullDomainsInput string
 	cidrsInput       string
-	keywordsInput string
-	geosites      []string
-	geoips        []string
-	geositeQuery  string
-	geoipQuery    string
-	tab           int // 0: Domains/IPs, 1: GeoData
-	errText       string
+	keywordsInput    string
+	geosites         []string
+	geoips           []string
+	geositeQuery     string
+	geoipQuery       string
+	tab              int // 0: GeoData, 1: Domains/IPs
+	scroll           ui.ScrollState
+	errText          string
 }
 
 type app struct {
@@ -226,6 +229,8 @@ func (a *app) localizedRuleName(rule routing.Rule) string {
 		return cat.PresetRuleGFW()
 	case "preset-lan-direct":
 		return cat.PresetRuleBypassLan()
+	case "preset-cn-direct":
+		return cat.PresetRuleCnDirect()
 	default:
 		return rule.Name
 	}
@@ -244,6 +249,8 @@ func (a *app) localizedRuleDescription(rule routing.Rule) string {
 		return cat.PresetRuleGFWDesc()
 	case "preset-lan-direct":
 		return cat.PresetRuleBypassLanDesc()
+	case "preset-cn-direct":
+		return cat.PresetRuleCnDirectDesc()
 	default:
 		return rule.Description
 	}
@@ -1538,8 +1545,12 @@ func (a *app) startDormantServiceForTag(tag string) {
 	}
 
 	matchesService := func(svc config.Service) bool {
+		if strings.HasPrefix(tag, "node:") {
+			targetID := strings.TrimSpace(strings.TrimPrefix(tag, "node:"))
+			return targetID != "" && svc.ID == targetID
+		}
 		if tag == "" || tag == "PROXY_POOL" || len(wantTags) == 0 {
-			return true
+			return !svc.IsBuiltinWarp()
 		}
 		for _, t := range svc.Tags {
 			for _, wt := range wantTags {
@@ -2763,14 +2774,11 @@ func (a *app) syncRouter() {
 }
 
 func (a *app) isBuiltinWarpNeeded() bool {
-	if a.state.Cloudflare.DirectWarpEnabled {
-		return true
-	}
-	if a.state.RoutingFinal.Type == routing.ActionWarp {
+	if a.state.RoutingFinal.TargetsNode(config.BuiltinWarpServiceID) {
 		return true
 	}
 	for _, r := range a.state.RoutingRules {
-		if r.Enabled && r.Action.Type == routing.ActionWarp {
+		if r.Enabled && r.Action.TargetsNode(config.BuiltinWarpServiceID) {
 			return true
 		}
 	}
