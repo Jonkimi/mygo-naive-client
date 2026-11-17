@@ -97,9 +97,14 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 		}
 	}
 
+	magicDNS := st.MagicDNSSuffix
+	if magicDNS == "" && st.CurrentTailnet != nil {
+		magicDNS = st.CurrentTailnet.MagicDNSSuffix
+	}
+
 	var self NodeInfo
 	if st.Self != nil {
-		self.Hostname = st.Self.HostName
+		self.Hostname = ExtractNodeName(st.Self.DNSName, magicDNS, st.Self.HostName)
 		self.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
 		self.OS = st.Self.OS
 		self.Online = st.Self.Online
@@ -140,7 +145,7 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 
 		peers = append(peers, PeerInfo{
 			ID:             string(ps.ID),
-			Hostname:       ps.HostName,
+			Hostname:       ExtractNodeName(ps.DNSName, magicDNS, ps.HostName),
 			DNSName:        strings.TrimSuffix(ps.DNSName, "."),
 			IPs:            ips,
 			AllowedIPs:     allowedIPs,
@@ -153,11 +158,6 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 	}
 
 	SortPeers(peers)
-
-	magicDNS := st.MagicDNSSuffix
-	if magicDNS == "" && st.CurrentTailnet != nil {
-		magicDNS = st.CurrentTailnet.MagicDNSSuffix
-	}
 
 	return &Status{
 		BackendState:    st.BackendState,

@@ -76,6 +76,29 @@ func DefaultConfig() Config {
 	}
 }
 
+// ExtractNodeName resolves the display node name for a Tailscale node.
+// It prefers the configured Tailnet name in dnsName (stripping magicDNSSuffix
+// or falling back to the first DNS label) and falls back to fallbackHostname
+// when dnsName is empty.
+func ExtractNodeName(dnsName, magicDNSSuffix, fallbackHostname string) string {
+	cleanDNS := strings.Trim(strings.TrimSpace(dnsName), ".")
+	if cleanDNS != "" {
+		suffix := strings.Trim(strings.TrimSpace(magicDNSSuffix), ".")
+		if suffix != "" {
+			dotSuffix := "." + suffix
+			if len(cleanDNS) > len(dotSuffix) && strings.EqualFold(cleanDNS[len(cleanDNS)-len(dotSuffix):], dotSuffix) {
+				if name := cleanDNS[:len(cleanDNS)-len(dotSuffix)]; name != "" {
+					return name
+				}
+			}
+		}
+		if first, _, _ := strings.Cut(cleanDNS, "."); first != "" {
+			return first
+		}
+	}
+	return strings.TrimSpace(fallbackHostname)
+}
+
 // SortPeers sorts a slice of PeerInfo deterministically:
 // 1. Online peers first, offline peers last
 // 2. Case-insensitive hostname in ascending order

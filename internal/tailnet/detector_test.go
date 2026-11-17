@@ -157,4 +157,57 @@ func TestSortPeers(t *testing.T) {
 	}
 }
 
+// Regression: ConvertIPNStatus previously used raw OS HostName (e.g. "localhost",
+// "instance-20220211-1708") instead of the configured Tailnet node name in DNSName.
+func TestConvertIPNStatus_PrefersConfiguredNodeNameOverOSHostName(t *testing.T) {
+	status := ConvertIPNStatus(&ipnstate.Status{
+		BackendState:   "Running",
+		MagicDNSSuffix: "tail8bfe1c.ts.net",
+		Self: &ipnstate.PeerStatus{
+			HostName: "Jun-MBP",
+			DNSName:  "jun-mbp-node.tail8bfe1c.ts.net.",
+			Online:   true,
+		},
+		Peer: map[key.NodePublic]*ipnstate.PeerStatus{
+			key.NewNode().Public(): {
+				ID:       tailcfg.StableNodeID("node-1"),
+				HostName: "localhost",
+				DNSName:  "iphone-13.tail8bfe1c.ts.net.",
+				Online:   true,
+			},
+			key.NewNode().Public(): {
+				ID:       tailcfg.StableNodeID("node-2"),
+				HostName: "instance-20220211-1708",
+				DNSName:  "ts-opc1.tail8bfe1c.ts.net.",
+				Online:   true,
+			},
+			key.NewNode().Public(): {
+				ID:       tailcfg.StableNodeID("node-3"),
+				HostName: "fallback-box",
+				DNSName:  "",
+				Online:   false,
+			},
+		},
+	})
+
+	if status.Self.Hostname != "jun-mbp-node" {
+		t.Errorf("self hostname = %q, want %q", status.Self.Hostname, "jun-mbp-node")
+	}
+
+	got := make(map[string]string, len(status.Peers))
+	for _, p := range status.Peers {
+		got[p.ID] = p.Hostname
+	}
+	if got["node-1"] != "iphone-13" {
+		t.Errorf("node-1 hostname = %q, want %q", got["node-1"], "iphone-13")
+	}
+	if got["node-2"] != "ts-opc1" {
+		t.Errorf("node-2 hostname = %q, want %q", got["node-2"], "ts-opc1")
+	}
+	if got["node-3"] != "fallback-box" {
+		t.Errorf("node-3 hostname = %q, want %q", got["node-3"], "fallback-box")
+	}
+}
+
+
 

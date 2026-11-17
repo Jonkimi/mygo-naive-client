@@ -59,14 +59,15 @@ func TestTailnetUI_NavigationAndExitNode(t *testing.T) {
 				BackendState:   "Running",
 				MagicDNSSuffix: "testnet.ts.net",
 				Self: &ipnstate.PeerStatus{
-					HostName:     "my-workstation",
+					HostName:     "raw-workstation-os",
+					DNSName:      "my-workstation.testnet.ts.net.",
 					TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.10")},
 					Online:       true,
 				},
 				Peer: map[key.NodePublic]*ipnstate.PeerStatus{
 					peerKey: {
 						ID:             tailcfg.StableNodeID("peer-sg-exit"),
-						HostName:       "sg-gateway",
+						HostName:       "instance-20220211-1708",
 						DNSName:        "sg-gateway.testnet.ts.net.",
 						OS:             "linux",
 						TailscaleIPs:   []netip.Addr{netip.MustParseAddr("100.64.0.20")},
@@ -102,12 +103,18 @@ func TestTailnetUI_NavigationAndExitNode(t *testing.T) {
 	a.activeTab = TabTailnet
 	tt.Frame()
 
-	// 2. Verify node details and peer are rendered
+	// 2. Verify node details and peer use configured Tailnet node names (not raw OS hostnames)
 	if !tt.HasText("my-workstation") {
-		t.Error("expected local node hostname 'my-workstation' on screen")
+		t.Error("expected local node name 'my-workstation' on screen")
+	}
+	if tt.HasText("raw-workstation-os") {
+		t.Error("expected raw OS hostname 'raw-workstation-os' not to be displayed")
 	}
 	if !tt.HasText("sg-gateway") {
-		t.Error("expected peer 'sg-gateway' on screen")
+		t.Error("expected peer node name 'sg-gateway' on screen")
+	}
+	if tt.HasText("instance-20220211-1708") {
+		t.Error("expected raw OS hostname 'instance-20220211-1708' not to be displayed")
 	}
 
 	// 3. Click "Use as Exit Node" button

@@ -310,3 +310,75 @@ func TestManager_SwitchFromEmbeddedToHost(t *testing.T) {
 		t.Errorf("expected empty AuthURL in host mode, got %s", st.AuthURL)
 	}
 }
+
+// Regression: embedded mode status updates previously displayed raw OS HostName
+// instead of the configured Tailnet node name from DNSName.
+func TestManager_EmbeddedMode_PrefersConfiguredNodeNameOverOSHostName(t *testing.T) {
+	det := NewDetectorWithClient(&mockHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			return nil, errors.New("not running")
+		},
+	})
+	mgr := NewManager(Config{Enabled: true, Mode: ModeEmbedded}, det)
+	defer mgr.Close()
+
+	endpoint := newMockEmbeddedEndpoint()
+	mgr.BindEmbeddedEndpoint(endpoint)
+	<-endpoint.subscribed
+
+	endpoint.emitStatus(&adapter.TailscaleEndpointStatus{
+		BackendState:   "Running",
+		MagicDNSSuffix: "tail8bfe1c.ts.net",
+		Self: &adapter.TailscalePeer{
+			HostName: "localhost",
+			DNSName:  "naive-client.tail8bfe1c.ts.net.",
+			Online:   true,
+		},
+		UserGroups: []*adapter.TailscaleUserGroup{
+			{
+				Peers: []*adapter.TailscalePeer{
+					{
+						StableID: "peer-1",
+						HostName: "localhost",
+						DNSName:  "iphone-13.tail8bfe1c.ts.net.",
+						Online:   true,
+					},
+					{
+						StableID: "peer-2",
+						HostName: "instance-20220211-1708",
+						DNSName:  "ts-opc1.tail8bfe1c.ts.net.",
+						Online:   true,
+					},
+					{
+						StableID: "peer-3",
+						HostName: "nas-fallback",
+						DNSName:  "",
+						Online:   false,
+					},
+				},
+			},
+		},
+	})
+
+	st := mgr.Status()
+	if st.Self.Hostname != "naive-client" {
+		t.Errorf("self hostname = %q, want %q", st.Self.Hostname, "naive-client")
+	}
+	if st.Self.DNSName != "naive-client.tail8bfe1c.ts.net" {
+		t.Errorf("self dnsName = %q, want %q", st.Self.DNSName, "naive-client.tail8bfe1c.ts.net")
+	}
+
+	got := make(map[string]string, len(st.Peers))
+	for _, p := range st.Peers {
+		got[p.ID] = p.Hostname
+	}
+	if got["peer-1"] != "iphone-13" {
+		t.Errorf("peer-1 hostname = %q, want %q", got["peer-1"], "iphone-13")
+	}
+	if got["peer-2"] != "ts-opc1" {
+		t.Errorf("peer-2 hostname = %q, want %q", got["peer-2"], "ts-opc1")
+	}
+	if got["peer-3"] != "nas-fallback" {
+		t.Errorf("peer-3 hostname = %q, want %q", got["peer-3"], "nas-fallback")
+	}
+}

@@ -266,8 +266,8 @@ func (m *Manager) updateFromEmbedded(st *adapter.TailscaleEndpointStatus) {
 	}
 	var self NodeInfo
 	if st.Self != nil {
-		self.Hostname = st.Self.HostName
-		self.DNSName = st.Self.DNSName
+		self.Hostname = ExtractNodeName(st.Self.DNSName, st.MagicDNSSuffix, st.Self.HostName)
+		self.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
 		self.OS = st.Self.OS
 		self.Online = st.Self.Online
 		self.IPs = st.Self.TailscaleIPs
@@ -285,8 +285,8 @@ func (m *Manager) updateFromEmbedded(st *adapter.TailscaleEndpointStatus) {
 			}
 			peers = append(peers, PeerInfo{
 				ID:             p.StableID,
-				Hostname:       p.HostName,
-				DNSName:        p.DNSName,
+				Hostname:       ExtractNodeName(p.DNSName, st.MagicDNSSuffix, p.HostName),
+				DNSName:        strings.TrimSuffix(p.DNSName, "."),
 				IPs:            p.TailscaleIPs,
 				OS:             p.OS,
 				Online:         p.Online,
