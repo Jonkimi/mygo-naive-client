@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 0.1.7
+
+- **统一路由目标与多级调度策略**：分流规则动作支持灵活混合指定具体节点与标签（Tag）代理池；新增智能平滑加权（Smart EWMA）与按序故障转移（Ordered Failover）调度策略；引入严格目标隔离与离线防漏机制，杜绝节点故障时的真实 IP 泄漏。
+- **自定义分流 DoH 解析与规则解耦**：支持在 sing-box 网关层为特定分流规则独立生成专有远程 DoH 绕行链，精细化隔离解析；拆分局域网（LAN）与国内直连预设规则，规则抽屉提供统一的目标拾取器与三态动作选择器。
+- **Cloudflare WARP 优选接入与丢包感知扫描**：新增 Anycast 优选接入点测速与自适应扫描能力，结合延迟与丢包率评估网络质量；支持 MASQUE 优先 HTTP/2 传输配置选项，完善健康诊断与故障恢复。
+- **Tailnet 节点显示名称识别优化**：智能优先提取 MagicDNS 及节点配置名称，规避通用系统主机名（如 localhost 或云服务商默认实例名）掩盖节点真实标识的问题。
+- **Sidecar 进程真实往返延迟（RTT）采集**：修复并准确记录 Sidecar 进程节点的实际请求往返延迟，增强洞察分析与自动路由策略调度的精度。
+
 ## 0.1.6
 
 - **Cloudflare WARP 与 Tunnel 原生集成**：内置 Cloudflare WARP 引擎（支持 MASQUE over HTTP/3 与 WireGuard 双模式）及 Cloudflare Tunnel (`cloudflared`) 双向穿透；支持一键免配置设备注册、私有密钥管理与连接链路打通。
