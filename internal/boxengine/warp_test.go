@@ -3,7 +3,10 @@ package boxengine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"naive-client/internal/warp"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -727,5 +731,259 @@ func TestBuildOutboundsConfig_CleanIPScopeIsolation(t *testing.T) {
 		t.Errorf("expected NO static WG endpoint for auto-select chained us-wg-node")
 	}
 }
+
+// Regression: warpAutoWireGuardOutbound previously omitted adapter.Lifecycle.Start and was
+// also wrapped by blockerOutbound which hid Lifecycle.Start. As a result, Engine.Close()
+// canceled the box context without ever closing the WireGuard endpoint, leaving sing-box's
+// ClientBind.receive loop spamming "outbound/warp-wg-auto[...]: connect to server: ...: operation was canceled"
+// every second even after WARP was removed from all nodes.
+func TestWarpAutoWireGuardOutbound_CloseStopsClientBindLoop(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		for {
+			conn, aErr := upstreamLn.Accept()
+			if aErr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	privKey, _, err := warp.GenerateWireGuardKeypair()
+	if err != nil {
+		t.Fatalf("GenerateWireGuardKeypair: %v", err)
+	}
+
+	sel := warp.NewEndpointSelector()
+	sel.SetCached(warp.EndpointCacheKey{
+		ScopeKey: "node-svc-wg-test",
+		Mode:     warp.ModeWireGuard,
+	}, "127.0.0.1:2408", "wireguard", 10*time.Millisecond)
+
+	var logMu sync.Mutex
+	var postCloseLogs []string
+	var closedAfter bool
+
+	bl := blocker.NewEngine(blocker.Options{})
+	svc := config.Service{
+		ID:          "svc-wg-test",
+		Name:        "WG Test",
+		Kind:        config.KindExternalProxy,
+		Protocol:    config.ProtoSOCKS5,
+		Engine:      config.EngineSingBox,
+		ExternalURI: fmt.Sprintf("socks5://%s", upstreamLn.Addr().String()),
+		EnableWARP:  true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport:  config.WarpTransportWireGuard,
+			PrivateKey: privKey,
+		},
+	}
+
+	eng, err := New(EngineOptions{
+		ListenAddr:       "127.0.0.1:0",
+		TrafficMode:      "port",
+		Services:         []config.Service{svc},
+		ActiveIDs:        map[string]bool{"svc-wg-test": true},
+		Blocker:          bl,
+		EndpointSelector: sel,
+		LogLevel:         "warn",
+		OnLog: func(level, message string) {
+			logMu.Lock()
+			if closedAfter {
+				postCloseLogs = append(postCloseLogs, level+": "+message)
+			}
+			logMu.Unlock()
+		},
+	})
+	if err != nil {
+		t.Fatalf("New engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine failed: %v", err)
+	}
+
+	// Trigger lazy WireGuard endpoint creation and ClientBind receive loop.
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	_, _ = eng.DialNode(dialCtx, "svc-wg-test", "tcp", "127.0.0.1:80")
+	dialCancel()
+
+	ob, ok := eng.GetOutbound("svc-wg-test")
+	if !ok {
+		_ = eng.Close()
+		t.Fatalf("expected node-svc-wg-test outbound to exist")
+	}
+	wgOb, ok := common.Cast[*warpAutoWireGuardOutbound](ob)
+	if !ok {
+		_ = eng.Close()
+		t.Fatalf("expected outbound to unwrap to *warpAutoWireGuardOutbound, got %T", ob)
+	}
+	wgOb.mu.Lock()
+	hadEP := wgOb.ep != nil
+	wgOb.mu.Unlock()
+	if !hadEP {
+		_ = eng.Close()
+		t.Fatalf("expected DialNode to start WireGuard endpoint before Close")
+	}
+
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close engine failed: %v", err)
+	}
+
+	logMu.Lock()
+	closedAfter = true
+	logMu.Unlock()
+
+	wgOb.mu.Lock()
+	isClosed := wgOb.closed
+	epAfter := wgOb.ep
+	wgOb.mu.Unlock()
+	if !isClosed || epAfter != nil {
+		t.Fatalf("expected warpAutoWireGuardOutbound to be closed with ep=nil after Engine.Close(), closed=%v ep=%v", isClosed, epAfter)
+	}
+
+	// Wait past ClientBind.receive()'s 1-second retry backoff to prove no zombie loop remains.
+	time.Sleep(1200 * time.Millisecond)
+
+	logMu.Lock()
+	leaked := append([]string(nil), postCloseLogs...)
+	logMu.Unlock()
+	if len(leaked) > 0 {
+		t.Fatalf("expected no sing-box logs after Engine.Close(), got leaked logs: %v", leaked)
+	}
+}
+
+type lifecycleTrackingOutbound struct {
+	*mockOutbound
+	startedStages     []adapter.StartStage
+	scopeAddCount     int
+	interfaceUpdated  int
+	keepIdle          bool
+	closeIdleCount    int
+	activeEndpointVal string
+}
+
+func (l *lifecycleTrackingOutbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	l.startedStages = append(l.startedStages, stage)
+	if stage == adapter.StartStateInitialize && scope != nil {
+		scope.Add(func() error {
+			l.scopeAddCount++
+			return nil
+		})
+	}
+	return nil
+}
+
+func (l *lifecycleTrackingOutbound) InterfaceUpdated(ctx context.Context) {
+	l.interfaceUpdated++
+}
+
+func (l *lifecycleTrackingOutbound) SetKeepIdleConnections(keep bool) {
+	l.keepIdle = keep
+}
+
+func (l *lifecycleTrackingOutbound) CloseIdleConnections() {
+	l.closeIdleCount++
+}
+
+func (l *lifecycleTrackingOutbound) ActiveEndpoint() string {
+	return l.activeEndpointVal
+}
+
+// Regression: blockerOutbound must forward adapter.Lifecycle, InterfaceUpdateListener,
+// IdleConnectionKeeper, ActiveEndpoint, and Upstream() to the wrapped outbound.
+func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
+	inner := &lifecycleTrackingOutbound{
+		mockOutbound:      &mockOutbound{tag: "node-test"},
+		activeEndpointVal: "162.159.198.2:443",
+	}
+	wrapped := &blockerOutbound{Outbound: inner}
+
+	if unwrapped, ok := common.Cast[*lifecycleTrackingOutbound](wrapped); !ok || unwrapped != inner {
+		t.Fatalf("expected common.Cast to unwrap blockerOutbound via Upstream()")
+	}
+
+	var lc adapter.Lifecycle = wrapped
+	if err := lc.Start(adapter.StartStateInitialize, nil); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if len(inner.startedStages) != 1 || inner.startedStages[0] != adapter.StartStateInitialize {
+		t.Fatalf("expected Start to forward StartStateInitialize, got %v", inner.startedStages)
+	}
+
+	var iul adapter.InterfaceUpdateListener = wrapped
+	iul.InterfaceUpdated(context.Background())
+	if inner.interfaceUpdated != 1 {
+		t.Fatalf("expected InterfaceUpdated to forward once, got %d", inner.interfaceUpdated)
+	}
+
+	var keeper adapter.IdleConnectionKeeper = wrapped
+	keeper.SetKeepIdleConnections(true)
+	keeper.CloseIdleConnections()
+	if !inner.keepIdle || inner.closeIdleCount != 1 {
+		t.Fatalf("expected IdleConnectionKeeper to forward, keepIdle=%v closeIdleCount=%d", inner.keepIdle, inner.closeIdleCount)
+	}
+
+	if ep := wrapped.ActiveEndpoint(); ep != "162.159.198.2:443" {
+		t.Fatalf("expected ActiveEndpoint to forward, got %q", ep)
+	}
+}
+
+// Regression: warpMasqueOutbound must implement adapter.Lifecycle so Engine.Close tears down
+// MASQUE outbounds even when wrapped by blockerOutbound.
+func TestWarpMasqueOutbound_CloseRunsOnEngineClose(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{})
+	svc := config.Service{
+		ID:       config.BuiltinWarpServiceID,
+		Name:     "Cloudflare WARP",
+		Protocol: config.ProtoWARP,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportMasque,
+			Endpoint:  "162.159.198.2:443",
+		},
+	}
+
+	eng, err := New(EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		TrafficMode: "port",
+		Services:    []config.Service{svc},
+		Blocker:     bl,
+	})
+	if err != nil {
+		t.Fatalf("New engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine failed: %v", err)
+	}
+
+	ob, ok := eng.GetOutbound(config.BuiltinWarpServiceID)
+	if !ok {
+		_ = eng.Close()
+		t.Fatalf("expected builtin-warp outbound")
+	}
+	mqOb, ok := common.Cast[*warpMasqueOutbound](ob)
+	if !ok {
+		_ = eng.Close()
+		t.Fatalf("expected *warpMasqueOutbound, got %T", ob)
+	}
+
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close engine failed: %v", err)
+	}
+
+	mqOb.mu.Lock()
+	closed := mqOb.closed
+	mqOb.mu.Unlock()
+	if !closed {
+		t.Fatalf("expected warpMasqueOutbound to be closed after Engine.Close()")
+	}
+}
+
 
 

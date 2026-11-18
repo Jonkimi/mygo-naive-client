@@ -41,15 +41,24 @@ type warpMasqueOutbound struct {
 	logger      log.ContextLogger
 	opts        warpMasqueOptions
 	eng         *Engine
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
 
 	tun            *warp.MASQUETunnel
 	activeEndpoint string
 	masqueFailedAt time.Time
 	mu             sync.Mutex
 	closed         bool
+	closeWG        sync.WaitGroup
 }
 
+var _ adapter.Lifecycle = (*warpMasqueOutbound)(nil)
+
 func newWarpMasqueOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, opts warpMasqueOptions, eng *Engine) (adapter.Outbound, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	closeCtx, closeCancel := context.WithCancel(ctx)
 	return &warpMasqueOutbound{
 		tag:         tag,
 		router:      router,
@@ -57,7 +66,24 @@ func newWarpMasqueOutbound(ctx context.Context, router adapter.Router, logger lo
 		logger:      logger,
 		opts:        opts,
 		eng:         eng,
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 	}, nil
+}
+
+// Start registers Close with sing-box's lifecycle scope so Engine.Close tears down active MASQUE tunnels.
+func (w *warpMasqueOutbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	if scope != nil {
+		scope.Add(w.Close)
+	}
+	return nil
+}
+
+func (w *warpMasqueOutbound) isClosed() bool {
+	return w.closed || (w.closeCtx != nil && w.closeCtx.Err() != nil)
 }
 
 func (w *warpMasqueOutbound) scopeKey() string {
@@ -132,7 +158,7 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.closed {
+	if w.isClosed() {
 		return nil, errors.New("outbound closed")
 	}
 	if w.opts.WireGuardFallback != "" && time.Since(w.masqueFailedAt) < 60*time.Second {
@@ -213,7 +239,7 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 		if w.opts.WireGuardFallback != "" {
 			provTimeout = 4 * time.Second
 		}
-		provCtx, provCancel := context.WithTimeout(ctx, provTimeout)
+		provCtx, provCancel := deriveLifecycleContext(ctx, w.closeCtx, provTimeout)
 		enrolled, err := client.ProvisionAll(provCtx, curAccount, "")
 		provCancel()
 		if apiHTTPClient != nil {
@@ -238,17 +264,20 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 		}
 	}
 
-	connectCtx := ctx
-	var connectCancel context.CancelFunc
+	if w.isClosed() {
+		return nil, errors.New("outbound closed")
+	}
+
+	var masqueTimeout time.Duration
 	if w.opts.WireGuardFallback != "" {
 		// Leave headroom inside caller's deadline for WireGuard fallback if MASQUE fails.
 		// PreferH2 needs enough time for both H2 (TCP) and H3 (QUIC) attempts.
-		masqueTimeout := 5 * time.Second
+		masqueTimeout = 5 * time.Second
 		if w.opts.PreferH2 && !w.opts.TCPOnlyDetour && !w.opts.ForceH2 {
 			masqueTimeout = 9 * time.Second
 		}
-		connectCtx, connectCancel = context.WithTimeout(ctx, masqueTimeout)
 	}
+	connectCtx, connectCancel := deriveLifecycleContext(ctx, w.closeCtx, masqueTimeout)
 	mOpts := warp.MASQUEOptions{
 		TCPOnly:  w.opts.TCPOnlyDetour,
 		ForceH2:  w.opts.ForceH2,
@@ -268,12 +297,14 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 		}
 		tun, selectedEP, err = selector.SelectMASQUEAndConnect(connectCtx, w.scopeKey(), upstreamDialer, acc, mOpts)
 	}
-	if connectCancel != nil {
-		connectCancel()
-	}
+	connectCancel()
 	if err != nil {
 		w.masqueFailedAt = time.Now()
 		return nil, err
+	}
+	if w.isClosed() {
+		_ = tun.Close()
+		return nil, errors.New("outbound closed")
 	}
 	w.masqueFailedAt = time.Time{}
 	w.tun = tun
@@ -293,6 +324,9 @@ func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
 		w.activeEndpoint = ""
 		w.masqueFailedAt = time.Now()
 	}
+	if tun != nil {
+		w.closeWG.Add(1)
+	}
 	w.mu.Unlock()
 	if strings.TrimSpace(w.opts.Endpoint) == "" && failedEP != "" {
 		selector := warp.DefaultEndpointSelector()
@@ -307,6 +341,7 @@ func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
 	}
 	if tun != nil {
 		_ = tun.Close()
+		w.closeWG.Done()
 	}
 }
 
@@ -437,15 +472,20 @@ func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Soc
 }
 
 func (w *warpMasqueOutbound) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.closed = true
-	if w.tun != nil {
-		err := w.tun.Close()
-		w.tun = nil
-		return err
+	if w.closeCancel != nil {
+		w.closeCancel()
 	}
-	return nil
+	w.mu.Lock()
+	w.closed = true
+	tun := w.tun
+	w.tun = nil
+	w.mu.Unlock()
+	var err error
+	if tun != nil {
+		err = tun.Close()
+	}
+	w.closeWG.Wait()
+	return err
 }
 
 type udpPacketConnAdapter struct {

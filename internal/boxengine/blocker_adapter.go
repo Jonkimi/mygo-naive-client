@@ -70,6 +70,10 @@ func (t *blockerDNSTransport) Dependencies() []string {
 	return t.underlying.Dependencies()
 }
 
+func (t *blockerDNSTransport) Upstream() any {
+	return t.underlying
+}
+
 func (t *blockerDNSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return t.underlying.Start(stage, scope)
 }
@@ -175,6 +179,47 @@ type blockerOutbound struct {
 	provider NodeProvider
 }
 
+func startWrappedOutbound(ob adapter.Outbound, stage adapter.StartStage, scope *adapter.Scope) error {
+	if lifecycle, ok := ob.(adapter.Lifecycle); ok {
+		return lifecycle.Start(stage, scope)
+	}
+	return nil
+}
+
+func (o *blockerOutbound) Upstream() any {
+	return o.Outbound
+}
+
+// Start forwards sing-box lifecycle hooks so wrapped outbounds register close cleanups and start cleanly.
+func (o *blockerOutbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	return startWrappedOutbound(o.Outbound, stage, scope)
+}
+
+func (o *blockerOutbound) InterfaceUpdated(ctx context.Context) {
+	if listener, ok := o.Outbound.(adapter.InterfaceUpdateListener); ok {
+		listener.InterfaceUpdated(ctx)
+	}
+}
+
+func (o *blockerOutbound) SetKeepIdleConnections(keep bool) {
+	if keeper, ok := o.Outbound.(adapter.IdleConnectionKeeper); ok {
+		keeper.SetKeepIdleConnections(keep)
+	}
+}
+
+func (o *blockerOutbound) CloseIdleConnections() {
+	if keeper, ok := o.Outbound.(adapter.IdleConnectionKeeper); ok {
+		keeper.CloseIdleConnections()
+	}
+}
+
+func (o *blockerOutbound) ActiveEndpoint() string {
+	if p, ok := o.Outbound.(interface{ ActiveEndpoint() string }); ok {
+		return p.ActiveEndpoint()
+	}
+	return ""
+}
+
 func shouldAnnotateDirectOutbound(ob adapter.Outbound) bool {
 	if ob == nil {
 		return false
@@ -264,6 +309,14 @@ func (o *blockerOutbound) ListenPacket(ctx context.Context, destination M.Socksa
 
 type rejectOutbound struct {
 	adapter.Outbound
+}
+
+func (o *rejectOutbound) Upstream() any {
+	return o.Outbound
+}
+
+func (o *rejectOutbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	return startWrappedOutbound(o.Outbound, stage, scope)
 }
 
 func (o *rejectOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -165,6 +166,30 @@ type Engine struct {
 	logWriter         *boxPlatformWriter
 	boxCtx            context.Context
 	cancel            context.CancelFunc
+	closersMu         sync.Mutex
+	closers           []func() error
+}
+
+func (e *Engine) registerCloser(fn func() error) {
+	if e == nil || fn == nil {
+		return
+	}
+	e.closersMu.Lock()
+	e.closers = append(e.closers, fn)
+	e.closersMu.Unlock()
+}
+
+func (e *Engine) closeRegisteredClosers() {
+	if e == nil {
+		return
+	}
+	e.closersMu.Lock()
+	closers := e.closers
+	e.closers = nil
+	e.closersMu.Unlock()
+	for i := len(closers) - 1; i >= 0; i-- {
+		_ = closers[i]()
+	}
 }
 
 // New constructs a new Engine instance.
@@ -229,6 +254,7 @@ func New(opts EngineOptions) (*Engine, error) {
 
 	boxOpts, err := eng.buildConfig(boxCtx, opts, listenHost, listenPort)
 	if err != nil {
+		eng.closeRegisteredClosers()
 		cancel()
 		return nil, fmt.Errorf("build sing-box options: %w", err)
 	}
@@ -238,6 +264,7 @@ func New(opts EngineOptions) (*Engine, error) {
 		Options: *boxOpts,
 	})
 	if err != nil {
+		eng.closeRegisteredClosers()
 		cancel()
 		if strings.Contains(err.Error(), "with_tailscale") {
 			return nil, fmt.Errorf("内嵌 Tailscale 节点需要添加编译标签 (-tags with_tailscale,with_gvisor): %w", err)
@@ -276,6 +303,15 @@ func New(opts EngineOptions) (*Engine, error) {
 	return eng, nil
 }
 
+func trackOutboundCloser(eng *Engine, ob adapter.Outbound, err error) (adapter.Outbound, error) {
+	if err == nil && eng != nil {
+		if c, ok := ob.(io.Closer); ok {
+			eng.registerCloser(c.Close)
+		}
+	}
+	return ob, err
+}
+
 func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 	outboundReg := include.OutboundRegistry()
 	type poolOption struct {
@@ -312,10 +348,12 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 	})
 
 	outbound.Register[warpMasqueOptions](outboundReg, "masque", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, mOpts warpMasqueOptions) (adapter.Outbound, error) {
-		return newWarpMasqueOutbound(ctx, router, logger, tag, mOpts, eng)
+		ob, err := newWarpMasqueOutbound(ctx, router, logger, tag, mOpts, eng)
+		return trackOutboundCloser(eng, ob, err)
 	})
 	outbound.Register[warpAutoWireGuardOptions](outboundReg, "warp-wg-auto", func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, wgOpts warpAutoWireGuardOptions) (adapter.Outbound, error) {
-		return newWarpAutoWireGuardOutbound(ctx, router, logger, tag, wgOpts, eng)
+		ob, err := newWarpAutoWireGuardOutbound(ctx, router, logger, tag, wgOpts, eng)
+		return trackOutboundCloser(eng, ob, err)
 	})
 
 	var finalOutboundReg adapter.OutboundRegistry = outboundReg
@@ -369,6 +407,7 @@ func (e *Engine) Close() error {
 		err = e.box.Close()
 		e.box = nil
 	}
+	e.closeRegisteredClosers()
 	if e.cancel != nil {
 		e.cancel()
 		e.cancel = nil
