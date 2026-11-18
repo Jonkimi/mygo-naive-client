@@ -59,6 +59,13 @@ func (a Account) IsRegistered() bool {
 	return a.DeviceID != "" || a.MASQUEDeviceID != "" || a.WGPrivateKey != "" || a.MASQUEPrivateKey != ""
 }
 
+// Clone returns a copy of Account with its mutable slices cloned.
+func (a Account) Clone() Account {
+	out := a
+	out.Reserved = append([]uint8(nil), a.Reserved...)
+	return out
+}
+
 // TunnelConfig holds Cloudflare Zero Trust Tunnel (cloudflared inbound) settings.
 type TunnelConfig struct {
 	Enabled       bool   `json:"enabled"`

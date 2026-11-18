@@ -64,7 +64,7 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 						ui.Text(c, cat.CloudflarePageTitle()).FontSize(17).FontWeight(700).TextColor(p.text)
 
 						if a.cloudflareSubTab == 0 {
-							acc := a.state.Cloudflare.Account
+							acc := a.getCloudflareAccount()
 							if acc.AccountType == "unlimited" {
 								statusBadge(c, "WARP+", p.accent, p.accentBg)
 							} else if acc.IsRegistered() {
@@ -79,7 +79,7 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 							tunCfg := a.state.Cloudflare.Tunnel
 							if !tunCfg.Enabled {
 								statusBadge(c, cat.TailnetModeOff(), p.textDim, p.elevated)
-							} else if a.gateway != nil && strings.TrimSpace(tunCfg.Token) != "" {
+							} else if a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "" {
 								statusBadge(c, cat.CloudflareTunnelConnected(), p.green, p.greenBg)
 							} else {
 								statusBadge(c, cat.CloudflareTunnelDisconnected(), p.amber, p.amberBg)
@@ -166,7 +166,7 @@ func (a *app) renderCloudflareMetricCol(c *ui.Context, p palette, label, value s
 
 func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 	cat := a.catalog()
-	acc := a.state.Cloudflare.Account
+	acc := a.getCloudflareAccount()
 
 	// Card 1: WARP Device & Credentials (3-column metrics + progressive License form)
 	ui.Column(c.Key("warp-account-card")).
@@ -576,7 +576,7 @@ func (a *app) renderCloudflareTunnelView(c *ui.Context, p palette) {
 					ui.Text(c, cat.CloudflareTunnelTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 					if !tunCfg.Enabled {
 						statusBadge(c, cat.TailnetModeOff(), p.textDim, p.surface)
-					} else if a.gateway != nil && strings.TrimSpace(tunCfg.Token) != "" {
+					} else if a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "" {
 						statusBadge(c, cat.CloudflareTunnelConnected(), p.green, p.greenBg)
 					} else {
 						statusBadge(c, cat.CloudflareTunnelStatusWaiting(), p.amber, p.amberBg)

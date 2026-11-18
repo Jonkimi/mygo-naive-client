@@ -230,14 +230,15 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	gwAddr := fmt.Sprintf("127.0.0.1:%d", gwPort)
 
 	// Gateway dot & badge colors
-	gwRunning := a.state.GatewayEnabled && a.gateway != nil
+	gwRunning := a.state.GatewayEnabled && a.getGateway() != nil
+	gwErr := a.getLastGatewayErr()
 	gwDotColor := p.textDim
 	gwBadgeText := ""
 	gwBadgeFg := p.textDim
 	gwBadgeBg := p.elevated
 
 	if !gwRunning {
-		if a.state.GatewayEnabled && a.lastGatewayErr != nil {
+		if a.state.GatewayEnabled && gwErr != nil {
 			gwDotColor = p.red
 			gwBadgeText = cat.StatusError()
 			gwBadgeFg = p.red
@@ -338,7 +339,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	}
 
 	// Mode handling
-	activeMode := a.state.TrafficMode
+	activeMode := a.getTrafficMode()
 	if activeMode == "" {
 		activeMode = "port"
 	}

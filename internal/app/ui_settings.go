@@ -169,11 +169,13 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 
 			// Section 1.5: Unified Gateway & Traffic Takeover
 			ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+				gw := a.getGateway()
+				gwErr := a.getLastGatewayErr()
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.GatewaySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
-					if a.gateway != nil && a.state.GatewayEnabled {
+					if gw != nil && a.state.GatewayEnabled {
 						statusBadge(c, "Running :"+fmt.Sprint(a.state.GatewayPort), p.green, p.greenBg)
-					} else if a.state.GatewayEnabled && a.lastGatewayErr != nil {
+					} else if a.state.GatewayEnabled && gwErr != nil {
 						statusBadge(c, cat.StatusError(), p.red, p.redBg)
 					} else {
 						statusBadge(c, cat.StatusStopped(), p.textDim, p.elevated)
@@ -191,10 +193,10 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 					}
 				}
 
-				if a.state.GatewayEnabled && a.gateway == nil && a.lastGatewayErr != nil {
+				if a.state.GatewayEnabled && gw == nil && gwErr != nil {
 					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Padding(8, 10, 8, 10).Radius(6).
 						Background(p.redBg).Children(func() {
-						ui.Text(c, cat.ErrorPrefix()+a.lastGatewayErr.Error()).FontSize(11).TextColor(p.red).Grow(1)
+						ui.Text(c, cat.ErrorPrefix()+gwErr.Error()).FontSize(11).TextColor(p.red).Grow(1)
 						if actionChip(c.Key("page-btn-retry-gw"), p, iconRefresh, "重试", false).Clicked() {
 							if err := a.startGatewayWithFallback(); err != nil {
 								a.toast("重试失败: " + err.Error())

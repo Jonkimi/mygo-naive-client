@@ -3,6 +3,7 @@ package boxengine
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,18 +14,21 @@ import (
 	"naive-client/internal/warp"
 
 	"github.com/sagernet/sing-box/adapter"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 // warpOutboundLifecycle coordinates lazy initialization, shutdown cancellation,
 // and in-flight cleanup synchronization for custom WARP outbounds.
 //
-// Lock ordering: initMu -> mu (never hold mu across network I/O or Engine.mu).
+// Lock ordering: mu never held across network I/O, Engine.mu, or init wait.
 type warpOutboundLifecycle struct {
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
 
-	initMu    sync.Mutex
 	mu        sync.Mutex
+	initBusy  bool
+	initCh    chan struct{}
 	closed    bool
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -61,8 +65,72 @@ func (l *warpOutboundLifecycle) isClosed() bool {
 	return l.isClosedLocked()
 }
 
+func (l *warpOutboundLifecycle) doneChan() <-chan struct{} {
+	if l.closeCtx == nil {
+		return nil
+	}
+	return l.closeCtx.Done()
+}
+
+func (l *warpOutboundLifecycle) acquireInit(ctx context.Context, tryFast func() (bool, error)) (func(), bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		l.mu.Lock()
+		if l.isClosedLocked() {
+			l.mu.Unlock()
+			return nil, false, errors.New("outbound closed")
+		}
+		if tryFast != nil {
+			ready, err := tryFast()
+			if err != nil || ready {
+				l.mu.Unlock()
+				return nil, ready, err
+			}
+		}
+		if !l.initBusy {
+			l.initBusy = true
+			ch := make(chan struct{})
+			l.initCh = ch
+			l.wg.Add(1)
+			l.mu.Unlock()
+			return func() {
+				l.mu.Lock()
+				l.initBusy = false
+				l.initCh = nil
+				close(ch)
+				l.mu.Unlock()
+				l.wg.Done()
+			}, false, nil
+		}
+		waitCh := l.initCh
+		l.mu.Unlock()
+
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		select {
+		case <-waitCh:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-l.doneChan():
+			return nil, false, errors.New("outbound closed")
+		}
+	}
+}
+
 func (l *warpOutboundLifecycle) deriveContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return deriveLifecycleContext(ctx, l.closeCtx, timeout)
+}
+
+func resolveDomainViaDialerDNS(ctx context.Context, d N.Dialer, host string, allowV4, allowV6 bool) (netip.Addr, error) {
+	if d == nil {
+		return netip.Addr{}, errors.New("nil dialer")
+	}
+	return warp.ResolveDNSOverTunnel(ctx, func(dCtx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+		return d.DialContext(dCtx, network, M.SocksaddrFrom(server, port))
+	}, host, allowV4, allowV6)
 }
 
 // close cancels active operations, atomically transitions to closed while detaching any
@@ -101,6 +169,10 @@ func deriveLifecycleContext(ctx, lifeCtx context.Context, timeout time.Duration)
 		subCtx, cancel = context.WithCancel(ctx)
 	}
 	if lifeCtx == nil {
+		return subCtx, cancel
+	}
+	if lifeCtx.Err() != nil {
+		cancel()
 		return subCtx, cancel
 	}
 	stop := context.AfterFunc(lifeCtx, cancel)
@@ -157,6 +229,10 @@ func closeHTTPTransportIdle(c *http.Client) {
 	}
 }
 
+func cloneWarpAccount(acc warp.Account) warp.Account {
+	return acc.Clone()
+}
+
 func loadGlobalWarpAccount(eng *Engine) warp.Account {
 	if eng == nil {
 		return warp.Account{}
@@ -166,18 +242,24 @@ func loadGlobalWarpAccount(eng *Engine) warp.Account {
 	if eng.cloudflareConfig == nil {
 		return warp.Account{}
 	}
-	return eng.cloudflareConfig.Account
+	return cloneWarpAccount(eng.cloudflareConfig.Account)
 }
 
 func saveGlobalWarpAccount(eng *Engine, enrolled warp.Account) {
 	if eng == nil {
 		return
 	}
+	accCopy := cloneWarpAccount(enrolled)
+	var onUpdate func(warp.Account)
 	eng.mu.Lock()
 	if eng.cloudflareConfig != nil {
-		eng.cloudflareConfig.Account = enrolled
+		eng.cloudflareConfig.Account = accCopy
 	}
+	onUpdate = eng.onCloudflareAccountUpdate
 	eng.mu.Unlock()
+	if onUpdate != nil {
+		onUpdate(cloneWarpAccount(accCopy))
+	}
 }
 
 func selectEndpointSelector(eng *Engine) *warp.EndpointSelector {
@@ -185,31 +267,4 @@ func selectEndpointSelector(eng *Engine) *warp.EndpointSelector {
 		return eng.endpointSelector
 	}
 	return warp.DefaultEndpointSelector()
-}
-
-func resolveHostIP(ctx context.Context, host string) (netip.Addr, error) {
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return addr, nil
-	}
-	rCtx, rCancel := context.WithTimeout(ctx, 1200*time.Millisecond)
-	defer rCancel()
-	r := &net.Resolver{
-		PreferGo: true,
-		Dial: func(c context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 800 * time.Millisecond}
-			return d.DialContext(c, "udp", "223.5.5.5:53")
-		},
-	}
-	ips, err := r.LookupIP(rCtx, "ip4", host)
-	if err == nil && len(ips) > 0 {
-		return netip.ParseAddr(ips[0].String())
-	}
-
-	dCtx, dCancel := context.WithTimeout(ctx, 1000*time.Millisecond)
-	defer dCancel()
-	ips, err = net.DefaultResolver.LookupIP(dCtx, "ip4", host)
-	if err == nil && len(ips) > 0 {
-		return netip.ParseAddr(ips[0].String())
-	}
-	return netip.Addr{}, fmt.Errorf("failed to resolve host %q: %w", host, err)
 }

@@ -26,6 +26,9 @@ import (
 
 const nicID = 1
 
+// ErrNoDNSRecords indicates the in-tunnel DNS server answered cleanly without any A/AAAA records.
+var ErrNoDNSRecords = errors.New("no DNS records")
+
 // Netstack provides an isolated user-space TCP/IP stack over a channel link endpoint.
 type Netstack struct {
 	Stack  *stack.Stack
@@ -172,6 +175,9 @@ func (ns *Netstack) dialIPTCP(ctx context.Context, addr netip.Addr, port uint16)
 	if ns.ctx.Err() != nil {
 		return nil, errors.New("tunnel closed")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	var netProto tcpip.NetworkProtocolNumber
 	var laddr tcpip.FullAddress
@@ -288,74 +294,116 @@ func (ns *Netstack) resolveHostIP(ctx context.Context, host string) (netip.Addr,
 	if ns.ctx.Err() != nil {
 		return netip.Addr{}, errors.New("tunnel closed")
 	}
-
-	// Resolve inside the WARP tunnel via Cloudflare DNS to prevent host DNS leaks and poisoning.
-	if addr, err := ns.resolveInTunnelDNS(ctx, host); err == nil {
-		return addr, nil
-	} else if ns.ctx.Err() != nil || ctx.Err() != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
 		return netip.Addr{}, err
 	}
 
-	// Fallback to host system resolver only if the tunnel is still open and in-tunnel DNS did not answer.
-	netProto := "ip"
-	if ns.IPv4.IsValid() && (!ns.IPv6.IsValid() || ns.IPv6.IsUnspecified()) {
-		netProto = "ip4"
-	}
-	ips, err := net.DefaultResolver.LookupIP(ctx, netProto, host)
-	if len(ips) == 0 {
-		return netip.Addr{}, fmt.Errorf("failed to resolve host %q: %w", host, err)
-	}
-	selected := ips[0]
-	if ns.IPv4.IsValid() {
-		for _, ip := range ips {
-			if ip.To4() != nil {
-				selected = ip
-				break
-			}
-		}
-	}
-	parsed, err := netip.ParseAddr(selected.String())
-	if err != nil {
-		return netip.Addr{}, fmt.Errorf("failed to parse resolved IP %q: %w", selected.String(), err)
-	}
-	return parsed, nil
+	// Resolve strictly inside the WARP tunnel via Cloudflare DNS so domains never
+	// leak to the host system resolver or local ISP.
+	return ns.resolveInTunnelDNS(ctx, host)
 }
 
 func (ns *Netstack) resolveInTunnelDNS(ctx context.Context, host string) (netip.Addr, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dnsCtx, dnsCancel := context.WithCancel(ctx)
+	if ns.ctx.Err() != nil {
+		dnsCancel()
+	}
+	stopWatch := context.AfterFunc(ns.ctx, dnsCancel)
+	defer func() {
+		stopWatch()
+		dnsCancel()
+	}()
+	return ResolveDNSOverTunnel(dnsCtx, func(dCtx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+		if network == "tcp" {
+			return ns.dialIPTCP(dCtx, server, port)
+		}
+		return ns.dialIPUDP(server, port)
+	}, host, ns.IPv4.IsValid() || !ns.IPv6.IsValid(), ns.IPv6.IsValid())
+}
+
+// ResolveDNSOverTunnel resolves host via Cloudflare's in-tunnel DNS (1.1.1.1:53 UDP, then 1.0.0.1:53 TCP)
+// using the supplied tunnel dial function.
+func ResolveDNSOverTunnel(
+	ctx context.Context,
+	dial func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error),
+	host string,
+	allowV4 bool,
+	allowV6 bool,
+) (netip.Addr, error) {
+	if dial == nil {
+		return netip.Addr{}, errors.New("nil dialer")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return netip.Addr{}, err
+	}
 	qtype := dns.TypeA
-	if !ns.IPv4.IsValid() && ns.IPv6.IsValid() {
+	if !allowV4 && allowV6 {
 		qtype = dns.TypeAAAA
 	}
 
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(host), qtype)
-	msg.RecursionDesired = true
+	query := func(qt uint16, server netip.Addr, useTCP bool) (netip.Addr, error) {
+		m := new(dns.Msg)
+		m.SetQuestion(dns.Fqdn(host), qt)
+		m.RecursionDesired = true
+		qCtx, qCancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		defer qCancel()
+		return exchangeTunnelDNS(qCtx, dial, m, server, useTCP)
+	}
 
-	// 1. Try UDP 1.1.1.1:53 inside the tunnel
-	udpCtx, udpCancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-	addr, err := ns.exchangeDNS(udpCtx, msg, netip.MustParseAddr("1.1.1.1"), false)
-	udpCancel()
+	udpServer := netip.MustParseAddr("1.1.1.1")
+	addr, err := query(qtype, udpServer, false)
 	if err == nil {
 		return addr, nil
 	}
-	if ns.ctx.Err() != nil || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return netip.Addr{}, err
 	}
+	if errors.Is(err, ErrNoDNSRecords) {
+		if qtype == dns.TypeA && allowV6 {
+			addr, v6Err := query(dns.TypeAAAA, udpServer, false)
+			if v6Err == nil || errors.Is(v6Err, ErrNoDNSRecords) || ctx.Err() != nil {
+				return addr, v6Err
+			}
+			// UDP AAAA timed out or hit a transport error; fall through to TCP.
+			err = v6Err
+		} else {
+			return netip.Addr{}, err
+		}
+	}
 
-	// 2. Fallback to TCP 1.0.0.1:53 inside the tunnel
-	tcpCtx, tcpCancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-	defer tcpCancel()
-	return ns.exchangeDNS(tcpCtx, msg, netip.MustParseAddr("1.0.0.1"), true)
+	// Fallback to TCP 1.0.0.1:53 inside the tunnel when UDP fails at transport level.
+	tcpServer := netip.MustParseAddr("1.0.0.1")
+	addr, tcpErr := query(qtype, tcpServer, true)
+	if tcpErr == nil || ctx.Err() != nil {
+		return addr, tcpErr
+	}
+	if qtype == dns.TypeA && allowV6 && errors.Is(tcpErr, ErrNoDNSRecords) {
+		return query(dns.TypeAAAA, tcpServer, true)
+	}
+	return netip.Addr{}, tcpErr
 }
 
-func (ns *Netstack) exchangeDNS(ctx context.Context, msg *dns.Msg, server netip.Addr, useTCP bool) (netip.Addr, error) {
-	var rawConn net.Conn
-	var err error
+func exchangeTunnelDNS(
+	ctx context.Context,
+	dial func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error),
+	msg *dns.Msg,
+	server netip.Addr,
+	useTCP bool,
+) (netip.Addr, error) {
+	network := "udp"
 	if useTCP {
-		rawConn, err = ns.dialIPTCP(ctx, server, 53)
-	} else {
-		rawConn, err = ns.dialIPUDP(server, 53)
+		network = "tcp"
 	}
+	rawConn, err := dial(ctx, network, server, 53)
 	if err != nil {
 		return netip.Addr{}, err
 	}
@@ -374,6 +422,12 @@ func (ns *Netstack) exchangeDNS(ctx context.Context, msg *dns.Msg, server netip.
 	if err != nil {
 		return netip.Addr{}, err
 	}
+	if resp.Truncated {
+		return netip.Addr{}, fmt.Errorf("DNS response truncated for %s", msg.Question[0].Name)
+	}
+	if resp.Rcode != dns.RcodeSuccess && resp.Rcode != dns.RcodeNameError {
+		return netip.Addr{}, fmt.Errorf("DNS query failed with rcode %s for %s", dns.RcodeToString[resp.Rcode], msg.Question[0].Name)
+	}
 	for _, ans := range resp.Answer {
 		switch rr := ans.(type) {
 		case *dns.A:
@@ -386,5 +440,5 @@ func (ns *Netstack) exchangeDNS(ctx context.Context, msg *dns.Msg, server netip.
 			}
 		}
 	}
-	return netip.Addr{}, fmt.Errorf("no DNS records for %s", msg.Question[0].Name)
+	return netip.Addr{}, fmt.Errorf("%w for %s", ErrNoDNSRecords, msg.Question[0].Name)
 }

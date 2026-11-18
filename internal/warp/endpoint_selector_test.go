@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -244,9 +245,40 @@ func TestScanBestEndpoints_SortsTopNAndSamplesCIDRs(t *testing.T) {
 	}
 }
 
-// Regression: canceling SelectMASQUEAndConnect during engine shutdown must not mark a healthy
-// cached endpoint as failed and put it on cooldown.
+type stallingCancelDialer struct {
+	startedOnce sync.Once
+	started     chan struct{}
+}
+
+func (d *stallingCancelDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	d.startedOnce.Do(func() {
+		close(d.started)
+	})
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (d *stallingCancelDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
+	d.startedOnce.Do(func() {
+		close(d.started)
+	})
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Regression: canceling SelectMASQUEAndConnect during engine shutdown (both pre-canceled
+// and mid-dial) must not mark a healthy cached endpoint as failed and put it on cooldown.
 func TestEndpointSelector_SelectMASQUEAndConnect_CanceledContextDoesNotMarkFailed(t *testing.T) {
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+
 	sel := NewEndpointSelector()
 	key := EndpointCacheKey{
 		ScopeKey: "direct",
@@ -255,14 +287,117 @@ func TestEndpointSelector_SelectMASQUEAndConnect_CanceledContextDoesNotMarkFaile
 	const ep = "162.159.198.2:443"
 	sel.SetCached(key, ep, "h3", 15*time.Millisecond)
 
+	// 1. Pre-canceled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	_, _, err := sel.SelectMASQUEAndConnect(ctx, "direct", nil, &Account{}, MASQUEOptions{})
-	if err == nil {
-		t.Fatalf("expected error for canceled context")
+	if _, _, err := sel.SelectMASQUEAndConnect(ctx, "direct", nil, acc, MASQUEOptions{}); err == nil {
+		t.Fatalf("expected error for pre-canceled context")
 	}
 	if cached, ok := sel.GetCached(key); !ok || cached != ep {
-		t.Fatalf("expected cached endpoint %q to stay intact after context cancellation, got %q (ok=%v)", ep, cached, ok)
+		t.Fatalf("expected cached endpoint %q to stay intact after pre-cancel, got %q (ok=%v)", ep, cached, ok)
 	}
+
+	// 2. Mid-dial cancellation while ConnectMASQUEWithOptions is in flight
+	midCtx, midCancel := context.WithCancel(context.Background())
+	d := &stallingCancelDialer{started: make(chan struct{})}
+	go func() {
+		<-d.started
+		midCancel()
+	}()
+	if _, _, err := sel.SelectMASQUEAndConnect(midCtx, "direct", d, acc, MASQUEOptions{}); err == nil {
+		t.Fatalf("expected error for mid-dial canceled context")
+	}
+	if cached, ok := sel.GetCached(key); !ok || cached != ep {
+		t.Fatalf("expected cached endpoint %q to stay intact after mid-dial cancellation, got %q (ok=%v)", ep, cached, ok)
+	}
+	tcpKey := EndpointCacheKey{ScopeKey: "direct", Mode: ModeMASQUE, TCPOnly: true}
+	sel.SetCached(tcpKey, ep, "h2", 15*time.Millisecond)
+	midCtx2, midCancel2 := context.WithCancel(context.Background())
+	d2 := &stallingCancelDialer{started: make(chan struct{})}
+	go func() {
+		<-d2.started
+		midCancel2()
+	}()
+	if _, _, err := sel.SelectMASQUEAndConnect(midCtx2, "direct", d2, acc, MASQUEOptions{TCPOnly: true}); err == nil {
+		t.Fatalf("expected error for mid-dial canceled TCPOnly context")
+	}
+	if cached, ok := sel.GetCached(tcpKey); !ok || cached != ep {
+		t.Fatalf("expected cached endpoint %q to stay intact after mid-dial cancellation, got %q (ok=%v)", ep, cached, ok)
+	}
+}
+
+// Regression: SelectMASQUEAndConnect's retry branch previously checked !errors.Is(err, context.Canceled)
+// using the first attempt's error rather than err2, putting ep2 on cooldown when canceled mid-dial.
+func TestEndpointSelector_SelectMASQUEAndConnect_SecondAttemptCancelDoesNotMarkFailed(t *testing.T) {
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+
+	const ep1 = "198.51.100.1:443"
+	const ep2 = "198.51.100.2:443"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sel := NewEndpointSelector()
+	sel.masqueCandidates = []string{ep1, ep2}
+	probeCount := map[string]int{}
+	var probeMu sync.Mutex
+	sel.masqueProbeFn = func(pCtx context.Context, dialer Dialer, endpoint string, a *Account, opts MASQUEOptions) (string, time.Duration, error) {
+		probeMu.Lock()
+		probeCount[endpoint]++
+		probeMu.Unlock()
+		return "h2", 5 * time.Millisecond, nil
+	}
+	// Pre-seed ep1 so first dial tries ep1 -> fails cleanly -> retry picks ep2 from selector -> cancels!
+	key := EndpointCacheKey{ScopeKey: "direct", Mode: ModeMASQUE, TCPOnly: true}
+	sel.SetCached(key, ep1, "h2", 5*time.Millisecond)
+
+	dialer := &switchingCancelDialer{
+		failEP:   ep1,
+		cancelEP: ep2,
+		cancel:   cancel,
+	}
+	_, _, connErr := sel.SelectMASQUEAndConnect(ctx, "direct", dialer, acc, MASQUEOptions{TCPOnly: true})
+	if !errors.Is(connErr, context.Canceled) {
+		t.Fatalf("expected context.Canceled on canceled retry, got %v", connErr)
+	}
+
+	sel.mu.RLock()
+	ep1Failed := !sel.failedUntil[key][ep1].IsZero()
+	ep2Failed := !sel.failedUntil[key][ep2].IsZero()
+	sel.mu.RUnlock()
+	if !ep1Failed {
+		t.Fatalf("expected first failing endpoint %q to be marked failed", ep1)
+	}
+	if ep2Failed {
+		t.Fatalf("expected canceled second endpoint %q NOT to be marked failed", ep2)
+	}
+}
+
+type switchingCancelDialer struct {
+	failEP   string
+	cancelEP string
+	cancel   context.CancelFunc
+}
+
+func (d *switchingCancelDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if addr == d.failEP {
+		return nil, errors.New("connection refused")
+	}
+	if addr == d.cancelEP {
+		d.cancel()
+		return nil, ctx.Err()
+	}
+	return nil, errors.New("unexpected endpoint")
+}
+
+func (d *switchingCancelDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
+	return nil, errors.New("unused")
 }

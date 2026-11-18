@@ -3209,6 +3209,7 @@ func TestGateway_SingBoxRealityNodeStartupAndDialer(t *testing.T) {
 	// 3. Stopping gateway and starting another service without gateway auto-recovery should fail
 	a.stopGateway()
 	a.state.GatewayEnabled = false
+	a.refreshGatewaySnapshot()
 	svc2 := svc
 	svc2.ID = "svc-vless-reality-2"
 	if err := a.mgr.Start(svc2); err == nil {

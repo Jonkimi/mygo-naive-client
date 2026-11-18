@@ -537,8 +537,11 @@ func (a *app) loadState() {
 			st.Services[i].Listens = []string{"socks://127.0.0.1:1080"}
 		}
 	}
+	a.gatewayMu.Lock()
 	a.state = st
+	a.gatewayMu.Unlock()
 	a.gatewayPortInput = fmt.Sprintf("%d", st.GatewayPort)
+	a.refreshGatewaySnapshot()
 	a.syncBuiltinWarpService()
 	a.syncRouter()
 	a.syncBlocker()
@@ -550,19 +553,31 @@ func (a *app) loadState() {
 	}
 }
 
-func (a *app) saveState() {
+func (a *app) snapshotPersistedStateLocked() (PersistedState, uint64) {
+	a.stateRev++
+	snap := a.state
+	snap.Cloudflare.Account = a.state.Cloudflare.Account.Clone()
+	snap.Services = cloneServices(a.state.Services)
+	snap.RoutingRules = cloneRoutingRules(a.state.RoutingRules)
+	snap.RoutingFinal = cloneRouteAction(a.state.RoutingFinal)
+	snap.SystemProxyBypass = append([]string(nil), a.state.SystemProxyBypass...)
+	return snap, a.stateRev
+}
+
+func (a *app) persistStateFiles(st PersistedState, rev uint64) {
 	if !a.stateLoaded {
 		return
 	}
-	a.syncBuiltinWarpService()
-	a.syncRouter()
-	if a.tailnetMgr != nil {
-		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+	a.persistMu.Lock()
+	defer a.persistMu.Unlock()
+	if rev != 0 && rev < a.persistedRev {
+		return
 	}
-	a.writeTailnetAuthKey(a.state.TailnetAuthKey)
-	a.writeCloudflareSecrets(&a.state.Cloudflare)
 
-	toPersist := a.state
+	a.writeTailnetAuthKey(st.TailnetAuthKey)
+	a.writeCloudflareSecrets(&st.Cloudflare)
+
+	toPersist := st
 	toPersist.TailnetAuthKey = "" // never store plaintext auth key in state.json
 	toPersist.Cloudflare.Account.WGPrivateKey = ""
 	toPersist.Cloudflare.Account.MASQUEPrivateKey = ""
@@ -585,8 +600,25 @@ func (a *app) saveState() {
 	}
 	tmp := a.stateFilePath() + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err == nil {
-		_ = os.Rename(tmp, a.stateFilePath())
+		if _ = os.Rename(tmp, a.stateFilePath()); rev > a.persistedRev {
+			a.persistedRev = rev
+		}
 	}
+}
+
+func (a *app) saveState() {
+	if !a.stateLoaded {
+		return
+	}
+	a.syncBuiltinWarpService()
+	a.syncRouter()
+	if a.tailnetMgr != nil {
+		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+	}
+	a.gatewayMu.Lock()
+	snap, rev := a.snapshotPersistedStateLocked()
+	a.gatewayMu.Unlock()
+	a.persistStateFiles(snap, rev)
 }
 
 func (a *app) recoverServicesFromConfigs() []config.Service {

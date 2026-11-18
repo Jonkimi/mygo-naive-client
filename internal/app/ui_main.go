@@ -69,9 +69,8 @@ func (a *app) view(c *ui.Context) {
 	a.renderDeleteDialog(c, p)
 	a.renderRuleEditorDialog(c, p)
 
-	if a.pendingToast != "" {
-		c.Toast(a.pendingToast)
-		a.pendingToast = ""
+	if msg := a.consumePendingToast(); msg != "" {
+		c.Toast(msg)
 	}
 }
 

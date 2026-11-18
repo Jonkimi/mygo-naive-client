@@ -331,9 +331,6 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 	if tag == "block" || outboundType == "block" {
 		return &rejectOutbound{Outbound: ob}, nil
 	}
-	if strings.HasPrefix(tag, "raw-node-") || strings.HasPrefix(tag, "wg-node-") {
-		return ob, nil
-	}
 	// Only wrap direct outbounds; pooled/proxy/WARP traffic is already checked and
 	// annotated in BlockerConnectionTracker and PoolOutbound, so leaving those
 	// outbounds unwrapped preserves native sing-box Lifecycle and connection pooling.

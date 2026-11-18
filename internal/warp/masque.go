@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -49,6 +50,49 @@ type closerFunc func() error
 
 func (f closerFunc) Close() error {
 	return f()
+}
+
+type domainUDPAddr string
+
+func (a domainUDPAddr) Network() string { return "udp" }
+func (a domainUDPAddr) String() string  { return string(a) }
+
+func resolveMASQUEUDPAddr(ctx context.Context, dialer Dialer, pConn net.PacketConn, endpoint string) (net.Addr, error) {
+	if ap, err := netip.ParseAddrPort(endpoint); err == nil {
+		return net.UDPAddrFromAddrPort(ap), nil
+	}
+	if _, isDefault := dialer.(*defaultDialer); !isDefault {
+		if _, isUDPConn := pConn.(*net.UDPConn); !isUDPConn {
+			// Detour packet connections route destination domains remotely; avoid host DNS lookup.
+			return domainUDPAddr(endpoint), nil
+		}
+	}
+	host, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("invalid port %q", portStr)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no IP addresses for %q", host)
+	}
+	selected := ips[0]
+	for _, ip := range ips {
+		if ip.Is4() {
+			selected = ip
+			break
+		}
+	}
+	return net.UDPAddrFromAddrPort(netip.AddrPortFrom(selected, uint16(port))), nil
 }
 
 // MASQUETunnel manages an active MASQUE tunnel to Cloudflare over HTTP/3 or HTTP/2.
@@ -221,33 +265,71 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	tlsCfg := baseTLS.Clone()
 	tlsCfg.NextProtos = []string{http3.NextProtoH3}
 
-	// Use tunnelCtx for ListenPacket so cancelling the dial timeout context after handshake
-	// does not tear down the underlying proxy packet session.
-	pConn, err := dialer.ListenPacket(tunnelCtx, "udp", endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen packet for endpoint %s: %w", endpoint, err)
-	}
-
+	// Tie listenCtx to ctx only while the handshake is settling so cancelling h3Timeout
+	// after handshake does not tear down the active proxy packet session, while still
+	// aborting blocked ListenPacket calls promptly on timeout or shutdown.
+	listenCtx, listenCancel := context.WithCancel(tunnelCtx)
 	var dialMu sync.Mutex
 	dialSettled := false
+	var pConn net.PacketConn
+	var pConnCloseOnce sync.Once
+	closePacketConn := func(c net.PacketConn) {
+		if c == nil {
+			return
+		}
+		pConnCloseOnce.Do(func() {
+			_ = c.Close()
+		})
+	}
 	stopListenWatch := context.AfterFunc(ctx, func() {
 		dialMu.Lock()
 		settled := dialSettled
+		c := pConn
 		dialMu.Unlock()
 		if !settled {
-			_ = pConn.Close()
+			listenCancel()
+			closePacketConn(c)
 		}
 	})
-	defer func() {
+
+	rawPConn, err := dialer.ListenPacket(listenCtx, "udp", endpoint)
+	if err != nil {
 		dialMu.Lock()
 		dialSettled = true
 		dialMu.Unlock()
 		stopListenWatch()
-	}()
+		listenCancel()
+		return nil, fmt.Errorf("failed to listen packet for endpoint %s: %w", endpoint, err)
+	}
+	dialMu.Lock()
+	pConn = rawPConn
+	aborted := dialSettled || ctx.Err() != nil
+	if aborted {
+		dialSettled = true
+	}
+	dialMu.Unlock()
+	if aborted {
+		stopListenWatch()
+		closePacketConn(pConn)
+		listenCancel()
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("failed to listen packet for endpoint %s: %w", endpoint, err)
+		}
+		return nil, fmt.Errorf("failed to listen packet for endpoint %s: dial aborted", endpoint)
+	}
 
-	rAddr, err := net.ResolveUDPAddr("udp", endpoint)
+	cleanupDial := func() {
+		dialMu.Lock()
+		dialSettled = true
+		dialMu.Unlock()
+		stopListenWatch()
+		closePacketConn(pConn)
+		listenCancel()
+	}
+
+	rAddr, err := resolveMASQUEUDPAddr(ctx, dialer, pConn, endpoint)
 	if err != nil {
-		_ = pConn.Close()
+		cleanupDial()
 		return nil, fmt.Errorf("failed to resolve UDP address %s: %w", endpoint, err)
 	}
 
@@ -264,7 +346,7 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	qConn, err := qTransport.DialEarly(ctx, rAddr, tlsCfg, qCfg)
 	if err != nil {
 		_ = qTransport.Close()
-		_ = pConn.Close()
+		cleanupDial()
 		return nil, fmt.Errorf("QUIC dial failed: %w", err)
 	}
 
@@ -280,9 +362,10 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 
 	template, err := uritemplate.New(DefaultMASQUEConnectURI)
 	if err != nil {
+		_ = h3Tr.Close()
 		_ = qConn.CloseWithError(0, "")
 		_ = qTransport.Close()
-		_ = pConn.Close()
+		cleanupDial()
 		return nil, err
 	}
 
@@ -291,11 +374,23 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	}
 
 	ipConn, rsp, err := connectip.Dial(ctx, clientConn, template, "cf-connect-ip", additionalHeaders, true)
+	dialMu.Lock()
+	dialSettled = true
+	dialMu.Unlock()
+	stopped := stopListenWatch()
+	if err == nil && (!stopped || ctx.Err() != nil) {
+		err = ctx.Err()
+		if err == nil {
+			err = context.Canceled
+		}
+		_ = ipConn.Close()
+	}
 	if err != nil {
 		_ = h3Tr.Close()
 		_ = qConn.CloseWithError(0, "")
 		_ = qTransport.Close()
-		_ = pConn.Close()
+		closePacketConn(pConn)
+		listenCancel()
 		return nil, fmt.Errorf("connect-ip HTTP/3 dial failed: %w", err)
 	}
 	if rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
@@ -303,11 +398,13 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		_ = h3Tr.Close()
 		_ = qConn.CloseWithError(0, "")
 		_ = qTransport.Close()
-		_ = pConn.Close()
+		closePacketConn(pConn)
+		listenCancel()
 		return nil, fmt.Errorf("HTTP/3 CONNECT rejected: %s", rsp.Status)
 	}
 
-	_ = ipConn.AdvertiseRoute(ctx, []connectip.IPRoute{
+	advCtx, advCancel := context.WithTimeout(tunnelCtx, 2*time.Second)
+	_ = ipConn.AdvertiseRoute(advCtx, []connectip.IPRoute{
 		{
 			IPProtocol: 0,
 			StartIP:    netip.AddrFrom4([4]byte{}),
@@ -324,6 +421,7 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 			}),
 		},
 	})
+	advCancel()
 
 	tun := &MASQUETunnel{
 		Netstack: ns,
@@ -336,7 +434,8 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 			_ = h3Tr.Close()
 			_ = qConn.CloseWithError(0, "")
 			_ = qTransport.Close()
-			_ = pConn.Close()
+			closePacketConn(pConn)
+			listenCancel()
 			return nil
 		}),
 	}
@@ -350,7 +449,8 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 	tlsCfg.NextProtos = []string{"h2"}
 
 	var connMu sync.Mutex
-	var activeConn net.Conn
+	var dialConns []net.Conn
+	var transportClosed bool
 
 	h2Tr := &http2.Transport{
 		DisableCompression: true,
@@ -367,7 +467,12 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 				return nil, err
 			}
 			connMu.Lock()
-			activeConn = tlsConn
+			if transportClosed {
+				connMu.Unlock()
+				_ = tlsConn.Close()
+				return nil, context.Canceled
+			}
+			dialConns = append(dialConns, tlsConn)
 			connMu.Unlock()
 			return tlsConn, nil
 		},
@@ -406,18 +511,28 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 	dialMu.Lock()
 	dialSettled = true
 	dialMu.Unlock()
-	stopDialWatch()
+	stopped := stopDialWatch()
 
 	closeTransport := func() {
 		reqCancel()
 		h2Tr.CloseIdleConnections()
 		connMu.Lock()
-		c := activeConn
-		activeConn = nil
+		transportClosed = true
+		conns := dialConns
+		dialConns = nil
 		connMu.Unlock()
-		if c != nil {
+		for _, c := range conns {
 			_ = c.Close()
 		}
+	}
+
+	if err == nil && (!stopped || reqCtx.Err() != nil) {
+		_ = ipConn.Close()
+		closeTransport()
+		if reqErr := reqCtx.Err(); reqErr != nil {
+			return nil, fmt.Errorf("connect-ip HTTP/2 dial aborted: %w", reqErr)
+		}
+		return nil, fmt.Errorf("connect-ip HTTP/2 dial aborted: %w", dialCtx.Err())
 	}
 
 	if err != nil {
@@ -430,7 +545,8 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 		return nil, fmt.Errorf("HTTP/2 CONNECT rejected: %s", rsp.Status)
 	}
 
-	_ = ipConn.AdvertiseRoute(dialCtx, []connectip.IPRoute{
+	advCtx, advCancel := context.WithTimeout(tunnelCtx, 2*time.Second)
+	_ = ipConn.AdvertiseRoute(advCtx, []connectip.IPRoute{
 		{
 			IPProtocol: 0,
 			StartIP:    netip.AddrFrom4([4]byte{}),
@@ -447,6 +563,7 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 			}),
 		},
 	})
+	advCancel()
 
 	tun := &MASQUETunnel{
 		Netstack: ns,

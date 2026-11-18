@@ -214,6 +214,7 @@ func TestGatewayConfigSignature_TracksWARPAndTunnelChanges(t *testing.T) {
 
 func TestBuiltinWarp_LifecycleAndRuleSync(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true // Prevent background live Cloudflare API calls during unit test.
 	gwPort := freeLocalPort(t)
 	a.state.GatewayPort = gwPort
 	a.state.GatewayEnabled = true
@@ -318,6 +319,7 @@ func TestDirectWARP_DefaultProbeURL(t *testing.T) {
 
 func TestBuiltinWarp_NodeNameAndDisabledDelete(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true
 	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
@@ -375,6 +377,9 @@ func TestInsights_WarpChainDisplay(t *testing.T) {
 }
 
 func TestBuiltinWarp_DirectLatencyProbe(t *testing.T) {
+	if testing.Short() || os.Getenv("RUN_LIVE_WARP_TESTS") == "" {
+		t.Skip("live Cloudflare WARP network test skipped; set RUN_LIVE_WARP_TESTS=1 to run")
+	}
 	a, tt, _ := newTestApp(t, nil)
 	freePort, err := runner.AllocateFreePort()
 	if err != nil {
@@ -455,6 +460,7 @@ func TestBuiltinWarp_DirectLatencyProbe(t *testing.T) {
 
 func TestDirectWARP_UnhealthyStatusAndDiagnostics(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true
 	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
@@ -536,6 +542,7 @@ func TestDirectWARP_UnhealthyStatusAndDiagnostics(t *testing.T) {
 
 func TestNodeDrawer_UnhealthyReflected(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true
 	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
@@ -607,6 +614,7 @@ func TestDownloadSpeedFailure_TriggersUnhealthy(t *testing.T) {
 
 func TestCloudflarePage_AttachedNodesHealth(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true
 	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
@@ -726,6 +734,7 @@ func TestWARPNode_TransientProbeFailureStaysHealthy(t *testing.T) {
 	}
 
 	a, tt, _ := newTestApp(t, []config.Service{chainedSvc, directWarp})
+	a.warpRegistering = true
 	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
@@ -1193,6 +1202,89 @@ func TestCloudflare_PresetSplitMigrationAndSingleSourceToggle(t *testing.T) {
 		}
 	}
 }
+
+// Regression test: auto-enrolling WARP credentials from a running gateway must
+// persist the account without restarting the active gateway (which previously
+// deadlocked headless mode on eng.Close() and interrupted live GUI dials).
+func TestCloudflareAccountUpdate_DoesNotRestartOrDeadlockGateway(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.win = nil // Exercise headless synchronous dispatchUI path.
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = true
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway failed: %v", err)
+	}
+	defer a.stopGateway()
+
+	origGw := a.getGateway()
+	if origGw == nil {
+		t.Fatalf("expected running gateway")
+	}
+
+	updated := warp.Account{
+		DeviceID:         "auto-wg-dev",
+		WGPrivateKey:     "wg-priv-secret",
+		MASQUEDeviceID:   "auto-masque-dev",
+		MASQUEPrivateKey: "masque-priv-secret",
+		Reserved:         []uint8{1, 2, 3},
+	}
+	a.handleGatewayCloudflareAccountUpdate(origGw, updated)
+
+	if a.getGateway() != origGw {
+		t.Fatalf("expected gateway instance to remain running without restart")
+	}
+	if a.state.Cloudflare.Account.DeviceID != "auto-wg-dev" || a.state.Cloudflare.Account.MASQUEDeviceID != "auto-masque-dev" {
+		t.Fatalf("expected state Cloudflare account updated, got %+v", a.state.Cloudflare.Account)
+	}
+
+	// Subsequent saveState/ensureGatewaySynced must keep the same gateway alive.
+	a.saveState()
+	if err := a.ensureGatewaySynced(); err != nil {
+		t.Fatalf("ensureGatewaySynced failed: %v", err)
+	}
+	if a.getGateway() != origGw {
+		t.Fatalf("expected saveState + ensureGatewaySynced not to restart gateway")
+	}
+
+	// Verify secrets were written without dropping keys.
+	var reloaded warp.Config
+	a.readCloudflareSecrets(&reloaded)
+	if reloaded.Account.WGPrivateKey != "wg-priv-secret" || reloaded.Account.MASQUEPrivateKey != "masque-priv-secret" {
+		t.Fatalf("expected Cloudflare secrets persisted, got %+v", reloaded.Account)
+	}
+
+	// Stale persistence snapshots (older stateRev) must not overwrite newer credentials on disk.
+	staleSnap := a.state
+	staleSnap.Cloudflare.Account = warp.Account{DeviceID: "stale-dev", WGPrivateKey: "stale-priv"}
+	a.persistStateFiles(staleSnap, 1)
+	var afterStale warp.Config
+	a.readCloudflareSecrets(&afterStale)
+	if afterStale.Account.WGPrivateKey != "wg-priv-secret" {
+		t.Fatalf("expected stale snapshot rev=1 not to overwrite newer secrets, got %+v", afterStale.Account)
+	}
+
+	// Concurrent MASQUE enrollment on cur must be preserved when WG registration finishes.
+	merged := mergeRegisteredWarpAccount(
+		warp.Account{MASQUEDeviceID: "live-masque-dev", MASQUEPrivateKey: "live-masque-priv"},
+		warp.Account{},
+		warp.Account{DeviceID: "new-wg-dev", WGPrivateKey: "new-wg-priv", MASQUEDeviceID: "reg-masque", MASQUEPrivateKey: "reg-priv"},
+	)
+	if merged.DeviceID != "new-wg-dev" || merged.MASQUEPrivateKey != "live-masque-priv" {
+		t.Fatalf("expected merged account to keep live MASQUE key while updating WG, got %+v", merged)
+	}
+
+	// Concurrent account update + stopGateway must never ABBA-deadlock or race.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 10; i++ {
+			a.handleGatewayCloudflareAccountUpdate(origGw, updated)
+		}
+	}()
+	a.stopGateway()
+	<-done
+}
+
 
 
 

@@ -811,7 +811,7 @@ func TestWarpAutoWireGuardOutbound_CloseStopsClientBindLoop(t *testing.T) {
 	}
 
 	// Trigger lazy WireGuard endpoint creation and ClientBind receive loop.
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	_, _ = eng.DialNode(dialCtx, "svc-wg-test", "tcp", "127.0.0.1:80")
 	dialCancel()
 
@@ -897,9 +897,9 @@ func (l *lifecycleTrackingOutbound) ActiveEndpoint() string {
 	return l.activeEndpointVal
 }
 
-// Regression: blockerOutbound must forward adapter.Lifecycle, InterfaceUpdateListener,
-// and Upstream() without exposing IdleConnectionKeeper directly, and blockerOutboundRegistry
-// must only wrap direct/block outbounds so proxy/WARP outbounds keep native sing-box hooks.
+// Regression: blockerOutbound must forward adapter.Lifecycle and InterfaceUpdateListener,
+// blockerOutboundRegistry must only wrap direct/block outbounds, and ReferenceManager must
+// still trace pooled and fallback proxy outbounds via adapter.Referrer.
 func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 	inner := &lifecycleTrackingOutbound{
 		mockOutbound:      &mockOutbound{tag: "direct"},
@@ -912,18 +912,6 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 	}
 	if _, isKeeper := any(wrapped).(adapter.IdleConnectionKeeper); isKeeper {
 		t.Fatalf("expected blockerOutbound NOT to expose adapter.IdleConnectionKeeper directly")
-	}
-	if keeper, ok := common.Cast[adapter.IdleConnectionKeeper](wrapped); !ok {
-		t.Fatalf("expected common.Cast[adapter.IdleConnectionKeeper] to unwrap via Upstream()")
-	} else {
-		keeper.SetKeepIdleConnections(true)
-		keeper.CloseIdleConnections()
-		if !inner.keepIdle || inner.closeIdleCount != 1 {
-			t.Fatalf("expected unwrapped IdleConnectionKeeper calls to succeed, keepIdle=%v closeIdleCount=%d", inner.keepIdle, inner.closeIdleCount)
-		}
-	}
-	if epProvider, ok := common.Cast[interface{ ActiveEndpoint() string }](wrapped); !ok || epProvider.ActiveEndpoint() != "162.159.198.2:443" {
-		t.Fatalf("expected common.Cast[ActiveEndpoint] to unwrap via Upstream()")
 	}
 
 	scope := adapter.NewScope(context.Background(), boxLog.NewNOPFactory().Logger())
@@ -947,7 +935,8 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 		t.Fatalf("expected InterfaceUpdated to forward once, got %d", inner.interfaceUpdated)
 	}
 
-	// Verify blockerOutboundRegistry only wraps direct/block and leaves proxy/WARP/pool unwrapped.
+	// Verify blockerOutboundRegistry only wraps direct/block and leaves proxy/WARP/pool unwrapped,
+	// and ReferenceManager keeps pooled/chained proxy outbounds referenced (no unreferenced log).
 	bl := blocker.NewEngine(blocker.Options{Denylist: []string{"blocked.example"}})
 	svc := config.Service{
 		ID:          "svc-socks",
@@ -956,6 +945,16 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 		Protocol:    config.ProtoSOCKS5,
 		Engine:      config.EngineSingBox,
 		ExternalURI: "socks5://127.0.0.1:1080",
+	}
+	trojanSvc := config.Service{
+		ID:         "svc-trojan",
+		Name:       "Trojan",
+		Protocol:   config.ProtoTrojan,
+		Engine:     config.EngineSingBox,
+		Server:     "127.0.0.1",
+		ServerPort: 443,
+		Password:   "secret",
+		EnableWARP: true,
 	}
 	warpSvc := config.Service{
 		ID:       config.BuiltinWarpServiceID,
@@ -966,17 +965,42 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 			Endpoint:  "162.159.198.2:443",
 		},
 	}
+
+	var logMu sync.Mutex
+	var unrefLogs []string
 	eng, err := New(EngineOptions{
 		ListenAddr:  "127.0.0.1:0",
 		TrafficMode: "port",
-		Services:    []config.Service{svc, warpSvc},
-		ActiveIDs:   map[string]bool{"svc-socks": true, config.BuiltinWarpServiceID: true},
+		Services:    []config.Service{svc, trojanSvc, warpSvc},
+		ActiveIDs:   map[string]bool{"svc-socks": true, "svc-trojan": true, config.BuiltinWarpServiceID: true},
+		FinalAction: "proxy",
 		Blocker:     bl,
+		LogLevel:    "debug",
+		OnLog: func(level, message string) {
+			if strings.Contains(message, "is unreferenced") {
+				logMu.Lock()
+				unrefLogs = append(unrefLogs, message)
+				logMu.Unlock()
+			}
+		},
 	})
 	if err != nil {
 		t.Fatalf("New engine failed: %v", err)
 	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine failed: %v", err)
+	}
 	defer eng.Close()
+
+	logMu.Lock()
+	gotUnref := append([]string(nil), unrefLogs...)
+	logMu.Unlock()
+	for _, msg := range gotUnref {
+		if strings.Contains(msg, "raw-node-svc-trojan") || strings.Contains(msg, "node-svc-trojan") {
+			t.Fatalf("expected ReferenceManager to keep pooled/chained trojan outbound referenced, got log: %v", gotUnref)
+		}
+	}
 
 	directOb, ok := eng.box.Outbound().Outbound("direct")
 	if !ok {
@@ -997,10 +1021,32 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 	} else if _, isBlocker := socksOb.(*blockerOutbound); isBlocker {
 		t.Fatalf("expected proxy outbound NOT to be wrapped by *blockerOutbound")
 	}
+	if trojanOb, ok := eng.GetOutbound("raw-node-svc-trojan"); !ok {
+		t.Fatalf("expected raw-node-svc-trojan outbound")
+	} else if _, isKeeper := trojanOb.(adapter.IdleConnectionKeeper); !isKeeper {
+		t.Fatalf("expected unwrapped trojan outbound to preserve adapter.IdleConnectionKeeper directly, got %T", trojanOb)
+	}
 	if mqOb, ok := eng.GetOutbound(config.BuiltinWarpServiceID); !ok {
 		t.Fatalf("expected builtin-warp outbound")
 	} else if _, isDirectType := mqOb.(*warpMasqueOutbound); !isDirectType {
 		t.Fatalf("expected MASQUE outbound to be unwrapped *warpMasqueOutbound, got %T", mqOb)
+	}
+	if poolOb, ok := eng.box.Outbound().Outbound("PROXY_POOL"); !ok {
+		t.Fatalf("expected PROXY_POOL outbound")
+	} else if ref, ok := poolOb.(adapter.Referrer); !ok {
+		t.Fatalf("expected PoolOutbound to implement adapter.Referrer")
+	} else {
+		refs := ref.References()
+		hasTrojan := false
+		for _, r := range refs {
+			if r == "node-svc-trojan" {
+				hasTrojan = true
+				break
+			}
+		}
+		if !hasTrojan {
+			t.Fatalf("expected PoolOutbound.References() to include node-svc-trojan, got %v", refs)
+		}
 	}
 	if _, dialErr := eng.DialNode(context.Background(), "svc-socks", "tcp", "blocked.example:443"); !errors.Is(dialErr, syscall.EPERM) {
 		t.Fatalf("expected DialNode to enforce Blocker with EPERM, got %v", dialErr)
@@ -1072,6 +1118,7 @@ func TestWarpMasqueOutbound_ConcurrentInvalidateAndCloseNoRace(t *testing.T) {
 		}
 		ob := &warpMasqueOutbound{
 			tag:                   "node-builtin-warp",
+			eng:                   &Engine{endpointSelector: warp.NewEndpointSelector()},
 			warpOutboundLifecycle: newWarpOutboundLifecycle(context.Background()),
 			tun:                   tun,
 			activeEndpoint:        "162.159.198.2:443",
@@ -1112,6 +1159,7 @@ func TestWarpAutoWireGuardOutbound_CloseDuringInflightDialNoDeadlock(t *testing.
 	// in-flight until Engine.Close() cancels closeCtx.
 	connsMu := sync.Mutex{}
 	var accepted []net.Conn
+	acceptedCh := make(chan struct{}, 1)
 	defer func() {
 		connsMu.Lock()
 		for _, c := range accepted {
@@ -1128,6 +1176,10 @@ func TestWarpAutoWireGuardOutbound_CloseDuringInflightDialNoDeadlock(t *testing.
 			connsMu.Lock()
 			accepted = append(accepted, c)
 			connsMu.Unlock()
+			select {
+			case acceptedCh <- struct{}{}:
+			default:
+			}
 		}
 	}()
 
@@ -1173,7 +1225,11 @@ func TestWarpAutoWireGuardOutbound_CloseDuringInflightDialNoDeadlock(t *testing.
 		dialDone <- dErr
 	}()
 
-	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-acceptedCh:
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatalf("timed out waiting for in-flight WARP probe to reach upstream listener")
+	}
 
 	closeDone := make(chan error, 1)
 	go func() {
@@ -1193,5 +1249,498 @@ func TestWarpAutoWireGuardOutbound_CloseDuringInflightDialNoDeadlock(t *testing.
 	case <-dialDone:
 	case <-time.After(1500 * time.Millisecond):
 		t.Fatalf("in-flight DialNode did not abort promptly on Engine.Close")
+	}
+}
+
+// Regression: deriveLifecycleContext previously relied solely on context.AfterFunc, which
+// schedules cancel asynchronously when lifeCtx is already done, leaving subCtx.Err() == nil
+// immediately after return.
+func TestWarpLifecycle_DeriveContextCanceledSynchronouslyWhenLifeCtxClosed(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		lifeCtx, lifeCancel := context.WithCancel(context.Background())
+		lifeCancel()
+
+		subCtx, subCancel := deriveLifecycleContext(context.Background(), lifeCtx, 5*time.Second)
+		err := subCtx.Err()
+		subCancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("iteration %d: expected derived context to be synchronously canceled when lifeCtx is already done, got %v", i, err)
+		}
+	}
+}
+
+// Regression: invalidateTunnel checked w.closed instead of w.isClosedLocked(), and
+// getOrCreateTunnel recorded masqueFailedAt even when caller ctx was canceled, which
+// could mark healthy endpoints failed during shutdown or force 60s WireGuard fallback.
+func TestWarpMasqueOutbound_CanceledInvalidateAndDialDoNotMarkFailed(t *testing.T) {
+	t.Run("invalidateTunnel after closeCancel does not mark endpoint failed", func(t *testing.T) {
+		sel := warp.NewEndpointSelector()
+		key := warp.EndpointCacheKey{
+			ScopeKey: "direct",
+			Mode:     warp.ModeMASQUE,
+		}
+		const ep = "162.159.198.2:443"
+		sel.SetCached(key, ep, "h3", 10*time.Millisecond)
+
+		ns, err := warp.NewNetstack(warp.DefaultIPv4, warp.DefaultIPv6)
+		if err != nil {
+			t.Fatalf("NewNetstack: %v", err)
+		}
+		defer ns.Close()
+
+		tun := &warp.MASQUETunnel{Netstack: ns}
+		ob := &warpMasqueOutbound{
+			tag:                   "node-builtin-warp",
+			eng:                   &Engine{endpointSelector: sel},
+			warpOutboundLifecycle: newWarpOutboundLifecycle(context.Background()),
+			tun:                   tun,
+			activeEndpoint:        ep,
+		}
+
+		// Simulate the shutdown window after closeCancel() fires and before Close() sets closed=true.
+		ob.closeCancel()
+		ob.invalidateTunnel(tun)
+
+		if cached, ok := sel.GetCached(key); !ok || cached != ep {
+			t.Fatalf("expected cached endpoint %q to stay intact after closeCancel, got %q (ok=%v)", ep, cached, ok)
+		}
+		ob.mu.Lock()
+		failedAt := ob.masqueFailedAt
+		ob.mu.Unlock()
+		if !failedAt.IsZero() {
+			t.Fatalf("expected masqueFailedAt to remain zero after closeCancel, got %v", failedAt)
+		}
+	})
+
+	t.Run("caller context cancellation during getOrCreateTunnel does not set fallback cooldown", func(t *testing.T) {
+		priv, _, certPEM, err := warp.GenerateMASQUEKeypair()
+		if err != nil {
+			t.Fatalf("GenerateMASQUEKeypair: %v", err)
+		}
+		ob := &warpMasqueOutbound{
+			tag: "node-builtin-warp",
+			opts: warpMasqueOptions{
+				Endpoint:          "127.0.0.1:1",
+				PrivateKey:        priv,
+				CertPEM:           certPEM,
+				WireGuardFallback: "wg-node-builtin-warp",
+			},
+			eng:                   &Engine{},
+			warpOutboundLifecycle: newWarpOutboundLifecycle(context.Background()),
+		}
+		defer ob.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if _, err := ob.getOrCreateTunnel(ctx); err == nil {
+			t.Fatalf("expected getOrCreateTunnel to fail for canceled caller ctx")
+		}
+		ob.mu.Lock()
+		failedAt := ob.masqueFailedAt
+		ob.mu.Unlock()
+		if !failedAt.IsZero() {
+			t.Fatalf("expected masqueFailedAt to remain zero on caller cancellation, got %v", failedAt)
+		}
+	})
+}
+
+// Regression: warpAutoWireGuardOutbound.recordDialResult previously counted context.Canceled
+// dial errors toward consecFails (rotating healthy endpoints after 3 canceled dials) and checked
+// w.closed instead of w.isClosedLocked().
+func TestWarpAutoWireGuardOutbound_CanceledDialsDoNotRotateOrMarkFailed(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		for {
+			c, aErr := upstreamLn.Accept()
+			if aErr != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	privKey, _, err := warp.GenerateWireGuardKeypair()
+	if err != nil {
+		t.Fatalf("GenerateWireGuardKeypair: %v", err)
+	}
+
+	sel := warp.NewEndpointSelector()
+	key := warp.EndpointCacheKey{
+		ScopeKey: "node-svc-wg-cancel",
+		Mode:     warp.ModeWireGuard,
+	}
+	const cachedEP = "127.0.0.1:2408"
+	sel.SetCached(key, cachedEP, "wireguard", 10*time.Millisecond)
+
+	svc := config.Service{
+		ID:          "svc-wg-cancel",
+		Name:        "WG Cancel",
+		Kind:        config.KindExternalProxy,
+		Protocol:    config.ProtoSOCKS5,
+		Engine:      config.EngineSingBox,
+		ExternalURI: fmt.Sprintf("socks5://%s", upstreamLn.Addr().String()),
+		EnableWARP:  true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport:  config.WarpTransportWireGuard,
+			PrivateKey: privKey,
+		},
+	}
+
+	eng, err := New(EngineOptions{
+		ListenAddr:       "127.0.0.1:0",
+		TrafficMode:      "port",
+		Services:         []config.Service{svc},
+		ActiveIDs:        map[string]bool{"svc-wg-cancel": true},
+		EndpointSelector: sel,
+	})
+	if err != nil {
+		t.Fatalf("New engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine failed: %v", err)
+	}
+	defer eng.Close()
+
+	// Establish the initial WireGuard endpoint cleanly.
+	initCtx, initCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _ = eng.DialNode(initCtx, "svc-wg-cancel", "tcp", "127.0.0.1:80")
+	initCancel()
+
+	ob, ok := eng.GetOutbound("svc-wg-cancel")
+	if !ok {
+		t.Fatalf("expected node-svc-wg-cancel outbound")
+	}
+	wgOb, ok := common.Cast[*warpAutoWireGuardOutbound](ob)
+	if !ok {
+		t.Fatalf("expected *warpAutoWireGuardOutbound, got %T", ob)
+	}
+	wgOb.mu.Lock()
+	initialEP := wgOb.ep
+	wgOb.consecFails = 0
+	wgOb.mu.Unlock()
+	if initialEP == nil {
+		t.Fatalf("expected initial WireGuard endpoint to be created")
+	}
+
+	// 3+ caller-canceled dials must not increment consecFails, rotate ep, or MarkFailed.
+	for i := 0; i < 4; i++ {
+		cCtx, cCancel := context.WithCancel(context.Background())
+		cCancel()
+		_, dErr := wgOb.DialContext(cCtx, "tcp", M.ParseSocksaddr("127.0.0.1:80"))
+		if dErr == nil {
+			t.Fatalf("expected DialContext with canceled context to fail")
+		}
+		if strings.Contains(strings.ToLower(dErr.Error()), "warp server") {
+			t.Fatalf("expected canceled DialContext not to wrap error as warp server failure, got %v", dErr)
+		}
+	}
+
+	wgOb.mu.Lock()
+	epAfterCancels := wgOb.ep
+	failsAfterCancels := wgOb.consecFails
+	wgOb.mu.Unlock()
+	if epAfterCancels != initialEP || failsAfterCancels != 0 {
+		t.Fatalf("expected canceled dials not to rotate ep or increment consecFails, epChanged=%v consecFails=%d", epAfterCancels != initialEP, failsAfterCancels)
+	}
+	if got, ok := sel.GetCached(key); !ok || got != cachedEP {
+		t.Fatalf("expected cached endpoint %q to stay intact after canceled dials, got %q (ok=%v)", cachedEP, got, ok)
+	}
+
+	// Stale endpoint failures must not increment consecFails or rotate a newer endpoint.
+	wgOb.mu.Lock()
+	wgOb.consecFails = 2
+	wgOb.mu.Unlock()
+	wgOb.recordDialResult(context.Background(), nil, errors.New("stale ep failure"))
+	wgOb.mu.Lock()
+	epAfterStale := wgOb.ep
+	failsAfterStale := wgOb.consecFails
+	wgOb.mu.Unlock()
+	if epAfterStale != initialEP || failsAfterStale != 2 {
+		t.Fatalf("expected stale ep failure not to rotate or mutate consecFails, epChanged=%v consecFails=%d", epAfterStale != initialEP, failsAfterStale)
+	}
+
+	// InterfaceUpdated should run safely without racing Close().
+	wgOb.InterfaceUpdated(context.Background())
+
+	// Shutdown cancellation (closeCancel before closed=true) must also prevent recordDialResult rotation.
+	wgOb.closeCancel()
+	wgOb.recordDialResult(context.Background(), initialEP, errors.New("shutdown failure"))
+
+	wgOb.mu.Lock()
+	epAfterShutdown := wgOb.ep
+	wgOb.mu.Unlock()
+	if epAfterShutdown != initialEP {
+		t.Fatalf("expected recordDialResult after closeCancel not to rotate ep")
+	}
+	if got, ok := sel.GetCached(key); !ok || got != cachedEP {
+		t.Fatalf("expected cached endpoint %q to stay intact after closeCancel, got %q (ok=%v)", cachedEP, got, ok)
+	}
+}
+
+// Regression: concurrent callers waiting on warpOutboundLifecycle.acquireInit must unblock
+// immediately when their own ctx is canceled instead of blocking until the initializer finishes.
+func TestWarpLifecycle_AcquireInitRespectsWaiterContext(t *testing.T) {
+	l := newWarpOutboundLifecycle(context.Background())
+	defer l.close(nil)
+
+	release, ready, err := l.acquireInit(context.Background(), nil)
+	if err != nil || ready || release == nil {
+		t.Fatalf("expected initial acquireInit to succeed, ready=%v err=%v", ready, err)
+	}
+	defer release()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer waitCancel()
+	start := time.Now()
+	_, _, waitErr := l.acquireInit(waitCtx, nil)
+	if !errors.Is(waitErr, context.DeadlineExceeded) {
+		t.Fatalf("expected waiter to fail with DeadlineExceeded, got %v", waitErr)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("expected waiter to abort promptly on ctx.Done, took %v", elapsed)
+	}
+}
+
+// Regression: chained warpAutoWireGuardOutbound previously queried dnsRouter.Lookup instead of
+// in-tunnel DNS and bypassed recordDialResult/wrapDialError when resolveDestination failed, while
+// Engine.New left eng.cloudflareConfig nil when opts.CloudflareConfig was nil.
+func TestWarpAutoWireGuardOutbound_TunnelDNSFailureRotatesAndDefaultsCloudflareConfig(t *testing.T) {
+	eng, err := New(EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		TrafficMode: "port",
+	})
+	if err != nil {
+		t.Fatalf("New engine: %v", err)
+	}
+	if eng.cloudflareConfig == nil {
+		t.Fatalf("expected non-nil internal cloudflareConfig when opts.CloudflareConfig is nil")
+	}
+	saveGlobalWarpAccount(eng, warp.Account{
+		DeviceID:     "dev-1",
+		WGPrivateKey: "priv-1",
+	})
+	if loaded := loadGlobalWarpAccount(eng); loaded.DeviceID != "dev-1" {
+		t.Fatalf("expected saveGlobalWarpAccount to persist into initialized cloudflareConfig, got %+v", loaded)
+	}
+	_ = eng.Close()
+
+	// Exercise resolveDestination -> recordDialResult -> wrapDialError when tunnel DNS fails.
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer upstreamLn.Close()
+	go func() {
+		for {
+			c, aErr := upstreamLn.Accept()
+			if aErr != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	privKey, _, err := warp.GenerateWireGuardKeypair()
+	if err != nil {
+		t.Fatalf("GenerateWireGuardKeypair: %v", err)
+	}
+	sel := warp.NewEndpointSelector()
+	const cachedEP = "127.0.0.1:2408"
+	key := warp.EndpointCacheKey{ScopeKey: "node-svc-wg-dns", Mode: warp.ModeWireGuard}
+	sel.SetCached(key, cachedEP, "wireguard", 10*time.Millisecond)
+
+	svc := config.Service{
+		ID:          "svc-wg-dns",
+		Name:        "WG DNS",
+		Kind:        config.KindExternalProxy,
+		Protocol:    config.ProtoSOCKS5,
+		Engine:      config.EngineSingBox,
+		ExternalURI: fmt.Sprintf("socks5://%s", upstreamLn.Addr().String()),
+		EnableWARP:  true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport:  config.WarpTransportWireGuard,
+			PrivateKey: privKey,
+		},
+	}
+
+	eng2, err := New(EngineOptions{
+		ListenAddr:       "127.0.0.1:0",
+		TrafficMode:      "port",
+		Services:         []config.Service{svc},
+		ActiveIDs:        map[string]bool{"svc-wg-dns": true},
+		EndpointSelector: sel,
+	})
+	if err != nil {
+		t.Fatalf("New engine2: %v", err)
+	}
+	if err := eng2.Start(); err != nil {
+		_ = eng2.Close()
+		t.Fatalf("Start engine2: %v", err)
+	}
+	defer eng2.Close()
+
+	ob, ok := eng2.GetOutbound("svc-wg-dns")
+	if !ok {
+		t.Fatalf("expected node-svc-wg-dns outbound")
+	}
+	wgOb, ok := common.Cast[*warpAutoWireGuardOutbound](ob)
+	if !ok {
+		t.Fatalf("expected *warpAutoWireGuardOutbound, got %T", ob)
+	}
+
+	// Ensure endpoint is established first via an IP dial.
+	initCtx, initCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _ = wgOb.DialContext(initCtx, "tcp", M.ParseSocksaddr("127.0.0.1:80"))
+	initCancel()
+
+	// Genuine ErrNoDNSRecords must NOT increment consecFails or wrap as warp server failure.
+	epAddr := wgOb.ActiveEndpoint()
+	wgOb.mu.Lock()
+	wgOb.consecFails = 0
+	ep := wgOb.ep
+	wgOb.mu.Unlock()
+	if ep == nil {
+		t.Fatalf("expected WireGuard endpoint to be initialized")
+	}
+	wgOb.recordDialResult(context.Background(), ep, warp.ErrNoDNSRecords)
+	if wrapped := wgOb.wrapDialError(context.Background(), epAddr, warp.ErrNoDNSRecords); !errors.Is(wrapped, warp.ErrNoDNSRecords) || strings.Contains(strings.ToLower(wrapped.Error()), "warp server") {
+		t.Fatalf("expected ErrNoDNSRecords not to wrap as warp server failure, got %v", wrapped)
+	}
+	wgOb.mu.Lock()
+	failsAfterNX := wgOb.consecFails
+	wgOb.mu.Unlock()
+	if failsAfterNX != 0 {
+		t.Fatalf("expected ErrNoDNSRecords not to increment consecFails, got %d", failsAfterNX)
+	}
+
+	// Simulate 3 tunnel-level DNS resolution failures over a broken tunnel -> wraps & rotates ep.
+	wgOb.mu.Lock()
+	wgOb.consecFails = 0
+	wgOb.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		dCtx, dCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		// Force ensureEndpoint on the same ep until 3rd failure rotates it.
+		_, dErr := wgOb.DialContext(dCtx, "tcp", M.ParseSocksaddr("blocked-or-unreachable.example:443"))
+		dCancel()
+		if dErr == nil {
+			t.Fatalf("expected domain dial over unreachable tunnel to fail")
+		}
+		if !strings.Contains(strings.ToLower(dErr.Error()), "warp server (") {
+			t.Fatalf("expected tunnel DNS transport failure to wrap with warp server error, got %v", dErr)
+		}
+	}
+
+	wgOb.mu.Lock()
+	rotated := wgOb.ep == nil
+	wgOb.mu.Unlock()
+	if !rotated {
+		t.Fatalf("expected 3 tunnel DNS failures to rotate WireGuard endpoint")
+	}
+}
+
+// Regression: buildDNSConfig must preserve PROXY_POOL detour for remote-doh when a custom
+// ProtoWARP node is configured, DialNode must not wrap context.Canceled into a warp server
+// error, and PoolOutbound must route static explicit-endpoint WireGuard WARP domain dials
+// through ResolveWarpDomain rather than forwarding unresolved domains to sing-box's dnsRouter.
+func TestWarpDNSLeakAndCancelClassification_Regressions(t *testing.T) {
+	// 1. Custom non-builtin ProtoWARP node in PROXY_POOL keeps remote-doh detour = PROXY_POOL.
+	customWarp := config.Service{
+		ID:       "custom-warp-1",
+		Name:     "Custom WARP",
+		Protocol: config.ProtoWARP,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportWireGuard,
+			Endpoint:  "162.159.192.1:2408",
+		},
+	}
+	dnsMap := buildDNSConfig(EngineOptions{
+		Services: []config.Service{customWarp},
+	}, "PROXY_POOL", nil)
+	servers := dnsMap["servers"].([]map[string]any)
+	var remoteDetour any
+	for _, s := range servers {
+		if s["tag"] == "remote-doh" {
+			remoteDetour = s["detour"]
+		}
+	}
+	if remoteDetour != "PROXY_POOL" {
+		t.Fatalf("expected remote-doh detour PROXY_POOL when custom ProtoWARP service exists, got %v", remoteDetour)
+	}
+
+	// 2. DialNode must return context.Canceled directly instead of wrapping with "warp server (...)".
+	priv, _, certPEM, err := warp.GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	customWarpMasque := config.Service{
+		ID:       "custom-warp-cancel",
+		Name:     "Custom WARP Cancel",
+		Protocol: config.ProtoWARP,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportMasque,
+			Endpoint:  "127.0.0.1:1",
+		},
+	}
+	eng, err := New(EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		TrafficMode: "port",
+		Services:    []config.Service{customWarpMasque, customWarp},
+		CloudflareConfig: &warp.Config{
+			Account: warp.Account{
+				MASQUEPrivateKey: priv,
+				MASQUECertPEM:    certPEM,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New engine: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine: %v", err)
+	}
+	defer eng.Close()
+
+	cCtx, cCancel := context.WithCancel(context.Background())
+	cCancel()
+	_, dialErr := eng.DialNode(cCtx, customWarpMasque.ID, "tcp", "1.1.1.1:443")
+	if !errors.Is(dialErr, context.Canceled) {
+		t.Fatalf("expected context.Canceled from DialNode, got %v", dialErr)
+	}
+	if strings.Contains(strings.ToLower(dialErr.Error()), "warp server") {
+		t.Fatalf("expected canceled DialNode not to wrap error as warp server failure, got %v", dialErr)
+	}
+
+	// 3. PoolOutbound dialing a static explicit-endpoint WireGuard WARP candidate must invoke
+	// ResolveWarpDomain (failing canceled DNS resolution before forwarding domain to endpoint).
+	wgOnlyEng, err := New(EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		TrafficMode: "port",
+		Services:    []config.Service{customWarp},
+	})
+	if err != nil {
+		t.Fatalf("New wgOnlyEng: %v", err)
+	}
+	if err := wgOnlyEng.Start(); err != nil {
+		_ = wgOnlyEng.Close()
+		t.Fatalf("Start wgOnlyEng: %v", err)
+	}
+	defer wgOnlyEng.Close()
+
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		PoolTag:      "PROXY_POOL",
+		NodeProvider: wgOnlyEng,
+	})
+	_, poolErr := pool.DialContext(cCtx, "tcp", M.ParseSocksaddr("domain-must-not-leak.example:443"))
+	if !errors.Is(poolErr, context.Canceled) {
+		t.Fatalf("expected PoolOutbound domain dial over static WG WARP with canceled ctx to fail via ResolveWarpDomain, got %v", poolErr)
 	}
 }

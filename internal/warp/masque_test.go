@@ -10,14 +10,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/miekg/dns"
 	"github.com/sagernet/gvisor/pkg/tcpip"
 	"github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet"
 	"github.com/sagernet/gvisor/pkg/tcpip/network/ipv4"
@@ -111,7 +115,10 @@ func TestConnectMASQUE_H2_LongLivedStreamAndLargePayload(t *testing.T) {
 		NextProtos:   []string{"h2"},
 	})
 
+	var handlerWG sync.WaitGroup
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerWG.Add(1)
+		defer handlerWG.Done()
 		if r.Method != http.MethodConnect || r.Header.Get("cf-connect-proto") != "cf-connect-ip" {
 			http.Error(w, "bad masque connect", http.StatusBadRequest)
 			return
@@ -122,10 +129,15 @@ func TestConnectMASQUE_H2_LongLivedStreamAndLargePayload(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(r.Context())
-		defer cancel()
+		outboundDone := make(chan struct{})
+		defer func() {
+			cancel()
+			<-outboundDone
+		}()
 
 		// Server outbound (serverNS -> client HTTP/2 capsule response)
 		go func() {
+			defer close(outboundDone)
 			defer cancel()
 			for {
 				pkt, err := serverNS.ReadPacket(ctx)
@@ -175,7 +187,10 @@ func TestConnectMASQUE_H2_LongLivedStreamAndLargePayload(t *testing.T) {
 	go func() {
 		_ = srv.Serve(tlsLn)
 	}()
-	defer srv.Close()
+	defer func() {
+		_ = srv.Close()
+		handlerWG.Wait()
+	}()
 
 	priv, _, certPEM, err := GenerateMASQUEKeypair()
 	if err != nil {
@@ -371,3 +386,121 @@ func generateTestServerCert(t *testing.T) tls.Certificate {
 	}
 	return cert
 }
+
+// Regression: ResolveDNSOverTunnel must treat valid empty DNS answers as ErrNoDNSRecords
+// (skipping redundant TCP fallback after UDP NXDOMAIN/NODATA), and must support AAAA
+// on TCP 1.0.0.1:53 when UDP transport fails.
+func TestResolveDNSOverTunnel_ErrorClassificationAndTCPFallback(t *testing.T) {
+	if _, err := ResolveDNSOverTunnel(context.Background(), nil, "example.com", true, true); err == nil {
+		t.Fatalf("expected error for nil dialer")
+	}
+
+	serveDNS := func(handle func(req *dns.Msg) *dns.Msg) (net.Conn, error) {
+		cConn, sConn := net.Pipe()
+		go func() {
+			defer sConn.Close()
+			dc := &dns.Conn{Conn: sConn}
+			req, err := dc.ReadMsg()
+			if err != nil {
+				return
+			}
+			resp := handle(req)
+			_ = dc.WriteMsg(resp)
+		}()
+		return cConn, nil
+	}
+
+	// 1. UDP returns valid empty answers (NODATA/NXDOMAIN) for A and AAAA -> ErrNoDNSRecords, no TCP attempt.
+	var tcpCalls int
+	addr, err := ResolveDNSOverTunnel(context.Background(), func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+		if network == "tcp" {
+			tcpCalls++
+			return nil, errors.New("unexpected tcp fallback")
+		}
+		return serveDNS(func(req *dns.Msg) *dns.Msg {
+			resp := new(dns.Msg)
+			resp.SetReply(req)
+			return resp
+		})
+	}, "missing.example.invalid", true, true)
+	if !errors.Is(err, ErrNoDNSRecords) {
+		t.Fatalf("expected ErrNoDNSRecords on empty UDP A+AAAA answers, got addr=%v err=%v", addr, err)
+	}
+	if tcpCalls != 0 {
+		t.Fatalf("expected 0 TCP fallback calls after authoritative UDP empty answers, got %d", tcpCalls)
+	}
+
+	// 2. UDP transport failure -> TCP 1.0.0.1:53 tries A (empty), then AAAA -> resolves IPv6.
+	wantV6 := net.ParseIP("2001:db8::42")
+	var udpCalls int
+	var tcpTypes []uint16
+	addr, err = ResolveDNSOverTunnel(context.Background(), func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+		if network == "udp" {
+			udpCalls++
+			return nil, errors.New("udp blocked")
+		}
+		return serveDNS(func(req *dns.Msg) *dns.Msg {
+			tcpTypes = append(tcpTypes, req.Question[0].Qtype)
+			resp := new(dns.Msg)
+			resp.SetReply(req)
+			if req.Question[0].Qtype == dns.TypeAAAA {
+				resp.Answer = append(resp.Answer, &dns.AAAA{
+					Hdr:  dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
+					AAAA: wantV6,
+				})
+			}
+			return resp
+		})
+	}, "v6only.example.invalid", true, true)
+	if err != nil {
+		t.Fatalf("expected TCP AAAA fallback to succeed, got err=%v", err)
+	}
+	if addr != netip.MustParseAddr("2001:db8::42") {
+		t.Fatalf("expected 2001:db8::42, got %v", addr)
+	}
+	if udpCalls != 1 {
+		t.Fatalf("expected single UDP attempt before TCP fallback on transport error, got %d", udpCalls)
+	}
+	if len(tcpTypes) != 2 || tcpTypes[0] != dns.TypeA || tcpTypes[1] != dns.TypeAAAA {
+		t.Fatalf("expected TCP fallback sequence [A, AAAA], got %v", tcpTypes)
+	}
+
+	// 3. Truncated UDP response (TC=1) and SERVFAIL must trigger TCP 1.0.0.1:53 fallback, not ErrNoDNSRecords.
+	for _, tc := range []struct {
+		name      string
+		truncated bool
+		rcode     int
+	}{
+		{name: "truncated", truncated: true, rcode: dns.RcodeSuccess},
+		{name: "servfail", truncated: false, rcode: dns.RcodeServerFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var usedTCP bool
+			wantV4 := net.ParseIP("198.51.100.99")
+			gotAddr, tcErr := ResolveDNSOverTunnel(context.Background(), func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+				return serveDNS(func(req *dns.Msg) *dns.Msg {
+					resp := new(dns.Msg)
+					resp.SetReply(req)
+					if network == "udp" {
+						resp.Truncated = tc.truncated
+						resp.Rcode = tc.rcode
+						return resp
+					}
+					usedTCP = true
+					resp.Answer = append(resp.Answer, &dns.A{
+						Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+						A:   wantV4,
+					})
+					return resp
+				})
+			}, "tc-or-servfail.example.invalid", true, true)
+			if tcErr != nil {
+				t.Fatalf("expected TCP fallback to succeed for %s, got err=%v", tc.name, tcErr)
+			}
+			if !usedTCP || gotAddr != netip.MustParseAddr("198.51.100.99") {
+				t.Fatalf("expected TCP fallback resolving 198.51.100.99 for %s, got usedTCP=%v addr=%v", tc.name, usedTCP, gotAddr)
+			}
+		})
+	}
+}
+

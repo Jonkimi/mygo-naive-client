@@ -105,6 +105,21 @@ func (w *warpMasqueOutbound) Dependencies() []string {
 	return nil
 }
 
+var _ adapter.Referrer = (*warpMasqueOutbound)(nil)
+
+// References reports both the upstream detour and any WireGuard fallback outbound
+// so ReferenceManager keeps idle connections on underlying transports.
+func (w *warpMasqueOutbound) References() []string {
+	var refs []string
+	if w.opts.Detour != "" {
+		refs = append(refs, w.opts.Detour)
+	}
+	if w.opts.WireGuardFallback != "" {
+		refs = append(refs, w.opts.WireGuardFallback)
+	}
+	return refs
+}
+
 type outboundDialerAdapter struct {
 	ob adapter.Outbound
 }
@@ -134,25 +149,31 @@ func (w *warpMasqueOutbound) getFallbackOutbound() adapter.Outbound {
 	return nil
 }
 
-func (w *warpMasqueOutbound) activeTunnelLocked() (*warp.MASQUETunnel, error) {
+func (w *warpMasqueOutbound) activeTunnelLocked() (*warp.MASQUETunnel, string, error) {
 	if w.isClosedLocked() {
-		return nil, errors.New("outbound closed")
+		return nil, "", errors.New("outbound closed")
 	}
 	if w.opts.WireGuardFallback != "" && time.Since(w.masqueFailedAt) < 60*time.Second {
-		return nil, errors.New("masque recently failed, using wireguard fallback")
+		return nil, "", errors.New("masque recently failed, using wireguard fallback")
 	}
 	if w.tun != nil {
 		select {
 		case <-w.tun.Done():
 			w.tun = nil
+			deadEP := w.activeEndpoint
+			w.activeEndpoint = ""
+			return nil, deadEP, nil
 		default:
-			return w.tun, nil
+			return w.tun, "", nil
 		}
 	}
-	return nil, nil
+	return nil, "", nil
 }
 
-func (w *warpMasqueOutbound) recordFailureTime() {
+func (w *warpMasqueOutbound) recordFailureTime(ctx context.Context, err error) {
+	if (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+		return
+	}
 	w.mu.Lock()
 	if !w.isClosedLocked() {
 		w.masqueFailedAt = time.Now()
@@ -160,26 +181,48 @@ func (w *warpMasqueOutbound) recordFailureTime() {
 	w.mu.Unlock()
 }
 
+func (w *warpMasqueOutbound) markEndpointFailedIfAuto(ep string) {
+	if strings.TrimSpace(w.opts.Endpoint) != "" || ep == "" {
+		return
+	}
+	selectEndpointSelector(w.eng).MarkFailed(warp.EndpointCacheKey{
+		ScopeKey: w.scopeKey(),
+		Mode:     warp.ModeMASQUE,
+		TCPOnly:  w.opts.TCPOnlyDetour || w.opts.ForceH2,
+	}, ep)
+}
+
 func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQUETunnel, error) {
-	w.mu.Lock()
-	tun, err := w.activeTunnelLocked()
-	w.mu.Unlock()
-	if err != nil || tun != nil {
-		return tun, err
+	var activeTun *warp.MASQUETunnel
+	var deadEP string
+	release, ready, err := w.acquireInit(ctx, func() (bool, error) {
+		tun, dead, aErr := w.activeTunnelLocked()
+		if dead != "" {
+			deadEP = dead
+		}
+		if aErr != nil {
+			return false, aErr
+		}
+		if tun != nil {
+			activeTun = tun
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	w.initMu.Lock()
-	defer w.initMu.Unlock()
-
-	w.mu.Lock()
-	tun, err = w.activeTunnelLocked()
-	if err != nil || tun != nil {
-		w.mu.Unlock()
-		return tun, err
+	if ready {
+		return activeTun, nil
 	}
-	w.wg.Add(1)
-	w.mu.Unlock()
-	defer w.wg.Done()
+	defer release()
+
+	if deadEP != "" {
+		w.markEndpointFailedIfAuto(deadEP)
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	upstreamDialer, err := resolveDetourDialer(w.opts.Detour, w.outboundMgr, w.eng)
 	if err != nil {
@@ -195,7 +238,7 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 
 	// Fallback to global Cloudflare account if node credentials not explicitly set
 	globalAcc := loadGlobalWarpAccount(w.eng)
-	if acc.MASQUEPrivateKey == "" {
+	if acc.MASQUEPrivateKey == "" || acc.MASQUECertPEM == "" {
 		acc.MASQUEPrivateKey = globalAcc.MASQUEPrivateKey
 		acc.MASQUECertPEM = globalAcc.MASQUECertPEM
 		acc.MASQUEIPv4 = globalAcc.MASQUEIPv4
@@ -217,13 +260,15 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 		provCancel()
 		closeHTTPTransportIdle(apiHTTPClient)
 		if provErr != nil {
-			w.recordFailureTime()
+			w.recordFailureTime(ctx, provErr)
 			return nil, fmt.Errorf("Cloudflare WARP MASQUE 凭证未注册且自动注册失败: %w", provErr)
 		}
 		acc.MASQUEPrivateKey = enrolled.MASQUEPrivateKey
 		acc.MASQUECertPEM = enrolled.MASQUECertPEM
 		acc.MASQUEIPv4 = enrolled.MASQUEIPv4
 		acc.MASQUEIPv6 = enrolled.MASQUEIPv6
+		acc.IPv4 = enrolled.IPv4
+		acc.IPv6 = enrolled.IPv6
 		if !w.isClosed() {
 			saveGlobalWarpAccount(w.eng, enrolled)
 		}
@@ -231,6 +276,9 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 
 	if w.isClosed() {
 		return nil, errors.New("outbound closed")
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	var masqueTimeout time.Duration
@@ -250,6 +298,7 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	}
 	explicitEP := strings.TrimSpace(w.opts.Endpoint)
 	var selectedEP string
+	var tun *warp.MASQUETunnel
 	if explicitEP != "" {
 		tun, err = warp.ConnectMASQUEWithOptions(connectCtx, upstreamDialer, explicitEP, acc, mOpts)
 		selectedEP = explicitEP
@@ -258,7 +307,7 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	}
 	connectCancel()
 	if err != nil {
-		w.recordFailureTime()
+		w.recordFailureTime(ctx, err)
 		return nil, err
 	}
 
@@ -283,7 +332,7 @@ func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
 	var failedEP string
 	var shouldClose bool
 	w.mu.Lock()
-	if !w.closed && w.tun == tun {
+	if !w.isClosedLocked() && w.tun == tun {
 		w.tun = nil
 		failedEP = w.activeEndpoint
 		w.activeEndpoint = ""
@@ -298,21 +347,50 @@ func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
 		return
 	}
 	defer w.wg.Done()
-	if strings.TrimSpace(w.opts.Endpoint) == "" && failedEP != "" {
-		selectEndpointSelector(w.eng).MarkFailed(warp.EndpointCacheKey{
-			ScopeKey: w.scopeKey(),
-			Mode:     warp.ModeMASQUE,
-			TCPOnly:  w.opts.TCPOnlyDetour || w.opts.ForceH2,
-		}, failedEP)
-	}
+	w.markEndpointFailedIfAuto(failedEP)
 	_ = tun.Close()
+}
+
+func (w *warpMasqueOutbound) resolveFallbackDestination(ctx context.Context, fbOb adapter.Outbound, destination M.Socksaddr) (M.Socksaddr, error) {
+	if !destination.IsDomain() {
+		return destination, nil
+	}
+	if _, isAutoWG := fbOb.(*warpAutoWireGuardOutbound); isAutoWG {
+		// warpAutoWireGuardOutbound resolves domains after ensuring its WireGuard endpoint.
+		return destination, nil
+	}
+	rCtx, rCancel := w.deriveContext(ctx, 0)
+	defer rCancel()
+	ip, err := resolveDomainViaDialerDNS(rCtx, fbOb, destination.Fqdn, true, true)
+	if err != nil {
+		return destination, err
+	}
+	return M.SocksaddrFrom(ip, destination.Port), nil
+}
+
+func (w *warpMasqueOutbound) wrapFallbackOrDialError(ep string, fbErr, dialErr error) error {
+	if fbErr != nil {
+		if strings.Contains(strings.ToLower(fbErr.Error()), "warp server (") {
+			return fbErr
+		}
+		return fmt.Errorf("warp server (%s) connection failed: %w", ep, fbErr)
+	}
+	if dialErr != nil {
+		if strings.Contains(strings.ToLower(dialErr.Error()), "warp server (") {
+			return dialErr
+		}
+		return fmt.Errorf("warp server (%s) connection failed: %w", ep, dialErr)
+	}
+	return fmt.Errorf("warp server (%s) connection failed", ep)
 }
 
 func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	t0 := time.Now()
 	tun, err := w.getOrCreateTunnel(ctx)
 	t1 := time.Now()
+	var ep string
 	if err == nil {
+		ep = w.ActiveEndpoint()
 		var conn net.Conn
 		if strings.HasPrefix(strings.ToLower(network), "udp") {
 			conn, err = tun.DialUDP(ctx, destination.String())
@@ -341,20 +419,29 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 	if w.isClosed() {
 		return nil, errors.New("outbound closed")
 	}
+	if (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+		if err != nil {
+			return nil, err
+		}
+		return nil, ctx.Err()
+	}
 
-	ep := w.ActiveEndpoint()
+	if ep == "" {
+		ep = w.ActiveEndpoint()
+	}
 	if ep == "" {
 		ep = "auto"
 	}
 
 	if fbOb := w.getFallbackOutbound(); fbOb != nil {
 		tR0 := time.Now()
-		if w.opts.Detour == "" && destination.IsDomain() {
-			rCtx, rCancel := w.deriveContext(ctx, 0)
-			if ip, rErr := resolveHostIP(rCtx, destination.Fqdn); rErr == nil {
-				destination = M.SocksaddrFrom(ip, destination.Port)
+		var resErr error
+		destination, resErr = w.resolveFallbackDestination(ctx, fbOb, destination)
+		if resErr != nil {
+			if errors.Is(resErr, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(resErr, context.Canceled) {
+				return nil, resErr
 			}
-			rCancel()
+			return nil, w.wrapFallbackOrDialError(ep, resErr, err)
 		}
 		tR1 := time.Now()
 		conn, fbErr := fbOb.DialContext(ctx, network, destination)
@@ -363,19 +450,18 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 			w.logger.DebugContext(ctx, fmt.Sprintf("Fallback dial after %v (resolve %v, dial %v): %v", tF.Sub(tR0), tR1.Sub(tR0), tF.Sub(tR1), fbErr))
 		}
 		if fbErr != nil {
-			return nil, fmt.Errorf("warp server (%s) connection failed: %w", ep, fbErr)
+			return nil, w.wrapFallbackOrDialError(ep, fbErr, err)
 		}
 		return conn, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("warp server (%s) connection failed: %w", ep, err)
-	}
-	return nil, fmt.Errorf("warp server (%s) connection failed", ep)
+	return nil, w.wrapFallbackOrDialError(ep, nil, err)
 }
 
 func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	tun, err := w.getOrCreateTunnel(ctx)
+	var ep string
 	if err == nil {
+		ep = w.ActiveEndpoint()
 		var conn net.Conn
 		conn, err = tun.DialUDP(ctx, destination.String())
 		if err == nil {
@@ -393,30 +479,36 @@ func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Soc
 	if w.isClosed() {
 		return nil, errors.New("outbound closed")
 	}
+	if (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+		if err != nil {
+			return nil, err
+		}
+		return nil, ctx.Err()
+	}
 
-	ep := w.ActiveEndpoint()
+	if ep == "" {
+		ep = w.ActiveEndpoint()
+	}
 	if ep == "" {
 		ep = "auto"
 	}
 
 	if fbOb := w.getFallbackOutbound(); fbOb != nil {
-		if w.opts.Detour == "" && destination.IsDomain() {
-			rCtx, rCancel := w.deriveContext(ctx, 0)
-			if ip, rErr := resolveHostIP(rCtx, destination.Fqdn); rErr == nil {
-				destination = M.SocksaddrFrom(ip, destination.Port)
+		var resErr error
+		destination, resErr = w.resolveFallbackDestination(ctx, fbOb, destination)
+		if resErr != nil {
+			if errors.Is(resErr, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(resErr, context.Canceled) {
+				return nil, resErr
 			}
-			rCancel()
+			return nil, w.wrapFallbackOrDialError(ep, resErr, err)
 		}
 		pConn, fbErr := fbOb.ListenPacket(ctx, destination)
 		if fbErr != nil {
-			return nil, fmt.Errorf("warp server (%s) connection failed: %w", ep, fbErr)
+			return nil, w.wrapFallbackOrDialError(ep, fbErr, err)
 		}
 		return pConn, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("warp server (%s) connection failed: %w", ep, err)
-	}
-	return nil, fmt.Errorf("warp server (%s) connection failed", ep)
+	return nil, w.wrapFallbackOrDialError(ep, nil, err)
 }
 
 func (w *warpMasqueOutbound) Close() error {

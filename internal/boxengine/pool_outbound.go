@@ -16,6 +16,7 @@ import (
 	"naive-client/internal/blocker"
 	"naive-client/internal/routing"
 	"naive-client/internal/telemetry"
+	"naive-client/internal/warp"
 
 	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"
@@ -40,6 +41,10 @@ type NodeProvider interface {
 	GetCandidates(poolTag string) []string
 	GetOutbound(nodeID string) (adapter.Outbound, bool)
 	IsSidecar(nodeID string) bool
+}
+
+type warpDomainResolverProvider interface {
+	ResolveWarpDomain(ctx context.Context, nodeID string, ob adapter.Outbound, dest M.Socksaddr) (M.Socksaddr, error)
 }
 
 // PoolOutboundOptions defines configuration for a PoolOutbound instance.
@@ -117,6 +122,57 @@ func (p *PoolOutbound) Network() []string {
 
 func (p *PoolOutbound) Dependencies() []string {
 	return nil
+}
+
+var _ adapter.Referrer = (*PoolOutbound)(nil)
+
+// References reports all candidate node outbound tags this pool can dispatch to
+// so sing-box's ReferenceManager preserves idle connection pooling on them.
+func (p *PoolOutbound) References() []string {
+	if p.provider == nil {
+		return nil
+	}
+	lookup := p.provider.GetCandidates
+	if ap, ok := p.provider.(interface{ AllCandidates(string) []string }); ok {
+		lookup = ap.AllCandidates
+	}
+	seen := make(map[string]bool)
+	var refs []string
+	addIDs := func(ids []string) {
+		for _, id := range ids {
+			if id == "" {
+				continue
+			}
+			tag := id
+			if !strings.HasPrefix(tag, "node-") {
+				tag = "node-" + tag
+			}
+			if !seen[tag] {
+				seen[tag] = true
+				refs = append(refs, tag)
+			}
+		}
+	}
+	if len(p.targets) == 0 {
+		tagKey := p.poolTag
+		if tagKey == "" {
+			tagKey = p.tag
+		}
+		addIDs(lookup(tagKey))
+		return refs
+	}
+	for _, t := range p.targets {
+		switch t.Kind {
+		case routing.TargetNode:
+			addIDs([]string{t.Value})
+		case routing.TargetTag:
+			addIDs(lookup(t.Value))
+		}
+	}
+	if p.fallbackToPool {
+		addIDs(lookup("PROXY_POOL"))
+	}
+	return refs
 }
 
 func extractTargetHost(ctx context.Context, destination M.Socksaddr) string {
@@ -321,6 +377,16 @@ func formatConnectionError(err error) string {
 	return "连接失败"
 }
 
+func (p *PoolOutbound) resolveCandidateDestination(ctx context.Context, candID string, ob adapter.Outbound, destination M.Socksaddr) (M.Socksaddr, error) {
+	if !destination.IsDomain() {
+		return destination, nil
+	}
+	if wp, ok := p.provider.(warpDomainResolverProvider); ok {
+		return wp.ResolveWarpDomain(ctx, candID, ob, destination)
+	}
+	return destination, nil
+}
+
 func (p *PoolOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if p.provider == nil {
 		return nil, errors.New("node provider is nil")
@@ -377,7 +443,17 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		}
 
 		start := time.Now()
-		conn, err := ob.DialContext(dialCtx, network, destination)
+		candDest, err := p.resolveCandidateDestination(dialCtx, candID, ob, destination)
+		if err != nil && (errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled)) {
+			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
+			}
+			return nil, err
+		}
+		var conn net.Conn
+		if err == nil {
+			conn, err = ob.DialContext(dialCtx, network, candDest)
+		}
 		rtt := time.Since(start)
 
 		if err != nil {
@@ -536,7 +612,17 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 			continue
 		}
 
-		conn, err := ob.ListenPacket(packetCtx, destination)
+		candDest, err := p.resolveCandidateDestination(packetCtx, candID, ob, destination)
+		if err != nil && (errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled)) {
+			if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(err))
+			}
+			return nil, err
+		}
+		var conn net.PacketConn
+		if err == nil {
+			conn, err = ob.ListenPacket(packetCtx, candDest)
+		}
 		if err == nil {
 			// UDP has no handshake RTT; leave Duration empty (UI shows the UDP tag).
 			unbindUDP()

@@ -79,8 +79,9 @@ type EngineOptions struct {
 	StateDir              string
 
 	// Cloudflare integration (WARP egress & Tunnel ingress)
-	CloudflareConfig *warp.Config
-	EndpointSelector *warp.EndpointSelector
+	CloudflareConfig          *warp.Config
+	EndpointSelector          *warp.EndpointSelector
+	OnCloudflareAccountUpdate func(warp.Account)
 
 	// Logging configuration
 	LogLevel string
@@ -149,6 +150,7 @@ func (w *boxPlatformWriter) WriteMessage(level log.Level, message string) {
 
 // Engine manages the embedded sing-box instance (*box.Box) with dynamic node pools and telemetry.
 type Engine struct {
+	lifecycleMu       sync.Mutex
 	mu                sync.RWMutex
 	box               *box.Box
 	port              int
@@ -160,9 +162,10 @@ type Engine struct {
 	failureMonitor    *telemetry.FailureMonitor
 	blocker           *blocker.Engine
 	connTracker       *BlockerConnectionTracker
-	onDemandStart     func(poolTag string)
-	onTelemetryUpdate func()
-	cloudflareConfig  *warp.Config
+	onDemandStart             func(poolTag string)
+	onTelemetryUpdate         func()
+	onCloudflareAccountUpdate func(warp.Account)
+	cloudflareConfig          *warp.Config
 	endpointSelector  *warp.EndpointSelector
 	logLevel          string
 	logWriter         *boxPlatformWriter
@@ -223,22 +226,29 @@ func New(opts EngineOptions) (*Engine, error) {
 		allocated = make(map[string]int)
 	}
 
+	cfCfg := &warp.Config{}
+	if opts.CloudflareConfig != nil {
+		*cfCfg = *opts.CloudflareConfig
+		cfCfg.Account = cloneWarpAccount(cfCfg.Account)
+	}
+
 	normLvl, parsedLvl := parseSingBoxLogLevel(opts.LogLevel)
 	eng := &Engine{
-		port:              listenPort,
-		addr:              fmt.Sprintf("%s:%d", listenHost, listenPort),
-		services:          opts.Services,
-		allocatedPorts:    allocated,
-		activeIDs:         opts.ActiveIDs,
-		tracker:           opts.Tracker,
-		failureMonitor:    opts.FailureMonitor,
-		blocker:           opts.Blocker,
-		onDemandStart:     opts.OnDemandStart,
-		onTelemetryUpdate: opts.OnTelemetryUpdate,
-		cloudflareConfig:  opts.CloudflareConfig,
-		endpointSelector:  opts.EndpointSelector,
-		logLevel:          normLvl,
-		logWriter:         newBoxPlatformWriter(parsedLvl, opts.OnLog),
+		port:                      listenPort,
+		addr:                      fmt.Sprintf("%s:%d", listenHost, listenPort),
+		services:                  opts.Services,
+		allocatedPorts:            allocated,
+		activeIDs:                 opts.ActiveIDs,
+		tracker:                   opts.Tracker,
+		failureMonitor:            opts.FailureMonitor,
+		blocker:                   opts.Blocker,
+		onDemandStart:             opts.OnDemandStart,
+		onTelemetryUpdate:         opts.OnTelemetryUpdate,
+		onCloudflareAccountUpdate: opts.OnCloudflareAccountUpdate,
+		cloudflareConfig:          cfCfg,
+		endpointSelector:          opts.EndpointSelector,
+		logLevel:                  normLvl,
+		logWriter:                 newBoxPlatformWriter(parsedLvl, opts.OnLog),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -391,21 +401,34 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 
 // Start launches the embedded sing-box engine.
 func (e *Engine) Start() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.box == nil {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
+
+	e.mu.RLock()
+	b := e.box
+	e.mu.RUnlock()
+	if b == nil {
 		return errors.New("engine is closed")
 	}
-	return e.box.Start()
+	return b.Start()
 }
 
 // Close gracefully closes the embedded engine.
 func (e *Engine) Close() error {
 	e.mu.Lock()
-	b := e.box
-	e.box = nil
 	cancel := e.cancel
 	e.cancel = nil
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
+
+	e.mu.Lock()
+	b := e.box
+	e.box = nil
 	e.mu.Unlock()
 
 	var err error
@@ -413,9 +436,6 @@ func (e *Engine) Close() error {
 		err = b.Close()
 	}
 	e.closeRegisteredClosers()
-	if cancel != nil {
-		cancel()
-	}
 	return err
 }
 
@@ -484,20 +504,30 @@ func (e *Engine) GetCandidates(poolTag string) []string {
 	cleanTag = strings.TrimPrefix(cleanTag, "PROXY_TAG:")
 
 	e.mu.RLock()
-	candidates := e.findCandidates(cleanTag)
+	candidates := e.findCandidates(cleanTag, true)
 	e.mu.RUnlock()
 
 	if len(candidates) == 0 && e.onDemandStart != nil {
 		e.onDemandStart(cleanTag)
 		e.mu.RLock()
-		candidates = e.findCandidates(cleanTag)
+		candidates = e.findCandidates(cleanTag, true)
 		e.mu.RUnlock()
 	}
 
 	return candidates
 }
 
-func (e *Engine) findCandidates(cleanTag string) []string {
+// AllCandidates returns all configured candidate IDs matching poolTag regardless of active/sidecar state.
+func (e *Engine) AllCandidates(poolTag string) []string {
+	cleanTag := strings.TrimSpace(poolTag)
+	cleanTag = strings.TrimPrefix(cleanTag, "PROXY_TAG:")
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.findCandidates(cleanTag, false)
+}
+
+func (e *Engine) findCandidates(cleanTag string, activeOnly bool) []string {
 	if strings.HasPrefix(cleanTag, "node:") {
 		targetID := strings.TrimSpace(strings.TrimPrefix(cleanTag, "node:"))
 		if targetID == "" {
@@ -507,11 +537,13 @@ func (e *Engine) findCandidates(cleanTag string) []string {
 			if svc.ID != targetID {
 				continue
 			}
-			if e.activeIDs != nil && !e.activeIDs[svc.ID] {
-				return nil
-			}
-			if isSidecarService(svc) && e.allocatedPorts[svc.ID] <= 0 {
-				return nil
+			if activeOnly {
+				if e.activeIDs != nil && !e.activeIDs[svc.ID] {
+					return nil
+				}
+				if isSidecarService(svc) && e.allocatedPorts[svc.ID] <= 0 {
+					return nil
+				}
 			}
 			return []string{svc.ID}
 		}
@@ -527,11 +559,11 @@ func (e *Engine) findCandidates(cleanTag string) []string {
 
 	var candidates []string
 	for _, svc := range e.services {
-		if e.activeIDs != nil && !e.activeIDs[svc.ID] {
-			continue
-		}
-		if isSidecarService(svc) {
-			if e.allocatedPorts[svc.ID] <= 0 {
+		if activeOnly {
+			if e.activeIDs != nil && !e.activeIDs[svc.ID] {
+				continue
+			}
+			if isSidecarService(svc) && e.allocatedPorts[svc.ID] <= 0 {
 				continue
 			}
 		}
@@ -707,6 +739,33 @@ func (e *Engine) GetOutbound(nodeID string) (adapter.Outbound, bool) {
 	return nil, false
 }
 
+// ResolveWarpDomain resolves domain destinations inside the tunnel for static explicit-endpoint
+// WireGuard WARP outbounds so domains do not fall back to dnsRouter/host resolvers.
+func (e *Engine) ResolveWarpDomain(ctx context.Context, nodeID string, ob adapter.Outbound, dest M.Socksaddr) (M.Socksaddr, error) {
+	if !dest.IsDomain() {
+		return dest, nil
+	}
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	if !e.isWarpNode(cleanID) {
+		return dest, nil
+	}
+	_, isMasque := common.Cast[*warpMasqueOutbound](ob)
+	_, isAutoWG := common.Cast[*warpAutoWireGuardOutbound](ob)
+	if isMasque || isAutoWG {
+		return dest, nil
+	}
+	e.mu.RLock()
+	boxCtx := e.boxCtx
+	e.mu.RUnlock()
+	rCtx, rCancel := deriveLifecycleContext(ctx, boxCtx, 0)
+	ip, rErr := resolveDomainViaDialerDNS(rCtx, ob, dest.Fqdn, true, true)
+	rCancel()
+	if rErr != nil {
+		return dest, rErr
+	}
+	return M.SocksaddrFrom(ip, dest.Port), nil
+}
+
 // DialNode dials a destination address through the specified node outbound.
 func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr string) (net.Conn, error) {
 	cleanID := strings.TrimPrefix(nodeID, "node-")
@@ -722,13 +781,18 @@ func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr stri
 		return nil, syscall.EPERM
 	}
 	isWarp := e.isWarpNode(cleanID)
-	if isWarp && !e.isChainedWarpNode(cleanID) && dest.IsDomain() {
-		if ip, err := resolveHostIP(ctx, dest.Fqdn); err == nil {
-			dest = M.SocksaddrFrom(ip, dest.Port)
-		}
+	var err error
+	if isWarp {
+		dest, err = e.ResolveWarpDomain(ctx, cleanID, ob, dest)
 	}
-	conn, err := ob.DialContext(ctx, network, dest)
+	var conn net.Conn
+	if err == nil {
+		conn, err = ob.DialContext(ctx, network, dest)
+	}
 	if err != nil && isWarp {
+		if (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) || errors.Is(err, warp.ErrNoDNSRecords) {
+			return nil, err
+		}
 		errLower := strings.ToLower(err.Error())
 		if !strings.Contains(errLower, "warp server") &&
 			(strings.Contains(errLower, "not registered") ||
@@ -1281,16 +1345,12 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 	// Node outbounds
 	for _, svc := range opts.Services {
 		if svc.EffectiveProtocol() == config.ProtoWARP {
-			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
 			if isWarpWireGuard(svc, opts.CloudflareConfig) {
 				if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
 					outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, ""))
 				}
 				// Explicit endpoints are handled in buildEndpointsConfig as WireGuard endpoint.
 				continue
-			}
-			if mode == warp.ModeAuto && resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
-				outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, ""))
 			}
 			masqueOb := buildMasqueOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, "", false)
 			outbounds = append(outbounds, masqueOb)
@@ -1330,16 +1390,12 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 
 		if svc.EnableWARP {
 			isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
-			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
 			if isWarpWireGuard(svc, opts.CloudflareConfig) {
 				if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
 					outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, baseTag))
 				}
 				// Explicit endpoints are handled in buildEndpointsConfig as WireGuard endpoint.
 				continue
-			}
-			if !isTCPOnly && mode == warp.ModeAuto && resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
-				outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, baseTag))
 			}
 			masqueOb := buildMasqueOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, baseTag, isTCPOnly)
 			outbounds = append(outbounds, masqueOb)
@@ -1489,9 +1545,6 @@ func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, 
 	}
 	if !tcpOnlyDetour && resolveServiceMasquePreferH2(svc, globalCfg) {
 		ob["prefer_h2"] = true
-	}
-	if !tcpOnlyDetour && resolveServiceWarpMode(svc, globalCfg) == warp.ModeAuto {
-		ob["wireguard_fallback"] = "wg-" + tag
 	}
 	return ob
 }
@@ -1706,9 +1759,6 @@ func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 				if mode == warp.ModeWireGuard {
 					wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)
 					endpoints = append(endpoints, wgEp)
-				} else if mode == warp.ModeAuto {
-					wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "wg-node-"+svc.ID, detour)
-					endpoints = append(endpoints, wgEp)
 				}
 			}
 		}
@@ -1765,14 +1815,14 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 	if isProxyOutboundTag(finalOutbound) {
 		remoteDoHDetour = finalOutbound
 	}
-	hasRegularProxy := false
+	hasPoolProxy := false
 	for _, s := range opts.Services {
-		if s.EffectiveProtocol() != config.ProtoWARP && !s.IsBuiltinWarp() {
-			hasRegularProxy = true
+		if !s.IsBuiltinWarp() {
+			hasPoolProxy = true
 			break
 		}
 	}
-	if !hasRegularProxy && remoteDoHDetour == "PROXY_POOL" {
+	if !hasPoolProxy && remoteDoHDetour == "PROXY_POOL" {
 		remoteDoHDetour = ""
 	}
 

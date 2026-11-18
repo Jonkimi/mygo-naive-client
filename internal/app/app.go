@@ -102,22 +102,29 @@ type app struct {
 
 	tracker        *telemetry.Tracker
 	failureMonitor *telemetry.FailureMonitor
-	gateway        *boxengine.Engine
-	lastGatewayErr error
-	lastGatewaySig string
-	sysproxyQueue  chan func() // serial worker so slow networksetup calls never block the UI
-	sysproxy       *sysproxy.Sysproxy
-	router         *routing.Router
-	blocker        *blocker.Engine
-	tailnetMgr     *tailnet.Manager
-	tunDevice        *tunhelper.ReceivedDevice
+	gateway         *boxengine.Engine
+	startingGateway *boxengine.Engine
+	lastGatewayErr  error
+	lastGatewaySig  string
+	gwSnap          gatewayConfigSnapshot
+	stateRev        uint64
+	persistedRev    uint64
+	sysproxyQueue   chan func() // serial worker so slow networksetup calls never block the UI
+	sysproxy        *sysproxy.Sysproxy
+	router          *routing.Router
+	blocker         *blocker.Engine
+	tailnetMgr      *tailnet.Manager
+	tunDevice       *tunhelper.ReceivedDevice
 	mockTunDevice    func() (*tunhelper.ReceivedDevice, error)
 	mockTunCreator   func(options tun.Options) (tun.Tun, error)
 	mockNodeResolver func(host string) []net.IP
 	resolvedNodeIPs  map[string][]net.IP
 	resolvedNodeMu   sync.RWMutex
-	dormantStartMu   sync.Mutex
-	gatewayMu        sync.Mutex
+	dormantStartMu     sync.Mutex
+	gatewayLifecycleMu sync.Mutex
+	gatewayMu          sync.Mutex
+	persistMu          sync.Mutex
+	toastMu            sync.Mutex
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -434,6 +441,7 @@ func newApp(dataDir string) *app {
 		a.tracker.SetProbeInterval(time.Duration(st.AutoProbeInterval) * time.Minute)
 	}
 	a.refreshGeoDataStatus()
+	a.refreshGatewaySnapshot()
 	return a
 }
 
@@ -445,7 +453,7 @@ func (a *app) initSubsystems() {
 	cfgDir := filepath.Join(a.userDataDir(), "configs")
 	a.mgr = runner.NewManager(binPath, cfgDir, func() {
 		if gw := a.getGateway(); gw != nil {
-			gw.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+			gw.UpdateNodes(a.snapshotServices(), a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
 		}
 		a.dispatchUI(func() {
 			a.rebuildTrayMenu()
@@ -456,7 +464,7 @@ func (a *app) initSubsystems() {
 	a.mgr.PreStartChecker = func(svc config.Service) error {
 		if svc.EffectiveEngine() == config.EngineSingBox {
 			if a.getGateway() == nil {
-				if a.state.GatewayEnabled {
+				if a.isGatewayEnabled() {
 					if err := a.startGatewayWithFallback(); err != nil {
 						return fmt.Errorf("网关内核启动失败: %w", err)
 					}
@@ -464,7 +472,7 @@ func (a *app) initSubsystems() {
 					return errors.New("网关功能未开启，请先在设置中启用网关")
 				}
 			}
-		} else if svc.EnableWARP && !a.state.GatewayEnabled {
+		} else if svc.EnableWARP && !a.isGatewayEnabled() {
 			return errors.New("网关功能未开启，开启 WARP 链式代理需先在设置中启用网关")
 		}
 		return nil
@@ -514,7 +522,7 @@ func (a *app) initSubsystems() {
 		if a.tracker != nil {
 			a.tracker.ResetNode(svc.ID)
 		}
-		if svc.EffectiveEngine() != config.EngineSingBox && a.state.GatewayEnabled && a.getGateway() != nil {
+		if svc.EffectiveEngine() != config.EngineSingBox && a.isGatewayEnabled() && a.getGateway() != nil {
 			go func() {
 				_ = a.ensureGatewaySynced()
 			}()
@@ -534,7 +542,7 @@ func (a *app) initSubsystems() {
 				time.Sleep(200 * time.Millisecond)
 			}
 			if a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
-				if svc.EnableWARP && a.state.GatewayEnabled {
+				if svc.EnableWARP && a.isGatewayEnabled() {
 					_ = a.ensureGatewaySynced()
 				}
 				a.mgr.ProbeService(svc, a.probeURLForService(svc))
@@ -745,7 +753,17 @@ func (a *app) dispatchUI(fn func()) {
 }
 
 func (a *app) toast(msg string) {
+	a.toastMu.Lock()
 	a.pendingToast = msg
+	a.toastMu.Unlock()
+}
+
+func (a *app) consumePendingToast() string {
+	a.toastMu.Lock()
+	msg := a.pendingToast
+	a.pendingToast = ""
+	a.toastMu.Unlock()
+	return msg
 }
 
 // Service Actions
@@ -860,14 +878,16 @@ func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint 
 	isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
 
 	if isWarpNode {
-		if !a.state.Cloudflare.Account.IsRegistered() ||
-			strings.Contains(strings.ToLower(rt.ProbeError+rt.SpeedError), "not registered") {
+		combinedErr := strings.ToLower(rt.ProbeError + rt.SpeedError)
+		if !a.getCloudflareAccount().IsRegistered() ||
+			strings.Contains(combinedErr, "not registered") ||
+			strings.Contains(combinedErr, "凭证未注册") {
 			return cat.WarpUnhealthyUnregisteredHint(), true, true
 		}
 
 		endpoint := "auto"
-		if a.gateway != nil {
-			if ob, ok := a.gateway.GetOutbound(svc.ID); ok {
+		if gw := a.getGateway(); gw != nil {
+			if ob, ok := gw.GetOutbound(svc.ID); ok {
 				type activeEndpointProvider interface {
 					ActiveEndpoint() string
 				}
@@ -1043,11 +1063,11 @@ func (a *app) buildUpdaterHTTPOptions(timeout time.Duration) updater.HTTPClientO
 		Timeout:  timeout,
 	}
 	if opts.ProxyURL == "" && a.state.UseRunningServiceForUpd {
-		if a.gateway != nil && a.state.GatewayEnabled && a.gateway.Port() > 0 {
+		if gw := a.getGateway(); gw != nil && a.state.GatewayEnabled && gw.Port() > 0 {
 			ep := config.ListenEndpoint{
 				Proto: "http",
 				Addr:  "127.0.0.1",
-				Port:  a.gateway.Port(),
+				Port:  gw.Port(),
 			}
 			opts.LocalEndpoint = &ep
 		} else if a.mgr != nil {
@@ -1333,6 +1353,37 @@ func (a *app) triggerSeamlessXrayUpdate(auto ...bool) {
 	}()
 }
 
+func mergeRegisteredWarpAccount(cur, base, enrolled warp.Account) warp.Account {
+	out := cur.Clone()
+	if enrolled.DeviceID != "" {
+		out.DeviceID = enrolled.DeviceID
+		out.AccessToken = enrolled.AccessToken
+		out.AccountID = enrolled.AccountID
+		out.AccountType = enrolled.AccountType
+		out.LicenseKey = enrolled.LicenseKey
+		out.WGPrivateKey = enrolled.WGPrivateKey
+		out.WGPublicKey = enrolled.WGPublicKey
+		out.WGPeerPublicKey = enrolled.WGPeerPublicKey
+		out.ClientID = enrolled.ClientID
+		out.Reserved = append([]uint8(nil), enrolled.Reserved...)
+		out.IPv4 = enrolled.IPv4
+		out.IPv6 = enrolled.IPv6
+	}
+	if enrolled.MASQUEDeviceID != "" || enrolled.MASQUEPrivateKey != "" {
+		if cur.MASQUEPrivateKey == "" || cur.MASQUEPrivateKey == base.MASQUEPrivateKey {
+			out.MASQUEDeviceID = enrolled.MASQUEDeviceID
+			out.MASQUEToken = enrolled.MASQUEToken
+			out.MASQUEPrivateKey = enrolled.MASQUEPrivateKey
+			out.MASQUEPublicKey = enrolled.MASQUEPublicKey
+			out.MASQUECertPEM = enrolled.MASQUECertPEM
+			out.MASQUEIPv4 = enrolled.MASQUEIPv4
+			out.MASQUEIPv6 = enrolled.MASQUEIPv6
+			out.MASQUEEnrolled = enrolled.MASQUEEnrolled
+		}
+	}
+	return out
+}
+
 // Cloudflare WARP registration and license actions
 func (a *app) triggerWarpRegister() {
 	if a.warpRegistering {
@@ -1342,6 +1393,8 @@ func (a *app) triggerWarpRegister() {
 	if a.win != nil {
 		a.win.Invalidate()
 	}
+	accSnap := a.getCloudflareAccount()
+	licenseSnap := a.warpLicenseInput
 	go func() {
 		defer func() {
 			a.dispatchUI(func() {
@@ -1354,17 +1407,21 @@ func (a *app) triggerWarpRegister() {
 		cli := warp.NewClient(nil)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		acc, err := cli.ProvisionAll(ctx, a.state.Cloudflare.Account, a.warpLicenseInput)
+		acc, err := cli.ProvisionAll(ctx, accSnap, licenseSnap)
 		a.dispatchUI(func() {
 			cat := a.catalog()
 			if err != nil {
 				a.toast(cat.CloudflareWarpToastRegFailed(err.Error()))
 				return
 			}
-			a.state.Cloudflare.Account = acc
+			a.gatewayMu.Lock()
+			merged := mergeRegisteredWarpAccount(a.state.Cloudflare.Account, accSnap, acc)
+			a.state.Cloudflare.Account = merged
+			a.gwSnap.Cloudflare.Account = merged.Clone()
+			a.gatewayMu.Unlock()
 			a.saveState()
-			a.toast(cat.CloudflareWarpToastRegSuccess(acc.IPv4))
-			for _, svc := range a.state.Services {
+			a.toast(cat.CloudflareWarpToastRegSuccess(merged.IPv4))
+			for _, svc := range a.snapshotServices() {
 				if (svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP) && a.mgr != nil && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
 					a.mgr.ProbeService(svc, a.probeURLForService(svc))
 				}
@@ -1386,6 +1443,7 @@ func (a *app) triggerWarpBindLicense() {
 	if a.win != nil {
 		a.win.Invalidate()
 	}
+	accSnap := a.getCloudflareAccount()
 	go func() {
 		defer func() {
 			a.dispatchUI(func() {
@@ -1398,17 +1456,28 @@ func (a *app) triggerWarpBindLicense() {
 		cli := warp.NewClient(nil)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		err := cli.BindLicense(ctx, &a.state.Cloudflare.Account, key)
+		err := cli.BindLicense(ctx, &accSnap, key)
 		a.dispatchUI(func() {
 			cat := a.catalog()
 			if err != nil {
 				a.toast(cat.CloudflareWarpToastLicenseFailed(err.Error()))
 				return
 			}
-			a.state.Cloudflare.Account.LicenseKey = key
+			a.gatewayMu.Lock()
+			merged := a.state.Cloudflare.Account.Clone()
+			merged.LicenseKey = key
+			if accSnap.AccountType != "" {
+				merged.AccountType = accSnap.AccountType
+			}
+			if accSnap.AccountID != "" {
+				merged.AccountID = accSnap.AccountID
+			}
+			a.state.Cloudflare.Account = merged
+			a.gwSnap.Cloudflare.Account = merged.Clone()
+			a.gatewayMu.Unlock()
 			a.warpShowLicenseForm = false
 			a.saveState()
-			a.toast(cat.CloudflareWarpToastLicenseSuccess(a.state.Cloudflare.Account.AccountType))
+			a.toast(cat.CloudflareWarpToastLicenseSuccess(merged.AccountType))
 		})
 	}()
 }
@@ -1446,7 +1515,7 @@ func (a *app) triggerWarpEndpointScan() {
 	}
 	mode := a.state.Cloudflare.EffectiveDirectMode()
 	preferH2 := a.state.Cloudflare.MasquePreferH2
-	acc := a.state.Cloudflare.Account
+	acc := a.getCloudflareAccount()
 	scanner := a.warpEndpointScanner
 	if scanner == nil {
 		scanner = warp.ScanBestEndpoints
@@ -1533,7 +1602,176 @@ func (a *app) readClipboard() string {
 	return os.Getenv("NAIVE_CLIENT_TEST_CLIPBOARD")
 }
 
-func (a *app) startDormantServiceForTag(tag string) {
+func cloneService(s config.Service) config.Service {
+	cp := s
+	cp.Tags = append([]string(nil), s.Tags...)
+	cp.ALPN = append([]string(nil), s.ALPN...)
+	cp.Listens = append([]string(nil), s.Listens...)
+	cp.Proxies = append([]string(nil), s.Proxies...)
+	if s.WARPConfig != nil {
+		wc := *s.WARPConfig
+		wc.Reserved = append([]uint8(nil), s.WARPConfig.Reserved...)
+		if s.WARPConfig.MasquePreferH2 != nil {
+			b := *s.WARPConfig.MasquePreferH2
+			wc.MasquePreferH2 = &b
+		}
+		cp.WARPConfig = &wc
+	}
+	return cp
+}
+
+func cloneServices(svcs []config.Service) []config.Service {
+	if svcs == nil {
+		return nil
+	}
+	out := make([]config.Service, len(svcs))
+	for i, s := range svcs {
+		out[i] = cloneService(s)
+	}
+	return out
+}
+
+func cloneRouteAction(act routing.RouteAction) routing.RouteAction {
+	cp := act
+	cp.Tags = append([]string(nil), act.Tags...)
+	cp.Targets = append([]routing.TargetRef(nil), act.Targets...)
+	return cp
+}
+
+func cloneRoutingRules(rules []routing.Rule) []routing.Rule {
+	if rules == nil {
+		return nil
+	}
+	out := make([]routing.Rule, len(rules))
+	for i, r := range rules {
+		out[i] = r
+		out[i].DomainSuffix = append([]string(nil), r.DomainSuffix...)
+		out[i].DomainKeyword = append([]string(nil), r.DomainKeyword...)
+		out[i].DomainFull = append([]string(nil), r.DomainFull...)
+		out[i].IPCidr = append([]string(nil), r.IPCidr...)
+		out[i].GeoSite = append([]string(nil), r.GeoSite...)
+		out[i].GeoIP = append([]string(nil), r.GeoIP...)
+		out[i].Action = cloneRouteAction(r.Action)
+	}
+	return out
+}
+
+type gatewayConfigSnapshot struct {
+	Initialized       bool
+	GatewayEnabled    bool
+	GatewayPort       int
+	TrafficMode       string
+	Services          []config.Service
+	Rules             []routing.Rule
+	Final             routing.RouteAction
+	GeoSiteDB         *geodata.GeoSiteDB
+	GeoIPDB           *geodata.GeoIPDB
+	GeoTag            string
+	BootstrapDomains  []string
+	BootstrapDNS      string
+	DomesticDNS       string
+	RemoteDNS         string
+	PreferIPv4        bool
+	LogLevel          string
+	TailnetMode       string
+	Cloudflare        warp.Config
+	SystemProxyBypass []string
+}
+
+func cloneGatewayConfigSnapshot(snap gatewayConfigSnapshot) gatewayConfigSnapshot {
+	cp := snap
+	cp.Services = cloneServices(snap.Services)
+	cp.Rules = cloneRoutingRules(snap.Rules)
+	cp.Final = cloneRouteAction(snap.Final)
+	cp.BootstrapDomains = append([]string(nil), snap.BootstrapDomains...)
+	cp.Cloudflare.Account = snap.Cloudflare.Account.Clone()
+	cp.SystemProxyBypass = append([]string(nil), snap.SystemProxyBypass...)
+	return cp
+}
+
+func (a *app) buildGatewaySnapshotFromUI() gatewayConfigSnapshot {
+	a.gatewayMu.Lock()
+	cf := a.state.Cloudflare
+	cf.Account = a.state.Cloudflare.Account.Clone()
+	a.gatewayMu.Unlock()
+	return gatewayConfigSnapshot{
+		Initialized:       true,
+		GatewayEnabled:    a.state.GatewayEnabled,
+		GatewayPort:       a.state.GatewayPort,
+		TrafficMode:       a.state.TrafficMode,
+		Services:          cloneServices(a.state.Services),
+		Rules:             cloneRoutingRules(a.state.RoutingRules),
+		Final:             cloneRouteAction(a.state.RoutingFinal),
+		GeoSiteDB:         a.cachedSiteDB,
+		GeoIPDB:           a.cachedIPDB,
+		GeoTag:            a.localGeodataVersion,
+		BootstrapDomains:  a.collectBootstrapDomains(),
+		BootstrapDNS:      a.state.BootstrapDNS,
+		DomesticDNS:       a.effectiveDomesticDNS(),
+		RemoteDNS:         a.effectiveRemoteDNS(),
+		PreferIPv4:        a.state.PreferIPv4,
+		LogLevel:          a.state.LogLevel,
+		TailnetMode:       a.state.TailnetMode,
+		Cloudflare:        cf,
+		SystemProxyBypass: append([]string(nil), a.state.SystemProxyBypass...),
+	}
+}
+
+func (a *app) refreshGatewaySnapshot() {
+	snap := a.buildGatewaySnapshotFromUI()
+	a.gatewayMu.Lock()
+	a.gwSnap = snap
+	a.gatewayMu.Unlock()
+}
+
+func (a *app) refreshServicesSnapshot() {
+	services := cloneServices(a.state.Services)
+	a.gatewayMu.Lock()
+	if !a.gwSnap.Initialized {
+		a.gatewayMu.Unlock()
+		a.refreshGatewaySnapshot()
+		return
+	}
+	a.gwSnap.Services = services
+	a.gatewayMu.Unlock()
+}
+
+func (a *app) snapshotServices() []config.Service {
+	a.gatewayMu.Lock()
+	svcs := cloneServices(a.gwSnap.Services)
+	initialized := a.gwSnap.Initialized
+	a.gatewayMu.Unlock()
+	if !initialized {
+		return cloneServices(a.state.Services)
+	}
+	return svcs
+}
+
+func (a *app) getGatewaySnapshot() gatewayConfigSnapshot {
+	a.gatewayMu.Lock()
+	defer a.gatewayMu.Unlock()
+	return cloneGatewayConfigSnapshot(a.gwSnap)
+}
+
+func (a *app) isGatewayEnabled() bool {
+	a.gatewayMu.Lock()
+	if a.gwSnap.Initialized {
+		enabled := a.gwSnap.GatewayEnabled
+		a.gatewayMu.Unlock()
+		return enabled
+	}
+	a.gatewayMu.Unlock()
+	return a.state.GatewayEnabled
+}
+
+func (a *app) getCloudflareAccount() warp.Account {
+	a.gatewayMu.Lock()
+	acc := a.state.Cloudflare.Account.Clone()
+	a.gatewayMu.Unlock()
+	return acc
+}
+
+func (a *app) startDormantServiceForTag(eng *boxengine.Engine, tag string) {
 	a.dormantStartMu.Lock()
 	defer a.dormantStartMu.Unlock()
 
@@ -1563,15 +1801,17 @@ func (a *app) startDormantServiceForTag(tag string) {
 		return false
 	}
 
+	services := a.snapshotServices()
+
 	// If a matching service is already running or starting, wait briefly for it to reach StateRunning
 	// rather than spawning another service or restarting the same service.
-	for _, svc := range a.state.Services {
+	for _, svc := range services {
 		if matchesService(svc) && a.isServiceActive(svc.ID) {
 			for i := 0; i < 20; i++ {
 				st := a.mgr.StatusOf(svc.ID)
 				if st.State == runner.StateRunning {
-					if a.gateway != nil {
-						a.gateway.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+					if eng != nil {
+						eng.UpdateNodes(services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
 					}
 					return
 				}
@@ -1581,14 +1821,14 @@ func (a *app) startDormantServiceForTag(tag string) {
 		}
 	}
 
-	for _, svc := range a.state.Services {
+	for _, svc := range services {
 		if matchesService(svc) && !a.isServiceActive(svc.ID) {
 			_ = a.mgr.Start(svc)
 			for i := 0; i < 20; i++ {
 				st := a.mgr.StatusOf(svc.ID)
 				if st.State == runner.StateRunning {
-					if a.gateway != nil {
-						a.gateway.UpdateNodes(a.state.Services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+					if eng != nil {
+						eng.UpdateNodes(services, a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
 					}
 					return
 				}
@@ -1827,47 +2067,177 @@ func (a *app) waitLocalPortReady(svcID string, port int, maxWait time.Duration) 
 	}
 }
 
-func (a *app) ensureGatewaySynced() error {
+func (a *app) getTunDevice() *tunhelper.ReceivedDevice {
 	a.gatewayMu.Lock()
-	if !a.state.GatewayEnabled {
+	dev := a.tunDevice
+	a.gatewayMu.Unlock()
+	return dev
+}
+
+func (a *app) getLastGatewayErr() error {
+	a.gatewayMu.Lock()
+	err := a.lastGatewayErr
+	a.gatewayMu.Unlock()
+	return err
+}
+
+func (a *app) setLastGatewayErr(err error) {
+	a.gatewayMu.Lock()
+	a.lastGatewayErr = err
+	a.gatewayMu.Unlock()
+}
+
+func (a *app) getTrafficMode() string {
+	a.gatewayMu.Lock()
+	var m string
+	if a.gwSnap.Initialized {
+		m = a.gwSnap.TrafficMode
+	} else {
+		m = a.state.TrafficMode
+	}
+	a.gatewayMu.Unlock()
+	return m
+}
+
+func (a *app) setTrafficModeState(mode string) {
+	a.gatewayMu.Lock()
+	a.state.TrafficMode = mode
+	if a.gwSnap.Initialized {
+		a.gwSnap.TrafficMode = mode
+	}
+	a.gatewayMu.Unlock()
+}
+
+func (a *app) setSnapshotTrafficModeLocked(mode string) {
+	a.gatewayMu.Lock()
+	if a.gwSnap.Initialized {
+		a.gwSnap.TrafficMode = mode
+	}
+	a.gatewayMu.Unlock()
+}
+
+func (a *app) handleGatewayCloudflareAccountUpdate(eng *boxengine.Engine, acc warp.Account) {
+	if eng == nil {
+		return
+	}
+	var allocPorts map[string]int
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+	}
+	accCopy := acc.Clone()
+	a.gatewayMu.Lock()
+	if a.gateway != eng && a.startingGateway != eng {
 		a.gatewayMu.Unlock()
+		return
+	}
+	if !a.gwSnap.Initialized {
+		a.state.Cloudflare.Account = accCopy
+		snap, rev := a.snapshotPersistedStateLocked()
+		a.gatewayMu.Unlock()
+		a.persistStateFiles(snap, rev)
+		if a.win != nil {
+			a.win.Invalidate()
+		}
+		return
+	}
+	prevSig := a.gatewayConfigSignatureForSnapshot(a.gwSnap, allocPorts)
+	a.state.Cloudflare.Account = accCopy
+	a.gwSnap.Cloudflare.Account = accCopy.Clone()
+	if prevSig == a.lastGatewaySig {
+		a.lastGatewaySig = a.gatewayConfigSignatureForSnapshot(a.gwSnap, allocPorts)
+	}
+	snap, rev := a.snapshotPersistedStateLocked()
+	a.gatewayMu.Unlock()
+
+	a.persistStateFiles(snap, rev)
+	if a.win != nil {
+		a.win.Invalidate()
+	}
+}
+
+func (a *app) ensureGatewaySynced() error {
+	var allocPorts map[string]int
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+	}
+	a.gatewayLifecycleMu.Lock()
+	a.gatewayMu.Lock()
+	snap := cloneGatewayConfigSnapshot(a.gwSnap)
+	gw := a.gateway
+	lastSig := a.lastGatewaySig
+	a.gatewayMu.Unlock()
+	if !snap.Initialized {
+		a.refreshGatewaySnapshot()
+		snap = a.getGatewaySnapshot()
+	}
+	if !snap.GatewayEnabled {
+		a.gatewayLifecycleMu.Unlock()
 		return errors.New("gateway engine is not running")
 	}
-	if a.gateway != nil && a.gatewayConfigSignature() == a.lastGatewaySig {
-		a.gatewayMu.Unlock()
+	if gw != nil && a.gatewayConfigSignatureForSnapshot(snap, allocPorts) == lastSig {
+		a.gatewayLifecycleMu.Unlock()
 		return nil
 	}
-	needSave, err := a.startGatewayWithFallbackLocked()
-	a.gatewayMu.Unlock()
-	if needSave {
-		a.saveState()
+	needSave, toastMsg, err := a.startGatewayWithFallbackLocked()
+	a.gatewayLifecycleMu.Unlock()
+	if needSave || toastMsg != "" {
+		a.dispatchUI(func() {
+			if toastMsg != "" {
+				a.toast(toastMsg)
+			}
+			if needSave {
+				a.setTrafficModeState("port")
+				a.saveState()
+			}
+		})
 	}
-	if err != nil && a.gateway == nil {
+	if err != nil && a.getGateway() == nil {
 		return fmt.Errorf("网关内核启动失败: %w", err)
 	}
 	return err
 }
 
 func (a *app) startGateway() error {
-	a.gatewayMu.Lock()
-	defer a.gatewayMu.Unlock()
+	a.gatewayLifecycleMu.Lock()
+	defer a.gatewayLifecycleMu.Unlock()
+	a.refreshGatewaySnapshot()
 	return a.startGatewayLocked()
 }
 
-func (a *app) startGatewayLocked() error {
-	if a.gateway != nil {
-		_ = a.gateway.Stop()
-		a.gateway = nil
-		a.lastGatewayErr = nil
-		a.lastGatewaySig = ""
+func (a *app) detachGatewayLocked(closeTun bool) (*boxengine.Engine, *tunhelper.ReceivedDevice) {
+	a.gatewayMu.Lock()
+	oldGw := a.gateway
+	a.gateway = nil
+	a.startingGateway = nil
+	a.lastGatewayErr = nil
+	a.lastGatewaySig = ""
+	var oldTun *tunhelper.ReceivedDevice
+	if closeTun {
+		oldTun = a.tunDevice
+		a.tunDevice = nil
 	}
-	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
+	a.gatewayMu.Unlock()
+	return oldGw, oldTun
+}
+
+func (a *app) startGatewayLocked() error {
+	if oldGw, _ := a.detachGatewayLocked(false); oldGw != nil {
+		// Release gatewayMu before calling Stop() so in-flight engine callbacks
+		// (e.g. OnCloudflareAccountUpdate) cannot ABBA-deadlock during shutdown.
+		_ = oldGw.Stop()
+	}
+	snap := a.getGatewaySnapshot()
+	if !snap.Initialized {
+		a.refreshGatewaySnapshot()
+		snap = a.getGatewaySnapshot()
+	}
+	if a.tailnetMgr != nil && snap.TailnetMode != string(tailnet.ModeEmbedded) {
 		a.tailnetMgr.BindEmbeddedEndpoint(nil)
 	}
-	if !a.state.GatewayEnabled {
+	if !snap.GatewayEnabled {
 		return nil
 	}
-	port := a.state.GatewayPort
+	port := snap.GatewayPort
 	if port <= 0 {
 		port = 10809
 	}
@@ -1879,64 +2249,76 @@ func (a *app) startGatewayLocked() error {
 		activeIDs = a.mgr.RunningServiceIDs()
 	}
 
+	trafficMode := snap.TrafficMode
 	var tunFD int
 	var tunName string
-	if a.state.TrafficMode == "tun" {
+	if trafficMode == "tun" {
 		if runtime.GOOS == "windows" {
 			if a.mockTunDevice != nil {
-				if a.tunDevice == nil {
+				curTun := a.getTunDevice()
+				if curTun == nil {
 					dev, err := a.mockTunDevice()
 					if err != nil {
 						err = fmt.Errorf("request TUN device: %w", err)
-						a.lastGatewayErr = err
+						a.setLastGatewayErr(err)
 						return err
 					}
+					a.gatewayMu.Lock()
 					a.tunDevice = dev
+					a.gatewayMu.Unlock()
+					curTun = dev
 				}
-				if a.tunDevice != nil {
-					tunFD = a.tunDevice.FD
-					tunName = a.tunDevice.Name
+				if curTun != nil {
+					tunFD = curTun.FD
+					tunName = curTun.Name
 				}
 			} else {
 				// On Windows, Wintun runs in-process via wintun.dll with TunFD == 0.
 				// It requires the client process to be running with Administrator privileges.
 				if !tunhelper.IsElevated() {
 					err := errors.New("TUN 模式在 Windows 上需要以管理员身份运行客户端")
-					a.lastGatewayErr = err
+					a.setLastGatewayErr(err)
 					return err
 				}
 			}
 		} else {
-			if a.tunDevice == nil {
+			curTun := a.getTunDevice()
+			if curTun == nil {
 				dev, err := a.requestTunDevice()
 				if err != nil {
 					err = fmt.Errorf("request TUN device: %w", err)
-					a.lastGatewayErr = err
+					a.setLastGatewayErr(err)
 					return err
 				}
+				a.gatewayMu.Lock()
 				a.tunDevice = dev
+				a.gatewayMu.Unlock()
+				curTun = dev
 			}
-			if a.tunDevice != nil {
+			if curTun != nil {
 				// sing-tun wraps the fd in an os.File and closes it with the engine, so
 				// give it a private duplicate; ReceivedDevice keeps closing its own copy.
 				// Sharing one fd number made the second close hit an unrelated, reused fd.
-				tunFD = a.tunDevice.FD
+				tunFD = curTun.FD
 				if a.mockTunDevice == nil {
-					fd, err := tunhelper.DupFD(a.tunDevice.FD)
+					fd, err := tunhelper.DupFD(curTun.FD)
 					if err != nil {
 						err = fmt.Errorf("duplicate TUN fd: %w", err)
-						a.lastGatewayErr = err
+						a.setLastGatewayErr(err)
 						return err
 					}
 					tunFD = fd
 				}
-				tunName = a.tunDevice.Name
+				tunName = curTun.Name
 			}
 		}
 	} else {
-		if a.tunDevice != nil {
-			_ = a.tunDevice.Close()
-			a.tunDevice = nil
+		a.gatewayMu.Lock()
+		oldTun := a.tunDevice
+		a.tunDevice = nil
+		a.gatewayMu.Unlock()
+		if oldTun != nil {
+			_ = oldTun.Close()
 		}
 	}
 
@@ -1982,68 +2364,95 @@ func (a *app) startGatewayLocked() error {
 		}
 	}
 
-	eng, err := boxengine.New(boxengine.EngineOptions{
+	cfCfg := snap.Cloudflare
+	cfCfg.Account = cfCfg.Account.Clone()
+	var eng *boxengine.Engine
+	var err error
+	eng, err = boxengine.New(boxengine.EngineOptions{
 		ListenAddr:            fmt.Sprintf("127.0.0.1:%d", port),
-		TrafficMode:           a.state.TrafficMode,
+		TrafficMode:           trafficMode,
 		TunFD:                 tunFD,
 		TunInterface:          tunName,
 		TunAddresses:          tunAddrs,
 		TunCreator:            a.mockTunCreator,
 		NodeIPResolver:        a.nodeIPResolver(),
-		Services:              a.state.Services,
+		Services:              cloneServices(snap.Services),
 		AllocatedPorts:        allocPorts,
 		ActiveIDs:             activeIDs,
-		Rules:                 a.state.RoutingRules,
-		FinalAction:           string(a.state.RoutingFinal.Type),
-		FinalRoute:            a.state.RoutingFinal,
-		GeoSiteDB:             a.cachedSiteDB,
-		GeoIPDB:               a.cachedIPDB,
+		Rules:                 cloneRoutingRules(snap.Rules),
+		FinalAction:           string(snap.Final.Type),
+		FinalRoute:            cloneRouteAction(snap.Final),
+		GeoSiteDB:             snap.GeoSiteDB,
+		GeoIPDB:               snap.GeoIPDB,
 		Tracker:               a.tracker,
 		FailureMonitor:        a.failureMonitor,
 		Blocker:               a.blocker,
-		BootstrapDomains:      a.collectBootstrapDomains(),
-		BootstrapDNS:          parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS),
-		DomesticDoH:           parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH),
-		RemoteDoH:             parseDNSList(a.effectiveRemoteDNS(), boxengine.DefaultRemoteDoH),
-		PreferIPv4:            a.state.PreferIPv4,
+		BootstrapDomains:      append([]string(nil), snap.BootstrapDomains...),
+		BootstrapDNS:          parseDNSList(snap.BootstrapDNS, boxengine.DefaultBootstrapDNS),
+		DomesticDoH:           parseDNSList(snap.DomesticDNS, boxengine.DefaultDomesticDoH),
+		RemoteDoH:             parseDNSList(snap.RemoteDNS, boxengine.DefaultRemoteDoH),
+		PreferIPv4:            snap.PreferIPv4,
 		TailnetConfig:         &tnCfg,
 		TailnetMode:           tnMode,
 		TailnetHostExcludes:   tnExcludes,
 		TailnetMagicDNSSuffix: tnSuffix,
-		CloudflareConfig:      &a.state.Cloudflare,
+		CloudflareConfig:      &cfCfg,
+		OnCloudflareAccountUpdate: func(acc warp.Account) {
+			a.dispatchUI(func() {
+				a.handleGatewayCloudflareAccountUpdate(eng, acc)
+			})
+		},
 		StateDir:              a.userDataDir(),
-		LogLevel:              normalizeLogLevel(a.state.LogLevel),
+		LogLevel:              normalizeLogLevel(snap.LogLevel),
 		OnLog:                 a.appendGatewayLog,
 		OnDemandStart: func(tag string) {
-			a.startDormantServiceForTag(tag)
+			a.startDormantServiceForTag(eng, tag)
 		},
 		OnTelemetryUpdate: func() {
 			a.notifyTelemetryUI()
 		},
 	})
 	if err != nil {
-		if a.state.TrafficMode == "tun" && a.tunDevice != nil {
-			_ = a.tunDevice.Close()
-			a.tunDevice = nil
+		if trafficMode == "tun" {
+			if _, oldTun := a.detachGatewayLocked(true); oldTun != nil {
+				_ = oldTun.Close()
+			}
 		}
-		a.lastGatewayErr = err
+		a.setLastGatewayErr(err)
 		a.appendSystemLog("ERROR", "Gateway build failed: %v", err)
 		return err
 	}
+	a.gatewayMu.Lock()
+	a.startingGateway = eng
+	a.gatewayMu.Unlock()
 	if err := eng.Start(); err != nil {
-		_ = eng.Close()
-		if a.state.TrafficMode == "tun" && a.tunDevice != nil {
-			_ = a.tunDevice.Close()
-			a.tunDevice = nil
+		a.gatewayMu.Lock()
+		if a.startingGateway == eng {
+			a.startingGateway = nil
 		}
-		a.lastGatewayErr = err
+		a.gatewayMu.Unlock()
+		_ = eng.Close()
+		if trafficMode == "tun" {
+			if _, oldTun := a.detachGatewayLocked(true); oldTun != nil {
+				_ = oldTun.Close()
+			}
+		}
+		a.setLastGatewayErr(err)
 		a.appendSystemLog("ERROR", "Gateway start failed: %v", err)
 		return err
 	}
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+	}
+	a.gatewayMu.Lock()
+	if a.startingGateway == eng {
+		a.startingGateway = nil
+	}
 	a.gateway = eng
 	a.lastGatewayErr = nil
-	a.lastGatewaySig = a.gatewayConfigSignature()
-	a.appendSystemLog("INFO", "Gateway started on %s (mode: %s)", eng.Addr(), a.state.TrafficMode)
+	a.lastGatewaySig = a.gatewayConfigSignatureForSnapshot(a.gwSnap, allocPorts)
+	a.gatewayMu.Unlock()
+	a.appendSystemLog("INFO", "Gateway started on %s (mode: %s)", eng.Addr(), trafficMode)
 
 	if a.tailnetMgr != nil {
 		if tnMode == tailnet.ModeEmbedded {
@@ -2053,10 +2462,10 @@ func (a *app) startGatewayLocked() error {
 		}
 	}
 
-	if a.state.TrafficMode == "sysproxy" && a.sysproxy != nil {
-		sp, addr, bypass := a.sysproxy, eng.Addr(), a.state.SystemProxyBypass
+	if trafficMode == "sysproxy" && a.sysproxy != nil {
+		sp, addr, bypass := a.sysproxy, eng.Addr(), snap.SystemProxyBypass
 		a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
-	} else if a.state.TrafficMode == "tun" && a.sysproxy != nil {
+	} else if trafficMode == "tun" && a.sysproxy != nil {
 		_ = a.sysproxy.MarkDirtyTun(tunName)
 	}
 	a.releaseUnusedMemory()
@@ -2142,7 +2551,7 @@ func (a *app) collectBootstrapDomains() []string {
 }
 
 func (a *app) initDNS() {
-	if a.gateway != nil {
+	if a.getGateway() != nil {
 		_ = a.startGateway()
 	}
 }
@@ -2151,18 +2560,15 @@ func (a *app) stopGateway() {
 	if a.sysproxy != nil {
 		_ = a.sysproxy.Unset()
 	}
-	a.gatewayMu.Lock()
-	if a.gateway != nil {
-		_ = a.gateway.Stop()
-		a.gateway = nil
-		a.lastGatewayErr = nil
-		a.lastGatewaySig = ""
+	a.gatewayLifecycleMu.Lock()
+	oldGw, oldTun := a.detachGatewayLocked(true)
+	if oldGw != nil {
+		_ = oldGw.Stop()
 	}
-	if a.tunDevice != nil {
-		_ = a.tunDevice.Close()
-		a.tunDevice = nil
+	if oldTun != nil {
+		_ = oldTun.Close()
 	}
-	a.gatewayMu.Unlock()
+	a.gatewayLifecycleMu.Unlock()
 	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
 		a.tailnetMgr.BindEmbeddedEndpoint(nil)
 	}
@@ -2187,63 +2593,64 @@ func (a *app) runSysproxyOp(op func()) {
 // Regression: closing the fd while the engine still owned it made sing-tun
 // fail with "UTUN_OPT_MAX_PENDING_PACKETS: invalid argument" when leaving TUN mode.
 func (a *app) releaseTunDevice() {
-	a.gatewayMu.Lock()
-	if a.gateway != nil {
-		_ = a.gateway.Stop()
-		a.gateway = nil
-		a.lastGatewayErr = nil
-		a.lastGatewaySig = ""
+	a.gatewayLifecycleMu.Lock()
+	oldGw, oldTun := a.detachGatewayLocked(true)
+	if oldGw != nil {
+		_ = oldGw.Stop()
 	}
-	if a.tunDevice != nil {
-		_ = a.tunDevice.Close()
-		a.tunDevice = nil
+	if oldTun != nil {
+		_ = oldTun.Close()
 	}
-	a.gatewayMu.Unlock()
+	a.gatewayLifecycleMu.Unlock()
 }
 
 // startGatewayWithFallback starts the gateway and, if TUN mode fails (e.g. TUN helper
 // timeout or permission denial), cleans up the TUN device, falls back to "port" mode,
 // saves state, and restarts the gateway in port mode.
 func (a *app) startGatewayWithFallback() error {
-	a.gatewayMu.Lock()
-	needSave, err := a.startGatewayWithFallbackLocked()
-	a.gatewayMu.Unlock()
+	a.gatewayLifecycleMu.Lock()
+	a.refreshGatewaySnapshot()
+	needSave, toastMsg, err := a.startGatewayWithFallbackLocked()
+	a.gatewayLifecycleMu.Unlock()
+	if toastMsg != "" {
+		a.toast(toastMsg)
+	}
 	if needSave {
+		a.setTrafficModeState("port")
 		a.saveState()
 	}
 	return err
 }
 
-func (a *app) startGatewayWithFallbackLocked() (bool, error) {
+func (a *app) startGatewayWithFallbackLocked() (bool, string, error) {
 	err := a.startGatewayLocked()
 	if err == nil {
 		if a.win != nil {
 			a.win.Invalidate()
 		}
-		return false, nil
+		return false, "", nil
 	}
-	if a.state.TrafficMode == "tun" {
+	if a.getTrafficMode() == "tun" {
 		_ = os.WriteFile(filepath.Join(a.userDataDir(), "last_tun_error.txt"), []byte(err.Error()), 0644)
 		a.appendSystemLog("WARN", "TUN mode failed (%v); falling back to port mode", err)
-		if a.tunDevice != nil {
-			_ = a.tunDevice.Close()
-			a.tunDevice = nil
+		if _, oldTun := a.detachGatewayLocked(true); oldTun != nil {
+			_ = oldTun.Close()
 		}
-		a.state.TrafficMode = "port"
+		a.setSnapshotTrafficModeLocked("port")
 		fallbackErr := a.startGatewayLocked()
-		a.toast("TUN Mode error: " + err.Error())
+		toastMsg := "TUN Mode error: " + err.Error()
 		if a.win != nil {
 			a.win.Invalidate()
 		}
 		if fallbackErr != nil {
-			return true, fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
+			return true, toastMsg, fmt.Errorf("tun start error: %w (port fallback error: %v)", err, fallbackErr)
 		}
-		return true, err
+		return true, toastMsg, err
 	}
 	if a.win != nil {
 		a.win.Invalidate()
 	}
-	return false, err
+	return false, "", err
 }
 
 func (a *app) appendGatewayLog(level, msg string) {
@@ -2269,8 +2676,8 @@ func (a *app) setLogLevel(level string) {
 		return
 	}
 	a.state.LogLevel = norm
-	if a.gateway != nil {
-		a.gateway.SetLogLevel(norm)
+	if gw := a.getGateway(); gw != nil {
+		gw.SetLogLevel(norm)
 	}
 	if a.mgr != nil {
 		a.mgr.SetLogLevel(norm)
@@ -2283,17 +2690,17 @@ func (a *app) setTrafficMode(mode string) error {
 	a.appendSystemLog("INFO", "Switching traffic takeover mode to %s", mode)
 	switch mode {
 	case "port":
-		a.state.TrafficMode = "port"
+		a.setTrafficModeState("port")
 		if sp := a.sysproxy; sp != nil {
 			a.runSysproxyOp(func() { _ = sp.Unset() })
 		}
-		if a.tunDevice != nil {
-			restart := a.gateway != nil
+		if a.getTunDevice() != nil {
+			restart := a.getGateway() != nil
 			a.releaseTunDevice()
 			if restart || a.state.GatewayEnabled {
 				_ = a.startGateway()
 			}
-		} else if a.gateway == nil && a.state.GatewayEnabled {
+		} else if a.getGateway() == nil && a.state.GatewayEnabled {
 			_ = a.startGateway()
 		}
 		a.saveState()
@@ -2302,8 +2709,8 @@ func (a *app) setTrafficMode(mode string) error {
 		}
 		return nil
 	case "sysproxy":
-		a.state.TrafficMode = "sysproxy"
-		if a.tunDevice != nil {
+		a.setTrafficModeState("sysproxy")
+		if a.getTunDevice() != nil {
 			a.releaseTunDevice()
 			if err := a.startGateway(); err != nil {
 				if a.win != nil {
@@ -2311,7 +2718,7 @@ func (a *app) setTrafficMode(mode string) error {
 				}
 				return err
 			}
-		} else if a.gateway == nil {
+		} else if a.getGateway() == nil {
 			if err := a.startGateway(); err != nil {
 				if a.win != nil {
 					a.win.Invalidate()
@@ -2319,9 +2726,11 @@ func (a *app) setTrafficMode(mode string) error {
 				return err
 			}
 		}
-		if sp := a.sysproxy; sp != nil && a.gateway != nil {
-			addr, bypass := a.gateway.Addr(), a.state.SystemProxyBypass
-			a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
+		if sp := a.sysproxy; sp != nil {
+			if gw := a.getGateway(); gw != nil {
+				addr, bypass := gw.Addr(), a.state.SystemProxyBypass
+				a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
+			}
 		}
 		a.saveState()
 		if a.win != nil {
@@ -2329,7 +2738,7 @@ func (a *app) setTrafficMode(mode string) error {
 		}
 		return nil
 	case "tun":
-		a.state.TrafficMode = "tun"
+		a.setTrafficModeState("tun")
 		if a.sysproxy != nil {
 			_ = a.sysproxy.Unset()
 		}
@@ -2512,6 +2921,7 @@ func (a *app) loadGeoDataIfPresent() {
 	if prevIPDB != a.cachedIPDB || prevSiteDB != a.cachedSiteDB {
 		a.releaseUnusedMemory()
 	}
+	a.refreshGatewaySnapshot()
 }
 
 func (a *app) refreshGeoDataStatus() {
@@ -2654,6 +3064,14 @@ func engineTrafficMode(mode string) string {
 }
 
 func (a *app) gatewayConfigSignature() string {
+	var allocPorts map[string]int
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+	}
+	return a.gatewayConfigSignatureForSnapshot(a.buildGatewaySnapshotFromUI(), allocPorts)
+}
+
+func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allocPorts map[string]int) string {
 	type warpConfigSig struct {
 		HasConfig      bool
 		Transport      config.WarpTransport
@@ -2679,8 +3097,8 @@ func (a *app) gatewayConfigSignature() string {
 		EnableWARP  bool
 		WARPConfig  warpConfigSig
 	}
-	svcs := make([]svcSig, len(a.state.Services))
-	for i, s := range a.state.Services {
+	svcs := make([]svcSig, len(snap.Services))
+	for i, s := range snap.Services {
 		var wcSig warpConfigSig
 		if s.WARPConfig != nil {
 			preferH2 := "inherit"
@@ -2714,10 +3132,6 @@ func (a *app) gatewayConfigSignature() string {
 			WARPConfig:  wcSig,
 		}
 	}
-	var allocPorts map[string]int
-	if a.mgr != nil {
-		allocPorts = a.mgr.AllocatedPorts()
-	}
 	sigObj := struct {
 		Port             int
 		TrafficMode      string
@@ -2735,21 +3149,21 @@ func (a *app) gatewayConfigSignature() string {
 		PreferIPv4       bool
 		Cloudflare       warp.Config
 	}{
-		Port:             a.state.GatewayPort,
-		TrafficMode:      engineTrafficMode(a.state.TrafficMode),
+		Port:             snap.GatewayPort,
+		TrafficMode:      engineTrafficMode(snap.TrafficMode),
 		Svcs:             svcs,
 		AllocatedPorts:   allocPorts,
-		Rules:            a.state.RoutingRules,
-		Final:            a.state.RoutingFinal,
-		HasSiteDB:        a.cachedSiteDB != nil,
-		HasIPDB:          a.cachedIPDB != nil,
-		GeoTag:           a.localGeodataVersion,
-		BootstrapDomains: a.collectBootstrapDomains(),
-		Bootstrap:        a.state.BootstrapDNS,
-		Domestic:         a.effectiveDomesticDNS(),
-		Remote:           a.effectiveRemoteDNS(),
-		PreferIPv4:       a.state.PreferIPv4,
-		Cloudflare:       a.state.Cloudflare,
+		Rules:            snap.Rules,
+		Final:            snap.Final,
+		HasSiteDB:        snap.GeoSiteDB != nil,
+		HasIPDB:          snap.GeoIPDB != nil,
+		GeoTag:           snap.GeoTag,
+		BootstrapDomains: snap.BootstrapDomains,
+		Bootstrap:        snap.BootstrapDNS,
+		Domestic:         snap.DomesticDNS,
+		Remote:           snap.RemoteDNS,
+		PreferIPv4:       snap.PreferIPv4,
+		Cloudflare:       snap.Cloudflare,
 	}
 	return fmt.Sprintf("%#v", sigObj)
 }
@@ -2757,21 +3171,27 @@ func (a *app) gatewayConfigSignature() string {
 func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
 	a.loadGeoDataIfPresent()
-	a.gatewayMu.Lock()
-	gw := a.gateway
+	a.refreshGatewaySnapshot()
+	var allocPorts map[string]int
+	var activeIDs map[string]bool
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+		activeIDs = a.mgr.RunningServiceIDs()
+	}
+	a.gatewayLifecycleMu.Lock()
+	gw := a.getGateway()
 	if gw != nil {
-		var allocPorts map[string]int
-		var activeIDs map[string]bool
-		if a.mgr != nil {
-			allocPorts = a.mgr.AllocatedPorts()
-			activeIDs = a.mgr.RunningServiceIDs()
-		}
-		gw.UpdateNodes(a.state.Services, allocPorts, activeIDs)
-		if !a.state.GatewayEnabled || a.gatewayConfigSignature() != a.lastGatewaySig {
+		a.gatewayMu.Lock()
+		snap := cloneGatewayConfigSnapshot(a.gwSnap)
+		lastSig := a.lastGatewaySig
+		a.gatewayMu.Unlock()
+		gw.UpdateNodes(cloneServices(snap.Services), allocPorts, activeIDs)
+		needsRestart := !snap.GatewayEnabled || a.gatewayConfigSignatureForSnapshot(snap, allocPorts) != lastSig
+		if needsRestart {
 			_ = a.startGatewayLocked()
 		}
 	}
-	a.gatewayMu.Unlock()
+	a.gatewayLifecycleMu.Unlock()
 }
 
 func (a *app) isBuiltinWarpNeeded() bool {
@@ -2842,13 +3262,15 @@ func (a *app) syncBuiltinWarpService() {
 			warpSvc = a.state.Services[foundIdx]
 		}
 
+		a.refreshServicesSnapshot()
 		if a.mgr != nil && a.mgr.StatusOf(config.BuiltinWarpServiceID).State != runner.StateRunning {
-			if a.gateway != nil || a.state.GatewayEnabled {
+			if a.getGateway() != nil || a.state.GatewayEnabled {
 				_ = a.mgr.Start(warpSvc)
 			}
 		}
 
-		if !a.state.Cloudflare.Account.IsRegistered() && !a.warpRegistering {
+		registered := a.getCloudflareAccount().IsRegistered()
+		if !registered && !a.warpRegistering {
 			a.triggerWarpRegister()
 		}
 	} else {
@@ -2857,6 +3279,7 @@ func (a *app) syncBuiltinWarpService() {
 				_ = a.mgr.Stop(config.BuiltinWarpServiceID)
 			}
 			a.state.Services = append(a.state.Services[:foundIdx], a.state.Services[foundIdx+1:]...)
+			a.refreshServicesSnapshot()
 		}
 	}
 }
@@ -3005,8 +3428,8 @@ func (a *app) syncBlockerRules() {
 }
 
 func (a *app) clearDNSCache() {
-	if a.gateway != nil {
-		a.gateway.ClearDNSCache()
+	if gw := a.getGateway(); gw != nil {
+		gw.ClearDNSCache()
 	}
 }
 

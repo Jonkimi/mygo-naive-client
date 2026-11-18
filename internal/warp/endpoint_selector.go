@@ -186,19 +186,39 @@ func (s *EndpointSelector) now() time.Time {
 	return time.Now()
 }
 
-// GetCached returns the cached endpoint for key if present and unexpired.
-func (s *EndpointSelector) GetCached(key EndpointCacheKey) (string, bool) {
+func (s *EndpointSelector) getCachedEntry(key EndpointCacheKey) (cachedEndpointEntry, bool) {
 	now := s.now()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	entry, ok := s.cache[key]
 	if !ok || entry.endpoint == "" || now.After(entry.expiresAt) {
-		return "", false
+		return cachedEndpointEntry{}, false
 	}
 	if cooldowns := s.failedUntil[key]; cooldowns != nil {
 		if until, bad := cooldowns[entry.endpoint]; bad && now.Before(until) {
-			return "", false
+			return cachedEndpointEntry{}, false
 		}
+	}
+	return entry, true
+}
+
+func (s *EndpointSelector) isOnCooldown(key EndpointCacheKey, ep string) bool {
+	now := s.now()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if cooldowns := s.failedUntil[key]; cooldowns != nil {
+		if until, bad := cooldowns[ep]; bad && now.Before(until) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetCached returns the cached endpoint for key if present and unexpired.
+func (s *EndpointSelector) GetCached(key EndpointCacheKey) (string, bool) {
+	entry, ok := s.getCachedEntry(key)
+	if !ok {
+		return "", false
 	}
 	return entry.endpoint, true
 }
@@ -298,12 +318,9 @@ func (s *EndpointSelector) SelectMASQUEEndpoint(ctx context.Context, scopeKey st
 		Mode:     ModeMASQUE,
 		TCPOnly:  opts.TCPOnly || opts.ForceH2,
 	}
-	if cached, ok := s.GetCached(key); ok {
-		s.mu.RLock()
-		entry := s.cache[key]
-		s.mu.RUnlock()
+	if entry, ok := s.getCachedEntry(key); ok {
 		return EndpointCandidateResult{
-			Endpoint: cached,
+			Endpoint: entry.endpoint,
 			Protocol: entry.protocol,
 			RTT:      entry.rtt,
 		}, nil
@@ -312,6 +329,7 @@ func (s *EndpointSelector) SelectMASQUEEndpoint(ctx context.Context, scopeKey st
 	candidates := s.activeCandidates(key, s.masqueCandidates)
 	if scopeKey != "direct" && !opts.TCPOnly && !opts.ForceH2 {
 		// Chained remote nodes can resolve Cloudflare's Anycast hostname remotely if IPs fail.
+		const domainCandidate = "engage.cloudflareclient.com:443"
 		hasDomain := false
 		for _, c := range candidates {
 			if strings.HasPrefix(c, "engage.cloudflareclient.com:") {
@@ -319,8 +337,8 @@ func (s *EndpointSelector) SelectMASQUEEndpoint(ctx context.Context, scopeKey st
 				break
 			}
 		}
-		if !hasDomain && len(candidates) < defaultRuntimeBatch {
-			candidates = append(candidates, "engage.cloudflareclient.com:443")
+		if !hasDomain && len(candidates) < defaultRuntimeBatch && !s.isOnCooldown(key, domainCandidate) {
+			candidates = append(candidates, domainCandidate)
 		}
 	}
 
@@ -361,13 +379,20 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 		TCPOnly:  opts.TCPOnly || opts.ForceH2,
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+
 	// Fast path: if a cached endpoint exists, attempt direct tunnel connection without extra probe overhead.
 	if cached, ok := s.GetCached(key); ok {
 		tun, err := ConnectMASQUEWithOptions(ctx, dialer, cached, acc, opts)
 		if err == nil {
 			return tun, cached, nil
 		}
-		if !errors.Is(ctx.Err(), context.Canceled) {
+		if !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(err, context.Canceled) {
 			s.MarkFailed(key, cached)
 		}
 		if ctx.Err() != nil {
@@ -392,7 +417,7 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 
 	tun, err := ConnectMASQUEWithOptions(ctx, dialer, best.Endpoint, acc, opts)
 	if err != nil {
-		if !errors.Is(ctx.Err(), context.Canceled) {
+		if !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(err, context.Canceled) {
 			s.MarkFailed(key, best.Endpoint)
 		}
 		// Retry once with another candidate if context still has time.
@@ -400,9 +425,14 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 			if second, sErr := s.SelectMASQUEEndpoint(ctx, scopeKey, dialer, acc, opts); sErr == nil && second.Endpoint != best.Endpoint {
 				if tun2, err2 := ConnectMASQUEWithOptions(ctx, dialer, second.Endpoint, acc, opts); err2 == nil {
 					return tun2, second.Endpoint, nil
-				}
-				if !errors.Is(ctx.Err(), context.Canceled) {
-					s.MarkFailed(key, second.Endpoint)
+				} else {
+					if !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(err2, context.Canceled) {
+						s.MarkFailed(key, second.Endpoint)
+					}
+					if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err2, context.Canceled) {
+						return nil, "", err2
+					}
+					return nil, "", errors.Join(err, err2)
 				}
 			}
 		}
@@ -423,12 +453,9 @@ func (s *EndpointSelector) SelectWireGuardEndpoint(ctx context.Context, scopeKey
 		ScopeKey: scopeKey,
 		Mode:     ModeWireGuard,
 	}
-	if cached, ok := s.GetCached(key); ok {
-		s.mu.RLock()
-		entry := s.cache[key]
-		s.mu.RUnlock()
+	if entry, ok := s.getCachedEntry(key); ok {
 		return EndpointCandidateResult{
-			Endpoint: cached,
+			Endpoint: entry.endpoint,
 			Protocol: "wireguard",
 			RTT:      entry.rtt,
 		}, nil
@@ -464,6 +491,9 @@ func (s *EndpointSelector) raceCandidates(
 ) (EndpointCandidateResult, error) {
 	if len(candidates) == 0 {
 		return EndpointCandidateResult{}, errors.New("no candidate endpoints available")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	raceCtx, cancelRace := context.WithCancel(ctx)
@@ -508,6 +538,10 @@ func (s *EndpointSelector) raceCandidates(
 		wg.Wait()
 		close(allDone)
 	}()
+	defer func() {
+		cancelRace()
+		<-allDone
+	}()
 
 	var results []EndpointCandidateResult
 	var windowTimer *time.Timer
@@ -526,13 +560,11 @@ func (s *EndpointSelector) raceCandidates(
 				if windowTimer != nil {
 					windowTimer.Stop()
 				}
-				cancelRace()
 				return pickLowestRTT(results), nil
 			}
 		case err := <-errCh:
 			lastErr = err
 		case <-windowCh:
-			cancelRace()
 			return pickLowestRTT(results), nil
 		case <-allDone:
 			// Drain any queued successes that arrived simultaneously with allDone.
@@ -883,7 +915,15 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 		if err != nil {
 			return 0, err
 		}
-		defer rawConn.Close()
+		var closeOnce sync.Once
+		closeRaw := func() {
+			closeOnce.Do(func() {
+				_ = rawConn.Close()
+			})
+		}
+		defer closeRaw()
+		stopWatch := context.AfterFunc(ctx, closeRaw)
+		defer stopWatch()
 		tlsCfg := baseTLS.Clone()
 		tlsCfg.NextProtos = []string{"h2"}
 		tlsConn := tls.Client(rawConn, tlsCfg)
@@ -894,15 +934,24 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 	}
 
 	probeH3 := func() (time.Duration, error) {
-		rAddr, err := net.ResolveUDPAddr("udp", endpoint)
-		if err != nil {
-			return 0, err
-		}
 		pConn, err := dialer.ListenPacket(ctx, "udp", endpoint)
 		if err != nil {
 			return 0, err
 		}
-		defer pConn.Close()
+		var closeOnce sync.Once
+		closePConn := func() {
+			closeOnce.Do(func() {
+				_ = pConn.Close()
+			})
+		}
+		defer closePConn()
+		stopWatch := context.AfterFunc(ctx, closePConn)
+		defer stopWatch()
+
+		rAddr, err := resolveMASQUEUDPAddr(ctx, dialer, pConn, endpoint)
+		if err != nil {
+			return 0, err
+		}
 
 		qTr := &quic.Transport{
 			Conn:               pConn,
