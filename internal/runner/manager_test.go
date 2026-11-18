@@ -545,4 +545,34 @@ func TestManager_ConcurrentStartSameServiceLeavesSingleProcess(t *testing.T) {
 	}
 }
 
+// Regression: probing/speed-testing a running :0 sidecar with EnableWARP=false from UI state
+// previously passed socks://127.0.0.1:0 to OutboundEndpoint() instead of the allocated port.
+func TestResolveProbeEndpoint_AutoLoopbackFallback(t *testing.T) {
+	autoSvc := config.Service{
+		ID:       "auto-sidecar",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSidecar,
+		Listens:  []string{"socks://127.0.0.1:0"},
+		Proxies:  []string{"https://user:pass@example.com:443"},
+	}
+	ep, err := resolveProbeEndpoint(autoSvc, 54321)
+	if err != nil {
+		t.Fatalf("resolveProbeEndpoint failed: %v", err)
+	}
+	if ep.Port != 54321 || ep.DialAddr() != "127.0.0.1:54321" {
+		t.Fatalf("expected allocated port 54321, got %+v", ep)
+	}
+
+	fixedSvc := autoSvc
+	fixedSvc.Listens = []string{"socks://127.0.0.1:1080"}
+	epFixed, err := resolveProbeEndpoint(fixedSvc, 54321)
+	if err != nil {
+		t.Fatalf("resolveProbeEndpoint fixed failed: %v", err)
+	}
+	if epFixed.Port != 1080 {
+		t.Fatalf("expected explicit port 1080 preserved, got %+v", epFixed)
+	}
+}
+
+
 

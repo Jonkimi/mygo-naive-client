@@ -1092,6 +1092,7 @@ func (a *app) saveEditorService() {
 				break
 			}
 		}
+		a.refreshServicesSnapshot()
 		st := a.mgr.StatusOf(svc.ID).State
 		if st == runner.StateRunning || st == runner.StateStarting {
 			_ = a.mgr.Start(svc)

@@ -1396,6 +1396,160 @@ func TestCloudflarePage_AttachedNodesShowsActualWarpTransportBadges(t *testing.T
 	}
 }
 
+// Regression: disabling WARP on a running :0 sidecar node in the node editor previously
+// restarted the sidecar while syncRouter rebuilt the gateway before StateRunning, and
+// startGatewayLocked overwrote lastGatewaySig with post-build AllocatedPorts while
+// OnServiceStarted skipped ensureGatewaySynced when a.gateway was nil mid-restart.
+// That left node-<id> missing from the gateway (falling back to other pool/WARP nodes)
+// or out of sync.
+func TestSidecarWarp_DisableWhileRunningSyncsGatewayWithoutWarp(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:         "naive-warp-disable-01",
+		Name:       "Naive Sidecar WARP",
+		Protocol:   config.ProtoNaive,
+		Engine:     config.EngineSidecar,
+		Listens:    []string{"socks://127.0.0.1:0"},
+		Proxies:    []string{"https://user:pass@example.com:443"},
+		EnableWARP: true,
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{naiveSvc})
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = true
+	a.saveState()
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway failed: %v", err)
+	}
+	defer a.stopGateway()
+
+	if err := a.mgr.Start(naiveSvc); err != nil {
+		t.Fatalf("mgr.Start failed: %v", err)
+	}
+	defer a.mgr.StopAll()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.mgr.StatusOf(naiveSvc.ID).State == runner.StateRunning {
+			if gw := a.getGateway(); gw != nil {
+				if _, ok := gw.GetOutbound("raw-node-" + naiveSvc.ID); ok {
+					break
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	gwBefore := a.getGateway()
+	if gwBefore == nil {
+		t.Fatalf("expected running gateway")
+	}
+	obBefore, ok := gwBefore.GetOutbound(naiveSvc.ID)
+	if !ok || obBefore.Type() != "masque" {
+		t.Fatalf("expected node-%s outbound type=masque before disabling WARP, got ok=%v ob=%v", naiveSvc.ID, ok, obBefore)
+	}
+	if _, ok := gwBefore.GetOutbound("raw-node-" + naiveSvc.ID); !ok {
+		t.Fatalf("expected raw-node-%s before disabling WARP", naiveSvc.ID)
+	}
+	if !gwBefore.IsChainedWarp(naiveSvc.ID) {
+		t.Fatalf("expected IsChainedWarp(%s)=true before disabling WARP", naiveSvc.ID)
+	}
+
+	// Open editor, toggle WARP off, and save while the sidecar is running.
+	tt.SetSize(960, 900)
+	a.openEditServiceDialog(a.state.Services[0])
+	tt.Frame()
+	a.editor.scroll.Y = 400
+	tt.Frame()
+	if err := tt.Click(a.catalog().NodeEditorEnableWarp()); err != nil {
+		t.Fatalf("toggle disable warp: %v", err)
+	}
+	tt.Frame()
+	if a.editor.enableWARP {
+		t.Fatalf("expected editor.enableWARP to become false")
+	}
+	a.saveEditorService()
+
+	if a.state.Services[0].EnableWARP {
+		t.Fatalf("expected saved service EnableWARP=false")
+	}
+
+	// Wait for restarted sidecar and async ensureGatewaySynced() to converge.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.mgr.StatusOf(naiveSvc.ID).State == runner.StateRunning {
+			if gw := a.getGateway(); gw != nil {
+				if ob, ok := gw.GetOutbound(naiveSvc.ID); ok && ob.Type() == "socks" {
+					break
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	gwAfter := a.getGateway()
+	if gwAfter == nil {
+		t.Fatalf("expected running gateway after disabling WARP")
+	}
+	obAfter, ok := gwAfter.GetOutbound(naiveSvc.ID)
+	if !ok {
+		t.Fatalf("expected node-%s outbound in gateway after disabling WARP", naiveSvc.ID)
+	}
+	if obAfter.Type() != "socks" {
+		t.Fatalf("expected node-%s outbound type=socks after disabling WARP, got %q", naiveSvc.ID, obAfter.Type())
+	}
+	if _, ok := gwAfter.GetOutbound("raw-node-" + naiveSvc.ID); ok {
+		t.Fatalf("expected raw-node-%s to be removed after disabling WARP", naiveSvc.ID)
+	}
+	if gwAfter.IsChainedWarp(naiveSvc.ID) {
+		t.Fatalf("expected IsChainedWarp(%s)=false after disabling WARP", naiveSvc.ID)
+	}
+}
+
+// Regression: when a :0 sidecar finishes starting while startGatewayLocked() is mid-restart,
+// lastGatewaySig must still reflect the ports passed into boxengine.New so ensureGatewaySynced()
+// detects the new port and rebuilds the gateway with node-<id>.
+func TestSidecar_StartGatewayLockedPreservesBuiltPortsForSig(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:       "naive-sig-race-01",
+		Name:     "Naive Sig Race",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSidecar,
+		Listens:  []string{"socks://127.0.0.1:0"},
+		Proxies:  []string{"https://user:pass@example.com:443"},
+	}
+
+	a, _, _ := newTestApp(t, []config.Service{naiveSvc})
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = true
+	a.saveState()
+
+	// Build initial gateway while sidecar is stopped (node outbound is omitted).
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway failed: %v", err)
+	}
+	defer a.stopGateway()
+
+	if _, ok := a.getGateway().GetOutbound(naiveSvc.ID); ok {
+		t.Fatalf("expected no node-%s outbound while sidecar is stopped", naiveSvc.ID)
+	}
+
+	// Simulate sidecar reaching StateRunning with an allocated port.
+	a.mgr.SetStatusForTest(naiveSvc.ID, runner.Status{
+		State:         runner.StateRunning,
+		AllocatedPort: freeLocalPort(t),
+	})
+
+	if err := a.ensureGatewaySynced(); err != nil {
+		t.Fatalf("ensureGatewaySynced failed: %v", err)
+	}
+	ob, ok := a.getGateway().GetOutbound(naiveSvc.ID)
+	if !ok || ob.Type() != "socks" {
+		t.Fatalf("expected node-%s outbound type=socks after ensureGatewaySynced, got ok=%v ob=%v", naiveSvc.ID, ok, ob)
+	}
+}
+
+
+
 
 
 

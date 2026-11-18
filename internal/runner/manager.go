@@ -756,6 +756,14 @@ func (m *Manager) Remove(id string) {
 	m.onChange()
 }
 
+func resolveProbeEndpoint(svc config.Service, allocPort int) (config.ListenEndpoint, error) {
+	ep, err := svc.OutboundEndpoint()
+	if err == nil && ep.Port == 0 && allocPort > 0 && svc.EffectiveKind() != config.KindExternalProxy {
+		ep.Port = allocPort
+	}
+	return ep, err
+}
+
 // ProbeServiceCtx synchronously measures latency through the service's primary listen endpoint,
 // respecting the provided context for cancellation. The service must be in StateRunning.
 func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probeURL string) (time.Duration, error) {
@@ -767,6 +775,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 	}
 	inst.status.Probing = true
 	inst.status.ProbeError = ""
+	allocPort := inst.status.AllocatedPort
 	m.mu.Unlock()
 	m.onChange()
 
@@ -783,7 +792,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 		cancel()
 	} else {
 		var ep config.ListenEndpoint
-		ep, err = svc.OutboundEndpoint()
+		ep, err = resolveProbeEndpoint(svc, allocPort)
 		if err == nil {
 			probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			rtt, err = Probe(probeCtx, ep, probeURL)
@@ -844,6 +853,7 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 	inst.status.SpeedTesting = true
 	inst.status.SpeedError = ""
 	inst.status.DownloadSpeed = 0
+	allocPort := inst.status.AllocatedPort
 	m.mu.Unlock()
 	m.onChange()
 
@@ -865,7 +875,7 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 		cancel()
 	} else {
 		var ep config.ListenEndpoint
-		ep, err = svc.OutboundEndpoint()
+		ep, err = resolveProbeEndpoint(svc, allocPort)
 		if err == nil {
 			speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 			bps, err = MeasureDownloadSpeed(speedCtx, ep, downloadURL, func(sample float64) {

@@ -104,6 +104,7 @@ type app struct {
 	failureMonitor *telemetry.FailureMonitor
 	gateway         *boxengine.Engine
 	startingGateway *boxengine.Engine
+	gatewayStarting bool
 	lastGatewayErr  error
 	lastGatewaySig  string
 	gwSnap          gatewayConfigSnapshot
@@ -533,7 +534,7 @@ func (a *app) initSubsystems() {
 		if a.tracker != nil {
 			a.tracker.ResetNode(svc.ID)
 		}
-		if svc.EffectiveEngine() != config.EngineSingBox && a.isGatewayEnabled() && a.getGateway() != nil {
+		if svc.EffectiveEngine() != config.EngineSingBox && a.isGatewayEnabled() && a.isGatewayActiveOrStarting() {
 			go func() {
 				_ = a.ensureGatewaySynced()
 			}()
@@ -2132,6 +2133,13 @@ func (a *app) getGateway() *boxengine.Engine {
 	return gw
 }
 
+func (a *app) isGatewayActiveOrStarting() bool {
+	a.gatewayMu.Lock()
+	active := a.gateway != nil || a.startingGateway != nil || a.gatewayStarting
+	a.gatewayMu.Unlock()
+	return active
+}
+
 func (a *app) waitLocalPortReady(svcID string, port int, maxWait time.Duration) {
 	if port <= 0 {
 		return
@@ -2240,11 +2248,11 @@ func (a *app) handleGatewayCloudflareAccountUpdate(eng *boxengine.Engine, acc wa
 }
 
 func (a *app) ensureGatewaySynced() error {
+	a.gatewayLifecycleMu.Lock()
 	var allocPorts map[string]int
 	if a.mgr != nil {
 		allocPorts = a.mgr.AllocatedPorts()
 	}
-	a.gatewayLifecycleMu.Lock()
 	a.gatewayMu.Lock()
 	snap := cloneGatewayConfigSnapshot(a.gwSnap)
 	gw := a.gateway
@@ -2305,6 +2313,14 @@ func (a *app) detachGatewayLocked(closeTun bool) (*boxengine.Engine, *tunhelper.
 }
 
 func (a *app) startGatewayLocked() error {
+	a.gatewayMu.Lock()
+	a.gatewayStarting = true
+	a.gatewayMu.Unlock()
+	defer func() {
+		a.gatewayMu.Lock()
+		a.gatewayStarting = false
+		a.gatewayMu.Unlock()
+	}()
 	if oldGw, _ := a.detachGatewayLocked(false); oldGw != nil {
 		// Release gatewayMu before calling Stop() so in-flight engine callbacks
 		// (e.g. OnCloudflareAccountUpdate) cannot ABBA-deadlock during shutdown.
@@ -2525,16 +2541,17 @@ func (a *app) startGatewayLocked() error {
 		a.appendSystemLog("ERROR", "Gateway start failed: %v", err)
 		return err
 	}
-	if a.mgr != nil {
-		allocPorts = a.mgr.AllocatedPorts()
-	}
 	a.gatewayMu.Lock()
 	if a.startingGateway == eng {
 		a.startingGateway = nil
 	}
 	a.gateway = eng
+	a.gatewayStarting = false
 	a.lastGatewayErr = nil
-	a.lastGatewaySig = a.gatewayConfigSignatureForSnapshot(a.gwSnap, allocPorts)
+	if a.gwSnap.Initialized {
+		snap.Cloudflare.Account = a.gwSnap.Cloudflare.Account.Clone()
+	}
+	a.lastGatewaySig = a.gatewayConfigSignatureForSnapshot(snap, allocPorts)
 	a.gatewayMu.Unlock()
 	a.appendSystemLog("INFO", "Gateway started on %s (mode: %s)", eng.Addr(), trafficMode)
 
@@ -3339,13 +3356,13 @@ func (a *app) syncRouter() {
 	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
 	a.loadGeoDataIfPresent()
 	a.refreshGatewaySnapshot()
+	a.gatewayLifecycleMu.Lock()
 	var allocPorts map[string]int
 	var activeIDs map[string]bool
 	if a.mgr != nil {
 		allocPorts = a.mgr.AllocatedPorts()
 		activeIDs = a.mgr.RunningServiceIDs()
 	}
-	a.gatewayLifecycleMu.Lock()
 	gw := a.getGateway()
 	if gw != nil {
 		a.gatewayMu.Lock()
