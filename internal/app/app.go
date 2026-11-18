@@ -109,8 +109,11 @@ type app struct {
 	gwSnap          gatewayConfigSnapshot
 	stateRev        uint64
 	persistedRev    uint64
-	sysproxyQueue   chan func() // serial worker so slow networksetup calls never block the UI
-	sysproxy        *sysproxy.Sysproxy
+	sysproxyMu     sync.Mutex    // serializes access to sysproxyOps and worker lifecycle
+	sysproxyOps    []func()      // FIFO queue so slow networksetup calls stay ordered off the UI thread
+	sysproxySignal chan struct{} // buffered(1) wakeup signal for the sysproxy worker
+	sysproxyClosed bool
+	sysproxy       *sysproxy.Sysproxy
 	router          *routing.Router
 	blocker         *blocker.Engine
 	tailnetMgr      *tailnet.Manager
@@ -348,6 +351,7 @@ func Run() error {
 		}
 		a.stopGateway()
 		wg.Wait()
+		a.closeSysproxyWorker()
 		a.destroyTray()
 	})
 
@@ -370,6 +374,7 @@ func Run() error {
 			}
 			a.stopGateway()
 			wg.Wait()
+			a.closeSysproxyWorker()
 			mygo.App.Quit()
 		case <-a.quitCh:
 			return
@@ -595,8 +600,8 @@ func (a *app) boot() {
 	if !a.headless {
 		a.openAtLogin = mygo.App.OpenAtLogin()
 	}
-	if a.sysproxy != nil {
-		_ = a.sysproxy.RecoverIfDirty()
+	if sp := a.sysproxy; sp != nil {
+		a.runSysproxyOpSync(func() { _ = sp.RecoverIfDirty() })
 	}
 	if a.localVersion != "" {
 		for _, svc := range a.state.Services {
@@ -2545,7 +2550,8 @@ func (a *app) startGatewayLocked() error {
 		sp, addr, bypass := a.sysproxy, eng.Addr(), snap.SystemProxyBypass
 		a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
 	} else if trafficMode == "tun" && a.sysproxy != nil {
-		_ = a.sysproxy.MarkDirtyTun(tunName)
+		sp := a.sysproxy
+		a.runSysproxyOp(func() { _ = sp.MarkDirtyTun(tunName) })
 	}
 	a.releaseUnusedMemory()
 	return nil
@@ -2636,8 +2642,8 @@ func (a *app) initDNS() {
 }
 
 func (a *app) stopGateway() {
-	if a.sysproxy != nil {
-		_ = a.sysproxy.Unset()
+	if sp := a.sysproxy; sp != nil {
+		a.runSysproxyOpSync(func() { _ = sp.Unset() })
 	}
 	a.gatewayLifecycleMu.Lock()
 	oldGw, oldTun := a.detachGatewayLocked(true)
@@ -2653,19 +2659,101 @@ func (a *app) stopGateway() {
 	}
 }
 
+func (a *app) enqueueSysproxyOp(op func()) bool {
+	a.sysproxyMu.Lock()
+	if a.sysproxyClosed {
+		a.sysproxyMu.Unlock()
+		return false
+	}
+	if a.sysproxySignal == nil {
+		a.sysproxySignal = make(chan struct{}, 1)
+		sig := a.sysproxySignal
+		go a.runSysproxyWorker(sig)
+	}
+	a.sysproxyOps = append(a.sysproxyOps, op)
+	sig := a.sysproxySignal
+	a.sysproxyMu.Unlock()
+	select {
+	case sig <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+func (a *app) runSysproxyWorker(sig chan struct{}) {
+	for {
+		a.sysproxyMu.Lock()
+		if len(a.sysproxyOps) == 0 {
+			if a.sysproxyClosed {
+				a.sysproxyMu.Unlock()
+				return
+			}
+			a.sysproxyMu.Unlock()
+			<-sig
+			continue
+		}
+		op := a.sysproxyOps[0]
+		a.sysproxyOps[0] = nil
+		a.sysproxyOps = a.sysproxyOps[1:]
+		if len(a.sysproxyOps) == 0 {
+			a.sysproxyOps = nil
+		}
+		a.sysproxyMu.Unlock()
+		op()
+	}
+}
+
+func (a *app) hasSysproxyWorker() bool {
+	a.sysproxyMu.Lock()
+	started := a.sysproxySignal != nil
+	a.sysproxyMu.Unlock()
+	return started
+}
+
+func (a *app) closeSysproxyWorker() {
+	a.sysproxyMu.Lock()
+	if a.sysproxyClosed {
+		a.sysproxyMu.Unlock()
+		return
+	}
+	a.sysproxyClosed = true
+	sig := a.sysproxySignal
+	a.sysproxyMu.Unlock()
+	if sig != nil {
+		select {
+		case sig <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // runSysproxyOp queues a system-proxy change on a single worker. Each
 // networksetup call takes tens to hundreds of ms and a switch makes many of
 // them, so doing it inline froze the UI for 2-3s; the queue keeps rapid clicks ordered.
 func (a *app) runSysproxyOp(op func()) {
-	if a.sysproxyQueue == nil {
-		a.sysproxyQueue = make(chan func(), 16)
-		go func(q chan func()) {
-			for f := range q {
-				f()
-			}
-		}(a.sysproxyQueue)
+	if op == nil {
+		return
 	}
-	a.sysproxyQueue <- op
+	a.enqueueSysproxyOp(op)
+}
+
+// runSysproxyOpSync queues op on the sysproxy worker and waits for it (and all
+// earlier queued ops) to finish.
+func (a *app) runSysproxyOpSync(op func()) {
+	done := make(chan struct{})
+	enqueued := a.enqueueSysproxyOp(func() {
+		defer close(done)
+		if op != nil {
+			op()
+		}
+	})
+	if !enqueued {
+		if op != nil {
+			op()
+		}
+		return
+	}
+	<-done
 }
 
 // releaseTunDevice stops the running gateway before closing the TUN device.
@@ -2818,8 +2906,8 @@ func (a *app) setTrafficMode(mode string) error {
 		return nil
 	case "tun":
 		a.setTrafficModeState("tun")
-		if a.sysproxy != nil {
-			_ = a.sysproxy.Unset()
+		if sp := a.sysproxy; sp != nil {
+			a.runSysproxyOp(func() { _ = sp.Unset() })
 		}
 		if err := a.startGatewayWithFallback(); err != nil {
 			return err

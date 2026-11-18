@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
+	"naive-client/internal/sysproxy"
 	"naive-client/internal/tunhelper"
 	"naive-client/internal/updater"
 	"naive-client/locales"
@@ -97,6 +99,14 @@ done
 
 	a := newApp(tmpDir)
 	a.headless = true
+	// Isolate tests from mutating the host's real system proxy (networksetup /
+	// gsettings / reg) and prevent OS background traffic from hitting test gateways.
+	a.sysproxy = sysproxy.NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+		if name == "networksetup" && len(args) > 0 && args[0] == "-listallnetworkservices" {
+			return []byte("Wi-Fi\n"), nil
+		}
+		return []byte("ok"), nil
+	}, filepath.Join(tmpDir, "network-recovery.json"))
 	a.state.Language = locales.LangZhHans
 	a.state.AutoCheckUpdate = false
 	a.state.Services = initialServices
@@ -125,6 +135,10 @@ done
 	}
 
 	t.Cleanup(func() {
+		if a.getGateway() != nil || a.getTunDevice() != nil || a.hasSysproxyWorker() {
+			a.stopGateway()
+		}
+		a.closeSysproxyWorker()
 		if a.mgr != nil {
 			_ = a.mgr.StopAll()
 		}
@@ -1494,6 +1508,7 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 		t.Fatalf("click ModeSysProxy: %v", err)
 	}
 	tt.Frame()
+	a.runSysproxyOpSync(nil)
 
 	if a.state.TrafficMode != "sysproxy" {
 		t.Fatalf("expected trafficMode 'sysproxy' after click, got %q", a.state.TrafficMode)
@@ -1528,6 +1543,7 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 		t.Fatalf("click ModePortOnly: %v", err)
 	}
 	tt.Frame()
+	a.runSysproxyOpSync(nil)
 
 	if a.state.TrafficMode != "port" {
 		t.Fatalf("expected trafficMode 'port' after click, got %q", a.state.TrafficMode)
@@ -1554,6 +1570,131 @@ func TestTopBar_TrafficModeSwitching(t *testing.T) {
 	}
 	if a.tunDevice == nil {
 		t.Fatalf("expected tunDevice to be active after clicking ModeTun in collapsed sidebar")
+	}
+}
+
+// Regression: setTrafficMode("tun"), startGatewayLocked (MarkDirtyTun), and stopGateway
+// previously mutated a.sysproxy directly outside sysproxyQueue, so a slow queued Set
+// could block the UI on setTrafficMode("tun") or run out-of-order after Unset.
+func TestTrafficMode_SysproxyOpsSerializedInQueue(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = true
+
+	setEntered := make(chan struct{})
+	releaseSet := make(chan struct{})
+	var enterOnce sync.Once
+
+	var recMu sync.Mutex
+	var ops []string
+
+	isSetArg := func(args []string) bool {
+		for _, arg := range args {
+			if arg == "-setwebproxy" || arg == "'manual'" || arg == "1" {
+				return true
+			}
+		}
+		return false
+	}
+	isUnsetArg := func(args []string) bool {
+		for _, arg := range args {
+			if arg == "-setwebproxystate" || arg == "'none'" || arg == "0" {
+				return true
+			}
+		}
+		return false
+	}
+
+	recoveryPath := filepath.Join(a.dataDir, "network-recovery.json")
+	a.sysproxy = sysproxy.NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+		if name == "networksetup" && len(args) > 0 && args[0] == "-listallnetworkservices" {
+			return []byte("Wi-Fi\n"), nil
+		}
+		if isSetArg(args) {
+			recMu.Lock()
+			ops = append(ops, "set")
+			recMu.Unlock()
+			enterOnce.Do(func() {
+				close(setEntered)
+				<-releaseSet
+			})
+		} else if isUnsetArg(args) {
+			recMu.Lock()
+			ops = append(ops, "unset")
+			recMu.Unlock()
+		}
+		return []byte("ok"), nil
+	}, recoveryPath)
+
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway: %v", err)
+	}
+	defer a.stopGateway()
+
+	// Start first sysproxy Set and wait until it is actively running inside exec.
+	if err := a.setTrafficMode("sysproxy"); err != nil {
+		t.Fatalf("setTrafficMode(sysproxy #1): %v", err)
+	}
+	select {
+	case <-setEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first sysproxy Set to enter executor")
+	}
+
+	// Queue a second sysproxy Set behind the blocked one, then immediately switch to TUN.
+	if err := a.setTrafficMode("sysproxy"); err != nil {
+		t.Fatalf("setTrafficMode(sysproxy #2): %v", err)
+	}
+
+	tunErrCh := make(chan error, 1)
+	go func() {
+		tunErrCh <- a.setTrafficMode("tun")
+	}()
+
+	select {
+	case err := <-tunErrCh:
+		if err != nil {
+			t.Fatalf("setTrafficMode(tun): %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		close(releaseSet)
+		t.Fatal("setTrafficMode(tun) blocked waiting on in-flight sysproxy Set")
+	}
+
+	// stopGateway must wait for all queued sysproxy operations and unset cleanly.
+	stopDone := make(chan struct{})
+	go func() {
+		defer close(stopDone)
+		a.stopGateway()
+	}()
+
+	close(releaseSet)
+
+	select {
+	case <-stopDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for stopGateway")
+	}
+
+	if a.sysproxy.IsActive() {
+		t.Fatal("expected sysproxy inactive after stopGateway")
+	}
+
+	recMu.Lock()
+	recorded := append([]string(nil), ops...)
+	recMu.Unlock()
+
+	lastSet := -1
+	firstUnset := -1
+	for i, op := range recorded {
+		if op == "set" {
+			lastSet = i
+		} else if op == "unset" && firstUnset == -1 {
+			firstUnset = i
+		}
+	}
+	if lastSet == -1 || firstUnset == -1 || firstUnset < lastSet {
+		t.Fatalf("expected all sysproxy sets to precede every unset, got ops=%v", recorded)
 	}
 }
 
