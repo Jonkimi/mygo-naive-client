@@ -536,6 +536,17 @@ func (a *app) loadState() {
 		} else if len(st.Services[i].Listens) == 0 {
 			st.Services[i].Listens = []string{"socks://127.0.0.1:1080"}
 		}
+		if st.Services[i].EnableWARP && st.Services[i].IsTCPOnlyProxy() && st.Services[i].WARPConfig != nil {
+			if st.Services[i].WARPConfig.Transport != config.WarpTransportMasque {
+				st.Services[i].WARPConfig.Transport = config.WarpTransportMasque
+				needsResave = true
+			}
+			if st.Services[i].WARPConfig.MasquePreferH2 == nil || !*st.Services[i].WARPConfig.MasquePreferH2 {
+				preferH2 := true
+				st.Services[i].WARPConfig.MasquePreferH2 = &preferH2
+				needsResave = true
+			}
+		}
 	}
 	a.gatewayMu.Lock()
 	a.state = st

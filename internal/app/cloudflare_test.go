@@ -1281,6 +1281,121 @@ func TestCloudflareAccountUpdate_DoesNotRestartOrDeadlockGateway(t *testing.T) {
 	<-done
 }
 
+// Regression: enabling WARP on a Naive sidecar node previously inherited global ChainedMode
+// (WireGuard) in the node editor, saving WARPConfig.Transport="wireguard" and rendering
+// "➔ WARP · WG" on the node card even though boxengine always forces MASQUE over HTTP/2.
+func TestNaiveWarp_EditorSavesMasqueH2AndNormalizesCardBadge(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:       "naive-warp-ui-01",
+		Name:     "Naive Sidecar",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSidecar,
+		Listens:  []string{"socks://127.0.0.1:1080"},
+		Proxies:  []string{"https://user:pass@example.com:443"},
+	}
+	a, tt, _ := newTestApp(t, []config.Service{naiveSvc})
+	a.state.Cloudflare.ChainedMode = warp.ModeWireGuard
+	a.saveState()
+
+	// 1. Toggle EnableWARP in node editor -> must persist MASQUE + PreferH2=true, never WireGuard.
+	tt.SetSize(960, 900)
+	a.openEditServiceDialog(naiveSvc)
+	tt.Frame()
+	a.editor.scroll.Y = 400
+	tt.Frame()
+	if err := tt.Click(a.catalog().NodeEditorEnableWarp()); err != nil {
+		t.Fatalf("toggle enable warp: %v", err)
+	}
+	tt.Frame()
+	if !a.editor.enableWARP {
+		t.Fatalf("expected editor.enableWARP to become true")
+	}
+
+	built, err := a.buildServiceFromEditor()
+	if err != nil {
+		t.Fatalf("buildServiceFromEditor failed: %v", err)
+	}
+	if built.WARPConfig == nil || built.WARPConfig.Transport != config.WarpTransportMasque {
+		t.Fatalf("expected Naive+WARP to save WarpTransportMasque, got %+v", built.WARPConfig)
+	}
+	if built.WARPConfig.MasquePreferH2 == nil || !*built.WARPConfig.MasquePreferH2 {
+		t.Fatalf("expected Naive+WARP to save MasquePreferH2=true, got %+v", built.WARPConfig)
+	}
+
+	// 2. Legacy persisted state with Transport="wireguard" on Naive+WARP must normalize on load
+	// and render "➔ WARP · MASQUE H2" (not "WARP · WG") on the node card.
+	a.editor.open = false
+	legacy := naiveSvc
+	legacy.EnableWARP = true
+	legacy.WARPConfig = &config.WarpNodeConfig{Transport: config.WarpTransportWireGuard}
+	a.state.Services = []config.Service{legacy}
+	a.saveState()
+
+	a.loadState()
+	tt.Frame()
+
+	reloaded := a.state.Services[0]
+	if reloaded.WARPConfig == nil || reloaded.WARPConfig.Transport != config.WarpTransportMasque {
+		t.Fatalf("expected loadState to normalize Naive+WARP transport to masque, got %+v", reloaded.WARPConfig)
+	}
+	if reloaded.WARPConfig.MasquePreferH2 == nil || !*reloaded.WARPConfig.MasquePreferH2 {
+		t.Fatalf("expected loadState to normalize Naive+WARP MasquePreferH2=true, got %+v", reloaded.WARPConfig)
+	}
+	if !tt.HasText("➔ WARP · MASQUE H2") {
+		t.Fatalf("expected node card to show '➔ WARP · MASQUE H2'")
+	}
+	if tt.HasText("WARP · WG") {
+		t.Fatalf("node card must not show 'WARP · WG' for Naive sidecar node")
+	}
+}
+
+// Regression: the Cloudflare page's Attached Nodes section previously rendered a generic
+// "<PROTO> ➔ WARP" pill without the actual WARP transport protocol (and omitted the protocol
+// badge for direct WARP nodes), diverging from the main node cards and drawer.
+func TestCloudflarePage_AttachedNodesShowsActualWarpTransportBadges(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:         "cf-naive-warp",
+		Name:       "CF-Naive-WARP",
+		Protocol:   config.ProtoNaive,
+		Engine:     config.EngineSidecar,
+		Listens:    []string{"socks://127.0.0.1:1080"},
+		Proxies:    []string{"https://user:pass@example.com:443"},
+		EnableWARP: true,
+		WARPConfig: &config.WarpNodeConfig{Transport: config.WarpTransportWireGuard},
+	}
+	vlessSvc := config.Service{
+		ID:         "cf-vless-warp",
+		Name:       "CF-VLESS-WARP",
+		Protocol:   config.ProtoVLESS,
+		Server:     "vless.example.com",
+		ServerPort: 443,
+		UUID:       "11111111-1111-1111-1111-111111111111",
+		EnableWARP: true,
+	}
+	directSvc := config.Service{
+		ID:       "cf-direct-warp",
+		Name:     "CF-Direct-WARP",
+		Protocol: config.ProtoWARP,
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{naiveSvc, vlessSvc, directSvc})
+	a.activeTab = TabCloudflare
+	tt.SetSize(960, 900)
+	tt.Frame()
+	a.cloudflareScroll.Y = 450
+	tt.Frame()
+
+	if !tt.HasText("NAIVE · SIDECAR") || !tt.HasText("➔ WARP · MASQUE H2") {
+		t.Fatalf("expected Naive+WARP row to show 'NAIVE · SIDECAR' and '➔ WARP · MASQUE H2'")
+	}
+	if !tt.HasText("VLESS · SING-BOX") || !tt.HasText("➔ WARP · WG") {
+		t.Fatalf("expected VLESS+WARP row to show 'VLESS · SING-BOX' and '➔ WARP · WG'")
+	}
+	if !tt.HasText(a.catalog().CloudflareWarpDirectBadge()) || !tt.HasText("WARP · MASQUE") {
+		t.Fatalf("expected direct WARP row to show direct badge and 'WARP · MASQUE'")
+	}
+}
+
 
 
 

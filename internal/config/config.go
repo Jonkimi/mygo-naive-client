@@ -184,6 +184,13 @@ func (s Service) EffectiveEngine() ExecutionEngine {
 	return EngineSingBox
 }
 
+// IsTCPOnlyProxy reports whether the node's upstream proxy only carries TCP traffic
+// (e.g., NaiveProxy or HTTP proxy), requiring MASQUE over HTTP/2 for WARP chaining.
+func (s Service) IsTCPOnlyProxy() bool {
+	proto := s.EffectiveProtocol()
+	return proto == ProtoNaive || proto == ProtoHTTP
+}
+
 // OutboundEndpoint returns the proxy dial endpoint for this service.
 // For KindManagedNaive, it returns the primary local listen address (e.g. socks://127.0.0.1:1080).
 // For KindExternalProxy, it parses and returns the remote proxy endpoint from ExternalURI.

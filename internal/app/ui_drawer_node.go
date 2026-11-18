@@ -289,25 +289,15 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 								ui.Text(c, svc.ID).FontSize(11).TextColor(p.textMuted)
 							})
 
-							protoStr := strings.ToUpper(string(svc.EffectiveProtocol()))
-							engineStr := "SING-BOX"
-							if svc.EffectiveEngine() == config.EngineSidecar {
-								engineStr = "SIDECAR"
-							}
-
 							ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-								tagPill(c, protoStr+" · "+engineStr, p.accentText, p.accentBg)
+								tagPill(c, nodeProtocolEngineLabel(svc), p.accentText, p.accentBg)
 								if svc.EffectiveProtocol() == config.ProtoWARP {
-									warpMode := "AUTO"
-									if svc.WARPConfig != nil && svc.WARPConfig.Transport != "" {
-										warpMode = strings.ToUpper(string(svc.WARPConfig.Transport))
-									}
-									tagPill(c, "WARP · "+warpMode, p.green, p.greenBg)
+									tagPill(c, a.warpTransportPillLabel(svc), p.green, p.greenBg)
 									if svc.IsBuiltinWarp() {
 										tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
 									}
 								} else if svc.EnableWARP {
-									tagPill(c, "➔ WARP", p.green, p.greenBg)
+									tagPill(c, "➔ "+a.warpTransportPillLabel(svc), p.green, p.greenBg)
 								}
 								if svc.AutoStart {
 									tagPill(c, cat.TagAutoStart(), p.accentText, p.accentBg)

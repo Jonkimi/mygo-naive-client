@@ -6,8 +6,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
+	"naive-client/internal/warp"
 )
 
 func (a *app) view(c *ui.Context) {
@@ -343,32 +345,15 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 						// Protocol and Engine capsule
 						if svc.EffectiveProtocol() == config.ProtoWARP {
-							modeStr := "MASQUE"
-							if svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportWireGuard {
-								modeStr = "WG"
-							} else if svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportAuto {
-								modeStr = "AUTO"
-							}
-							tagPill(c, "WARP · "+modeStr, p.accentText, p.accentBg)
+							tagPill(c, a.warpTransportPillLabel(svc), p.accentText, p.accentBg)
 							if svc.IsBuiltinWarp() {
 								tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
 							}
 						} else {
-							protoStr := strings.ToUpper(string(svc.EffectiveProtocol()))
-							engineStr := "SING-BOX"
-							if svc.EffectiveEngine() == config.EngineSidecar {
-								engineStr = "SIDECAR"
-							}
-							tagPill(c, protoStr+" · "+engineStr, p.accentText, p.accentBg)
+							tagPill(c, nodeProtocolEngineLabel(svc), p.accentText, p.accentBg)
 
 							if svc.EnableWARP {
-								warpBadge := "WARP"
-								if svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportWireGuard {
-									warpBadge = "WARP · WG"
-								} else {
-									warpBadge = "WARP · MASQUE"
-								}
-								tagPill(c, "➔ "+warpBadge, p.green, p.greenBg)
+								tagPill(c, "➔ "+a.warpTransportPillLabel(svc), p.green, p.greenBg)
 							}
 						}
 
@@ -709,6 +694,28 @@ func (a *app) cardBorderColor(p palette, st runner.State, isUnhealthy bool) ui.C
 	default:
 		return p.border
 	}
+}
+
+func nodeProtocolEngineLabel(svc config.Service) string {
+	protoStr := strings.ToUpper(string(svc.EffectiveProtocol()))
+	engineStr := "SING-BOX"
+	if svc.EffectiveEngine() == config.EngineSidecar {
+		engineStr = "SIDECAR"
+	}
+	return protoStr + " · " + engineStr
+}
+
+func (a *app) warpTransportPillLabel(svc config.Service) string {
+	if svc.EffectiveProtocol() == config.ProtoWARP && svc.WARPConfig != nil && svc.WARPConfig.Transport == config.WarpTransportAuto {
+		return "WARP · AUTO"
+	}
+	if svc.EffectiveProtocol() != config.ProtoWARP && svc.IsTCPOnlyProxy() {
+		return "WARP · MASQUE H2"
+	}
+	if boxengine.ResolveServiceWarpMode(svc, &a.state.Cloudflare) == warp.ModeWireGuard {
+		return "WARP · WG"
+	}
+	return "WARP · MASQUE"
 }
 
 func isWarpUnreachable(errText string) bool {

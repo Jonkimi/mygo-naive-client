@@ -858,7 +858,7 @@ func (e *Engine) getWarpEndpoint(nodeID string) string {
 	defer e.mu.RUnlock()
 	for _, svc := range e.services {
 		if svc.ID == cleanID {
-			mode := resolveServiceWarpMode(svc, e.cloudflareConfig)
+			mode := ResolveServiceWarpMode(svc, e.cloudflareConfig)
 			if ep := resolveExplicitWarpEndpoint(svc, e.cloudflareConfig, mode); ep != "" {
 				return ep
 			}
@@ -1389,7 +1389,7 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		}
 
 		if svc.EnableWARP {
-			isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
+			isTCPOnly := svc.IsTCPOnlyProxy()
 			if isWarpWireGuard(svc, opts.CloudflareConfig) {
 				if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) == "" {
 					outbounds = append(outbounds, buildAutoWireGuardOutboundConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, baseTag))
@@ -1419,9 +1419,9 @@ func resolveSidecarPort(svc config.Service, allocatedPorts map[string]int) (port
 	return 0, false
 }
 
-func resolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mode {
-	isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
-	if isTCPOnly {
+// ResolveServiceWarpMode returns the effective WARP transport mode for svc given globalCfg.
+func ResolveServiceWarpMode(svc config.Service, globalCfg *warp.Config) warp.Mode {
+	if svc.IsTCPOnlyProxy() {
 		return warp.ModeMASQUE
 	}
 	if svc.WARPConfig != nil && svc.WARPConfig.Transport != "" {
@@ -1471,11 +1471,10 @@ func isWarpActive(svc config.Service) bool {
 }
 
 func isWarpWireGuard(svc config.Service, globalCfg *warp.Config) bool {
-	isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
-	if isTCPOnly {
+	if svc.IsTCPOnlyProxy() {
 		return false
 	}
-	return resolveServiceWarpMode(svc, globalCfg) == warp.ModeWireGuard
+	return ResolveServiceWarpMode(svc, globalCfg) == warp.ModeWireGuard
 }
 
 // resolveExplicitWarpEndpoint returns the explicitly configured WARP endpoint for svc.
@@ -1740,8 +1739,7 @@ func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 
 	for _, svc := range opts.Services {
 		if isWarpActive(svc) {
-			isTCPOnly := svc.EffectiveProtocol() == config.ProtoNaive || svc.EffectiveProtocol() == config.ProtoHTTP
-			if isTCPOnly {
+			if svc.IsTCPOnlyProxy() {
 				continue
 			}
 			detour := ""
@@ -1754,7 +1752,7 @@ func buildEndpointsConfig(opts EngineOptions) []map[string]any {
 				}
 				detour = "raw-node-" + svc.ID
 			}
-			mode := resolveServiceWarpMode(svc, opts.CloudflareConfig)
+			mode := ResolveServiceWarpMode(svc, opts.CloudflareConfig)
 			if resolveExplicitWarpEndpoint(svc, opts.CloudflareConfig, warp.ModeWireGuard) != "" {
 				if mode == warp.ModeWireGuard {
 					wgEp := buildWireGuardEndpointConfig(svc, opts.CloudflareConfig, "node-"+svc.ID, detour)

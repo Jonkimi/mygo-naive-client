@@ -470,13 +470,18 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 						}
 						rowBtn.Children(func() {
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
-								ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Gap(8).Wrap().Grow(1).MinWidth(0).Children(func() {
 									ui.Box(c).Size(7, 7).Radius(999).Background(dotColor)
 									ui.Text(c, svc.Name).FontSize(12).FontWeight(600).TextColor(p.text)
 									if isDirect {
 										tagPill(c, cat.CloudflareWarpDirectBadge(), p.accent, p.accentBg)
+										tagPill(c, a.warpTransportPillLabel(svc), p.accentText, p.accentBg)
+										if svc.IsBuiltinWarp() {
+											tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
+										}
 									} else {
-										tagPill(c, fmt.Sprintf("%s ➔ WARP", strings.ToUpper(string(svc.EffectiveProtocol()))), p.green, p.greenBg)
+										tagPill(c, nodeProtocolEngineLabel(svc), p.accentText, p.accentBg)
+										tagPill(c, "➔ "+a.warpTransportPillLabel(svc), p.green, p.greenBg)
 									}
 									if rt.State == runner.StateRunning {
 										if unhealthy {
@@ -491,13 +496,13 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 									}
 								})
 
-								ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
 									if rt.State == runner.StateRunning && rt.Latency > 0 {
 										tagPill(c, fmt.Sprintf("%dms", max(1, rt.Latency.Milliseconds())), p.textMuted, p.card)
 									}
 									ep := svc.CompactRemoteEndpoint()
 									if ep != "" {
-										ui.Text(c, ep).FontSize(11).TextColor(p.textDim)
+										ui.Text(c, ep).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
 									}
 									ui.Icon(c, iconInfo).Size(13, 13).TextColor(p.textDim)
 								})

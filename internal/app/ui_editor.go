@@ -218,7 +218,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		if a.state.Cloudflare.EffectiveDirectMode() == warp.ModeWireGuard {
 			warpModeIdx = 1
 		}
-	} else if a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
+	} else if svc.IsTCPOnlyProxy() || a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
 		warpModeIdx = 0
 	}
 	warpMasquePreferH2 := a.state.Cloudflare.MasquePreferH2
@@ -227,14 +227,16 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 	warpIPv4 := ""
 	warpIPv6 := ""
 	if svc.WARPConfig != nil {
-		switch svc.WARPConfig.Transport {
-		case config.WarpTransportMasque:
-			warpModeIdx = 0
-		case config.WarpTransportWireGuard:
-			warpModeIdx = 1
-		}
-		if svc.WARPConfig.MasquePreferH2 != nil {
-			warpMasquePreferH2 = *svc.WARPConfig.MasquePreferH2
+		if !svc.IsTCPOnlyProxy() {
+			switch svc.WARPConfig.Transport {
+			case config.WarpTransportMasque:
+				warpModeIdx = 0
+			case config.WarpTransportWireGuard:
+				warpModeIdx = 1
+			}
+			if svc.WARPConfig.MasquePreferH2 != nil {
+				warpMasquePreferH2 = *svc.WARPConfig.MasquePreferH2
+			}
 		}
 		warpEndpoint = svc.WARPConfig.Endpoint
 		warpPrivKey = svc.WARPConfig.PrivateKey
@@ -325,10 +327,13 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 	attachWARP := func(s *config.Service) {
 		if a.editor.enableWARP {
 			transport := config.WarpTransportWireGuard
-			if a.editor.warpModeIndex == 0 {
+			preferH2 := a.editor.warpMasquePreferH2
+			if s.IsTCPOnlyProxy() {
+				transport = config.WarpTransportMasque
+				preferH2 = true
+			} else if a.editor.warpModeIndex == 0 {
 				transport = config.WarpTransportMasque
 			}
-			preferH2 := a.editor.warpMasquePreferH2
 			s.EnableWARP = true
 			s.WARPConfig = &config.WarpNodeConfig{
 				Transport:      transport,
@@ -891,7 +896,7 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 			ui.Column(c).Gap(8).Padding(12).Radius(8).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 				if switchRow(c, p, "inp-enable-warp-toggle", cat.NodeEditorEnableWarp(), &a.editor.enableWARP) {
 					if a.editor.enableWARP {
-						if a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
+						if proto == config.ProtoNaive || proto == config.ProtoHTTP || a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
 							a.editor.warpModeIndex = 0
 						} else {
 							a.editor.warpModeIndex = 1
