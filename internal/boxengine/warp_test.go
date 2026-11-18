@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"naive-client/internal/warp"
 
 	"github.com/sagernet/sing-box/adapter"
+	boxLog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -896,10 +898,11 @@ func (l *lifecycleTrackingOutbound) ActiveEndpoint() string {
 }
 
 // Regression: blockerOutbound must forward adapter.Lifecycle, InterfaceUpdateListener,
-// IdleConnectionKeeper, ActiveEndpoint, and Upstream() to the wrapped outbound.
+// and Upstream() without exposing IdleConnectionKeeper directly, and blockerOutboundRegistry
+// must only wrap direct/block outbounds so proxy/WARP outbounds keep native sing-box hooks.
 func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 	inner := &lifecycleTrackingOutbound{
-		mockOutbound:      &mockOutbound{tag: "node-test"},
+		mockOutbound:      &mockOutbound{tag: "direct"},
 		activeEndpointVal: "162.159.198.2:443",
 	}
 	wrapped := &blockerOutbound{Outbound: inner}
@@ -907,13 +910,35 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 	if unwrapped, ok := common.Cast[*lifecycleTrackingOutbound](wrapped); !ok || unwrapped != inner {
 		t.Fatalf("expected common.Cast to unwrap blockerOutbound via Upstream()")
 	}
+	if _, isKeeper := any(wrapped).(adapter.IdleConnectionKeeper); isKeeper {
+		t.Fatalf("expected blockerOutbound NOT to expose adapter.IdleConnectionKeeper directly")
+	}
+	if keeper, ok := common.Cast[adapter.IdleConnectionKeeper](wrapped); !ok {
+		t.Fatalf("expected common.Cast[adapter.IdleConnectionKeeper] to unwrap via Upstream()")
+	} else {
+		keeper.SetKeepIdleConnections(true)
+		keeper.CloseIdleConnections()
+		if !inner.keepIdle || inner.closeIdleCount != 1 {
+			t.Fatalf("expected unwrapped IdleConnectionKeeper calls to succeed, keepIdle=%v closeIdleCount=%d", inner.keepIdle, inner.closeIdleCount)
+		}
+	}
+	if epProvider, ok := common.Cast[interface{ ActiveEndpoint() string }](wrapped); !ok || epProvider.ActiveEndpoint() != "162.159.198.2:443" {
+		t.Fatalf("expected common.Cast[ActiveEndpoint] to unwrap via Upstream()")
+	}
 
+	scope := adapter.NewScope(context.Background(), boxLog.NewNOPFactory().Logger())
 	var lc adapter.Lifecycle = wrapped
-	if err := lc.Start(adapter.StartStateInitialize, nil); err != nil {
+	if err := lc.Start(adapter.StartStateInitialize, scope); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	if len(inner.startedStages) != 1 || inner.startedStages[0] != adapter.StartStateInitialize {
 		t.Fatalf("expected Start to forward StartStateInitialize, got %v", inner.startedStages)
+	}
+	if err := scope.Close(); err != nil {
+		t.Fatalf("scope.Close failed: %v", err)
+	}
+	if inner.scopeAddCount != 1 {
+		t.Fatalf("expected forwarded scope cleanup to run once on Close, got %d", inner.scopeAddCount)
 	}
 
 	var iul adapter.InterfaceUpdateListener = wrapped
@@ -922,20 +947,68 @@ func TestBlockerOutbound_ForwardsLifecycleAndInterfaceHooks(t *testing.T) {
 		t.Fatalf("expected InterfaceUpdated to forward once, got %d", inner.interfaceUpdated)
 	}
 
-	var keeper adapter.IdleConnectionKeeper = wrapped
-	keeper.SetKeepIdleConnections(true)
-	keeper.CloseIdleConnections()
-	if !inner.keepIdle || inner.closeIdleCount != 1 {
-		t.Fatalf("expected IdleConnectionKeeper to forward, keepIdle=%v closeIdleCount=%d", inner.keepIdle, inner.closeIdleCount)
+	// Verify blockerOutboundRegistry only wraps direct/block and leaves proxy/WARP/pool unwrapped.
+	bl := blocker.NewEngine(blocker.Options{Denylist: []string{"blocked.example"}})
+	svc := config.Service{
+		ID:          "svc-socks",
+		Name:        "SOCKS",
+		Kind:        config.KindExternalProxy,
+		Protocol:    config.ProtoSOCKS5,
+		Engine:      config.EngineSingBox,
+		ExternalURI: "socks5://127.0.0.1:1080",
 	}
+	warpSvc := config.Service{
+		ID:       config.BuiltinWarpServiceID,
+		Name:     "Cloudflare WARP",
+		Protocol: config.ProtoWARP,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportMasque,
+			Endpoint:  "162.159.198.2:443",
+		},
+	}
+	eng, err := New(EngineOptions{
+		ListenAddr:  "127.0.0.1:0",
+		TrafficMode: "port",
+		Services:    []config.Service{svc, warpSvc},
+		ActiveIDs:   map[string]bool{"svc-socks": true, config.BuiltinWarpServiceID: true},
+		Blocker:     bl,
+	})
+	if err != nil {
+		t.Fatalf("New engine failed: %v", err)
+	}
+	defer eng.Close()
 
-	if ep := wrapped.ActiveEndpoint(); ep != "162.159.198.2:443" {
-		t.Fatalf("expected ActiveEndpoint to forward, got %q", ep)
+	directOb, ok := eng.box.Outbound().Outbound("direct")
+	if !ok {
+		t.Fatalf("expected direct outbound")
+	}
+	if _, isBlocker := directOb.(*blockerOutbound); !isBlocker {
+		t.Fatalf("expected direct outbound to be wrapped by *blockerOutbound, got %T", directOb)
+	}
+	blockOb, ok := eng.box.Outbound().Outbound("block")
+	if !ok {
+		t.Fatalf("expected block outbound")
+	}
+	if _, isReject := blockOb.(*rejectOutbound); !isReject {
+		t.Fatalf("expected block outbound to be wrapped by *rejectOutbound, got %T", blockOb)
+	}
+	if socksOb, ok := eng.GetOutbound("svc-socks"); !ok {
+		t.Fatalf("expected svc-socks outbound")
+	} else if _, isBlocker := socksOb.(*blockerOutbound); isBlocker {
+		t.Fatalf("expected proxy outbound NOT to be wrapped by *blockerOutbound")
+	}
+	if mqOb, ok := eng.GetOutbound(config.BuiltinWarpServiceID); !ok {
+		t.Fatalf("expected builtin-warp outbound")
+	} else if _, isDirectType := mqOb.(*warpMasqueOutbound); !isDirectType {
+		t.Fatalf("expected MASQUE outbound to be unwrapped *warpMasqueOutbound, got %T", mqOb)
+	}
+	if _, dialErr := eng.DialNode(context.Background(), "svc-socks", "tcp", "blocked.example:443"); !errors.Is(dialErr, syscall.EPERM) {
+		t.Fatalf("expected DialNode to enforce Blocker with EPERM, got %v", dialErr)
 	}
 }
 
 // Regression: warpMasqueOutbound must implement adapter.Lifecycle so Engine.Close tears down
-// MASQUE outbounds even when wrapped by blockerOutbound.
+// MASQUE outbounds cleanly.
 func TestWarpMasqueOutbound_CloseRunsOnEngineClose(t *testing.T) {
 	bl := blocker.NewEngine(blocker.Options{})
 	svc := config.Service{
@@ -985,5 +1058,140 @@ func TestWarpMasqueOutbound_CloseRunsOnEngineClose(t *testing.T) {
 	}
 }
 
+// Regression: invalidateTunnel previously called wg.Add(1) unconditionally outside w.tun == tun
+// and without checking w.closed, racing with Close()'s wg.Wait() when tun.Close() woke up
+// concurrent DialContext callers via <-tun.Done().
+func TestWarpMasqueOutbound_ConcurrentInvalidateAndCloseNoRace(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		ns, err := warp.NewNetstack(warp.DefaultIPv4, warp.DefaultIPv6)
+		if err != nil {
+			t.Fatalf("NewNetstack: %v", err)
+		}
+		tun := &warp.MASQUETunnel{
+			Netstack: ns,
+		}
+		ob := &warpMasqueOutbound{
+			tag:                   "node-builtin-warp",
+			warpOutboundLifecycle: newWarpOutboundLifecycle(context.Background()),
+			tun:                   tun,
+			activeEndpoint:        "162.159.198.2:443",
+		}
 
+		var workers sync.WaitGroup
+		startCh := make(chan struct{})
+		for g := 0; g < 4; g++ {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				<-startCh
+				ob.invalidateTunnel(tun)
+			}()
+		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-startCh
+			_ = ob.Close()
+		}()
+		close(startCh)
+		workers.Wait()
+	}
+}
 
+// Regression: Engine.Close() previously held e.mu while calling w.Close(), while ensureEndpoint
+// held w.mu across network I/O and called e.mu (via GetOutbound / cloudflareConfig), causing an
+// ABBA deadlock and long shutdown stalls.
+func TestWarpAutoWireGuardOutbound_CloseDuringInflightDialNoDeadlock(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	// Accept upstream SOCKS5 connections and stall them so SelectWireGuardEndpoint stays
+	// in-flight until Engine.Close() cancels closeCtx.
+	connsMu := sync.Mutex{}
+	var accepted []net.Conn
+	defer func() {
+		connsMu.Lock()
+		for _, c := range accepted {
+			_ = c.Close()
+		}
+		connsMu.Unlock()
+	}()
+	go func() {
+		for {
+			c, aErr := ln.Accept()
+			if aErr != nil {
+				return
+			}
+			connsMu.Lock()
+			accepted = append(accepted, c)
+			connsMu.Unlock()
+		}
+	}()
+
+	privKey, _, err := warp.GenerateWireGuardKeypair()
+	if err != nil {
+		t.Fatalf("GenerateWireGuardKeypair: %v", err)
+	}
+
+	sel := warp.NewEndpointSelector()
+	svc := config.Service{
+		ID:          "svc-wg-inflight",
+		Name:        "WG Inflight",
+		Kind:        config.KindExternalProxy,
+		Protocol:    config.ProtoSOCKS5,
+		Engine:      config.EngineSingBox,
+		ExternalURI: fmt.Sprintf("socks5://%s", ln.Addr().String()),
+		EnableWARP:  true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport:  config.WarpTransportWireGuard,
+			PrivateKey: privKey,
+		},
+	}
+
+	eng, err := New(EngineOptions{
+		ListenAddr:       "127.0.0.1:0",
+		TrafficMode:      "port",
+		Services:         []config.Service{svc},
+		ActiveIDs:        map[string]bool{"svc-wg-inflight": true},
+		EndpointSelector: sel,
+		CloudflareConfig: &warp.Config{},
+	})
+	if err != nil {
+		t.Fatalf("New engine failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine failed: %v", err)
+	}
+
+	dialDone := make(chan error, 1)
+	go func() {
+		_, dErr := eng.DialNode(context.Background(), "svc-wg-inflight", "tcp", "1.1.1.1:80")
+		dialDone <- dErr
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- eng.Close()
+	}()
+
+	select {
+	case cErr := <-closeDone:
+		if cErr != nil {
+			t.Fatalf("Engine.Close returned error: %v", cErr)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatalf("Engine.Close timed out / deadlocked against in-flight WARP dial")
+	}
+
+	select {
+	case <-dialDone:
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatalf("in-flight DialNode did not abort promptly on Engine.Close")
+	}
+}

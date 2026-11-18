@@ -36,6 +36,7 @@ import (
 	"naive-client/locales"
 
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common"
 )
 
 // TabID identifies a page in the sidebar navigation.
@@ -870,7 +871,7 @@ func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint 
 				type activeEndpointProvider interface {
 					ActiveEndpoint() string
 				}
-				if p, ok := ob.(activeEndpointProvider); ok {
+				if p, ok := common.Cast[activeEndpointProvider](ob); ok {
 					if ep := strings.TrimSpace(p.ActiveEndpoint()); ep != "" {
 						endpoint = ep
 					}

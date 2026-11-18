@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -401,10 +402,10 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			destPort := destination.Port
 			poolTag := p.tag
 			singleCandidate := len(ordered) == 1
-			var wasStalled bool
+			var wasStalled atomic.Bool
 			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
 				if p.tracker != nil {
-					if !wasStalled || firstErr == nil {
+					if !wasStalled.Load() || firstErr == nil {
 						trackerRTT := realRTT
 						if firstErr == nil {
 							// Only plausible first-response RTTs feed the tracker; the log keeps the real value.
@@ -443,7 +444,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 					p.onTelemetryUpdate()
 				}
 			}, func() {
-				wasStalled = true
+				wasStalled.Store(true)
 				if p.tracker != nil {
 					p.tracker.RecordStall(candID, targetHost)
 				}

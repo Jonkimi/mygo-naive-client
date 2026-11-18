@@ -201,25 +201,6 @@ func (o *blockerOutbound) InterfaceUpdated(ctx context.Context) {
 	}
 }
 
-func (o *blockerOutbound) SetKeepIdleConnections(keep bool) {
-	if keeper, ok := o.Outbound.(adapter.IdleConnectionKeeper); ok {
-		keeper.SetKeepIdleConnections(keep)
-	}
-}
-
-func (o *blockerOutbound) CloseIdleConnections() {
-	if keeper, ok := o.Outbound.(adapter.IdleConnectionKeeper); ok {
-		keeper.CloseIdleConnections()
-	}
-}
-
-func (o *blockerOutbound) ActiveEndpoint() string {
-	if p, ok := o.Outbound.(interface{ ActiveEndpoint() string }); ok {
-		return p.ActiveEndpoint()
-	}
-	return ""
-}
-
 func shouldAnnotateDirectOutbound(ob adapter.Outbound) bool {
 	if ob == nil {
 		return false
@@ -351,6 +332,12 @@ func (r *blockerOutboundRegistry) CreateOutbound(ctx context.Context, router ada
 		return &rejectOutbound{Outbound: ob}, nil
 	}
 	if strings.HasPrefix(tag, "raw-node-") || strings.HasPrefix(tag, "wg-node-") {
+		return ob, nil
+	}
+	// Only wrap direct outbounds; pooled/proxy/WARP traffic is already checked and
+	// annotated in BlockerConnectionTracker and PoolOutbound, so leaving those
+	// outbounds unwrapped preserves native sing-box Lifecycle and connection pooling.
+	if outboundType != "direct" {
 		return ob, nil
 	}
 	if r.blocker == nil && r.fm == nil {

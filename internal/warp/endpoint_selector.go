@@ -367,7 +367,9 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 		if err == nil {
 			return tun, cached, nil
 		}
-		s.MarkFailed(key, cached)
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			s.MarkFailed(key, cached)
+		}
 		if ctx.Err() != nil {
 			return nil, "", err
 		}
@@ -376,6 +378,9 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 	// Concurrent selection via lightweight protocol probe.
 	best, err := s.SelectMASQUEEndpoint(ctx, scopeKey, dialer, acc, opts)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, "", err
+		}
 		// Last-resort fallback to default endpoint.
 		tun, fbErr := ConnectMASQUEWithOptions(ctx, dialer, DefaultMASQUEEndpoint, acc, opts)
 		if fbErr != nil {
@@ -387,14 +392,18 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 
 	tun, err := ConnectMASQUEWithOptions(ctx, dialer, best.Endpoint, acc, opts)
 	if err != nil {
-		s.MarkFailed(key, best.Endpoint)
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			s.MarkFailed(key, best.Endpoint)
+		}
 		// Retry once with another candidate if context still has time.
 		if ctx.Err() == nil {
 			if second, sErr := s.SelectMASQUEEndpoint(ctx, scopeKey, dialer, acc, opts); sErr == nil && second.Endpoint != best.Endpoint {
 				if tun2, err2 := ConnectMASQUEWithOptions(ctx, dialer, second.Endpoint, acc, opts); err2 == nil {
 					return tun2, second.Endpoint, nil
 				}
-				s.MarkFailed(key, second.Endpoint)
+				if !errors.Is(ctx.Err(), context.Canceled) {
+					s.MarkFailed(key, second.Endpoint)
+				}
 			}
 		}
 		return nil, "", err

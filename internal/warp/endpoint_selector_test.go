@@ -149,8 +149,8 @@ func TestEndpointSelector_WireGuardProbeAndPacket(t *testing.T) {
 
 		senderIdx := binary.LittleEndian.Uint32(buf[4:8])
 		resp := make([]byte, 92)
-		binary.LittleEndian.PutUint32(resp[0:4], 2)         // Type=2 Handshake Response
-		binary.LittleEndian.PutUint32(resp[4:8], 9999)      // Responder index
+		binary.LittleEndian.PutUint32(resp[0:4], 2)          // Type=2 Handshake Response
+		binary.LittleEndian.PutUint32(resp[4:8], 9999)       // Responder index
 		binary.LittleEndian.PutUint32(resp[8:12], senderIdx) // Echoed sender index
 		_, _ = pc.WriteTo(resp, addr)
 	}()
@@ -241,5 +241,28 @@ func TestScanBestEndpoints_SortsTopNAndSamplesCIDRs(t *testing.T) {
 	}
 	if results[0].LossRate != 0 || results[2].LossRate <= 0.5 {
 		t.Errorf("expected ep-fast loss=0 and ep-slow loss>0.5, got %+v", results)
+	}
+}
+
+// Regression: canceling SelectMASQUEAndConnect during engine shutdown must not mark a healthy
+// cached endpoint as failed and put it on cooldown.
+func TestEndpointSelector_SelectMASQUEAndConnect_CanceledContextDoesNotMarkFailed(t *testing.T) {
+	sel := NewEndpointSelector()
+	key := EndpointCacheKey{
+		ScopeKey: "direct",
+		Mode:     ModeMASQUE,
+	}
+	const ep = "162.159.198.2:443"
+	sel.SetCached(key, ep, "h3", 15*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := sel.SelectMASQUEAndConnect(ctx, "direct", nil, &Account{}, MASQUEOptions{})
+	if err == nil {
+		t.Fatalf("expected error for canceled context")
+	}
+	if cached, ok := sel.GetCached(key); !ok || cached != ep {
+		t.Fatalf("expected cached endpoint %q to stay intact after context cancellation, got %q (ok=%v)", ep, cached, ok)
 	}
 }

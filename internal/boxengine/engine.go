@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"naive-client/internal/blocker"
@@ -36,6 +37,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
 )
@@ -400,17 +402,19 @@ func (e *Engine) Start() error {
 // Close gracefully closes the embedded engine.
 func (e *Engine) Close() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	b := e.box
+	e.box = nil
+	cancel := e.cancel
+	e.cancel = nil
+	e.mu.Unlock()
 
 	var err error
-	if e.box != nil {
-		err = e.box.Close()
-		e.box = nil
+	if b != nil {
+		err = b.Close()
 	}
 	e.closeRegisteredClosers()
-	if e.cancel != nil {
-		e.cancel()
-		e.cancel = nil
+	if cancel != nil {
+		cancel()
 	}
 	return err
 }
@@ -714,6 +718,9 @@ func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr stri
 	if !dest.IsValid() {
 		return nil, fmt.Errorf("invalid destination addr %q", addr)
 	}
+	if e.blocker != nil && dest.IsDomain() && e.blocker.ShouldBlock(dest.Fqdn) {
+		return nil, syscall.EPERM
+	}
 	isWarp := e.isWarpNode(cleanID)
 	if isWarp && !e.isChainedWarpNode(cleanID) && dest.IsDomain() {
 		if ip, err := resolveHostIP(ctx, dest.Fqdn); err == nil {
@@ -777,7 +784,7 @@ func (e *Engine) getWarpEndpoint(nodeID string) string {
 		type activeEndpointProvider interface {
 			ActiveEndpoint() string
 		}
-		if p, ok := ob.(activeEndpointProvider); ok {
+		if p, ok := common.Cast[activeEndpointProvider](ob); ok {
 			if ep := strings.TrimSpace(p.ActiveEndpoint()); ep != "" {
 				return ep
 			}

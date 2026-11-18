@@ -84,11 +84,15 @@ func (t *MASQUETunnel) DialUDP(ctx context.Context, dest string) (net.Conn, erro
 func (t *MASQUETunnel) Close() error {
 	var err error
 	t.closeOnce.Do(func() {
-		t.cancel()
+		if t.cancel != nil {
+			t.cancel()
+		}
 		if t.closer != nil {
 			err = t.closer.Close()
 		}
-		_ = t.Netstack.Close()
+		if t.Netstack != nil {
+			_ = t.Netstack.Close()
+		}
 	})
 	return err
 }

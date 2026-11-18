@@ -2,15 +2,12 @@ package boxengine
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"naive-client/internal/warp"
@@ -44,21 +41,17 @@ type warpAutoWireGuardOptions struct {
 // then binds a sing-box wireguard.Endpoint to that selected peer.
 type warpAutoWireGuardOutbound struct {
 	ctx         context.Context
-	closeCtx    context.Context
-	closeCancel context.CancelFunc
 	router      adapter.Router
 	outboundMgr adapter.OutboundManager
 	logger      log.ContextLogger
 	tag         string
 	opts        warpAutoWireGuardOptions
 	eng         *Engine
+	warpOutboundLifecycle
 
-	mu             sync.Mutex
 	ep             *wireguard.Endpoint
 	activeEndpoint string
 	consecFails    int
-	closed         bool
-	closeWG        sync.WaitGroup
 }
 
 var _ adapter.Lifecycle = (*warpAutoWireGuardOutbound)(nil)
@@ -74,54 +67,21 @@ func newWarpAutoWireGuardOutbound(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	closeCtx, closeCancel := context.WithCancel(ctx)
 	return &warpAutoWireGuardOutbound{
-		ctx:         ctx,
-		closeCtx:    closeCtx,
-		closeCancel: closeCancel,
-		router:      router,
-		outboundMgr: service.FromContext[adapter.OutboundManager](ctx),
-		logger:      logger,
-		tag:         tag,
-		opts:        opts,
-		eng:         eng,
+		ctx:                   ctx,
+		router:                router,
+		outboundMgr:           service.FromContext[adapter.OutboundManager](ctx),
+		logger:                logger,
+		tag:                   tag,
+		opts:                  opts,
+		eng:                   eng,
+		warpOutboundLifecycle: newWarpOutboundLifecycle(ctx),
 	}, nil
 }
 
 // Start registers Close with sing-box's lifecycle scope so Engine.Close tears down active WireGuard endpoints.
 func (w *warpAutoWireGuardOutbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
-	if stage != adapter.StartStateInitialize {
-		return nil
-	}
-	if scope != nil {
-		scope.Add(w.Close)
-	}
-	return nil
-}
-
-func (w *warpAutoWireGuardOutbound) isClosed() bool {
-	return w.closed || (w.closeCtx != nil && w.closeCtx.Err() != nil)
-}
-
-func deriveLifecycleContext(ctx, lifeCtx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var subCtx context.Context
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		subCtx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		subCtx, cancel = context.WithCancel(ctx)
-	}
-	if lifeCtx == nil {
-		return subCtx, cancel
-	}
-	stop := context.AfterFunc(lifeCtx, cancel)
-	return subCtx, func() {
-		stop()
-		cancel()
-	}
+	return w.start(stage, scope, w.Close)
 }
 
 func (w *warpAutoWireGuardOutbound) Type() string {
@@ -160,29 +120,37 @@ func (w *warpAutoWireGuardOutbound) ActiveEndpoint() string {
 
 func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wireguard.Endpoint, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.isClosed() {
+	if w.isClosedLocked() {
+		w.mu.Unlock()
 		return nil, errors.New("outbound closed")
 	}
 	if w.ep != nil {
-		return w.ep, nil
+		ep := w.ep
+		w.mu.Unlock()
+		return ep, nil
 	}
+	w.mu.Unlock()
 
-	var upstreamDialer warp.Dialer
-	if w.opts.Detour != "" {
-		var ob adapter.Outbound
-		var ok bool
-		if w.outboundMgr != nil {
-			ob, ok = w.outboundMgr.Outbound(w.opts.Detour)
-		}
-		if !ok && w.eng != nil {
-			ob, ok = w.eng.GetOutbound(w.opts.Detour)
-		}
-		if !ok {
-			return nil, fmt.Errorf("detour outbound %q not found", w.opts.Detour)
-		}
-		upstreamDialer = &outboundDialerAdapter{ob: ob}
+	w.initMu.Lock()
+	defer w.initMu.Unlock()
+
+	w.mu.Lock()
+	if w.isClosedLocked() {
+		w.mu.Unlock()
+		return nil, errors.New("outbound closed")
+	}
+	if w.ep != nil {
+		ep := w.ep
+		w.mu.Unlock()
+		return ep, nil
+	}
+	w.wg.Add(1)
+	w.mu.Unlock()
+	defer w.wg.Done()
+
+	upstreamDialer, err := resolveDetourDialer(w.opts.Detour, w.outboundMgr, w.eng)
+	if err != nil {
+		return nil, err
 	}
 
 	privKey := w.opts.PrivateKey
@@ -191,14 +159,7 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 	ipv4 := w.opts.AddressIPv4
 	ipv6 := w.opts.AddressIPv6
 
-	var globalAcc warp.Account
-	if w.eng != nil {
-		w.eng.mu.RLock()
-		if w.eng.cloudflareConfig != nil {
-			globalAcc = w.eng.cloudflareConfig.Account
-		}
-		w.eng.mu.RUnlock()
-	}
+	globalAcc := loadGlobalWarpAccount(w.eng)
 
 	if privKey == "" && globalAcc.WGPrivateKey != "" {
 		privKey = globalAcc.WGPrivateKey
@@ -218,33 +179,13 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 
 	// Auto-provision WireGuard credentials if missing
 	if privKey == "" {
-		var apiHTTPClient *http.Client
-		if upstreamDialer != nil {
-			tr := &http.Transport{
-				DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
-					return upstreamDialer.DialContext(c, network, addr)
-				},
-				TLSClientConfig: &tls.Config{
-					ServerName: "api.cloudflareclient.com",
-				},
-				ForceAttemptHTTP2:   true,
-				TLSHandshakeTimeout: 5 * time.Second,
-			}
-			apiHTTPClient = &http.Client{
-				Transport: tr,
-				Timeout:   6 * time.Second,
-			}
-		}
+		apiHTTPClient := newWarpProvisionHTTPClient(upstreamDialer, 6*time.Second)
 		client := warp.NewClient(apiHTTPClient)
-		provCtx, provCancel := deriveLifecycleContext(ctx, w.closeCtx, 6*time.Second)
-		enrolled, err := client.ProvisionAll(provCtx, globalAcc, "")
+		provCtx, provCancel := w.deriveContext(ctx, 6*time.Second)
+		enrolled, provErr := client.ProvisionAll(provCtx, globalAcc, "")
 		provCancel()
-		if apiHTTPClient != nil {
-			if tr, ok := apiHTTPClient.Transport.(*http.Transport); ok {
-				tr.CloseIdleConnections()
-			}
-		}
-		if err == nil {
+		closeHTTPTransportIdle(apiHTTPClient)
+		if provErr == nil {
 			privKey = enrolled.WGPrivateKey
 			if enrolled.WGPeerPublicKey != "" {
 				peerPubKey = enrolled.WGPeerPublicKey
@@ -258,18 +199,18 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 			if enrolled.IPv6 != "" {
 				ipv6 = enrolled.IPv6
 			}
-			if w.eng != nil {
-				w.eng.mu.Lock()
-				if w.eng.cloudflareConfig != nil {
-					w.eng.cloudflareConfig.Account = enrolled
-				}
-				w.eng.mu.Unlock()
+			if !w.isClosed() {
+				saveGlobalWarpAccount(w.eng, enrolled)
 			}
 		}
 	}
 
+	if w.isClosed() {
+		return nil, errors.New("outbound closed")
+	}
+
 	if privKey == "" {
-		if genPriv, _, err := warp.GenerateWireGuardKeypair(); err == nil {
+		if genPriv, _, genErr := warp.GenerateWireGuardKeypair(); genErr == nil {
 			privKey = genPriv
 		}
 	}
@@ -286,18 +227,13 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 		ipv6 = warp.DefaultIPv6
 	}
 
-	selector := warp.DefaultEndpointSelector()
-	if w.eng != nil && w.eng.endpointSelector != nil {
-		selector = w.eng.endpointSelector
-	}
-
 	probeAcc := &warp.Account{
 		WGPrivateKey:    privKey,
 		WGPeerPublicKey: peerPubKey,
 		Reserved:        reserved,
 	}
-	selCtx, selCancel := deriveLifecycleContext(ctx, w.closeCtx, 2500*time.Millisecond)
-	selected, err := selector.SelectWireGuardEndpoint(selCtx, w.scopeKey(), upstreamDialer, probeAcc)
+	selCtx, selCancel := w.deriveContext(ctx, 2500*time.Millisecond)
+	selected, selErr := selectEndpointSelector(w.eng).SelectWireGuardEndpoint(selCtx, w.scopeKey(), upstreamDialer, probeAcc)
 	selCancel()
 
 	if w.isClosed() {
@@ -305,7 +241,7 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 	}
 
 	targetEndpoint := warp.DefaultWireGuardEndpoint
-	if err == nil && selected.Endpoint != "" {
+	if selErr == nil && selected.Endpoint != "" {
 		targetEndpoint = selected.Endpoint
 		if w.logger != nil {
 			w.logger.InfoContext(ctx, fmt.Sprintf("WireGuard auto-selected endpoint %s (%v) for scope %s", targetEndpoint, selected.RTT.Round(time.Millisecond), w.scopeKey()))
@@ -331,10 +267,10 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 		ipv6PrefixStr += "/128"
 	}
 	var addrs []netip.Prefix
-	if p4, err := netip.ParsePrefix(ipv4PrefixStr); err == nil {
+	if p4, parseErr := netip.ParsePrefix(ipv4PrefixStr); parseErr == nil {
 		addrs = append(addrs, p4)
 	}
-	if p6, err := netip.ParsePrefix(ipv6PrefixStr); err == nil {
+	if p6, parseErr := netip.ParsePrefix(ipv6PrefixStr); parseErr == nil {
 		addrs = append(addrs, p6)
 	}
 
@@ -434,14 +370,17 @@ func (w *warpAutoWireGuardOutbound) ensureEndpoint(ctx context.Context) (*wiregu
 		_ = wgEP.Close()
 		return nil, err
 	}
-	if w.isClosed() {
+
+	w.mu.Lock()
+	if w.isClosedLocked() {
+		w.mu.Unlock()
 		_ = wgEP.Close()
 		return nil, errors.New("outbound closed")
 	}
-
 	w.ep = wgEP
 	w.activeEndpoint = targetEndpoint
 	w.consecFails = 0
+	w.mu.Unlock()
 	return wgEP, nil
 }
 
@@ -453,6 +392,10 @@ func (w *warpAutoWireGuardOutbound) recordDialResult(err error) {
 		return
 	}
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
 	w.consecFails++
 	shouldRotate := w.consecFails >= 3 && w.ep != nil
 	var oldEP *wireguard.Endpoint
@@ -463,28 +406,44 @@ func (w *warpAutoWireGuardOutbound) recordDialResult(err error) {
 		w.ep = nil
 		w.activeEndpoint = ""
 		w.consecFails = 0
-		if oldEP != nil {
-			w.closeWG.Add(1)
-		}
+		w.wg.Add(1)
 	}
 	w.mu.Unlock()
 
 	if shouldRotate {
-		selector := warp.DefaultEndpointSelector()
-		if w.eng != nil && w.eng.endpointSelector != nil {
-			selector = w.eng.endpointSelector
-		}
+		defer w.wg.Done()
 		if failedAddr != "" {
-			selector.MarkFailed(warp.EndpointCacheKey{
+			selectEndpointSelector(w.eng).MarkFailed(warp.EndpointCacheKey{
 				ScopeKey: w.scopeKey(),
 				Mode:     warp.ModeWireGuard,
 			}, failedAddr)
 		}
 		if oldEP != nil {
 			_ = oldEP.Close()
-			w.closeWG.Done()
 		}
 	}
+}
+
+func (w *warpAutoWireGuardOutbound) resolveDestination(ctx context.Context, destination M.Socksaddr) M.Socksaddr {
+	if !destination.IsDomain() {
+		return destination
+	}
+	if w.opts.Detour == "" {
+		rCtx, rCancel := w.deriveContext(ctx, 0)
+		if ip, rErr := resolveHostIP(rCtx, destination.Fqdn); rErr == nil {
+			destination = M.SocksaddrFrom(ip, destination.Port)
+		}
+		rCancel()
+		return destination
+	}
+	if w.ctx != nil {
+		if dnsRouter := service.FromContext[adapter.DNSRouter](w.ctx); dnsRouter != nil {
+			if addrs, lErr := dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{}); lErr == nil && len(addrs) > 0 {
+				destination = M.SocksaddrFrom(addrs[0], destination.Port)
+			}
+		}
+	}
+	return destination
 }
 
 func (w *warpAutoWireGuardOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -492,19 +451,7 @@ func (w *warpAutoWireGuardOutbound) DialContext(ctx context.Context, network str
 	if err != nil {
 		return nil, fmt.Errorf("warp server (%s) connection failed: %w", w.activeOrAuto(), err)
 	}
-	if destination.IsDomain() {
-		if w.opts.Detour == "" {
-			if ip, rErr := resolveHostIP(ctx, destination.Fqdn); rErr == nil {
-				destination = M.SocksaddrFrom(ip, destination.Port)
-			}
-		} else if w.ctx != nil {
-			if dnsRouter := service.FromContext[adapter.DNSRouter](w.ctx); dnsRouter != nil {
-				if addrs, lErr := dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{}); lErr == nil && len(addrs) > 0 {
-					destination = M.SocksaddrFrom(addrs[0], destination.Port)
-				}
-			}
-		}
-	}
+	destination = w.resolveDestination(ctx, destination)
 	conn, err := ep.DialContext(ctx, network, destination)
 	w.recordDialResult(err)
 	if err != nil {
@@ -518,19 +465,7 @@ func (w *warpAutoWireGuardOutbound) ListenPacket(ctx context.Context, destinatio
 	if err != nil {
 		return nil, fmt.Errorf("warp server (%s) connection failed: %w", w.activeOrAuto(), err)
 	}
-	if destination.IsDomain() {
-		if w.opts.Detour == "" {
-			if ip, rErr := resolveHostIP(ctx, destination.Fqdn); rErr == nil {
-				destination = M.SocksaddrFrom(ip, destination.Port)
-			}
-		} else if w.ctx != nil {
-			if dnsRouter := service.FromContext[adapter.DNSRouter](w.ctx); dnsRouter != nil {
-				if addrs, lErr := dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{}); lErr == nil && len(addrs) > 0 {
-					destination = M.SocksaddrFrom(addrs[0], destination.Port)
-				}
-			}
-		}
-	}
+	destination = w.resolveDestination(ctx, destination)
 	pConn, err := ep.ListenPacket(ctx, destination)
 	w.recordDialResult(err)
 	if err != nil {
@@ -547,18 +482,12 @@ func (w *warpAutoWireGuardOutbound) activeOrAuto() string {
 }
 
 func (w *warpAutoWireGuardOutbound) Close() error {
-	if w.closeCancel != nil {
-		w.closeCancel()
-	}
-	w.mu.Lock()
-	w.closed = true
-	ep := w.ep
-	w.ep = nil
-	w.mu.Unlock()
-	var err error
-	if ep != nil {
-		err = ep.Close()
-	}
-	w.closeWG.Wait()
-	return err
+	return w.close(func() func() error {
+		ep := w.ep
+		w.ep = nil
+		if ep == nil {
+			return nil
+		}
+		return ep.Close
+	})
 }
