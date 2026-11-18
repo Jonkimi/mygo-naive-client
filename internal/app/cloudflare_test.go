@@ -894,14 +894,9 @@ func TestCloudflareWarpEndpointScan_OneClickAndCandidateSwitchAndReset(t *testin
 	}
 
 	// Wait for background scan goroutine to dispatch UI update
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		tt.Frame()
-		if !a.warpScanning && len(a.warpScanResults) == 2 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForUI(t, a, tt, 2*time.Second, func() bool {
+		return !a.warpScanning && len(a.warpScanResults) == 2
+	})
 	if a.warpScanning {
 		t.Fatalf("expected scan to finish")
 	}
@@ -1209,6 +1204,7 @@ func TestCloudflare_PresetSplitMigrationAndSingleSourceToggle(t *testing.T) {
 func TestCloudflareAccountUpdate_DoesNotRestartOrDeadlockGateway(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.win = nil // Exercise headless synchronous dispatchUI path.
+	a.setUIQueueEnabled(false)
 	a.state.GatewayPort = freeLocalPort(t)
 	a.state.GatewayEnabled = true
 	if err := a.startGateway(); err != nil {

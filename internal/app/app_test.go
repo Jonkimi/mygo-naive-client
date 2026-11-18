@@ -130,9 +130,28 @@ done
 		}
 	})
 
+	a.setUIQueueEnabled(true)
 	tt := ui.NewTester(a.view, 900, 660)
 	tt.Frame()
 	return a, tt, binPath
+}
+
+func waitForUI(t *testing.T, a *app, tt *ui.Tester, timeout time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		a.drainUI()
+		if tt != nil {
+			tt.Frame()
+		}
+		if cond() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func freeLocalPort(t *testing.T) int {
@@ -432,14 +451,9 @@ done
 	}
 
 	// Wait for background seamless update to finish and service to restart
-	deadline = time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
-		if !a.updatingCore && a.localVersion == "v154.0.8037.49-5" {
-			break
-		}
-		time.Sleep(40 * time.Millisecond)
-	}
-	tt.Frame()
+	waitForUI(t, a, tt, 4*time.Second, func() bool {
+		return !a.updatingCore && a.localVersion == "v154.0.8037.49-5"
+	})
 
 	if a.localVersion != "v154.0.8037.49-5" {
 		t.Fatalf("localVersion after update = %q, want v154.0.8037.49-5 (err=%s)", a.localVersion, a.updateError)
@@ -770,14 +784,9 @@ func TestAutoCoreUpdateSilentHotSwap(t *testing.T) {
 	a.triggerCheckUpdate(false)
 
 	// Wait for automatic seamless update hot-swap to complete in the background
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if !a.updatingCore && a.localVersion == "v154.0.8037.49-2" {
-			break
-		}
-		time.Sleep(40 * time.Millisecond)
-	}
-	tt.Frame()
+	waitForUI(t, a, tt, 5*time.Second, func() bool {
+		return !a.updatingCore && a.localVersion == "v154.0.8037.49-2"
+	})
 
 	if a.localVersion != "v154.0.8037.49-2" {
 		t.Fatalf("localVersion after auto update = %q, want v154.0.8037.49-2 (err=%s)", a.localVersion, a.updateError)
@@ -968,14 +977,9 @@ func TestAutoXrayUpdateSilentHotSwap(t *testing.T) {
 	// Trigger automatic background update check for Xray
 	a.triggerCheckXrayUpdate(false)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if !a.updatingXrayCore && a.localXrayVersion == "v25.1.30" {
-			break
-		}
-		time.Sleep(40 * time.Millisecond)
-	}
-	tt.Frame()
+	waitForUI(t, a, tt, 5*time.Second, func() bool {
+		return !a.updatingXrayCore && a.localXrayVersion == "v25.1.30"
+	})
 
 	if a.localXrayVersion != "v25.1.30" {
 		t.Fatalf("localXrayVersion after auto update = %q, want v25.1.30 (err=%s)", a.localXrayVersion, a.updateXrayError)
@@ -1089,14 +1093,9 @@ func TestMainPanel_BatchSpeedTest(t *testing.T) {
 	a.triggerBatchTest()
 	tt.Frame()
 
-	testDeadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(testDeadline) {
-		if !a.batchTesting {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	tt.Frame()
+	waitForUI(t, a, tt, 5*time.Second, func() bool {
+		return !a.batchTesting
+	})
 
 	if a.batchTesting {
 		t.Fatal("expected batchTesting to complete")
@@ -1111,6 +1110,129 @@ func TestMainPanel_BatchSpeedTest(t *testing.T) {
 	}
 	if !foundSummary {
 		t.Fatalf("expected toast containing '一键测速完成', got texts: %q", tt.Texts())
+	}
+}
+
+// Regression: when a.win == nil in ui.NewTester mode, dispatchUI previously
+// executed callbacks synchronously on background goroutines, racing with
+// view() frames and test polling; queuing them until view() drains keeps UI
+// mutations on the Tester goroutine, including nested dispatches.
+func TestHeadlessDispatchUI_QueuesUntilFrameAndDrainsNested(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	ran := 0
+	posted := make(chan struct{})
+	go func() {
+		a.dispatchUI(func() {
+			ran++
+			a.dispatchUI(func() {
+				ran++
+			})
+		})
+		close(posted)
+	}()
+	<-posted
+
+	if ran != 0 {
+		t.Fatalf("expected dispatchUI callback to remain queued until frame drain, ran=%d", ran)
+	}
+	tt.Frame()
+	if ran != 2 {
+		t.Fatalf("expected queued and nested dispatchUI callbacks to run on frame, ran=%d", ran)
+	}
+}
+
+// Regression: canceling a batch speed test and immediately starting a new run
+// previously allowed the canceled goroutine's deferred dispatchUI cleanup to
+// overwrite the active run's batchTesting, batchStage, and batchCancel.
+func TestBatchSpeedTest_StaleCancelDoesNotClearNewRun(t *testing.T) {
+	p1 := freeLocalPort(t)
+	svc := config.Service{
+		ID:      "svc-batch-gen",
+		Name:    "Batch-Gen",
+		Listens: []string{fmt.Sprintf("socks://127.0.0.1:%d", p1)},
+		Proxies: []string{"https://alice:secret@s1.example.com:443"},
+	}
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	if err := a.mgr.Start(svc); err != nil {
+		t.Fatalf("start svc: %v", err)
+	}
+	if !waitForUI(t, a, tt, 2*time.Second, func() bool {
+		return a.mgr.StatusOf(svc.ID).State == runner.StateRunning
+	}) {
+		t.Fatalf("service did not reach StateRunning")
+	}
+
+	holdLn, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p1))
+	if err != nil {
+		t.Fatalf("listen hold port: %v", err)
+	}
+	defer holdLn.Close()
+
+	conns := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := holdLn.Accept()
+			if err != nil {
+				return
+			}
+			conns <- c
+		}
+	}()
+
+	// Start run #1 and wait until its probe holds a connection on holdLn.
+	a.triggerBatchTest()
+	if !a.batchTesting {
+		t.Fatal("expected run #1 to enter batchTesting")
+	}
+	var conn1 net.Conn
+	select {
+	case conn1 = <-conns:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for run #1 probe connection")
+	}
+
+	// Cancel run #1 and immediately start run #2 before run #1's cleanup runs.
+	a.triggerBatchTest()
+	a.triggerBatchTest()
+	if !a.batchTesting || a.batchCancel == nil {
+		t.Fatal("expected run #2 to be active immediately after restart")
+	}
+
+	// Wait for run #2 to hold its own connection (Phase 2), then close conn1 so
+	// run #1's canceled goroutine finishes and enqueues its stale defer cleanup.
+	var conn2 net.Conn
+	select {
+	case conn2 = <-conns:
+		defer conn2.Close()
+	case <-time.After(2 * time.Second):
+		_ = conn1.Close()
+		t.Fatal("timed out waiting for run #2 connection")
+	}
+	_ = conn1.Close()
+
+	// Wait until run #1's ProbeServiceCtx records cancellation, then ensure its
+	// deferred dispatchUI callback has drained while run #2 is still active.
+	if !waitForUI(t, a, tt, 2*time.Second, func() bool {
+		return strings.Contains(a.mgr.LogsOf(svc.ID).Text(), "延迟测试已取消")
+	}) {
+		t.Fatal("timed out waiting for run #1 cancellation log")
+	}
+	time.Sleep(20 * time.Millisecond)
+	tt.Frame()
+
+	if !a.batchTesting || a.batchCancel == nil {
+		t.Fatalf("stale run #1 cleanup cleared active run #2 (batchTesting=%v, hasCancel=%v)", a.batchTesting, a.batchCancel != nil)
+	}
+
+	// Cleanly finish run #2.
+	a.triggerBatchTest()
+	_ = holdLn.Close()
+	_ = conn2.Close()
+	if !waitForUI(t, a, tt, 2*time.Second, func() bool {
+		return !a.batchTesting
+	}) {
+		t.Fatal("expected run #2 to stop after cancel")
 	}
 }
 

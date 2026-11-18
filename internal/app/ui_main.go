@@ -11,6 +11,10 @@ import (
 )
 
 func (a *app) view(c *ui.Context) {
+	if a.win == nil {
+		a.setUIServices(c.Services())
+		a.drainUI()
+	}
 	a.applyThemeToContext(c)
 	p := paletteFor(c.Theme())
 

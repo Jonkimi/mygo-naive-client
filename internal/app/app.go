@@ -125,6 +125,11 @@ type app struct {
 	gatewayMu          sync.Mutex
 	persistMu          sync.Mutex
 	toastMu            sync.Mutex
+	uiQueueMu          sync.Mutex
+	uiQueue            []func()
+	uiQueueEnabled     bool
+	uiServices         ui.Services
+	hasUIServices      bool
 
 	localVersion    string
 	latestRelease   *updater.Release
@@ -194,6 +199,7 @@ type app struct {
 	batchTesting bool
 	batchStage   string
 	batchCancel  context.CancelFunc
+	batchRunID   uint64
 
 	editor     editorForm
 	importDlg  importDialogState
@@ -737,6 +743,42 @@ func (a *app) notifyTelemetryUI() {
 	a.telemetryUIMu.Unlock()
 }
 
+func (a *app) setUIQueueEnabled(enabled bool) {
+	a.uiQueueMu.Lock()
+	a.uiQueueEnabled = enabled
+	a.uiQueueMu.Unlock()
+}
+
+func (a *app) setUIServices(svc ui.Services) {
+	a.uiQueueMu.Lock()
+	if a.uiQueueEnabled {
+		a.uiServices = svc
+		a.hasUIServices = true
+	}
+	a.uiQueueMu.Unlock()
+}
+
+// drainUI executes queued headless UI callbacks on the caller's UI/test
+// goroutine, preserving MyGo's single-threaded UI confinement in Tester mode.
+func (a *app) drainUI() {
+	for {
+		a.uiQueueMu.Lock()
+		if !a.uiQueueEnabled || len(a.uiQueue) == 0 {
+			a.uiQueueMu.Unlock()
+			return
+		}
+		pending := a.uiQueue
+		a.uiQueue = nil
+		a.uiQueueMu.Unlock()
+
+		for _, fn := range pending {
+			if fn != nil {
+				fn()
+			}
+		}
+	}
+}
+
 func (a *app) dispatchUI(fn func()) {
 	if a.win != nil {
 		a.win.Update(func() {
@@ -745,6 +787,26 @@ func (a *app) dispatchUI(fn func()) {
 			}
 			a.win.Invalidate()
 		})
+		return
+	}
+	a.uiQueueMu.Lock()
+	queued := a.uiQueueEnabled
+	var svc ui.Services
+	hasSvc := false
+	if queued {
+		if fn != nil {
+			a.uiQueue = append(a.uiQueue, fn)
+		}
+		if a.hasUIServices {
+			svc = a.uiServices
+			hasSvc = true
+		}
+	}
+	a.uiQueueMu.Unlock()
+	if queued {
+		if hasSvc {
+			svc.Invalidate()
+		}
 		return
 	}
 	if fn != nil {
@@ -964,6 +1026,7 @@ func (a *app) triggerServiceDownloadTest(svc config.Service) {
 
 func (a *app) triggerBatchTest() {
 	if a.batchTesting {
+		a.batchRunID++
 		if a.batchCancel != nil {
 			a.batchCancel()
 			a.batchCancel = nil
@@ -985,16 +1048,25 @@ func (a *app) triggerBatchTest() {
 		return
 	}
 
+	a.batchRunID++
+	runID := a.batchRunID
 	ctx, cancel := context.WithCancel(context.Background())
 	a.batchCancel = cancel
 	a.batchTesting = true
 	a.batchStage = "测延迟中..."
 
 	downloadURL := a.state.DownloadTestURL
+	probeURLs := make(map[string]string, len(targets))
+	for _, svc := range targets {
+		probeURLs[svc.ID] = a.probeURLForService(svc)
+	}
 
 	go func() {
 		defer func() {
 			a.dispatchUI(func() {
+				if a.batchRunID != runID {
+					return
+				}
 				a.batchTesting = false
 				a.batchStage = ""
 				a.batchCancel = nil
@@ -1008,10 +1080,11 @@ func (a *app) triggerBatchTest() {
 				break
 			}
 			wg.Add(1)
-			go func(s config.Service) {
+			probeURL := probeURLs[svc.ID]
+			go func(s config.Service, url string) {
 				defer wg.Done()
-				_, _ = a.mgr.ProbeServiceCtx(ctx, s, a.probeURLForService(s))
-			}(svc)
+				_, _ = a.mgr.ProbeServiceCtx(ctx, s, url)
+			}(svc, probeURL)
 		}
 		wg.Wait()
 
@@ -1027,6 +1100,9 @@ func (a *app) triggerBatchTest() {
 			}
 			idx := i + 1
 			a.dispatchUI(func() {
+				if a.batchRunID != runID {
+					return
+				}
 				a.batchStage = fmt.Sprintf("测速中 (%d/%d)...", idx, total)
 			})
 			_, _ = a.mgr.DownloadTestServiceCtx(ctx, svc, downloadURL)
@@ -1047,6 +1123,9 @@ func (a *app) triggerBatchTest() {
 		}
 
 		a.dispatchUI(func() {
+			if a.batchRunID != runID {
+				return
+			}
 			if failures == 0 {
 				a.toast(fmt.Sprintf("一键测速完成：全部 %d 个服务测速成功", successes))
 			} else {
