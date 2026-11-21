@@ -407,3 +407,72 @@ func TestP1Redesign_CloudflareScanAndAttachedNodesAlignmentAndContent(t *testing
 		t.Fatalf("expected attached node latency aligned right (X > 700), got ok=%v rect=%+v", okLat, latRect)
 	}
 }
+
+// Regression test: previously the Outbound Action segmented control (rule-set-action) in New/Edit Rule
+// used compactSegmentedControl inside a stretched Column, producing a thin (~17px) track with the
+// three segments clustered on the left and empty track space on the right. It must render as a
+// full-width, equal-column segmented control with comfortable vertical sizing and interactive clicks.
+func TestP1Redesign_RuleEditorActionSegmentedLayout(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.activeTab = TabRouting
+	tt.Frame()
+	cat := a.catalog()
+
+	assertActionSegments := func(mode string) {
+		t.Helper()
+		proxyRect, okP := tt.Find(cat.RoutingProxy())
+		directRect, okD := tt.Find(cat.RoutingDirect())
+		blockRect, okB := tt.Find(cat.RoutingBlock())
+		if !okP || !okD || !okB {
+			t.Fatalf("[%s] missing action segment rects: proxy=%v direct=%v block=%v", mode, okP, okD, okB)
+		}
+		if proxyRect.H < 24 || directRect.H < 24 || blockRect.H < 24 {
+			t.Fatalf("[%s] expected comfortable action segment height >= 24px, got proxy=%.1f direct=%.1f block=%.1f",
+				mode, proxyRect.H, directRect.H, blockRect.H)
+		}
+		if proxyRect.W < 100 || math.Abs(float64(proxyRect.W-directRect.W)) > 1 || math.Abs(float64(directRect.W-blockRect.W)) > 1 {
+			t.Fatalf("[%s] expected equal full-width segments >= 100px, got proxy=%+v direct=%+v block=%+v",
+				mode, proxyRect, directRect, blockRect)
+		}
+		if math.Abs(float64(proxyRect.Y-directRect.Y)) > 0.5 || math.Abs(float64(directRect.Y-blockRect.Y)) > 0.5 {
+			t.Fatalf("[%s] expected segments aligned on same row, got proxy=%+v direct=%+v block=%+v",
+				mode, proxyRect, directRect, blockRect)
+		}
+	}
+
+	// 1. New Rule drawer
+	if err := tt.Click(cat.NewRule()); err != nil {
+		t.Fatalf("click NewRule: %v", err)
+	}
+	tt.Frame()
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	assertActionSegments("new-rule")
+
+	if err := tt.Click(cat.RoutingDirect()); err != nil {
+		t.Fatalf("click Direct segment: %v", err)
+	}
+	tt.Frame()
+	if a.ruleEditor.actionIndex != 1 {
+		t.Fatalf("expected actionIndex=1 after clicking Direct, got %d", a.ruleEditor.actionIndex)
+	}
+
+	if err := tt.Click(cat.RoutingBlock()); err != nil {
+		t.Fatalf("click Block segment: %v", err)
+	}
+	tt.Frame()
+	if a.ruleEditor.actionIndex != 2 {
+		t.Fatalf("expected actionIndex=2 after clicking Block, got %d", a.ruleEditor.actionIndex)
+	}
+
+	a.dismissRuleEditorDrawer(false)
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+
+	// 2. Edit Rule drawer
+	a.openEditRuleDialog(a.state.RoutingRules[1])
+	tt.Frame()
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	assertActionSegments("edit-rule")
+}

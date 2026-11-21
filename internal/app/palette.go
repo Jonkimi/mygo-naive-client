@@ -250,7 +250,15 @@ func segmentedOptionsFromStrings(labels []string) []segmentedOption {
 	return opts
 }
 
-func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmentedOption, compact bool) bool {
+type segmentedStyle uint8
+
+const (
+	segmentedStandard segmentedStyle = iota
+	segmentedCompact
+	segmentedFullWidth
+)
+
+func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmentedOption, style segmentedStyle) bool {
 	if selected == nil || len(opts) == 0 {
 		return false
 	}
@@ -258,18 +266,25 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 	parts := ui.SegmentedBase(c, selected, len(opts))
 	track := parts.Track
 
-	trackRadius := float32(8)
+	trackPad, trackGap, trackRadius := float32(2), float32(2), float32(8)
 	segPadV, segPadH, segRadius := float32(4), float32(10), float32(6)
 	fontSize := float32(12)
 	shBlur, shAlpha := float32(2), float32(0.08)
-	if compact {
+	switch style {
+	case segmentedCompact:
 		trackRadius = 6
 		segPadV, segPadH, segRadius = 2, 8, 4
 		fontSize = 11
 		shBlur, shAlpha = 1, 0.06
+	case segmentedFullWidth:
+		trackPad, trackGap = 3, 3
+		segPadV = 6
 	}
 
-	track.AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(trackRadius)
+	track.AlignItems(ui.Stretch).Padding(trackPad).Gap(trackGap).Radius(trackRadius)
+	if style == segmentedFullWidth {
+		track.FillWidth()
+	}
 	if p.dark {
 		track.Background(p.codeBg)
 	} else {
@@ -289,6 +304,9 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 				Label(a11y).
 				Padding(segPadV, segPadH, segPadV, segPadH).
 				Radius(segRadius)
+			if style == segmentedFullWidth {
+				seg.Grow(1).Basis(0).MinWidth(0)
+			}
 
 			fg := p.textMuted
 			weight := 400
@@ -316,7 +334,10 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 			}
 
 			seg.Children(func() {
-				ui.Text(c, opt.Label).FontSize(fontSize).FontWeight(weight).TextColor(fg).SingleLine()
+				txt := ui.Text(c, opt.Label).FontSize(fontSize).FontWeight(weight).TextColor(fg).SingleLine()
+				if style == segmentedFullWidth {
+					txt.Ellipsis("…")
+				}
 			})
 		}
 	})
@@ -326,22 +347,27 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 // segmentedControl renders a standard (~28px) palette-driven segmented control for page headers,
 // drawer top tabs, Settings general rows, and Logs filter bars.
 func segmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
-	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), false)
+	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), segmentedStandard)
 }
 
 // segmentedOptions renders a standard (~28px) palette-driven segmented control with custom a11y labels and active colors.
 func segmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
-	return renderSegmentedTrack(c, p, selected, opts, false)
+	return renderSegmentedTrack(c, p, selected, opts, segmentedStandard)
 }
 
 // compactSegmentedControl renders a compact (~24px) palette-driven segmented control for embedded card tiles and form enums.
 func compactSegmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
-	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), true)
+	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), segmentedCompact)
 }
 
 // compactSegmentedOptions renders a compact (~24px) palette-driven segmented control supporting custom a11y labels and active colors.
 func compactSegmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
-	return renderSegmentedTrack(c, p, selected, opts, true)
+	return renderSegmentedTrack(c, p, selected, opts, segmentedCompact)
+}
+
+// fullWidthSegmentedOptions renders a full-width (~34px) equal-segment control for prominent form choices.
+func fullWidthSegmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
+	return renderSegmentedTrack(c, p, selected, opts, segmentedFullWidth)
 }
 
 func labeledInput(c *ui.Context, p palette, key, label string, value *string, placeholder string) ui.Element {

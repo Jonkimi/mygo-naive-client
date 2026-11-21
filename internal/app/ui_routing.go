@@ -1490,12 +1490,16 @@ func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routi
 			})
 		})
 
-		// Line 2: Description
-		if desc := a.localizedRuleDescription(rule); desc != "" {
-			ui.Box(c).Padding(0, 0, 0, 15).Children(func() {
-				ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).SingleLine().Ellipsis("…")
-			})
+		// Line 2: Description (always render one line so cards stay uniform in height)
+		desc := strings.TrimSpace(a.localizedRuleDescription(rule))
+		descColor := p.textMuted
+		if desc == "" {
+			desc = cat.RuleCardDefaultDesc()
+			descColor = p.textDim
 		}
+		ui.Box(c).Padding(0, 0, 0, 15).Children(func() {
+			ui.Text(c, desc).FontSize(11).TextColor(descColor).SingleLine().Ellipsis("…")
+		})
 
 		// Line 3: Single-line outbound route summary + right-aligned DNS/Geo status
 		a.renderRuleRouteSummary(c, p, rule, false, hasGeo, runningIDs)
@@ -1924,19 +1928,23 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 
 					// Card 2: Outbound Action & Scheduling
 					ruleEditorCompactCard(func() {
-						ui.Column(c).Gap(5).Children(func() {
+						ui.Column(c).Gap(6).Children(func() {
 							ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
-							actions := []string{cat.RoutingProxy(), cat.RoutingDirect(), cat.RoutingBlock()}
-							compactSegmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
+							actionOpts := []segmentedOption{
+								{Label: cat.RoutingProxy(), ActiveColor: p.accentText},
+								{Label: cat.RoutingDirect(), ActiveColor: p.text},
+								{Label: cat.RoutingBlock(), ActiveColor: p.red},
+							}
+							fullWidthSegmentedOptions(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actionOpts)
 							switch a.ruleEditor.actionIndex {
 							case 0: // Proxy
-								ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim)
+								ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
 							case 1: // Direct
 								if a.ruleEditor.ruleID == "preset-lan-direct" {
-									ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim)
+									ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
 								}
 							case 2: // Block
-								ui.Text(c, cat.RuleDrawerDescBlock()).FontSize(11).TextColor(p.red)
+								ui.Text(c, cat.RuleDrawerDescBlock()).FontSize(11).TextColor(p.red).LineHeight(1.35)
 							}
 						})
 

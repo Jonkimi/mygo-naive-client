@@ -396,6 +396,16 @@ func (msgs Messages) RuleDescLabel() string {
 	return Catalog.Format(msgs.locale, "ruleDescLabel", nil)
 }
 
+// RuleCardDefaultDesc says "No description"
+// in the language the app shows.
+func RuleCardDefaultDesc() string { return In(i18n.Locale()).RuleCardDefaultDesc() }
+
+// RuleCardDefaultDesc says "No description"
+// in the language of msgs.
+func (msgs Messages) RuleCardDefaultDesc() string {
+	return Catalog.Format(msgs.locale, "ruleCardDefaultDesc", nil)
+}
+
 // RuleActionLabel says "Outbound Action"
 // in the language the app shows.
 func RuleActionLabel() string { return In(i18n.Locale()).RuleActionLabel() }

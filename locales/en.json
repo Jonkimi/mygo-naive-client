@@ -36,6 +36,7 @@
   "deleteRule": "Delete Rule",
   "ruleNameLabel": "Rule Name",
   "ruleDescLabel": "Description",
+  "ruleCardDefaultDesc": "No description",
   "ruleActionLabel": "Outbound Action",
   "ruleTagLabel": "Target Tag",
   "ruleTagHint": "e.g. AI, Media, US",

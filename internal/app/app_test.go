@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3999,8 +4000,54 @@ func TestRouting_DirectWarpToggleInRuleEditor(t *testing.T) {
 	}
 }
 
+// Regression test: rule cards without a description previously skipped Line 2,
+// causing uneven card heights compared to cards that have descriptions.
+func TestRouting_RuleCardDefaultDescription(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.state.RoutingRules = append(a.state.RoutingRules,
+		routing.Rule{
+			ID:           "cust-with-desc",
+			Name:         "RuleWithDesc",
+			Description:  "Custom rule description",
+			Enabled:      true,
+			DomainSuffix: []string{"with-desc.example"},
+			Action:       routing.RouteAction{Type: routing.ActionDirect},
+		},
+		routing.Rule{
+			ID:           "cust-no-desc",
+			Name:         "RuleWithoutDesc",
+			Description:  "",
+			Enabled:      true,
+			DomainSuffix: []string{"no-desc.example"},
+			Action:       routing.RouteAction{Type: routing.ActionBlock},
+		},
+	)
+	a.activeTab = TabRouting
+	tt.Frame()
 
+	cat := a.catalog()
+	defaultDesc := cat.RuleCardDefaultDesc()
+	if !tt.HasText(defaultDesc) {
+		t.Fatalf("expected card without description to render default description %q", defaultDesc)
+	}
 
+	descWithRect, ok1 := tt.Find("Custom rule description")
+	descDefaultRect, ok2 := tt.Find(defaultDesc)
+	if !ok1 || !ok2 {
+		t.Fatalf("expected both description rects to be found: ok1=%v ok2=%v", ok1, ok2)
+	}
+	if descDefaultRect.H <= 0 || math.Abs(float64(descWithRect.H-descDefaultRect.H)) > 1 {
+		t.Fatalf("expected identical single-line description height, got withDesc=%+v defaultDesc=%+v", descWithRect, descDefaultRect)
+	}
+	if math.Abs(float64(descWithRect.Y-descDefaultRect.Y)) > 1 {
+		t.Fatalf("expected descriptions on same grid row to align vertically, got withDesc=%+v defaultDesc=%+v", descWithRect, descDefaultRect)
+	}
 
-
+	// Opening the editor for a rule without a saved description should keep the form field empty.
+	a.openEditRuleDialog(a.state.RoutingRules[len(a.state.RoutingRules)-1])
+	tt.Frame()
+	if a.ruleEditor.desc != "" {
+		t.Fatalf("expected editor description to stay empty for rule without description, got %q", a.ruleEditor.desc)
+	}
+}
 

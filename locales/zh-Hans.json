@@ -36,6 +36,7 @@
   "deleteRule": "删除规则",
   "ruleNameLabel": "规则名称",
   "ruleDescLabel": "规则说明",
+  "ruleCardDefaultDesc": "暂无规则说明",
   "ruleActionLabel": "出站动作",
   "ruleTagLabel": "目标标签",
   "ruleTagHint": "例如 AI, Media, US",
