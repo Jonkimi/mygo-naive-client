@@ -559,7 +559,7 @@
   "insightsTopBlockedEmpty": "暂无拦截记录",
   "insightsTopAllowedTitle": "Top 放行域名",
   "insightsTopAllowedEmpty": "暂无放行记录",
-  "insightsActionWhitelist": "+ 白名单",
+  "insightsActionWhitelist": "+ 放行",
   "insightsActionWhitelistTooltip": "加入白名单，解除拦截",
   "insightsActionDenylist": "+ 拦截",
   "insightsActionDenylistTooltip": "加入黑名单，禁止连接",
