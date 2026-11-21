@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -329,6 +330,146 @@ func TestTailnetUI_TunModeDoesNotReRequestTunDevice(t *testing.T) {
 	}
 	if a.gateway == nil {
 		t.Fatal("expected gateway to remain running in TUN mode after Tailnet update")
+	}
+}
+
+// Regression: when host Tailnet cooperation is enabled and a proxy node uses a Tailscale
+// FQDN or single-label peer hostname, app previously put those names into BootstrapDomains,
+// cached empty nodeIPResolver misses, missed Split DNS /etc/resolver suffixes, and skipped
+// Tailnet metadata in gatewayConfigSignatureForSnapshot.
+func TestApp_HostTailnetNode_ResolvesViaMagicDNSAndExcludesBootstrap(t *testing.T) {
+	services := []config.Service{
+		{
+			ID:         "ts-fqdn",
+			Name:       "TS FQDN",
+			Engine:     config.EngineSingBox,
+			Protocol:   config.ProtoVLESS,
+			Server:     "my-vps.tail8bfe1c.ts.net",
+			ServerPort: 443,
+			UUID:       "11111111-1111-1111-1111-111111111111",
+		},
+		{
+			ID:         "ts-short",
+			Name:       "TS Short",
+			Engine:     config.EngineSingBox,
+			Protocol:   config.ProtoShadowsocks,
+			Server:     "my-vps",
+			ServerPort: 8388,
+			Method:     "aes-256-gcm",
+			Password:   "pw",
+		},
+		{
+			ID:         "pub",
+			Name:       "Public",
+			Engine:     config.EngineSingBox,
+			Protocol:   config.ProtoTrojan,
+			Server:     "public.example.com",
+			ServerPort: 443,
+			Password:   "pw",
+		},
+	}
+
+	a, _, _ := newTestApp(t, services)
+	allowed := views.SliceOf([]netip.Prefix{
+		netip.MustParsePrefix("100.64.77.7/32"),
+		netip.MustParsePrefix("10.99.0.0/16"),
+	})
+	det := tailnet.NewDetectorWithClient(&mockAppHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			return &ipnstate.Status{
+				BackendState:   "Running",
+				MagicDNSSuffix: "tail8bfe1c.ts.net.",
+				Self: &ipnstate.PeerStatus{
+					HostName:     "local-mac",
+					DNSName:      "local-mac.tail8bfe1c.ts.net.",
+					TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+					Online:       true,
+				},
+				Peer: map[key.NodePublic]*ipnstate.PeerStatus{
+					key.NewNode().Public(): {
+						ID:           "peer-1",
+						HostName:     "my-vps",
+						DNSName:      "my-vps.tail8bfe1c.ts.net.",
+						TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.77.7")},
+						AllowedIPs:   &allowed,
+						Online:       true,
+					},
+				},
+			}, nil
+		},
+	})
+	if a.tailnetUnsub != nil {
+		a.tailnetUnsub()
+		a.tailnetUnsub = nil
+	}
+	if a.tailnetMgr != nil {
+		a.tailnetMgr.Close()
+	}
+	a.state.TailnetEnabled = true
+	a.state.TailnetMode = string(tailnet.ModeHost)
+	a.tailnetMgr = tailnet.NewManager(a.state.tailnetConfig(), det)
+	t.Cleanup(func() { a.tailnetMgr.Close() })
+
+	// Deliberately test resolveTailnetRuntimeInfo BEFORE Refresh() has run:
+	// ModeHost + BackendState=="" must still fetch host status rather than reading empty fields.
+	a.refreshGatewaySnapshot()
+	snapBefore := a.getGatewaySnapshot()
+	info := a.resolveTailnetRuntimeInfo(snapBefore)
+	if info.Mode != tailnet.ModeHost || info.MagicDNSSuffix != "tail8bfe1c.ts.net" {
+		t.Fatalf("resolveTailnetRuntimeInfo() = %+v, want ModeHost + tail8bfe1c.ts.net", info)
+	}
+	if got := info.HostRecords["my-vps"]; len(got) != 1 || got[0] != "100.64.77.7" {
+		t.Fatalf("expected HostRecords[my-vps] = [100.64.77.7], got %v", got)
+	}
+
+	// BootstrapDomains must exclude Tailnet FQDNs and single-label MagicDNS names.
+	boot := a.collectBootstrapDomains()
+	bootSet := make(map[string]bool, len(boot))
+	for _, d := range boot {
+		bootSet[d] = true
+	}
+	if bootSet["my-vps.tail8bfe1c.ts.net"] || bootSet["my-vps"] {
+		t.Errorf("Tailnet domains must be excluded from collectBootstrapDomains(), got %v", boot)
+	}
+	if !bootSet["public.example.com"] {
+		t.Errorf("expected public.example.com in collectBootstrapDomains(), got %v", boot)
+	}
+
+	// nodeIPResolver must resolve both short-name and FQDN from cached Tailnet records without public DNS.
+	resolve := a.nodeIPResolver()
+	for _, host := range []string{"my-vps", "my-vps.tail8bfe1c.ts.net"} {
+		ips := resolve(host)
+		if len(ips) != 1 || ips[0].String() != "100.64.77.7" {
+			t.Errorf("nodeIPResolver(%q) = %v, want [100.64.77.7]", host, ips)
+		}
+	}
+
+	// collectNodeServerIPs must not inject Tailnet peer CGNAT IPs into OS TUN bypass routes.
+	for _, ip := range a.collectNodeServerIPs() {
+		if ip == "100.64.77.7" {
+			t.Errorf("collectNodeServerIPs() must not include Tailnet CGNAT IP %s", ip)
+		}
+	}
+
+	// Gateway signature must reflect Tailnet state changes so ensureGatewaySynced triggers reload.
+	a.refreshGatewaySnapshot()
+	snapAfter := a.getGatewaySnapshot()
+	if a.gatewayConfigSignatureForSnapshot(snapBefore, nil) == a.gatewayConfigSignatureForSnapshot(snapAfter, nil) {
+		t.Error("expected gatewayConfigSignatureForSnapshot to change after Tailnet host status populated")
+	}
+
+	// detectDarwinTailscaleMagicDNS handles multi-token search lines and /etc/resolver Split DNS.
+	tmp := t.TempDir()
+	resolvPath := filepath.Join(tmp, "resolv.conf")
+	resolverDir := filepath.Join(tmp, "resolver")
+	_ = os.MkdirAll(resolverDir, 0o755)
+	_ = os.WriteFile(resolvPath, []byte("nameserver 100.100.100.100\nsearch home.arpa my-tailnet.ts.net\n"), 0o644)
+	if got := detectDarwinTailscaleMagicDNS(resolvPath, ""); got != "my-tailnet.ts.net" {
+		t.Errorf("resolv.conf detection got %q, want my-tailnet.ts.net", got)
+	}
+	_ = os.WriteFile(filepath.Join(resolverDir, "split.ts.net"), []byte("nameserver 100.100.100.100\n"), 0o644)
+	if got := detectDarwinTailscaleMagicDNS("", resolverDir); got != "split.ts.net" {
+		t.Errorf("resolver dir detection got %q, want split.ts.net", got)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"naive-client/internal/config"
+	"naive-client/internal/tailnet"
 )
 
 var buildNativeOutbound = BuildNativeOutbound
@@ -18,6 +19,43 @@ func BuildNativeOutbound(svc config.Service) map[string]any {
 		ob["domain_resolver"] = "bootstrap-dns"
 	}
 	return ob
+}
+
+// ConfigureNativeOutboundTailnet overrides domain_resolver and outbound binding/detour on ob
+// when the node's server targets a Tailnet host or IP under active Tailnet cooperation.
+func ConfigureNativeOutboundTailnet(ob map[string]any, opts EngineOptions, hostInterface string) {
+	if len(ob) == 0 {
+		return
+	}
+	if opts.TailnetMode != tailnet.ModeHost && (opts.TailnetMode != tailnet.ModeEmbedded || opts.TailnetConfig == nil) {
+		return
+	}
+	srv, _ := ob["server"].(string)
+	srv = strings.TrimSpace(srv)
+	if srv == "" {
+		return
+	}
+	cleanIP := strings.TrimSuffix(strings.TrimPrefix(srv, "["), "]")
+	isDomain := net.ParseIP(cleanIP) == nil
+	isTailnetHost := isDomain && tailnet.IsTailnetHostname(opts.TailnetMode, srv, opts.TailnetMagicDNSSuffix)
+	isTailnetDest := tailnet.IsTailnetTarget(opts.TailnetMode, srv, opts.TailnetMagicDNSSuffix, opts.TailnetHostRecords)
+
+	switch opts.TailnetMode {
+	case tailnet.ModeHost:
+		if isTailnetHost {
+			ob["domain_resolver"] = "tailscale-host-dns"
+		}
+		if isTailnetDest && hostInterface != "" && ob["detour"] == nil {
+			ob["bind_interface"] = hostInterface
+		}
+	case tailnet.ModeEmbedded:
+		if isTailnetHost && isTailnetDest {
+			ob["domain_resolver"] = "tailscale-dns"
+		}
+		if isTailnetDest && ob["detour"] == nil {
+			ob["detour"] = "tailscale-ep"
+		}
+	}
 }
 
 func buildNativeOutboundInner(svc config.Service) map[string]any {

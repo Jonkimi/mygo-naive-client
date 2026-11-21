@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -223,30 +224,40 @@ func teardownRoutesInternal(name string, excludeIPs []string, flushDNS bool) err
 
 func setupDarwinDNS(ifName string) {
 	cleanupStaleDarwinDNS()
-	searchDomain := getSearchDomainFromResolvConf()
+	searchDomains := collectDarwinSearchDomains("/etc/resolv.conf", "/etc/resolver")
+	cmd := exec.Command("scutil")
+	cmd.Stdin = strings.NewReader(buildDarwinDNSCommands(ifName, searchDomains))
+	_ = cmd.Run()
+}
+
+func buildDarwinDNSCommands(ifName string, searchDomains []string) string {
 	var sb strings.Builder
 	sb.WriteString("d.init\n")
 	sb.WriteString("d.add ServerAddresses * " + DNSAddress + "\n")
 	sb.WriteString(fmt.Sprintf("d.add InterfaceName %s\n", ifName))
-	if searchDomain != "" {
-		cleanDomain := strings.Trim(searchDomain, ".")
-		sb.WriteString(fmt.Sprintf("d.add SearchDomains * %s\n", cleanDomain))
-		sb.WriteString(fmt.Sprintf("d.add SupplementalMatchDomains * \"\" %s.\n", cleanDomain))
+	if len(searchDomains) > 0 {
+		sb.WriteString("d.add SearchDomains * " + strings.Join(searchDomains, " ") + "\n")
+		sb.WriteString("d.add SupplementalMatchDomains * \"\"")
+		for _, d := range searchDomains {
+			sb.WriteString(" " + d + ".")
+		}
+		sb.WriteString("\n")
 		// Explicitly assign the lowest SupplementalMatchOrders (highest priority) as CFNumber (* # ...)
 		// within Apple's standard VPN supplemental resolver range (100000..150000).
 		// 100000 is the theoretical minimum base order for VPNs, ensuring it precedes
 		// Tailscale (101800) and other registered VPN services without breaking convention.
-		sb.WriteString("d.add SupplementalMatchOrders * # 100000 100000\n")
+		sb.WriteString("d.add SupplementalMatchOrders * #")
+		for i := 0; i <= len(searchDomains); i++ {
+			sb.WriteString(" 100000")
+		}
+		sb.WriteString("\n")
 	} else {
 		sb.WriteString("d.add SupplementalMatchDomains * \"\"\n")
 		sb.WriteString("d.add SupplementalMatchOrders * # 100000\n")
 	}
 	sb.WriteString(fmt.Sprintf("set State:/Network/Service/%s/DNS\n", ifName))
 	sb.WriteString("quit\n")
-
-	cmd := exec.Command("scutil")
-	cmd.Stdin = strings.NewReader(sb.String())
-	_ = cmd.Run()
+	return sb.String()
 }
 
 // cleanupStaleDarwinDNS removes DynamicStore DNS entries left behind by a previous helper that
@@ -322,19 +333,68 @@ func teardownDarwinDNS(ifName string) {
 	_ = cmd.Run()
 }
 
-func getSearchDomainFromResolvConf() string {
-	data, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return ""
+func collectDarwinSearchDomains(resolvConfPath, resolverDir string) []string {
+	var domains []string
+	seen := make(map[string]bool)
+	addDomain := func(raw string) {
+		clean := strings.ToLower(strings.Trim(strings.TrimSpace(raw), "."))
+		if clean == "" || seen[clean] {
+			return
+		}
+		seen[clean] = true
+		domains = append(domains, clean)
 	}
-	lines := strings.Split(string(data), "\n")
-	for _, l := range lines {
-		fields := strings.Fields(l)
-		if len(fields) >= 2 && fields[0] == "search" {
-			return fields[1]
+
+	if resolvConfPath != "" {
+		if data, err := os.ReadFile(resolvConfPath); err == nil {
+			for _, l := range strings.Split(string(data), "\n") {
+				fields := strings.Fields(l)
+				if len(fields) >= 2 && (fields[0] == "search" || fields[0] == "domain") {
+					for _, tok := range fields[1:] {
+						addDomain(tok)
+					}
+				}
+			}
 		}
 	}
-	return ""
+
+	if resolverDir != "" {
+		if entries, err := os.ReadDir(resolverDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := strings.TrimSpace(entry.Name())
+				if name == "" || strings.HasPrefix(name, ".") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(resolverDir, name))
+				if err != nil {
+					continue
+				}
+				content := string(data)
+				isTailscaleResolver := strings.Contains(content, "100.100.100.100") ||
+					strings.Contains(content, "tailscaled") ||
+					strings.HasSuffix(strings.ToLower(strings.Trim(name, ".")), ".ts.net")
+				if !isTailscaleResolver {
+					continue
+				}
+				if strings.Contains(name, ".") {
+					addDomain(name)
+				}
+				for _, l := range strings.Split(content, "\n") {
+					fields := strings.Fields(l)
+					if len(fields) >= 2 && (fields[0] == "search" || fields[0] == "domain") {
+						for _, tok := range fields[1:] {
+							addDomain(tok)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return domains
 }
 
 func checkDarwinIPv6() bool {

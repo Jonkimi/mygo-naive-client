@@ -11,6 +11,7 @@ import (
 
 	"naive-client/internal/blocker"
 	"naive-client/internal/routing"
+	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
 
 	mDNS "github.com/miekg/dns"
@@ -24,9 +25,11 @@ import (
 )
 
 type blockerTransportRegistry struct {
-	underlying adapter.DNSTransportRegistry
-	blocker    *blocker.Engine
-	fm         *telemetry.FailureMonitor
+	underlying         adapter.DNSTransportRegistry
+	blocker            *blocker.Engine
+	fm                 *telemetry.FailureMonitor
+	tailnetSuffix      string
+	tailnetHostRecords map[string][]string
 }
 
 func (r *blockerTransportRegistry) OptionTypes() []string {
@@ -42,6 +45,9 @@ func (r *blockerTransportRegistry) CreateDNSTransport(ctx context.Context, logge
 	if err != nil {
 		return nil, err
 	}
+	if tag == "tailscale-host-dns" {
+		tr = newTailscaleHostDNSTransport(tr, r.tailnetSuffix, r.tailnetHostRecords)
+	}
 	if r.blocker == nil && r.fm == nil {
 		return tr, nil
 	}
@@ -50,6 +56,164 @@ func (r *blockerTransportRegistry) CreateDNSTransport(ctx context.Context, logge
 		blocker:    r.blocker,
 		fm:         r.fm,
 	}, nil
+}
+
+const tailscaleHostDNSRecordFallbackTimeout = 1500 * time.Millisecond
+
+// tailscaleHostDNSTransport wraps tailscale-host-dns to support single-label MagicDNS
+// search-domain expansion and fallback resolution from cached LocalAPI host records.
+type tailscaleHostDNSTransport struct {
+	underlying     adapter.DNSTransport
+	magicDNSSuffix string
+	hostRecords    map[string][]netip.Addr
+}
+
+func newTailscaleHostDNSTransport(underlying adapter.DNSTransport, magicDNSSuffix string, rawRecords map[string][]string) *tailscaleHostDNSTransport {
+	parsed := make(map[string][]netip.Addr, len(rawRecords))
+	for k, vals := range rawRecords {
+		normKey := tailnet.NormalizeHost(k)
+		if normKey == "" {
+			continue
+		}
+		var addrs []netip.Addr
+		for _, rawIP := range vals {
+			if addr, err := netip.ParseAddr(strings.TrimSpace(rawIP)); err == nil {
+				addrs = append(addrs, addr)
+			}
+		}
+		if len(addrs) > 0 {
+			parsed[normKey] = addrs
+		}
+	}
+	return &tailscaleHostDNSTransport{
+		underlying:     underlying,
+		magicDNSSuffix: tailnet.NormalizeHost(magicDNSSuffix),
+		hostRecords:    parsed,
+	}
+}
+
+func (t *tailscaleHostDNSTransport) Type() string {
+	return t.underlying.Type()
+}
+
+func (t *tailscaleHostDNSTransport) Tag() string {
+	return t.underlying.Tag()
+}
+
+func (t *tailscaleHostDNSTransport) Dependencies() []string {
+	return t.underlying.Dependencies()
+}
+
+func (t *tailscaleHostDNSTransport) Upstream() any {
+	return t.underlying
+}
+
+func (t *tailscaleHostDNSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	return t.underlying.Start(stage, scope)
+}
+
+func (t *tailscaleHostDNSTransport) Reset() {
+	t.underlying.Reset()
+}
+
+func (t *tailscaleHostDNSTransport) lookupHostRecord(q mDNS.Question, messageID uint16) (*mDNS.Msg, bool) {
+	if len(t.hostRecords) == 0 {
+		return nil, false
+	}
+	norm := tailnet.NormalizeHost(q.Name)
+	addrs, ok := t.hostRecords[norm]
+	if !ok && norm != "" && !strings.Contains(norm, ".") && t.magicDNSSuffix != "" {
+		addrs, ok = t.hostRecords[norm+"."+t.magicDNSSuffix]
+	}
+	if !ok {
+		return nil, false
+	}
+	return boxDNS.FixedResponse(messageID, q, addrs, 30), true
+}
+
+func restoreDNSResponseName(resp *mDNS.Msg, fromName, toName string) {
+	if resp == nil {
+		return
+	}
+	for i := range resp.Question {
+		if strings.EqualFold(resp.Question[i].Name, fromName) {
+			resp.Question[i].Name = toName
+		}
+	}
+	rewriteRRs := func(rrs []mDNS.RR) {
+		for _, rr := range rrs {
+			if rr == nil {
+				continue
+			}
+			hdr := rr.Header()
+			if strings.EqualFold(hdr.Name, fromName) {
+				hdr.Name = toName
+			}
+		}
+	}
+	rewriteRRs(resp.Answer)
+	rewriteRRs(resp.Ns)
+	rewriteRRs(resp.Extra)
+}
+
+func (t *tailscaleHostDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	if message == nil || len(message.Question) == 0 {
+		return t.underlying.Exchange(ctx, message)
+	}
+	origQ := message.Question[0]
+	fallbackResp, hasHostRecord := t.lookupHostRecord(origQ, message.Id)
+
+	queryCtx := ctx
+	var cancel context.CancelFunc
+	if hasHostRecord {
+		queryCtx, cancel = context.WithTimeout(ctx, tailscaleHostDNSRecordFallbackTimeout)
+		defer cancel()
+	}
+
+	norm := tailnet.NormalizeHost(origQ.Name)
+	isSingleLabel := norm != "" && !strings.Contains(norm, ".") && norm != "localhost" && net.ParseIP(norm) == nil
+
+	var resp *mDNS.Msg
+	var err error
+
+	if isSingleLabel && t.magicDNSSuffix != "" {
+		expandedName := mDNS.Fqdn(norm + "." + t.magicDNSSuffix)
+		expandedMsg := message.Copy()
+		expandedMsg.Question[0].Name = expandedName
+		resp, err = t.underlying.Exchange(queryCtx, expandedMsg)
+		if err == nil && resp != nil && resp.Rcode == mDNS.RcodeSuccess {
+			restoreDNSResponseName(resp, expandedName, origQ.Name)
+			return resp, nil
+		}
+		// Only retry the unexpanded single-label name upstream if 100.100.100.100 actually
+		// responded cleanly with a negative code (e.g., LAN search-domain host forwarded by Tailscale).
+		if err == nil && queryCtx.Err() == nil {
+			rawResp, rawErr := t.underlying.Exchange(queryCtx, message)
+			if rawErr == nil && rawResp != nil && rawResp.Rcode == mDNS.RcodeSuccess {
+				return rawResp, nil
+			}
+			if rawErr != nil || rawResp != nil {
+				resp, err = rawResp, rawErr
+			}
+		}
+	} else {
+		resp, err = t.underlying.Exchange(queryCtx, message)
+		if err == nil && resp != nil && resp.Rcode == mDNS.RcodeSuccess {
+			return resp, nil
+		}
+	}
+
+	if hasHostRecord && ctx.Err() == nil {
+		return fallbackResp, nil
+	}
+	return resp, err
+}
+
+func (t *tailscaleHostDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	go func() {
+		resp, err := t.Exchange(ctx, message)
+		callback(resp, err)
+	}()
 }
 
 type blockerDNSTransport struct {

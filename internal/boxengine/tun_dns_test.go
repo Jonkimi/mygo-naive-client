@@ -2,6 +2,7 @@ package boxengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,10 +14,12 @@ import (
 	"naive-client/internal/blocker"
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
+	"naive-client/internal/tailnet"
 	"naive-client/internal/tunhelper"
 
 	"github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing/service"
 )
 
 func tunInbound(t *testing.T, opts EngineOptions) map[string]any {
@@ -574,6 +577,406 @@ func TestEngine_PerRuleRemoteDoHDetourAndPoolWrapping(t *testing.T) {
 	}
 	if !matchedUS || !matchedOpenAI || !matchedCN {
 		t.Errorf("DNS rule mismatch: us=%v openai=%v cn=%v (rules=%+v)", matchedUS, matchedOpenAI, matchedCN, dnsRules)
+	}
+}
+
+// Regression: proxy nodes using Tailscale hostnames in host networking mode previously had
+// domain_resolver pinned to bootstrap-dns (223.5.5.5) and were added to allBootstrapDomains,
+// causing NXDOMAIN and falling off the Tailscale interface to en0; CGNAT/RFC1918 route rule 0.25
+// also preempted Tailnet rules.
+func TestHostTailnetNodeOutbound_UsesMagicDNSResolverAndInterfaceAndExcludesBootstrap(t *testing.T) {
+	opts := EngineOptions{
+		TrafficMode:           "tun",
+		TailnetMode:           tailnet.ModeHost,
+		TailnetMagicDNSSuffix: "tail8bfe1c.ts.net",
+		TailnetHostExcludes:   []string{"100.64.0.0/10", "fd7a:115c:a1e0::/48", "10.20.0.0/16"},
+		TailnetHostInterface:  "utun9",
+		TailnetHostRecords: map[string][]string{
+			"my-vps":                   {"100.64.1.5"},
+			"my-vps.tail8bfe1c.ts.net": {"100.64.1.5"},
+		},
+		BootstrapDomains: []string{"my-vps.tail8bfe1c.ts.net", "my-vps", "edge.example.com"},
+		Services: []config.Service{
+			{
+				ID:         "vless-fqdn",
+				Name:       "VLESS FQDN",
+				Engine:     config.EngineSingBox,
+				Protocol:   config.ProtoVLESS,
+				Server:     "my-vps.tail8bfe1c.ts.net",
+				ServerPort: 443,
+				UUID:       "11111111-1111-1111-1111-111111111111",
+			},
+			{
+				ID:         "ss-short",
+				Name:       "SS Short",
+				Engine:     config.EngineSingBox,
+				Protocol:   config.ProtoShadowsocks,
+				Server:     "my-vps",
+				ServerPort: 8388,
+				Method:     "aes-256-gcm",
+				Password:   "secret",
+			},
+			{
+				ID:          "socks-ip",
+				Name:        "SOCKS IP",
+				Kind:        config.KindExternalProxy,
+				ExternalURI: "socks5://100.64.2.9:1080",
+			},
+			{
+				ID:          "lan-short",
+				Name:        "LAN Short",
+				Kind:        config.KindExternalProxy,
+				ExternalURI: "http://lan-proxy:8080",
+			},
+			{
+				ID:         "public-vps",
+				Name:       "Public VPS",
+				Engine:     config.EngineSingBox,
+				Protocol:   config.ProtoTrojan,
+				Server:     "edge.example.com",
+				ServerPort: 443,
+				Password:   "pw",
+			},
+			{
+				ID:       "sidecar-ts",
+				Name:     "Naive Sidecar",
+				Engine:   config.EngineSidecar,
+				Kind:     config.KindManagedNaive,
+				Protocol: config.ProtoNaive,
+				Listens:  []string{"socks://127.0.0.1:20808"},
+				Proxies:  []string{"https://u:p@sidecar-box.tail8bfe1c.ts.net:443"},
+			},
+		},
+		NodeIPResolver: func(host string) []net.IP {
+			switch host {
+			case "my-vps.tail8bfe1c.ts.net", "my-vps":
+				return []net.IP{net.ParseIP("100.64.1.5")}
+			case "edge.example.com":
+				return []net.IP{net.ParseIP("203.0.113.10")}
+			default:
+				return nil
+			}
+		},
+	}
+
+	outbounds, err := buildOutboundsConfig(opts, "PROXY_POOL", map[string]int{"sidecar-ts": 20808})
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+	byTag := make(map[string]map[string]any, len(outbounds))
+	for _, ob := range outbounds {
+		if tag, _ := ob["tag"].(string); tag != "" {
+			byTag[tag] = ob
+		}
+	}
+
+	for _, tag := range []string{"node-vless-fqdn", "node-ss-short"} {
+		ob := byTag[tag]
+		if ob["domain_resolver"] != "tailscale-host-dns" {
+			t.Errorf("%s domain_resolver = %v, want tailscale-host-dns", tag, ob["domain_resolver"])
+		}
+		if ob["bind_interface"] != "utun9" {
+			t.Errorf("%s bind_interface = %v, want utun9", tag, ob["bind_interface"])
+		}
+	}
+	if byTag["node-socks-ip"]["bind_interface"] != "utun9" {
+		t.Errorf("node-socks-ip bind_interface = %v, want utun9", byTag["node-socks-ip"]["bind_interface"])
+	}
+	if _, hasDR := byTag["node-socks-ip"]["domain_resolver"]; hasDR {
+		t.Errorf("node-socks-ip should not set domain_resolver for IP literal")
+	}
+	// Non-Tailnet single-label LAN server must not bind to Tailscale interface when hostRecords is known.
+	if _, hasBind := byTag["node-lan-short"]["bind_interface"]; hasBind {
+		t.Errorf("node-lan-short should not set bind_interface=%v", byTag["node-lan-short"]["bind_interface"])
+	}
+	if byTag["node-public-vps"]["domain_resolver"] != "bootstrap-dns" {
+		t.Errorf("node-public-vps domain_resolver = %v, want bootstrap-dns", byTag["node-public-vps"]["domain_resolver"])
+	}
+	if _, hasBind := byTag["node-public-vps"]["bind_interface"]; hasBind {
+		t.Errorf("node-public-vps should not bind Tailscale interface")
+	}
+
+	bootstrap := collectAllBootstrapDomains(opts)
+	bootstrapSet := make(map[string]bool, len(bootstrap))
+	for _, d := range bootstrap {
+		bootstrapSet[d] = true
+	}
+	for _, excluded := range []string{"my-vps.tail8bfe1c.ts.net", "my-vps", "sidecar-box.tail8bfe1c.ts.net"} {
+		if bootstrapSet[excluded] {
+			t.Errorf("Tailnet domain %q must not appear in bootstrap domains: %v", excluded, bootstrap)
+		}
+	}
+	if !bootstrapSet["edge.example.com"] {
+		t.Errorf("expected edge.example.com in bootstrap domains: %v", bootstrap)
+	}
+
+	routeCfg := buildRouteConfig(opts, "PROXY_POOL", bootstrap)
+	rules := routeCfg["rules"].([]map[string]any)
+	firstTailnetIdx, firstDirectRFC1918Idx, nodeCIDRIdx := -1, -1, -1
+	for i, r := range rules {
+		if r["outbound"] == "tailnet-direct" && firstTailnetIdx == -1 {
+			firstTailnetIdx = i
+		}
+		if r["outbound"] == "direct" {
+			if cidrs, ok := r["ip_cidr"].([]string); ok {
+				for _, c := range cidrs {
+					if c == "100.64.0.0/10" && firstDirectRFC1918Idx == -1 {
+						firstDirectRFC1918Idx = i
+					}
+					if c == "203.0.113.10/32" && nodeCIDRIdx == -1 {
+						nodeCIDRIdx = i
+					}
+					if c == "100.64.1.5/32" {
+						t.Errorf("Tailnet peer IP 100.64.1.5/32 must not be emitted into direct nodeCIDRs rule")
+					}
+				}
+			}
+		}
+	}
+	if firstTailnetIdx < 0 || firstDirectRFC1918Idx < 0 || firstTailnetIdx >= firstDirectRFC1918Idx {
+		t.Errorf("tailnet-direct rule (idx=%d) must precede RFC1918/CGNAT direct rule (idx=%d)", firstTailnetIdx, firstDirectRFC1918Idx)
+	}
+	if nodeCIDRIdx < 0 || firstTailnetIdx >= nodeCIDRIdx {
+		t.Errorf("tailnet-direct rule (idx=%d) must precede nodeCIDRs direct rule (idx=%d)", firstTailnetIdx, nodeCIDRIdx)
+	}
+}
+
+func TestEmbeddedTailnetNodeOutbound_DetoursThroughTailscaleEndpoint(t *testing.T) {
+	opts := EngineOptions{
+		TrafficMode:           "tun",
+		TailnetMode:           tailnet.ModeEmbedded,
+		TailnetConfig:         &tailnet.Config{Enabled: true, Mode: tailnet.ModeEmbedded},
+		TailnetMagicDNSSuffix: "tail8bfe1c.ts.net",
+		Services: []config.Service{
+			{
+				ID:         "vless-ts",
+				Engine:     config.EngineSingBox,
+				Protocol:   config.ProtoVLESS,
+				Server:     "peer1.tail8bfe1c.ts.net",
+				ServerPort: 443,
+				UUID:       "11111111-1111-1111-1111-111111111111",
+			},
+			{
+				ID:         "public-vps",
+				Engine:     config.EngineSingBox,
+				Protocol:   config.ProtoTrojan,
+				Server:     "public.example.com",
+				ServerPort: 443,
+				Password:   "pw",
+			},
+		},
+		NodeIPResolver: func(host string) []net.IP {
+			if host == "peer1.tail8bfe1c.ts.net" {
+				return []net.IP{net.ParseIP("100.64.1.9")}
+			}
+			return []net.IP{net.ParseIP("203.0.113.20")}
+		},
+	}
+
+	outbounds, err := buildOutboundsConfig(opts, "PROXY_POOL", nil)
+	if err != nil {
+		t.Fatalf("buildOutboundsConfig failed: %v", err)
+	}
+	for _, ob := range outbounds {
+		switch ob["tag"] {
+		case "node-vless-ts":
+			if ob["detour"] != "tailscale-ep" || ob["domain_resolver"] != "tailscale-dns" {
+				t.Errorf("node-vless-ts = %+v, want detour=tailscale-ep domain_resolver=tailscale-dns", ob)
+			}
+		case "node-public-vps":
+			if ob["domain_resolver"] != "bootstrap-dns" || ob["detour"] != nil {
+				t.Errorf("node-public-vps = %+v, want bootstrap-dns with no detour", ob)
+			}
+		}
+	}
+
+	in := tunInbound(t, opts)
+	if excludes, ok := in["route_exclude_address"].([]string); ok {
+		for _, exc := range excludes {
+			if exc == "100.64.1.9/32" {
+				t.Errorf("ModeEmbedded TUN inbound must not exclude Tailnet IP %s", exc)
+			}
+		}
+	}
+}
+
+type mockDNSTransport struct {
+	tag       string
+	mu        sync.Mutex
+	seenNames []string
+	fn        func(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
+}
+
+func (m *mockDNSTransport) Type() string                                   { return "udp" }
+func (m *mockDNSTransport) Tag() string                                    { return m.tag }
+func (m *mockDNSTransport) Dependencies() []string                         { return nil }
+func (m *mockDNSTransport) Reset()                                         {}
+func (m *mockDNSTransport) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (m *mockDNSTransport) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	m.mu.Lock()
+	if len(msg.Question) > 0 {
+		m.seenNames = append(m.seenNames, msg.Question[0].Name)
+	}
+	m.mu.Unlock()
+	return m.fn(ctx, msg)
+}
+func (m *mockDNSTransport) ExchangeAsync(ctx context.Context, msg *dns.Msg, cb func(*dns.Msg, error)) {
+	resp, err := m.Exchange(ctx, msg)
+	cb(resp, err)
+}
+
+// Regression: tailscale-host-dns points straight at UDP 100.100.100.100:53 which does not expand
+// single-label Tailscale MagicDNS hostnames and fails when --accept-dns=false.
+func TestTailscaleHostDNSTransport_SingleLabelExpansionAndHostRecordFallback(t *testing.T) {
+	mock := &mockDNSTransport{
+		tag: "tailscale-host-dns",
+		fn: func(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+			q := msg.Question[0]
+			switch {
+			case q.Name == "my-vps.tail8bfe1c.ts.net." && q.Qtype == dns.TypeA:
+				resp := new(dns.Msg)
+				resp.SetReply(msg)
+				resp.Answer = append(resp.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+					A:   net.ParseIP("100.64.1.5").To4(),
+				})
+				return resp, nil
+			case q.Name == "my-vps.tail8bfe1c.ts.net." && q.Qtype == dns.TypeAAAA:
+				resp := new(dns.Msg)
+				resp.SetReply(msg)
+				return resp, nil
+			case q.Name == "printer.tail8bfe1c.ts.net.":
+				resp := new(dns.Msg)
+				resp.SetReply(msg)
+				resp.Rcode = dns.RcodeNameError
+				return resp, nil
+			case q.Name == "printer." && q.Qtype == dns.TypeA:
+				resp := new(dns.Msg)
+				resp.SetReply(msg)
+				resp.Answer = append(resp.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+					A:   net.ParseIP("192.168.1.50").To4(),
+				})
+				return resp, nil
+			case q.Name == "offline-dns.tail8bfe1c.ts.net." || q.Name == "offline-dns.":
+				return nil, errors.New("udp i/o timeout")
+			default:
+				resp := new(dns.Msg)
+				resp.SetReply(msg)
+				resp.Rcode = dns.RcodeNameError
+				return resp, nil
+			}
+		},
+	}
+
+	tr := newTailscaleHostDNSTransport(mock, "tail8bfe1c.ts.net", map[string][]string{
+		"offline-dns":                   {"100.64.8.8"},
+		"offline-dns.tail8bfe1c.ts.net": {"100.64.8.8"},
+	})
+
+	// 1. Single-label A query expands to MagicDNS FQDN and restores original question & answer names.
+	req := new(dns.Msg)
+	req.SetQuestion("my-vps.", dns.TypeA)
+	resp, err := tr.Exchange(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Exchange(my-vps A) failed: %v", err)
+	}
+	if resp.Question[0].Name != "my-vps." || len(resp.Answer) != 1 || resp.Answer[0].Header().Name != "my-vps." {
+		t.Fatalf("expected restored name my-vps. in question/answer, got q=%+v ans=%+v", resp.Question, resp.Answer)
+	}
+	if aRec, ok := resp.Answer[0].(*dns.A); !ok || aRec.A.String() != "100.64.1.5" {
+		t.Fatalf("unexpected A record: %+v", resp.Answer[0])
+	}
+
+	// 2. Single-label AAAA with NOERROR + 0 answers must return cleanly without retrying raw single-label.
+	req6 := new(dns.Msg)
+	req6.SetQuestion("my-vps.", dns.TypeAAAA)
+	mock.mu.Lock()
+	beforeCount := len(mock.seenNames)
+	mock.mu.Unlock()
+	resp6, err := tr.Exchange(context.Background(), req6)
+	if err != nil || resp6 == nil || resp6.Rcode != dns.RcodeSuccess || len(resp6.Answer) != 0 {
+		t.Fatalf("expected empty NOERROR for AAAA, got resp=%+v err=%v", resp6, err)
+	}
+	if resp6.Question[0].Name != "my-vps." {
+		t.Errorf("expected restored AAAA question name my-vps., got %q", resp6.Question[0].Name)
+	}
+	mock.mu.Lock()
+	newSeen := append([]string(nil), mock.seenNames[beforeCount:]...)
+	mock.mu.Unlock()
+	if len(newSeen) != 1 || newSeen[0] != "my-vps.tail8bfe1c.ts.net." {
+		t.Errorf("expected single expanded lookup for AAAA, got %v", newSeen)
+	}
+
+	// 3. Non-Tailnet single-label name falls back to unexpanded query when expanded returns NXDOMAIN.
+	reqLAN := new(dns.Msg)
+	reqLAN.SetQuestion("printer.", dns.TypeA)
+	respLAN, err := tr.Exchange(context.Background(), reqLAN)
+	if err != nil || len(respLAN.Answer) != 1 || respLAN.Answer[0].(*dns.A).A.String() != "192.168.1.50" {
+		t.Fatalf("expected LAN fallback answer 192.168.1.50, got resp=%+v err=%v", respLAN, err)
+	}
+
+	// 4. Transport error falls back to TailnetHostRecords for both short name and FQDN (ExchangeAsync).
+	reqAsync := new(dns.Msg)
+	reqAsync.SetQuestion("offline-dns.tail8bfe1c.ts.net.", dns.TypeA)
+	ch := make(chan *dns.Msg, 1)
+	tr.ExchangeAsync(context.Background(), reqAsync, func(r *dns.Msg, e error) {
+		if e != nil {
+			t.Errorf("ExchangeAsync failed: %v", e)
+		}
+		ch <- r
+	})
+	asyncResp := <-ch
+	if asyncResp == nil || len(asyncResp.Answer) != 1 || asyncResp.Answer[0].(*dns.A).A.String() != "100.64.8.8" {
+		t.Fatalf("expected fallback record 100.64.8.8, got %+v", asyncResp)
+	}
+
+	// 5. Real sing-box Engine builds and starts cleanly with Host-mode Tailscale node + remote-doh.
+	ln, lnErr := net.Listen("tcp", "127.0.0.1:0")
+	if lnErr != nil {
+		t.Fatal(lnErr)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	eng, newErr := New(EngineOptions{
+		ListenAddr:            fmt.Sprintf("127.0.0.1:%d", port),
+		TrafficMode:           "mixed",
+		TailnetMode:           tailnet.ModeHost,
+		TailnetMagicDNSSuffix: "tail8bfe1c.ts.net",
+		TailnetHostRecords: map[string][]string{
+			"my-vps":                   {"100.64.1.5"},
+			"my-vps.tail8bfe1c.ts.net": {"100.64.1.5"},
+		},
+		Services: []config.Service{
+			{
+				ID:         "ts-vless",
+				Name:       "TS VLESS",
+				Engine:     config.EngineSingBox,
+				Protocol:   config.ProtoVLESS,
+				Server:     "my-vps",
+				ServerPort: 443,
+				UUID:       "11111111-1111-1111-1111-111111111111",
+			},
+		},
+		NodeIPResolver: func(host string) []net.IP { return nil },
+	})
+	if newErr != nil {
+		t.Fatalf("real sing-box Engine New failed: %v", newErr)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("real sing-box Engine Start failed: %v", err)
+	}
+	defer eng.Close()
+
+	dnsRouter := service.FromContext[adapter.DNSRouter](eng.boxCtx)
+	if dnsRouter == nil {
+		t.Fatal("expected DNSRouter in running sing-box context")
+	}
+	for _, host := range []string{"my-vps", "my-vps.tail8bfe1c.ts.net"} {
+		addrs, lookupErr := dnsRouter.Lookup(context.Background(), host, adapter.DNSQueryOptions{})
+		if lookupErr != nil || len(addrs) == 0 || addrs[0].String() != "100.64.1.5" {
+			t.Errorf("real sing-box DNSRouter.Lookup(%q) = %v, err=%v; want [100.64.1.5]", host, addrs, lookupErr)
+		}
 	}
 }
 

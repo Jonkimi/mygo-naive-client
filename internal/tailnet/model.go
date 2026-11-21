@@ -1,6 +1,7 @@
 package tailnet
 
 import (
+	"net"
 	"sort"
 	"strings"
 )
@@ -115,5 +116,185 @@ func SortPeers(peers []PeerInfo) {
 		}
 		return peers[i].ID < peers[j].ID
 	})
+}
+
+// NormalizeHost trims whitespace, IPv6 brackets, trailing dots, and lowercases a host string.
+func NormalizeHost(host string) string {
+	h := strings.TrimSpace(host)
+	h = strings.TrimPrefix(h, "[")
+	h = strings.TrimSuffix(h, "]")
+	h = strings.Trim(h, ".")
+	return strings.ToLower(h)
+}
+
+// IsTailnetIP reports whether ip falls within Tailscale's CGNAT (100.64.0.0/10) or ULA (fd7a:115c:a1e0::/48) ranges.
+func IsTailnetIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127
+	}
+	return len(ip) == net.IPv6len &&
+		ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 &&
+		ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0
+}
+
+// IsTailnetIPString reports whether raw parses as a Tailnet IP address or host/subnet CIDR within Tailnet ranges.
+func IsTailnetIPString(raw string) bool {
+	norm := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(raw), "["), "]")
+	if norm == "" {
+		return false
+	}
+	if ip := net.ParseIP(norm); ip != nil {
+		return IsTailnetIP(ip)
+	}
+	if ip, ipNet, err := net.ParseCIDR(norm); err == nil && ipNet != nil {
+		ones, _ := ipNet.Mask.Size()
+		if ip.To4() != nil {
+			return ones >= 10 && IsTailnetIP(ip)
+		}
+		return ones >= 48 && IsTailnetIP(ip)
+	}
+	return false
+}
+
+// IsTailnetHostname reports whether host is a Tailscale MagicDNS domain or single-label peer hostname
+// when Tailnet host or embedded mode is active. Returns false for IPs, localhost/.local, or inactive modes.
+func IsTailnetHostname(mode Mode, host, magicDNSSuffix string) bool {
+	if mode != ModeHost && mode != ModeEmbedded {
+		return false
+	}
+	norm := NormalizeHost(host)
+	if norm == "" || net.ParseIP(norm) != nil {
+		return false
+	}
+	if norm == "localhost" || strings.HasSuffix(norm, ".local") || strings.HasSuffix(norm, ".localhost") {
+		return false
+	}
+	if norm == "ts.net" || strings.HasSuffix(norm, ".ts.net") {
+		return true
+	}
+	if suffix := NormalizeHost(magicDNSSuffix); suffix != "" && (norm == suffix || strings.HasSuffix(norm, "."+suffix)) {
+		return true
+	}
+	return !strings.Contains(norm, ".")
+}
+
+// IsTailnetTarget reports whether host (IP or hostname) targets a Tailnet destination in active modes.
+// When hostRecords is non-empty, ambiguous single-label hostnames only match if present in hostRecords.
+func IsTailnetTarget(mode Mode, host, magicDNSSuffix string, hostRecords map[string][]string) bool {
+	if mode != ModeHost && mode != ModeEmbedded {
+		return false
+	}
+	norm := NormalizeHost(host)
+	if norm == "" {
+		return false
+	}
+	if ip := net.ParseIP(norm); ip != nil {
+		return IsTailnetIP(ip)
+	}
+	if norm == "localhost" || strings.HasSuffix(norm, ".local") || strings.HasSuffix(norm, ".localhost") {
+		return false
+	}
+	if norm == "ts.net" || strings.HasSuffix(norm, ".ts.net") {
+		return true
+	}
+	if suffix := NormalizeHost(magicDNSSuffix); suffix != "" && (norm == suffix || strings.HasSuffix(norm, "."+suffix)) {
+		return true
+	}
+	if len(hostRecords) > 0 {
+		_, ok := hostRecords[norm]
+		return ok
+	}
+	return !strings.Contains(norm, ".")
+}
+
+// ExcludeAddressesFromStatus builds deduplicated Tailnet CGNAT, ULA, and subnet route CIDRs from st.
+func ExcludeAddressesFromStatus(st *Status) []string {
+	excludes := append([]string{}, DefaultTailnetSubnets...)
+	seen := make(map[string]bool, len(excludes))
+	for _, sub := range excludes {
+		seen[sub] = true
+	}
+	if st == nil {
+		return excludes
+	}
+	for _, sub := range st.SubnetRoutes {
+		sub = strings.TrimSpace(sub)
+		if sub == "" || sub == "0.0.0.0/0" || sub == "::/0" {
+			continue
+		}
+		if !seen[sub] {
+			seen[sub] = true
+			excludes = append(excludes, sub)
+		}
+	}
+	return excludes
+}
+
+// HostRecordsFromStatus extracts a normalized hostname -> Tailscale IP list index from Self and Peers.
+func HostRecordsFromStatus(st *Status) map[string][]string {
+	if st == nil {
+		return nil
+	}
+	suffix := NormalizeHost(st.MagicDNSSuffix)
+	records := make(map[string][]string)
+	addNode := func(hostname, dnsName string, ips []string) {
+		var validIPs []string
+		for _, rawIP := range ips {
+			ip := net.ParseIP(strings.TrimSpace(rawIP))
+			if ip != nil {
+				validIPs = append(validIPs, ip.String())
+			}
+		}
+		if len(validIPs) == 0 {
+			return
+		}
+		var keys []string
+		addKey := func(k string) {
+			k = NormalizeHost(k)
+			if k == "" || k == "localhost" || net.ParseIP(k) != nil {
+				return
+			}
+			keys = append(keys, k)
+		}
+		addKey(hostname)
+		addKey(dnsName)
+		if dnsNorm := NormalizeHost(dnsName); dnsNorm != "" {
+			if first, _, ok := strings.Cut(dnsNorm, "."); ok {
+				addKey(first)
+			}
+		}
+		if suffix != "" {
+			if hNorm := NormalizeHost(hostname); hNorm != "" && !strings.Contains(hNorm, ".") {
+				addKey(hNorm + "." + suffix)
+			}
+		}
+		for _, k := range keys {
+			existing := records[k]
+			for _, ip := range validIPs {
+				seen := false
+				for _, e := range existing {
+					if e == ip {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					existing = append(existing, ip)
+				}
+			}
+			records[k] = existing
+		}
+	}
+	addNode(st.Self.Hostname, st.Self.DNSName, st.Self.IPs)
+	for _, p := range st.Peers {
+		addNode(p.Hostname, p.DNSName, p.IPs)
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	return records
 }
 

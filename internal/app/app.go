@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +119,9 @@ type app struct {
 	router          *routing.Router
 	blocker         *blocker.Engine
 	tailnetMgr      *tailnet.Manager
+	tailnetUnsub    func()
+	tailnetSyncMu   sync.Mutex
+	tailnetSyncTimer *time.Timer
 	tunDevice       *tunhelper.ReceivedDevice
 	mockTunDevice    func() (*tunhelper.ReceivedDevice, error)
 	mockTunCreator   func(options tun.Options) (tun.Tun, error)
@@ -338,6 +342,16 @@ func Run() error {
 		}
 		if a.batchCancel != nil {
 			a.batchCancel()
+		}
+		a.tailnetSyncMu.Lock()
+		if a.tailnetSyncTimer != nil {
+			a.tailnetSyncTimer.Stop()
+			a.tailnetSyncTimer = nil
+		}
+		a.tailnetSyncMu.Unlock()
+		if a.tailnetUnsub != nil {
+			a.tailnetUnsub()
+			a.tailnetUnsub = nil
 		}
 		if a.tailnetMgr != nil {
 			a.tailnetMgr.Close()
@@ -563,6 +577,46 @@ func (a *app) initSubsystems() {
 	}
 	a.syncBinaryPathAndVersion()
 	a.syncXrayBinaryPathAndVersion()
+	if a.tailnetMgr != nil {
+		a.tailnetSyncMu.Lock()
+		if a.tailnetSyncTimer != nil {
+			a.tailnetSyncTimer.Stop()
+			a.tailnetSyncTimer = nil
+		}
+		a.tailnetSyncMu.Unlock()
+		if a.tailnetUnsub != nil {
+			a.tailnetUnsub()
+		}
+		var sigMu sync.Mutex
+		firstEvent := true
+		prevSig := ""
+		a.tailnetUnsub = a.tailnetMgr.Subscribe(func(st tailnet.Status) {
+			sig := tailnetHostStateSig(st)
+			sigMu.Lock()
+			if firstEvent {
+				prevSig = sig
+				firstEvent = false
+				sigMu.Unlock()
+				return
+			}
+			if sig == prevSig {
+				sigMu.Unlock()
+				return
+			}
+			prevSig = sig
+			sigMu.Unlock()
+
+			// Only auto-sync gateway when cooperating with host tailscaled (never on embedded
+			// status notifications, which originate inside the running sing-box engine).
+			if st.ActiveMode != tailnet.ModeHost || st.BackendState != "Running" {
+				return
+			}
+			if a.state.TailnetMode == string(tailnet.ModeOff) || a.state.TailnetMode == string(tailnet.ModeEmbedded) {
+				return
+			}
+			a.scheduleTailnetGatewaySync()
+		})
+	}
 }
 
 func (a *app) syncBinaryPathAndVersion() {
@@ -1758,7 +1812,9 @@ type gatewayConfigSnapshot struct {
 	RemoteDNS         string
 	PreferIPv4        bool
 	LogLevel          string
+	TailnetEnabled    bool
 	TailnetMode       string
+	TailnetStateSig   string
 	Cloudflare        warp.Config
 	SystemProxyBypass []string
 }
@@ -1796,7 +1852,9 @@ func (a *app) buildGatewaySnapshotFromUI() gatewayConfigSnapshot {
 		RemoteDNS:         a.effectiveRemoteDNS(),
 		PreferIPv4:        a.state.PreferIPv4,
 		LogLevel:          a.state.LogLevel,
+		TailnetEnabled:    a.state.TailnetEnabled,
 		TailnetMode:       a.state.TailnetMode,
+		TailnetStateSig:   a.currentTailnetStateSig(),
 		Cloudflare:        cf,
 		SystemProxyBypass: append([]string(nil), a.state.SystemProxyBypass...),
 	}
@@ -2041,28 +2099,14 @@ func (a *app) collectNodeServerIPs() []string {
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				var resolved []net.IP
-				if a != nil && a.mockNodeResolver != nil {
-					resolved = a.mockNodeResolver(targetHost)
-				} else {
-					ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-					defer cancel()
-					resolved, _ = net.DefaultResolver.LookupIP(ctx, "ip", targetHost)
-					if len(resolved) == 0 {
-						r := &net.Resolver{
-							PreferGo: true,
-							Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-								d := net.Dialer{Timeout: 1000 * time.Millisecond}
-								return d.DialContext(ctx, "udp", "223.5.5.5:53")
-							},
-						}
-						resolved, _ = r.LookupIP(ctx, "ip", targetHost)
-					}
-				}
+				resolved := a.resolveNodeHostIPs(targetHost)
 
 				mu.Lock()
 				resolvedMap[strings.ToLower(strings.TrimSpace(targetHost))] = resolved
 				for _, ip := range resolved {
+					if tailnet.IsTailnetIP(ip) {
+						continue
+					}
 					s := ip.String()
 					if !seen[s] {
 						seen[s] = true
@@ -2079,12 +2123,89 @@ func (a *app) collectNodeServerIPs() []string {
 				a.resolvedNodeIPs = make(map[string][]net.IP)
 			}
 			for k, v := range resolvedMap {
-				a.resolvedNodeIPs[k] = v
+				if len(v) > 0 {
+					a.resolvedNodeIPs[k] = v
+				}
 			}
 			a.resolvedNodeMu.Unlock()
 		}
 	}
 
+	return ips
+}
+
+func (a *app) resolveNodeHostIPs(host string) []net.IP {
+	if a != nil && a.mockNodeResolver != nil {
+		return a.mockNodeResolver(host)
+	}
+	if a != nil && a.tailnetMgr != nil {
+		st := a.tailnetMgr.Status()
+		records := a.tailnetMgr.GetHostRecords()
+		norm := tailnet.NormalizeHost(host)
+		if ips := lookupHostRecordNetIPs(records, norm, st.MagicDNSSuffix); len(ips) > 0 {
+			return ips
+		}
+		// Never leak Tailscale hostnames to public DNS (223.5.5.5); resolve via MagicDNS 100.100.100.100.
+		if a.state.TailnetMode != string(tailnet.ModeOff) && tailnet.IsTailnetHostname(tailnet.ModeHost, norm, st.MagicDNSSuffix) {
+			if a.state.TailnetMode == string(tailnet.ModeEmbedded) {
+				return nil
+			}
+			lookupTarget := norm
+			if sfx := tailnet.NormalizeHost(st.MagicDNSSuffix); sfx != "" && !strings.Contains(norm, ".") {
+				lookupTarget = norm + "." + sfx
+			}
+			if ips := lookupDNSServer(lookupTarget, "100.100.100.100:53", 800*time.Millisecond); len(ips) > 0 {
+				return ips
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
+			ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			cancel()
+			return ips
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if len(ips) == 0 {
+		ips = lookupDNSServer(host, "223.5.5.5:53", 1000*time.Millisecond)
+	}
+	return ips
+}
+
+func lookupHostRecordNetIPs(records map[string][]string, normHost, suffix string) []net.IP {
+	if len(records) == 0 || normHost == "" {
+		return nil
+	}
+	rawIPs := records[normHost]
+	if len(rawIPs) == 0 && !strings.Contains(normHost, ".") {
+		if sfx := tailnet.NormalizeHost(suffix); sfx != "" {
+			rawIPs = records[normHost+"."+sfx]
+		}
+	}
+	var out []net.IP
+	for _, rawIP := range rawIPs {
+		if ip := net.ParseIP(strings.TrimSpace(rawIP)); ip != nil {
+			out = append(out, ip)
+		}
+	}
+	return out
+}
+
+func lookupDNSServer(host, serverAddr string, timeout time.Duration) []net.IP {
+	if strings.TrimSpace(host) == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	r := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: timeout}
+			return d.DialContext(ctx, "udp", serverAddr)
+		},
+	}
+	ips, _ := r.LookupIP(ctx, "ip", host)
 	return ips
 }
 
@@ -2095,32 +2216,21 @@ func (a *app) nodeIPResolver() func(host string) []net.IP {
 	return func(host string) []net.IP {
 		key := strings.ToLower(strings.TrimSpace(host))
 		a.resolvedNodeMu.RLock()
-		if ips, ok := a.resolvedNodeIPs[key]; ok {
+		if ips, ok := a.resolvedNodeIPs[key]; ok && len(ips) > 0 {
 			a.resolvedNodeMu.RUnlock()
 			return ips
 		}
 		a.resolvedNodeMu.RUnlock()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-		defer cancel()
-		ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", host)
-		if len(ips) == 0 {
-			r := &net.Resolver{
-				PreferGo: true,
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					d := net.Dialer{Timeout: 1000 * time.Millisecond}
-					return d.DialContext(ctx, "udp", "223.5.5.5:53")
-				},
+		ips := a.resolveNodeHostIPs(host)
+		if len(ips) > 0 {
+			a.resolvedNodeMu.Lock()
+			if a.resolvedNodeIPs == nil {
+				a.resolvedNodeIPs = make(map[string][]net.IP)
 			}
-			ips, _ = r.LookupIP(ctx, "ip", host)
+			a.resolvedNodeIPs[key] = ips
+			a.resolvedNodeMu.Unlock()
 		}
-
-		a.resolvedNodeMu.Lock()
-		if a.resolvedNodeIPs == nil {
-			a.resolvedNodeIPs = make(map[string][]net.IP)
-		}
-		a.resolvedNodeIPs[key] = ips
-		a.resolvedNodeMu.Unlock()
 		return ips
 	}
 }
@@ -2427,42 +2537,9 @@ func (a *app) startGatewayLocked() error {
 		tunAddrs = []string{"127.0.0.1/24"}
 	}
 
-	var tnCfg tailnet.Config
-	var tnMode tailnet.Mode = tailnet.ModeOff
-	var tnExcludes []string
-	var tnSuffix string
-	if a.tailnetMgr != nil {
-		tnCfg = a.tailnetMgr.GetConfig()
-		if a.tailnetMgr.ShouldUseHostMode() {
-			tnMode = tailnet.ModeHost
-			tnExcludes = a.tailnetMgr.GetHostExcludeAddresses()
-			tnSuffix = a.tailnetMgr.GetMagicDNSSuffix()
-		} else if a.tailnetMgr.ShouldUseEmbeddedMode() {
-			tnMode = tailnet.ModeEmbedded
-			tnSuffix = a.tailnetMgr.GetMagicDNSSuffix()
-		} else if hostSt := a.tailnetMgr.DetectHostStatus(); hostSt != nil && hostSt.BackendState == "Running" {
-			tnMode = tailnet.ModeHost
-			tnExcludes = a.tailnetMgr.GetHostExcludeAddresses()
-			tnSuffix = hostSt.MagicDNSSuffix
-		}
-	}
-	// Fallback detection from resolv.conf if Tailscale is running on host with MagicDNS
-	if tnMode == tailnet.ModeOff && runtime.GOOS == "darwin" {
-		if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
-			s := string(data)
-			if strings.Contains(s, "100.100.100.100") {
-				for _, l := range strings.Split(s, "\n") {
-					f := strings.Fields(l)
-					if len(f) >= 2 && f[0] == "search" && strings.HasSuffix(f[1], "ts.net") {
-						tnMode = tailnet.ModeHost
-						tnSuffix = f[1]
-						tnExcludes = append([]string{}, tailnet.DefaultTailnetSubnets...)
-						break
-					}
-				}
-			}
-		}
-	}
+	tnInfo := a.resolveTailnetRuntimeInfo(snap)
+	tnCfg := tnInfo.Config
+	tnMode := tnInfo.Mode
 
 	cfCfg := snap.Cloudflare
 	cfCfg.Account = cfCfg.Account.Clone()
@@ -2494,8 +2571,10 @@ func (a *app) startGatewayLocked() error {
 		PreferIPv4:            snap.PreferIPv4,
 		TailnetConfig:         &tnCfg,
 		TailnetMode:           tnMode,
-		TailnetHostExcludes:   tnExcludes,
-		TailnetMagicDNSSuffix: tnSuffix,
+		TailnetHostExcludes:   tnInfo.Excludes,
+		TailnetMagicDNSSuffix: tnInfo.MagicDNSSuffix,
+		TailnetHostRecords:    tnInfo.HostRecords,
+		TailnetHostInterface:  tnInfo.HostInterface,
 		CloudflareConfig:      &cfCfg,
 		OnCloudflareAccountUpdate: func(acc warp.Account) {
 			a.dispatchUI(func() {
@@ -2551,6 +2630,7 @@ func (a *app) startGatewayLocked() error {
 	if a.gwSnap.Initialized {
 		snap.Cloudflare.Account = a.gwSnap.Cloudflare.Account.Clone()
 	}
+	snap.TailnetStateSig = a.currentTailnetStateSig()
 	a.lastGatewaySig = a.gatewayConfigSignatureForSnapshot(snap, allocPorts)
 	a.gatewayMu.Unlock()
 	a.appendSystemLog("INFO", "Gateway started on %s (mode: %s)", eng.Addr(), trafficMode)
@@ -2609,9 +2689,22 @@ func parseDNSList(s string, defaults []string) []string {
 }
 
 func (a *app) collectBootstrapDomains() []string {
+	var tnStatus tailnet.Status
+	if a.tailnetMgr != nil {
+		tnStatus = a.tailnetMgr.Status()
+	}
+	effectiveMode := tnStatus.ActiveMode
+	if effectiveMode == "" || effectiveMode == tailnet.ModeOff {
+		// In ModeAuto with TailnetEnabled false, cooperative host detection may still enable
+		// ModeHost at gateway startup; never hijack *.ts.net to public bootstrap-dns (223.5.5.5).
+		if a.state.TailnetMode != string(tailnet.ModeOff) {
+			effectiveMode = tailnet.ModeHost
+		}
+	}
+
 	var domains []string
 	seen := make(map[string]bool)
-	add := func(host string) {
+	add := func(host string, excludeTailnet bool) {
 		host = strings.TrimSpace(host)
 		if host == "" {
 			return
@@ -2619,8 +2712,14 @@ func (a *app) collectBootstrapDomains() []string {
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		host = strings.ToLower(host)
-		if net.ParseIP(host) == nil && !seen[host] {
+		host = tailnet.NormalizeHost(host)
+		if host == "" || net.ParseIP(host) != nil {
+			return
+		}
+		if excludeTailnet && tailnet.IsTailnetHostname(effectiveMode, host, tnStatus.MagicDNSSuffix) {
+			return
+		}
+		if !seen[host] {
 			seen[host] = true
 			domains = append(domains, host)
 		}
@@ -2628,16 +2727,16 @@ func (a *app) collectBootstrapDomains() []string {
 
 	for _, svc := range a.state.Services {
 		if svc.Server != "" {
-			add(svc.Server)
+			add(svc.Server, true)
 		}
 		for _, p := range svc.Proxies {
 			if u, err := url.Parse(p); err == nil && u.Hostname() != "" {
-				add(u.Hostname())
+				add(u.Hostname(), true)
 			}
 		}
 		if svc.ExternalURI != "" {
 			if u, err := url.Parse(svc.ExternalURI); err == nil && u.Hostname() != "" {
-				add(u.Hostname())
+				add(u.Hostname(), true)
 			}
 		}
 	}
@@ -2645,7 +2744,7 @@ func (a *app) collectBootstrapDomains() []string {
 	// Collect domestic DoH domains to ensure they can be resolved via Bootstrap DNS without deadlocking.
 	for _, ep := range parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH) {
 		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
-			add(u.Hostname())
+			add(u.Hostname(), false)
 		}
 	}
 
@@ -2674,6 +2773,182 @@ func (a *app) stopGateway() {
 	if a.tailnetMgr != nil && a.state.TailnetMode != string(tailnet.ModeEmbedded) {
 		a.tailnetMgr.BindEmbeddedEndpoint(nil)
 	}
+}
+
+type tailnetRuntimeInfo struct {
+	Config         tailnet.Config
+	Mode           tailnet.Mode
+	Excludes       []string
+	MagicDNSSuffix string
+	HostRecords    map[string][]string
+	HostInterface  string
+}
+
+func (a *app) resolveTailnetRuntimeInfo(snap gatewayConfigSnapshot) tailnetRuntimeInfo {
+	info := tailnetRuntimeInfo{Mode: tailnet.ModeOff}
+	if a.tailnetMgr != nil {
+		info.Config = a.tailnetMgr.GetConfig()
+	}
+	if snap.TailnetMode == string(tailnet.ModeOff) {
+		return info
+	}
+
+	if a.tailnetMgr != nil {
+		if a.tailnetMgr.ShouldUseHostMode() {
+			st := a.tailnetMgr.Status()
+			if st.BackendState != "Running" {
+				if detected := a.tailnetMgr.DetectHostStatus(); detected != nil && detected.BackendState == "Running" {
+					st = *detected
+				}
+			}
+			info.Mode = tailnet.ModeHost
+			info.Excludes = tailnet.ExcludeAddressesFromStatus(&st)
+			info.MagicDNSSuffix = st.MagicDNSSuffix
+			info.HostRecords = tailnet.HostRecordsFromStatus(&st)
+			info.HostInterface = tailnet.DetectHostInterfaceForIPs(st.Self.IPs...)
+		} else if a.tailnetMgr.ShouldUseEmbeddedMode() {
+			info.Mode = tailnet.ModeEmbedded
+			info.MagicDNSSuffix = a.tailnetMgr.GetMagicDNSSuffix()
+		} else if hostSt := a.tailnetMgr.DetectHostStatus(); hostSt != nil && hostSt.BackendState == "Running" {
+			info.Mode = tailnet.ModeHost
+			info.Excludes = tailnet.ExcludeAddressesFromStatus(hostSt)
+			info.MagicDNSSuffix = hostSt.MagicDNSSuffix
+			info.HostRecords = tailnet.HostRecordsFromStatus(hostSt)
+			info.HostInterface = tailnet.DetectHostInterfaceForIPs(hostSt.Self.IPs...)
+		}
+	}
+
+	if runtime.GOOS == "darwin" && (info.Mode == tailnet.ModeOff || (info.Mode == tailnet.ModeHost && info.MagicDNSSuffix == "")) {
+		if sfx := detectDarwinTailscaleMagicDNS("/etc/resolv.conf", "/etc/resolver"); sfx != "" {
+			if info.Mode == tailnet.ModeOff {
+				info.Mode = tailnet.ModeHost
+				info.Excludes = append([]string(nil), tailnet.DefaultTailnetSubnets...)
+			}
+			if info.MagicDNSSuffix == "" {
+				info.MagicDNSSuffix = sfx
+			}
+		}
+	}
+
+	if info.Mode == tailnet.ModeHost && info.HostInterface == "" {
+		info.HostInterface = tailnet.DetectHostInterface()
+	}
+	return info
+}
+
+func detectDarwinTailscaleMagicDNS(resolvConfPath, resolverDir string) string {
+	if resolvConfPath != "" {
+		if data, err := os.ReadFile(resolvConfPath); err == nil {
+			s := string(data)
+			if strings.Contains(s, "100.100.100.100") {
+				for _, l := range strings.Split(s, "\n") {
+					f := strings.Fields(l)
+					if len(f) >= 2 && (f[0] == "search" || f[0] == "domain") {
+						for _, tok := range f[1:] {
+							clean := tailnet.NormalizeHost(tok)
+							if clean == "ts.net" || strings.HasSuffix(clean, ".ts.net") {
+								return clean
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if resolverDir != "" {
+		if entries, err := os.ReadDir(resolverDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				cleanName := tailnet.NormalizeHost(entry.Name())
+				if cleanName != "ts.net" && !strings.HasSuffix(cleanName, ".ts.net") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(resolverDir, entry.Name()))
+				if err != nil {
+					continue
+				}
+				content := string(data)
+				if strings.Contains(content, "100.100.100.100") || strings.Contains(content, "tailscaled") {
+					return cleanName
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+func tailnetHostStateSig(st tailnet.Status) string {
+	var b strings.Builder
+	b.WriteString(string(st.ActiveMode))
+	b.WriteByte('|')
+	b.WriteString(st.BackendState)
+	b.WriteByte('|')
+	b.WriteString(tailnet.NormalizeHost(st.MagicDNSSuffix))
+	b.WriteByte('|')
+	routes := append([]string(nil), st.SubnetRoutes...)
+	sort.Strings(routes)
+	b.WriteString(strings.Join(routes, ","))
+	b.WriteByte('|')
+	records := tailnet.HostRecordsFromStatus(&st)
+	if len(records) > 0 {
+		keys := make([]string, 0, len(records))
+		for k := range records {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(k)
+			b.WriteByte('=')
+			b.WriteString(strings.Join(records[k], ","))
+			b.WriteByte(';')
+		}
+	}
+	return b.String()
+}
+
+func (a *app) currentTailnetStateSig() string {
+	if a.tailnetMgr == nil {
+		return ""
+	}
+	return tailnetHostStateSig(a.tailnetMgr.Status())
+}
+
+func (a *app) scheduleTailnetGatewaySync() {
+	select {
+	case <-a.quitCh:
+		return
+	default:
+	}
+	a.tailnetSyncMu.Lock()
+	if a.tailnetSyncTimer != nil {
+		a.tailnetSyncTimer.Stop()
+	}
+	a.tailnetSyncTimer = time.AfterFunc(80*time.Millisecond, func() {
+		select {
+		case <-a.quitCh:
+			return
+		default:
+		}
+		if a.tailnetMgr != nil {
+			cfg := a.tailnetMgr.GetConfig()
+			if cfg.Enabled && (cfg.Mode == tailnet.ModeOff || cfg.Mode == tailnet.ModeEmbedded) {
+				return
+			}
+		}
+		if snap := a.getGatewaySnapshot(); snap.Initialized && (snap.TailnetMode == string(tailnet.ModeOff) || snap.TailnetMode == string(tailnet.ModeEmbedded)) {
+			return
+		}
+		if !a.isGatewayEnabled() || !a.isGatewayActiveOrStarting() {
+			return
+		}
+		a.refreshGatewaySnapshot()
+		_ = a.ensureGatewaySynced()
+	})
+	a.tailnetSyncMu.Unlock()
 }
 
 func (a *app) enqueueSysproxyOp(op func()) bool {
@@ -3331,6 +3606,9 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		Domestic         string
 		Remote           string
 		PreferIPv4       bool
+		TailnetEnabled   bool
+		TailnetMode      string
+		TailnetStateSig  string
 		Cloudflare       warp.Config
 	}{
 		Port:             snap.GatewayPort,
@@ -3347,6 +3625,9 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		Domestic:         snap.DomesticDNS,
 		Remote:           snap.RemoteDNS,
 		PreferIPv4:       snap.PreferIPv4,
+		TailnetEnabled:   snap.TailnetEnabled,
+		TailnetMode:      snap.TailnetMode,
+		TailnetStateSig:  snap.TailnetStateSig,
 		Cloudflare:       snap.Cloudflare,
 	}
 	return fmt.Sprintf("%#v", sigObj)

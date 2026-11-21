@@ -76,6 +76,8 @@ type EngineOptions struct {
 	TailnetMode           tailnet.Mode
 	TailnetHostExcludes   []string
 	TailnetMagicDNSSuffix string
+	TailnetHostRecords    map[string][]string
+	TailnetHostInterface  string
 	StateDir              string
 
 	// Cloudflare integration (WARP egress & Tunnel ingress)
@@ -166,8 +168,11 @@ type Engine struct {
 	onTelemetryUpdate         func()
 	onCloudflareAccountUpdate func(warp.Account)
 	cloudflareConfig          *warp.Config
-	endpointSelector  *warp.EndpointSelector
-	logLevel          string
+	endpointSelector      *warp.EndpointSelector
+	tailnetMode           tailnet.Mode
+	tailnetMagicDNSSuffix string
+	tailnetHostRecords    map[string][]string
+	logLevel              string
 	logWriter         *boxPlatformWriter
 	boxCtx            context.Context
 	cancel            context.CancelFunc
@@ -247,6 +252,9 @@ func New(opts EngineOptions) (*Engine, error) {
 		onCloudflareAccountUpdate: opts.OnCloudflareAccountUpdate,
 		cloudflareConfig:          cfCfg,
 		endpointSelector:          opts.EndpointSelector,
+		tailnetMode:               opts.TailnetMode,
+		tailnetMagicDNSSuffix:     opts.TailnetMagicDNSSuffix,
+		tailnetHostRecords:        opts.TailnetHostRecords,
 		logLevel:                  normLvl,
 		logWriter:                 newBoxPlatformWriter(parsedLvl, opts.OnLog),
 	}
@@ -380,11 +388,13 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 
 	dnsReg := include.DNSTransportRegistry()
 	var finalDNSReg adapter.DNSTransportRegistry = dnsReg
-	if eng != nil && (eng.blocker != nil || eng.failureMonitor != nil) {
+	if eng != nil && (eng.blocker != nil || eng.failureMonitor != nil || eng.tailnetMode == tailnet.ModeHost) {
 		finalDNSReg = &blockerTransportRegistry{
-			underlying: dnsReg,
-			blocker:    eng.blocker,
-			fm:         eng.failureMonitor,
+			underlying:         dnsReg,
+			blocker:            eng.blocker,
+			fm:                 eng.failureMonitor,
+			tailnetSuffix:      eng.tailnetMagicDNSSuffix,
+			tailnetHostRecords: eng.tailnetHostRecords,
 		}
 	}
 
@@ -1029,6 +1039,108 @@ func defaultNodeIPResolver() func(host string) []net.IP {
 	}
 }
 
+func resolveNodeExcludes(opts EngineOptions) []string {
+	resolver := opts.NodeIPResolver
+	if resolver == nil {
+		base := defaultNodeIPResolver()
+		resolver = func(h string) []net.IP {
+			if tailnet.IsTailnetHostname(opts.TailnetMode, h, opts.TailnetMagicDNSSuffix) {
+				if len(opts.TailnetHostRecords) > 0 {
+					norm := tailnet.NormalizeHost(h)
+					rawIPs := opts.TailnetHostRecords[norm]
+					if len(rawIPs) == 0 && !strings.Contains(norm, ".") {
+						if sfx := tailnet.NormalizeHost(opts.TailnetMagicDNSSuffix); sfx != "" {
+							rawIPs = opts.TailnetHostRecords[norm+"."+sfx]
+						}
+					}
+					var parsed []net.IP
+					for _, rawIP := range rawIPs {
+						if ip := net.ParseIP(strings.TrimSpace(rawIP)); ip != nil {
+							parsed = append(parsed, ip)
+						}
+					}
+					if len(parsed) > 0 {
+						return parsed
+					}
+				}
+				return nil
+			}
+			return base(h)
+		}
+	}
+	raw := extractNodeExcludeAddresses(opts.Services, resolver)
+	if opts.TailnetMode != tailnet.ModeHost && opts.TailnetMode != tailnet.ModeEmbedded {
+		return raw
+	}
+	filtered := make([]string, 0, len(raw))
+	for _, exc := range raw {
+		if tailnet.IsTailnetIPString(exc) {
+			continue
+		}
+		filtered = append(filtered, exc)
+	}
+	return filtered
+}
+
+func tailnetDomainSuffixes(opts EngineOptions) []string {
+	suffixes := []string{"ts.net"}
+	if sfx := tailnet.NormalizeHost(opts.TailnetMagicDNSSuffix); sfx != "" && sfx != "ts.net" {
+		suffixes = append(suffixes, sfx)
+	}
+	return suffixes
+}
+
+func buildTailnetRouteRules(opts EngineOptions) []map[string]any {
+	var rules []map[string]any
+	if opts.TailnetMode == tailnet.ModeHost {
+		var tailnetCIDRs []string
+		seen := make(map[string]bool)
+		addCIDR := func(c string) {
+			c = strings.TrimSpace(c)
+			if c == "" || c == "0.0.0.0/0" || c == "::/0" || seen[c] {
+				return
+			}
+			seen[c] = true
+			tailnetCIDRs = append(tailnetCIDRs, c)
+		}
+		for _, c := range tailnet.DefaultTailnetSubnets {
+			addCIDR(c)
+		}
+		for _, c := range opts.TailnetHostExcludes {
+			addCIDR(c)
+		}
+		addCIDR("100.100.100.100/32")
+		if len(tailnetCIDRs) > 0 {
+			rules = append(rules, map[string]any{
+				"ip_cidr":  tailnetCIDRs,
+				"outbound": "tailnet-direct",
+			})
+		}
+		rules = append(rules, map[string]any{
+			"domain_suffix": tailnetDomainSuffixes(opts),
+			"outbound":      "tailnet-direct",
+		})
+		rules = append(rules, map[string]any{
+			"domain_regex": []string{`^[^.]+$`},
+			"outbound":     "tailnet-direct",
+		})
+	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
+		rules = append(rules, map[string]any{
+			"domain_suffix": tailnetDomainSuffixes(opts),
+			"outbound":      "tailscale-ep",
+		})
+		rules = append(rules, map[string]any{
+			"domain_regex": []string{`^[^.]+$`},
+			"outbound":     "tailscale-ep",
+		})
+		rules = append(rules, map[string]any{
+			"ip_cidr":  append([]string{}, tailnet.DefaultTailnetSubnets...),
+			"outbound": "tailscale-ep",
+		})
+	}
+	return rules
+}
+
 
 func resolveFinalPoolSpec(opts EngineOptions) poolSpec {
 	if opts.FinalRoute.Type != "" || len(opts.FinalRoute.Targets) > 0 {
@@ -1080,10 +1192,8 @@ func collectAllBootstrapDomains(opts EngineOptions) []string {
 		} else if host, _, err := net.SplitHostPort(raw); err == nil {
 			raw = host
 		}
-		raw = strings.TrimPrefix(raw, "[")
-		raw = strings.TrimSuffix(raw, "]")
-		raw = strings.ToLower(raw)
-		if raw != "" && net.ParseIP(raw) == nil {
+		raw = tailnet.NormalizeHost(raw)
+		if raw != "" && net.ParseIP(raw) == nil && !tailnet.IsTailnetHostname(opts.TailnetMode, raw, opts.TailnetMagicDNSSuffix) {
 			bootstrapDomainSet[raw] = true
 		}
 	}
@@ -1211,11 +1321,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		if opts.TunInterface != "" {
 			tunIn["interface_name"] = opts.TunInterface
 		}
-		resolver := opts.NodeIPResolver
-		if resolver == nil {
-			resolver = defaultNodeIPResolver()
-		}
-		excludes := extractNodeExcludeAddresses(opts.Services, resolver)
+		excludes := resolveNodeExcludes(opts)
 		// Exclude loopback addresses from TUN capture so 127.0.0.1 is never trapped in TUN
 		excludes = append(excludes, "127.0.0.0/8", "::1/128")
 		// Exclude Cloudflare WARP Anycast endpoints so local WARP clients do not loop into TUN
@@ -1263,6 +1369,11 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		loopbackOut["bind_interface"] = ifName
 	}
 
+	tailnetHostIf := strings.TrimSpace(opts.TailnetHostInterface)
+	if tailnetHostIf == "" {
+		tailnetHostIf = tailnet.DetectHostInterface()
+	}
+
 	tailnetDirectOut := map[string]any{
 		"type": "direct",
 		"tag":  "tailnet-direct",
@@ -1270,8 +1381,8 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		// cannot be used as a DNS server detour (tailscale-host-dns).
 		"connect_timeout": "10s",
 	}
-	if tsIf := tailnet.DetectHostInterface(); tsIf != "" {
-		tailnetDirectOut["bind_interface"] = tsIf
+	if tailnetHostIf != "" {
+		tailnetDirectOut["bind_interface"] = tailnetHostIf
 	}
 
 	outbounds := []map[string]any{
@@ -1385,6 +1496,7 @@ func buildOutboundsConfig(opts EngineOptions, finalOutbound string, allocatedPor
 		} else {
 			nativeOb := buildNativeOutbound(svc)
 			nativeOb["tag"] = baseTag
+			ConfigureNativeOutboundTailnet(nativeOb, opts, tailnetHostIf)
 			outbounds = append(outbounds, nativeOb)
 		}
 
@@ -1880,12 +1992,8 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 			"server_port": 53,
 			"detour":      "tailnet-direct",
 		})
-		suffixes := []string{"ts.net"}
-		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
-			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
-		}
 		dnsRules = append(dnsRules, map[string]any{
-			"domain_suffix": suffixes,
+			"domain_suffix": tailnetDomainSuffixes(opts),
 			"server":        "tailscale-host-dns",
 		})
 		// Match short names (single-label domain without dots, e.g. "nas", "debian") to MagicDNS
@@ -1904,12 +2012,8 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 			"tag":      "tailscale-dns",
 			"endpoint": "tailscale-ep",
 		})
-		suffixes := []string{"ts.net"}
-		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
-			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
-		}
 		dnsRules = append(dnsRules, map[string]any{
-			"domain_suffix": suffixes,
+			"domain_suffix": tailnetDomainSuffixes(opts),
 			"server":        "tailscale-dns",
 		})
 		dnsRules = append(dnsRules, map[string]any{
@@ -2034,6 +2138,10 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"outbound":      "loopback-direct",
 	})
 
+	// 0.22 Tailnet traffic (CGNAT, MagicDNS domains/short names, advertised subnet routes) must match
+	// before RFC1918/CGNAT direct rules (0.25) and node CIDR direct rules (0.3).
+	singRules = append(singRules, buildTailnetRouteRules(opts)...)
+
 	// 0.25 Ensure RFC1918 private / LAN traffic is always routed direct to protect local network services
 	singRules = append(singRules, map[string]any{
 		"ip_cidr": []string{
@@ -2053,12 +2161,8 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 	})
 
 	// 0.3 Node Server IPs routed directly to guarantee sidecars (naive, xray) never loop into proxy pool
-	resolver := opts.NodeIPResolver
-	if resolver == nil {
-		resolver = defaultNodeIPResolver()
-	}
 	var nodeCIDRs []string
-	for _, exc := range extractNodeExcludeAddresses(opts.Services, resolver) {
+	for _, exc := range resolveNodeExcludes(opts) {
 		if !strings.HasPrefix(exc, "127.") && exc != "::1/128" {
 			nodeCIDRs = append(nodeCIDRs, exc)
 		}
@@ -2121,53 +2225,6 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		singRules = append(singRules, map[string]any{
 			"ip_cidr":  bootstrapIPs,
 			"outbound": "direct",
-		})
-	}
-
-	// 4.1 Tailnet highest-priority routing & Pi-hole Blocker bypass
-	if opts.TailnetMode == tailnet.ModeHost {
-		var tailnetCIDRs []string
-		for _, c := range append(tailnet.DefaultTailnetSubnets, opts.TailnetHostExcludes...) {
-			c = strings.TrimSpace(c)
-			if c != "" && c != "0.0.0.0/0" && c != "::/0" {
-				tailnetCIDRs = append(tailnetCIDRs, c)
-			}
-		}
-		tailnetCIDRs = append(tailnetCIDRs, "100.100.100.100/32")
-		if len(tailnetCIDRs) > 0 {
-			singRules = append(singRules, map[string]any{
-				"ip_cidr":  tailnetCIDRs,
-				"outbound": "tailnet-direct",
-			})
-		}
-		suffixes := []string{"ts.net"}
-		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
-			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
-		}
-		singRules = append(singRules, map[string]any{
-			"domain_suffix": suffixes,
-			"outbound":      "tailnet-direct",
-		})
-		singRules = append(singRules, map[string]any{
-			"domain_regex":  []string{`^[^.]+$`},
-			"outbound":      "tailnet-direct",
-		})
-	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
-		suffixes := []string{"ts.net"}
-		if opts.TailnetMagicDNSSuffix != "" && opts.TailnetMagicDNSSuffix != "ts.net" {
-			suffixes = append(suffixes, opts.TailnetMagicDNSSuffix)
-		}
-		singRules = append(singRules, map[string]any{
-			"domain_suffix": suffixes,
-			"outbound":      "tailscale-ep",
-		})
-		singRules = append(singRules, map[string]any{
-			"domain_regex":  []string{`^[^.]+$`},
-			"outbound":      "tailscale-ep",
-		})
-		singRules = append(singRules, map[string]any{
-			"ip_cidr":  tailnet.DefaultTailnetSubnets,
-			"outbound": "tailscale-ep",
 		})
 	}
 

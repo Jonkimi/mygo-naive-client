@@ -5,12 +5,15 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/tailscale/ipn/ipnstate"
+	"github.com/sagernet/tailscale/types/key"
+	"github.com/sagernet/tailscale/types/views"
 )
 
 type mockEmbeddedEndpoint struct {
@@ -380,5 +383,118 @@ func TestManager_EmbeddedMode_PrefersConfiguredNodeNameOverOSHostName(t *testing
 	}
 	if got["peer-3"] != "nas-fallback" {
 		t.Errorf("peer-3 hostname = %q, want %q", got["peer-3"], "nas-fallback")
+	}
+}
+
+// Regression: DetectHostStatus previously failed to sync Manager.status when Enabled=true
+// in host/auto mode and didn't expose normalized peer records, leaving MagicDNS suffixes
+// and peer hostname-to-IP mappings empty until a later poll cycle.
+func TestManager_DetectHostStatus_SyncsCacheAndHostRecords(t *testing.T) {
+	allowed := views.SliceOf([]netip.Prefix{
+		netip.MustParsePrefix("100.64.1.5/32"),
+		netip.MustParsePrefix("10.88.0.0/16"),
+	})
+	det := NewDetectorWithClient(&mockHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			peerKey := key.NodePublic{}
+			return &ipnstate.Status{
+				BackendState:   "Running",
+				MagicDNSSuffix: "tail8bfe1c.ts.net.",
+				Self: &ipnstate.PeerStatus{
+					HostName:     "macbook",
+					DNSName:      "macbook.tail8bfe1c.ts.net.",
+					TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+					Online:       true,
+				},
+				Peer: map[key.NodePublic]*ipnstate.PeerStatus{
+					peerKey: {
+						ID:           "peer-vps",
+						HostName:     "vps-raw",
+						DNSName:      "my-vps.tail8bfe1c.ts.net.",
+						TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.1.5"), netip.MustParseAddr("fd7a:115c:a1e0::5")},
+						AllowedIPs:   &allowed,
+						Online:       true,
+					},
+				},
+			}, nil
+		},
+	})
+
+	// 1. Enabled host mode: DetectHostStatus populates status, excludes, suffix, and records.
+	mgr := NewManager(Config{Enabled: true, Mode: ModeHost}, det)
+	defer mgr.Close()
+
+	st := mgr.DetectHostStatus()
+	if st == nil || st.BackendState != "Running" {
+		t.Fatalf("DetectHostStatus() = %+v, want Running", st)
+	}
+	if got := mgr.GetMagicDNSSuffix(); got != "tail8bfe1c.ts.net" {
+		t.Errorf("GetMagicDNSSuffix() = %q, want %q", got, "tail8bfe1c.ts.net")
+	}
+	excludes := mgr.GetHostExcludeAddresses()
+	wantRoute := false
+	for _, ex := range excludes {
+		if ex == "10.88.0.0/16" {
+			wantRoute = true
+		}
+	}
+	if !wantRoute {
+		t.Errorf("GetHostExcludeAddresses() = %v, expected advertised subnet 10.88.0.0/16", excludes)
+	}
+	recs := mgr.GetHostRecords()
+	wantIPs := []string{"100.64.1.5", "fd7a:115c:a1e0::5"}
+	if !reflect.DeepEqual(recs["my-vps"], wantIPs) {
+		t.Errorf("records[my-vps] = %v, want %v", recs["my-vps"], wantIPs)
+	}
+	if !reflect.DeepEqual(recs["my-vps.tail8bfe1c.ts.net"], wantIPs) {
+		t.Errorf("records[my-vps.tail8bfe1c.ts.net] = %v, want %v", recs["my-vps.tail8bfe1c.ts.net"], wantIPs)
+	}
+
+	// 2. Disabled manager: DetectHostStatus returns host status without flipping ActiveMode to ModeHost.
+	passiveMgr := NewManager(DefaultConfig(), det)
+	defer passiveMgr.Close()
+	if got := passiveMgr.DetectHostStatus(); got == nil || got.MagicDNSSuffix != "tail8bfe1c.ts.net" {
+		t.Fatalf("passive DetectHostStatus() = %+v", got)
+	}
+	if passiveMgr.ShouldUseHostMode() {
+		t.Error("passive manager with Enabled=false should not report ShouldUseHostMode=true")
+	}
+}
+
+func TestIsTailnetHostnameAndTarget(t *testing.T) {
+	recs := map[string][]string{
+		"my-vps":                   {"100.64.1.5"},
+		"my-vps.tail8bfe1c.ts.net": {"100.64.1.5"},
+	}
+
+	if IsTailnetHostname(ModeOff, "my-vps.tail8bfe1c.ts.net", "tail8bfe1c.ts.net") {
+		t.Error("expected ModeOff to return false for Tailnet hostnames")
+	}
+	if IsTailnetTarget("", "100.64.1.5", "tail8bfe1c.ts.net", recs) {
+		t.Error("expected empty mode to return false for Tailnet IPs")
+	}
+	for _, host := range []string{"my-vps", "my-vps.", "my-vps.tail8bfe1c.ts.net", "node.ts.net", "node.corp.custom"} {
+		if !IsTailnetHostname(ModeHost, host, "corp.custom") {
+			t.Errorf("IsTailnetHostname(ModeHost, %q) = false, want true", host)
+		}
+	}
+	for _, nonTailnet := range []string{"", "localhost", "printer.local", "foo.localhost", "127.0.0.1", "example.com"} {
+		if IsTailnetHostname(ModeHost, nonTailnet, "tail8bfe1c.ts.net") {
+			t.Errorf("IsTailnetHostname(ModeHost, %q) = true, want false", nonTailnet)
+		}
+	}
+
+	// When hostRecords is known, non-Tailnet single-label LAN hosts must not bind to Tailnet interface,
+	// whereas Tailnet IPs/FQDNs/known peers do match.
+	if IsTailnetTarget(ModeHost, "lan-router", "tail8bfe1c.ts.net", recs) {
+		t.Error("unexpected match for non-Tailnet single-label host when hostRecords is populated")
+	}
+	for _, target := range []string{"my-vps", "other.tail8bfe1c.ts.net", "100.64.9.9", "[fd7a:115c:a1e0::9]", "100.100.100.100"} {
+		if !IsTailnetTarget(ModeHost, target, "tail8bfe1c.ts.net", recs) {
+			t.Errorf("IsTailnetTarget(ModeHost, %q) = false, want true", target)
+		}
+	}
+	if IsTailnetTarget(ModeHost, "100.63.255.254", "tail8bfe1c.ts.net", recs) {
+		t.Error("100.63.255.254 is outside 100.64.0.0/10 and must not match")
 	}
 }

@@ -130,11 +130,24 @@ func (m *Manager) DetectHostStatus() *Status {
 	if detector == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	st, err := detector.DetectHost(ctx)
-	if err != nil {
+	if err != nil || st == nil {
 		return nil
+	}
+	if st.BackendState == "Running" {
+		m.mu.RLock()
+		shouldSync := m.cfg.Enabled && (m.cfg.Mode == ModeHost || m.cfg.Mode == ModeAuto)
+		m.mu.RUnlock()
+		if shouldSync {
+			m.updateStatus(func(s *Status) {
+				*s = *st
+				s.Enabled = true
+				s.ActiveMode = ModeHost
+				s.Error = ""
+			})
+		}
 	}
 	return st
 }
@@ -143,24 +156,22 @@ func (m *Manager) DetectHostStatus() *Status {
 func (m *Manager) GetHostExcludeAddresses() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return ExcludeAddressesFromStatus(&m.status)
+}
 
-	excludes := append([]string{}, DefaultTailnetSubnets...)
-	seen := make(map[string]bool)
-	for _, sub := range excludes {
-		seen[sub] = true
-	}
+// GetHostRecords returns normalized Tailnet hostname -> IP mappings from current Self and Peers status.
+func (m *Manager) GetHostRecords() map[string][]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return HostRecordsFromStatus(&m.status)
+}
 
-	for _, sub := range m.status.SubnetRoutes {
-		sub = strings.TrimSpace(sub)
-		if sub == "" || sub == "0.0.0.0/0" || sub == "::/0" {
-			continue
-		}
-		if !seen[sub] {
-			seen[sub] = true
-			excludes = append(excludes, sub)
-		}
-	}
-	return excludes
+// GetHostInterface returns the host Tailscale network interface name using known Self IPs when available.
+func (m *Manager) GetHostInterface() string {
+	m.mu.RLock()
+	ips := append([]string{}, m.status.Self.IPs...)
+	m.mu.RUnlock()
+	return DetectHostInterfaceForIPs(ips...)
 }
 
 // GetMagicDNSSuffix returns the active MagicDNS suffix.
@@ -303,7 +314,7 @@ func (m *Manager) updateFromEmbedded(st *adapter.TailscaleEndpointStatus) {
 		s.ActiveMode = ModeEmbedded
 		s.BackendState = st.BackendState
 		s.AuthURL = st.AuthURL
-		s.MagicDNSSuffix = st.MagicDNSSuffix
+		s.MagicDNSSuffix = NormalizeHost(st.MagicDNSSuffix)
 		s.Self = self
 		s.Peers = peers
 		s.CurrentExitNode = currentExitNode

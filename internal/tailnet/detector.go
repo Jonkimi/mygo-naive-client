@@ -101,6 +101,7 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 	if magicDNS == "" && st.CurrentTailnet != nil {
 		magicDNS = st.CurrentTailnet.MagicDNSSuffix
 	}
+	magicDNS = NormalizeHost(magicDNS)
 
 	var self NodeInfo
 	if st.Self != nil {
@@ -173,43 +174,55 @@ func ConvertIPNStatus(st *ipnstate.Status) *Status {
 // DetectHostInterface returns the network interface name used by Tailscale (e.g. "utun6", "tailscale0")
 // by inspecting system interfaces for a Tailscale CGNAT IP (100.64.0.0/10) or ULA (fd7a:115c:a1e0::/48).
 func DetectHostInterface() string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ""
+	return DetectHostInterfaceForIPs()
+}
+
+// DetectHostInterfaceForIPs returns the host Tailscale network interface name, preferring an
+// interface that owns one of preferredIPs before falling back to Darwin route lookup and CGNAT/ULA scan.
+func DetectHostInterfaceForIPs(preferredIPs ...string) string {
+	preferred := make(map[string]bool, len(preferredIPs))
+	for _, raw := range preferredIPs {
+		if ip := net.ParseIP(strings.TrimSpace(raw)); ip != nil {
+			preferred[ip.String()] = true
+		}
 	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
+
+	ifaces, err := net.Interfaces()
+	if err == nil {
+		// Pass 1: exact Self IP match if known from LocalAPI.
+		if len(preferred) > 0 {
+			for _, iface := range ifaces {
+				if iface.Flags&net.FlagUp == 0 {
+					continue
+				}
+				for _, ip := range interfaceIPs(iface) {
+					if preferred[ip.String()] {
+						return iface.Name
+					}
+				}
 			}
-			if ip == nil {
+		}
+		// Pass 2: explicit Tailscale-named interface carrying a Tailnet IP.
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 {
 				continue
 			}
-			if ip4 := ip.To4(); ip4 != nil {
-				if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			lower := strings.ToLower(iface.Name)
+			if !strings.Contains(lower, "tailscale") {
+				continue
+			}
+			for _, ip := range interfaceIPs(iface) {
+				if IsTailnetIP(ip) {
 					return iface.Name
 				}
 			}
-			if len(ip) == 16 && ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0 {
-				return iface.Name
-			}
 		}
 	}
-	// Fallback on macOS via route lookup for Tailscale MagicDNS IP
+
+	// Pass 3: on macOS, route lookup for MagicDNS VIP disambiguates multiple utun interfaces
+	// and avoids matching ISP CGNAT on physical NICs (e.g., en0).
 	if runtime.GOOS == "darwin" {
-		out, err := exec.Command("route", "-n", "get", "100.100.100.100").Output()
-		if err == nil {
+		if out, err := exec.Command("route", "-n", "get", "100.100.100.100").Output(); err == nil {
 			for _, line := range strings.Split(string(out), "\n") {
 				fields := strings.Fields(line)
 				if len(fields) >= 2 && fields[0] == "interface:" {
@@ -221,6 +234,41 @@ func DetectHostInterface() string {
 			}
 		}
 	}
+
+	// Pass 4: scan remaining UP interfaces for Tailscale ULA or CGNAT.
+	if err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			for _, ip := range interfaceIPs(iface) {
+				if IsTailnetIP(ip) {
+					return iface.Name
+				}
+			}
+		}
+	}
 	return ""
+}
+
+func interfaceIPs(iface net.Interface) []net.IP {
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil
+	}
+	var ips []net.IP
+	for _, addr := range addrs {
+		switch v := addr.(type) {
+		case *net.IPNet:
+			if v.IP != nil {
+				ips = append(ips, v.IP)
+			}
+		case *net.IPAddr:
+			if v.IP != nil {
+				ips = append(ips, v.IP)
+			}
+		}
+	}
+	return ips
 }
 
