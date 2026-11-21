@@ -18,45 +18,65 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 	filteredEntries := filterLogEntries(rawEntries, a.logsLevelFilter, a.effectiveSourceFilter(), a.logsSearchQuery)
 
 	ui.Column(c.Key("logs-page")).Grow(1).Fill().MinHeight(0).Children(func() {
-		// 1. Page Header with Title, Live Status Pill, and Action Buttons
+		// Layer 1: Unified Header (Title + Segmented Sub-Tab + Live Status | Engine Level Select + Actions)
 		ui.Row(c.Key("logs-header")).
-			Padding(14, 18, 14, 18).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
+			Padding(12, 18, 12, 18).
+			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Wrap().
+			Background(p.surface).
 			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
 			Children(func() {
-				ui.Column(c).Shrink(1).MinWidth(0).Gap(2).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Text(c, cat.LogsPageTitle()).FontSize(17).FontWeight(700).TextColor(p.text)
-						if a.logsPaused {
-							statusBadge(c, cat.LogsStatusPaused(), p.amber, p.amberBg)
-						} else {
-							statusBadge(c, cat.LogsStatusLive(), p.green, p.greenBg)
+				ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().MinWidth(0).Shrink(1).Children(func() {
+					ui.Text(c, cat.LogsPageTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+
+					if segmentedControl(c.Key("logs-subtab-ctrl"), p, &a.logsSubTab, []string{cat.LogsTabGateway(), cat.LogsTabNodes()}) {
+						a.logsPaused = false
+						a.logsFrozenLines = nil
+						if a.logsSubTab == 1 {
+							a.ensureSelectedLogNode()
 						}
-						tagPill(c, cat.LogsLineCount(len(filteredEntries), len(rawEntries)), p.textMuted, p.card)
+					}
+
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+						if a.logsPaused {
+							statusDot(c, p.amber)
+							ui.Text(c, cat.LogsStatusPaused()).FontSize(12).TextColor(p.amber).NoWrap()
+						} else {
+							statusDot(c, p.green)
+							ui.Text(c, cat.LogsStatusLive()).FontSize(12).TextColor(p.textMuted).NoWrap()
+						}
+						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap()
+						ui.Text(c, cat.LogsLineCount(len(filteredEntries), len(rawEntries))).
+							FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
 					})
-					ui.Text(c, cat.LogsPageDesc()).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
 				})
 
-				// Right header controls: Pause / Copy / Clear
-				ui.Row(c).AlignItems(ui.Center).Shrink(0).Gap(6).Children(func() {
-					// Pause / Resume button
+				// Right header controls: Engine Log Level Select + Pause / Copy / Clear
+				ui.Row(c).AlignItems(ui.Center).Shrink(0).Gap(6).Wrap().Children(func() {
+					a.renderLogsEngineLevelSelect(c, p)
+
 					pauseIcon := iconStop
 					pauseLabel := cat.LogsActionPause()
 					if a.logsPaused {
 						pauseIcon = iconPlay
 						pauseLabel = cat.LogsActionResume()
 					}
-					if actionChip(c.Key("btn-logs-pause"), p, pauseIcon, pauseLabel, false).Clicked() {
+					btnPause := quietToolbarButton(c.Key("btn-logs-pause"), p, pauseIcon, pauseLabel, false).
+						Label(pauseLabel)
+					if btnPause.Clicked() {
 						a.toggleLogsPause()
 					}
 
-					// Copy button
-					if actionChip(c.Key("btn-logs-copy"), p, iconCopy, cat.LogCopy(), len(filteredEntries) == 0).Clicked() {
+					copyDimmed := len(filteredEntries) == 0
+					btnCopy := quietToolbarButton(c.Key("btn-logs-copy"), p, iconCopy, cat.LogCopy(), copyDimmed).
+						Label(cat.LogCopy())
+					if !copyDimmed && btnCopy.Clicked() {
 						a.writeClipboard(joinLogEntries(filteredEntries), cat.CopiedServiceLogs())
 					}
 
-					// Clear button
-					if actionChip(c.Key("btn-logs-clear"), p, iconTrash, cat.LogClear(), len(rawEntries) == 0).Clicked() {
+					clearDimmed := len(rawEntries) == 0
+					btnClear := quietToolbarButton(c.Key("btn-logs-clear"), p, iconTrash, cat.LogClear(), clearDimmed).
+						Label(cat.LogClear())
+					if !clearDimmed && btnClear.Clicked() {
 						a.clearCurrentLogs()
 					}
 				})
@@ -65,22 +85,12 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 		// 2. Main Body Container
 		ui.Column(c.Key("logs-body")).
 			Grow(1).Fill().MinHeight(0).
-			Padding(14, 18, 18, 18).Gap(10).
+			Padding(12, 18, 16, 18).Gap(10).
 			Children(func() {
-				// 2a. Primary Sub-Tab Bar: Gateway & System vs Node Processes
-				a.renderLogsSubTabBar(c, p, len(filteredEntries), len(rawEntries))
-
-				// 2b. Context Bar: Source filter (for Gateway & System) OR Node selector pills (for Node Processes)
-				if a.logsSubTab == 0 {
-					a.renderGatewaySourceBar(c, p)
-				} else {
-					a.renderNodeSelectorBar(c, p)
-				}
-
-				// 2c. Filter Bar: Keyword search + Log Level filter pills
+				// Layer 2: Unified Filter Toolbar (Source or Node Select + Search | Level Filter Track)
 				a.renderLogsFilterToolbar(c, p)
 
-				// 2d. Terminal Log Stream Viewport (mouse-selectable across lines)
+				// Terminal Log Stream Viewport (mouse-selectable across lines)
 				scroll := ui.Scroll(c.Key("logs-scroll")).
 					Grow(1).Fill().MinHeight(0).
 					Padding(12).Radius(8).
@@ -118,117 +128,153 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 	})
 }
 
-func (a *app) renderLogsSubTabBar(c *ui.Context, p palette, matchedCount, totalCount int) {
+func (a *app) renderLogsEngineLevelSelect(c *ui.Context, p palette) {
 	cat := a.catalog()
-	gwCount := 0
-	if a.gatewayLogs != nil {
-		gwCount = len(a.gatewayLogs.Lines())
+	if a.logsEngineLevel == "" {
+		a.logsEngineLevel = normalizeLogLevel(a.state.LogLevel)
 	}
-	runningNodes := a.activeRunningCount()
-	totalNodes := len(a.state.Services)
+	levels := []struct {
+		key   string
+		label string
+	}{
+		{"debug", cat.LogsLevelDebug()},
+		{"info", cat.LogsLevelInfo()},
+		{"warn", cat.LogsLevelWarn()},
+		{"error", cat.LogsLevelError()},
+	}
 
-	ui.Row(c.Key("logs-subtab-bar")).
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).
+	activeKey := normalizeLogLevel(a.logsEngineLevel)
+	activeLabel := cat.LogsLevelInfo()
+	for _, item := range levels {
+		if item.key == activeKey {
+			activeLabel = item.label
+			break
+		}
+	}
+
+	sel := ui.SelectBase(c.Key("select-engine-level"), &a.logsEngineLevel)
+	sel.Trigger.
+		Label("select-engine-level").
+		Tooltip(cat.LogsEngineLevelLabel()).
+		Height(32).Padding(0, 10, 0, 10).Radius(8).
+		Background(p.card).Border(1, p.border).
 		Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				// Tab 0: Gateway & System
-				gwActive := a.logsSubTab == 0
-				gwBg := p.card
-				gwFg := p.textMuted
-				gwBorder := p.borderSubtle
-				if gwActive {
-					gwBg = p.accentBg
-					gwFg = p.accentText
-					gwBorder = p.accent
-				}
-				btnGw := ui.ButtonBase(c.Key("btn-logs-tab-gateway")).
-					Label(cat.LogsTabGateway()).
-					Padding(7, 14, 7, 14).Radius(8).
-					Background(gwBg).Border(1, gwBorder).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Icon(c, iconShield).Size(14, 14).TextColor(gwFg)
-							ui.Text(c, cat.LogsTabGateway()).FontSize(12).FontWeight(700).TextColor(gwFg)
-							tagPill(c, fmt.Sprintf("%d", gwCount), gwFg, p.surface)
-						})
-					})
-				if btnGw.Clicked() && a.logsSubTab != 0 {
-					a.logsSubTab = 0
-					a.logsPaused = false
-					a.logsFrozenLines = nil
-				}
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Text(c, cat.LogsEngineLevelLabel()).FontSize(11).TextColor(p.textDim).NoWrap()
+				ui.Text(c, activeLabel).FontSize(12).FontWeight(500).TextColor(p.text).NoWrap()
+				ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(p.textMuted)
+			})
+		})
+	if sel.Trigger.Hovered() {
+		sel.Trigger.Background(p.cardHover)
+	}
 
-				// Tab 1: Node Processes
-				nodesActive := a.logsSubTab == 1
-				nodesBg := p.card
-				nodesFg := p.textMuted
-				nodesBorder := p.borderSubtle
-				if nodesActive {
-					nodesBg = p.accentBg
-					nodesFg = p.accentText
-					nodesBorder = p.accent
+	sel.Popup(func(panel ui.Element) {
+		panel.Column().Gap(2).MinWidth(136).
+			AttachTo(sel.Trigger, ui.AnchorBottomEnd, ui.AnchorTopEnd).
+			Margin(4, 0, 0, 0).
+			Padding(4).Radius(10).
+			Background(p.card).Border(1, p.border).
+			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+		for _, item := range levels {
+			selected := item.key == activeKey
+			opt := sel.Item(item.key).
+				Label("btn-engine-level-" + item.key).
+				FillWidth().Height(28).PaddingX(10).Radius(6).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8)
+			if opt.Highlighted() {
+				opt.Background(p.elevated)
+			}
+			opt.Children(func() {
+				fg := p.textMuted
+				if selected || opt.Highlighted() {
+					fg = p.text
 				}
-				btnNodes := ui.ButtonBase(c.Key("btn-logs-tab-nodes")).
-					Label(cat.LogsTabNodes()).
-					Padding(7, 14, 7, 14).Radius(8).
-					Background(nodesBg).Border(1, nodesBorder).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Icon(c, iconTerminal).Size(14, 14).TextColor(nodesFg)
-							ui.Text(c, cat.LogsTabNodes()).FontSize(12).FontWeight(700).TextColor(nodesFg)
-							tagPill(c, fmt.Sprintf("%d/%d", runningNodes, totalNodes), nodesFg, p.surface)
-						})
-					})
-				if btnNodes.Clicked() && a.logsSubTab != 1 {
-					a.logsSubTab = 1
-					a.logsPaused = false
-					a.logsFrozenLines = nil
-					a.ensureSelectedLogNode()
+				ui.Text(c, item.label).FontSize(12).FontWeight(500).TextColor(fg).NoWrap()
+				if selected {
+					statusDot(c, p.accent)
 				}
 			})
+		}
+	})
 
-			// Engine Log Level selector pill group on right side of Sub-Tab bar
-			ui.Row(c.Key("logs-engine-level-group")).
-				AlignItems(ui.Center).Gap(4).
-				Padding(3, 6, 3, 8).Radius(6).
-				Background(p.card).Border(1, p.borderSubtle).
+	if sel.Trigger.Changed() {
+		a.setLogLevel(a.logsEngineLevel)
+	} else if norm := normalizeLogLevel(a.state.LogLevel); a.logsEngineLevel != norm {
+		a.logsEngineLevel = norm
+	}
+}
+
+func (a *app) renderLogsFilterToolbar(c *ui.Context, p palette) {
+	cat := a.catalog()
+
+	ui.Row(c.Key("logs-filter-toolbar")).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Wrap().
+		Children(func() {
+			// Left: Gateway/System Source segmented track OR Node Select + SearchField
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).MinWidth(0).Wrap().Children(func() {
+				if a.logsSubTab == 0 {
+					a.renderGatewaySourceTrack(c, p)
+				} else {
+					a.renderNodeLogSelect(c, p)
+				}
+
+				ui.SearchField(c.Key("input-logs-search"), &a.logsSearchQuery).
+					Placeholder(cat.LogsSearchPlaceholder()).
+					Label(cat.LogsSearchPlaceholder()).
+					Height(28).Radius(7).FontSize(11).
+					MinWidth(100).Grow(1).MaxWidth(260).
+					Background(p.card)
+			})
+
+			// Right: Level Filter Segmented Track
+			levels := []struct {
+				key      string
+				label    string
+				activeFg ui.Color
+			}{
+				{"", cat.LogsLevelAll(), p.text},
+				{"info", cat.LogsLevelInfo(), p.accentText},
+				{"warn", cat.LogsLevelWarn(), p.amber},
+				{"error", cat.LogsLevelError(), p.red},
+				{"debug", cat.LogsLevelDebug(), p.textMuted},
+			}
+
+			ui.Row(c.Key("logs-level-filter-pills")).
+				AlignItems(ui.Center).Gap(2).Shrink(0).
+				Padding(2).Radius(7).Background(p.elevated).
 				Children(func() {
-					ui.Text(c, cat.LogsEngineLevelLabel()).FontSize(11).TextColor(p.textMuted)
-					activeLvl := normalizeLogLevel(a.state.LogLevel)
-					levels := []struct {
-						key   string
-						label string
-					}{
-						{"debug", cat.LogsLevelDebug()},
-						{"info", cat.LogsLevelInfo()},
-						{"warn", cat.LogsLevelWarn()},
-						{"error", cat.LogsLevelError()},
-					}
 					for _, item := range levels {
 						lvl := item.key
-						isActive := activeLvl == lvl
+						active := a.logsLevelFilter == lvl
 						bg := ui.Transparent
-						fg := p.textDim
-						if isActive {
-							bg = p.accentBg
-							fg = p.accentText
+						fg := p.textMuted
+						weight := 400
+						if active {
+							bg = p.card
+							fg = item.activeFg
+							weight = 600
 						}
-						btn := ui.ButtonBase(c.Key("btn-engine-level-" + lvl)).
-							Label("btn-engine-level-" + lvl).
-							Padding(3, 8, 3, 8).Radius(4).
+						btnKey := "btn-logs-filter-" + lvl
+						if lvl == "" {
+							btnKey = "btn-logs-filter-all"
+						}
+						btn := ui.ButtonBase(c.Key(btnKey)).
+							Label(btnKey).
+							Padding(4, 9, 4, 9).Radius(5).
 							Background(bg).
 							Children(func() {
-								ui.Text(c, item.label).FontSize(11).FontWeight(600).TextColor(fg)
+								ui.Text(c, item.label).FontSize(11).FontWeight(weight).TextColor(fg).NoWrap()
 							})
 						if btn.Clicked() {
-							a.setLogLevel(lvl)
+							a.logsLevelFilter = lvl
 						}
 					}
 				})
 		})
 }
 
-func (a *app) renderGatewaySourceBar(c *ui.Context, p palette) {
+func (a *app) renderGatewaySourceTrack(c *ui.Context, p palette) {
 	cat := a.catalog()
 	sources := []struct {
 		key   string
@@ -240,16 +286,19 @@ func (a *app) renderGatewaySourceBar(c *ui.Context, p palette) {
 	}
 
 	ui.Row(c.Key("logs-source-bar")).
-		AlignItems(ui.Center).Gap(6).
+		AlignItems(ui.Center).Gap(2).Shrink(0).
+		Padding(2).Radius(7).Background(p.elevated).
 		Children(func() {
 			for _, item := range sources {
 				src := item.key
 				active := a.logsSourceFilter == src
-				bg := p.card
+				bg := ui.Transparent
 				fg := p.textMuted
+				weight := 400
 				if active {
-					bg = p.elevated
+					bg = p.card
 					fg = p.text
+					weight = 600
 				}
 				btnKey := "btn-logs-src-" + src
 				if src == "" {
@@ -257,10 +306,10 @@ func (a *app) renderGatewaySourceBar(c *ui.Context, p palette) {
 				}
 				btn := ui.ButtonBase(c.Key(btnKey)).
 					Label(item.label).
-					Padding(4, 10, 4, 10).Radius(6).
-					Background(bg).Border(1, p.borderSubtle).
+					Padding(4, 9, 4, 9).Radius(5).
+					Background(bg).
 					Children(func() {
-						ui.Text(c, item.label).FontSize(11).FontWeight(600).TextColor(fg)
+						ui.Text(c, item.label).FontSize(11).FontWeight(weight).TextColor(fg).NoWrap()
 					})
 				if btn.Clicked() {
 					a.logsSourceFilter = src
@@ -269,11 +318,27 @@ func (a *app) renderGatewaySourceBar(c *ui.Context, p palette) {
 		})
 }
 
-func (a *app) renderNodeSelectorBar(c *ui.Context, p palette) {
+func (a *app) nodeLogStatusDotColor(svcID string, p palette) ui.Color {
+	if a.mgr == nil {
+		return p.textDim
+	}
+	switch a.mgr.StatusOf(svcID).State {
+	case runner.StateRunning:
+		return p.green
+	case runner.StateStarting:
+		return p.amber
+	case runner.StateError:
+		return p.red
+	default:
+		return p.textDim
+	}
+}
+
+func (a *app) renderNodeLogSelect(c *ui.Context, p palette) {
 	cat := a.catalog()
 	if len(a.state.Services) == 0 {
 		ui.Row(c.Key("logs-node-bar-empty")).
-			Padding(6, 10, 6, 10).Radius(6).
+			Padding(4, 10, 4, 10).Radius(7).
 			Background(p.card).Border(1, p.borderSubtle).
 			Children(func() {
 				ui.Text(c, cat.LogsNoNodes()).FontSize(11).TextColor(p.textDim)
@@ -281,119 +346,74 @@ func (a *app) renderNodeSelectorBar(c *ui.Context, p palette) {
 		return
 	}
 
-	ui.Row(c.Key("logs-node-bar")).
-		AlignItems(ui.Center).Wrap().Gap(6).
+	selSvc, ok := a.findService(a.logsSelectedNodeID)
+	if !ok {
+		selSvc = a.state.Services[0]
+		a.logsSelectedNodeID = selSvc.ID
+	}
+	selName := selSvc.Name
+	if selName == "" {
+		selName = selSvc.ID
+	}
+	selDotCol := a.nodeLogStatusDotColor(selSvc.ID, p)
+
+	sel := ui.SelectBase(c.Key("select-logs-node"), &a.logsSelectedNodeID)
+	sel.Trigger.
+		Label("select-logs-node").
+		Tooltip(cat.LogsNodeSelectorLabel()).
+		Height(28).Padding(0, 10, 0, 10).Radius(7).
+		Background(p.card).Border(1, p.border).
 		Children(func() {
-			for _, svc := range a.state.Services {
-				svcID := svc.ID
-				svcName := svc.Name
-				if svcName == "" {
-					svcName = svcID
-				}
-				selected := a.logsSelectedNodeID == svcID
-				st := runner.Status{State: runner.StateStopped}
-				if a.mgr != nil {
-					st = a.mgr.StatusOf(svcID)
-				}
-
-				dotColor := p.textDim
-				switch st.State {
-				case runner.StateRunning:
-					dotColor = p.green
-				case runner.StateStarting:
-					dotColor = p.amber
-				case runner.StateError:
-					dotColor = p.red
-				}
-
-				bg := p.card
-				fg := p.textMuted
-				borderColor := p.borderSubtle
-				if selected {
-					bg = p.accentBg
-					fg = p.accentText
-					borderColor = p.accent
-				}
-
-				btn := ui.ButtonBase(c.Key("btn-logs-node-" + svcID)).
-					Label("btn-logs-node-" + svcID).
-					Padding(5, 10, 5, 10).Radius(6).
-					Background(bg).Border(1, borderColor).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							ui.Box(c).Size(7, 7).Radius(999).Background(dotColor)
-							ui.Text(c, svcName).FontSize(11).FontWeight(600).TextColor(fg)
-							protoLabel := strings.ToUpper(string(svc.EffectiveProtocol()))
-							tagPill(c, protoLabel, p.textDim, p.surface)
-						})
-					})
-				if btn.Clicked() && a.logsSelectedNodeID != svcID {
-					a.logsSelectedNodeID = svcID
-					a.logsPaused = false
-					a.logsFrozenLines = nil
-				}
-			}
-		})
-}
-
-func (a *app) renderLogsFilterToolbar(c *ui.Context, p palette) {
-	cat := a.catalog()
-
-	ui.Row(c.Key("logs-filter-toolbar")).
-		AlignItems(ui.Center).Gap(10).
-		Children(func() {
-			// Keyword Search Input
-			ui.Row(c).Grow(1).Children(func() {
-				ui.TextInput(c.Key("input-logs-search"), &a.logsSearchQuery).
-					Placeholder(cat.LogsSearchPlaceholder()).
-					FontSize(11).
-					Padding(5, 10, 5, 10).Radius(6).
-					Background(p.card).Border(1, p.borderSubtle)
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				statusDot(c, selDotCol)
+				ui.Text(c, selName).FontSize(11).FontWeight(600).TextColor(p.text).SingleLine().Ellipsis("…").MaxWidth(150)
+				ui.Text(c, nodeCompactMeta(selSvc)).FontSize(11).FontFeatures("tnum").TextColor(p.textDim).NoWrap()
+				ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(p.textMuted)
 			})
-
-			// Level Filter Pills
-			levels := []struct {
-				key      string
-				label    string
-				activeFg ui.Color
-				activeBg ui.Color
-			}{
-				{"", cat.LogsLevelAll(), p.text, p.elevated},
-				{"debug", cat.LogsLevelDebug(), p.textMuted, p.elevated},
-				{"info", cat.LogsLevelInfo(), p.accentText, p.accentBg},
-				{"warn", cat.LogsLevelWarn(), p.amber, p.amberBg},
-				{"error", cat.LogsLevelError(), p.red, p.redBg},
-			}
-
-			ui.Row(c.Key("logs-level-filter-pills")).
-				AlignItems(ui.Center).Gap(4).
-				Children(func() {
-					for _, item := range levels {
-						lvl := item.key
-						active := a.logsLevelFilter == lvl
-						bg := p.card
-						fg := p.textDim
-						if active {
-							bg = item.activeBg
-							fg = item.activeFg
-						}
-						btnKey := "btn-logs-filter-" + lvl
-						if lvl == "" {
-							btnKey = "btn-logs-filter-all"
-						}
-						btn := ui.ButtonBase(c.Key(btnKey)).
-							Label(btnKey).
-							Padding(4, 9, 4, 9).Radius(5).
-							Background(bg).Border(1, p.borderSubtle).
-							Children(func() {
-								ui.Text(c, item.label).FontSize(11).FontWeight(600).TextColor(fg)
-							})
-						if btn.Clicked() {
-							a.logsLevelFilter = lvl
-						}
-					}
-				})
 		})
+	if sel.Trigger.Hovered() {
+		sel.Trigger.Background(p.cardHover)
+	}
+
+	sel.Popup(func(panel ui.Element) {
+		panel.Column().Gap(2).MinWidth(230).
+			AttachTo(sel.Trigger, ui.AnchorBottomStart, ui.AnchorTopStart).
+			Margin(4, 0, 0, 0).
+			Padding(4).Radius(10).
+			Background(p.card).Border(1, p.border).
+			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+		for _, svc := range a.state.Services {
+			svcName := svc.Name
+			if svcName == "" {
+				svcName = svc.ID
+			}
+			dotCol := a.nodeLogStatusDotColor(svc.ID, p)
+			selected := a.logsSelectedNodeID == svc.ID
+			opt := sel.Item(svc.ID).
+				Label("btn-logs-node-" + svc.ID).
+				FillWidth().Padding(6, 10, 6, 10).Radius(6).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10)
+			if opt.Highlighted() {
+				opt.Background(p.elevated)
+			}
+			opt.Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
+					statusDot(c, dotCol)
+					fg := p.textMuted
+					if selected || opt.Highlighted() {
+						fg = p.text
+					}
+					ui.Text(c, svcName).FontSize(12).FontWeight(500).TextColor(fg).SingleLine().Ellipsis("…")
+				})
+				ui.Text(c, nodeCompactMeta(svc)).FontSize(11).FontFeatures("tnum").TextColor(p.textDim).NoWrap().Shrink(0)
+			})
+		}
+	})
+
+	if sel.Trigger.Changed() {
+		a.logsPaused = false
+		a.logsFrozenLines = nil
+	}
 }
 
 func (a *app) ensureSelectedLogNode() {

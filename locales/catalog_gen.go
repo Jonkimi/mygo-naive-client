@@ -7445,3 +7445,55 @@ func CloudflareAttachedNodesHint() string { return In(i18n.Locale()).CloudflareA
 func (msgs Messages) CloudflareAttachedNodesHint() string {
 	return Catalog.Format(msgs.locale, "cloudflareAttachedNodesHint", nil)
 }
+
+// InsightsProtectionShort says "Protection"
+// in the language the app shows.
+func InsightsProtectionShort() string { return In(i18n.Locale()).InsightsProtectionShort() }
+
+// InsightsProtectionShort says "Protection"
+// in the language of msgs.
+func (msgs Messages) InsightsProtectionShort() string {
+	return Catalog.Format(msgs.locale, "insightsProtectionShort", nil)
+}
+
+// InsightsBuiltinAdsShort says "Built-in Ads"
+// in the language the app shows.
+func InsightsBuiltinAdsShort() string { return In(i18n.Locale()).InsightsBuiltinAdsShort() }
+
+// InsightsBuiltinAdsShort says "Built-in Ads"
+// in the language of msgs.
+func (msgs Messages) InsightsBuiltinAdsShort() string {
+	return Catalog.Format(msgs.locale, "insightsBuiltinAdsShort", nil)
+}
+
+// InsightsDrawerEyebrow says "Blocker Config"
+// in the language the app shows.
+func InsightsDrawerEyebrow() string { return In(i18n.Locale()).InsightsDrawerEyebrow() }
+
+// InsightsDrawerEyebrow says "Blocker Config"
+// in the language of msgs.
+func (msgs Messages) InsightsDrawerEyebrow() string {
+	return Catalog.Format(msgs.locale, "insightsDrawerEyebrow", nil)
+}
+
+// InsightsRulesCountShort says "{count} rules"
+// in the language the app shows.
+func InsightsRulesCountShort(count int) string {
+	return In(i18n.Locale()).InsightsRulesCountShort(count)
+}
+
+// InsightsRulesCountShort says "{count} rules"
+// in the language of msgs.
+func (msgs Messages) InsightsRulesCountShort(count int) string {
+	return Catalog.Format(msgs.locale, "insightsRulesCountShort", map[string]any{"count": count})
+}
+
+// LogsNodeSelectorLabel says "Select node"
+// in the language the app shows.
+func LogsNodeSelectorLabel() string { return In(i18n.Locale()).LogsNodeSelectorLabel() }
+
+// LogsNodeSelectorLabel says "Select node"
+// in the language of msgs.
+func (msgs Messages) LogsNodeSelectorLabel() string {
+	return Catalog.Format(msgs.locale, "logsNodeSelectorLabel", nil)
+}

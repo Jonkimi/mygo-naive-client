@@ -3112,6 +3112,10 @@ func TestLogsPage_GatewayAndNodeTabsFilteringAndActions(t *testing.T) {
 	}
 
 	// 7. Change engine log level and verify persistence
+	if err := tt.Click("select-engine-level"); err != nil {
+		t.Fatalf("open engine level select: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click("btn-engine-level-debug"); err != nil {
 		t.Fatalf("click engine level debug: %v", err)
 	}
@@ -3145,6 +3149,10 @@ func TestLogsPage_GatewayAndNodeTabsFilteringAndActions(t *testing.T) {
 	}
 
 	// Switch to second node (svc-us)
+	if err := tt.Click("select-logs-node"); err != nil {
+		t.Fatalf("open logs node select: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click("btn-logs-node-svc-us"); err != nil {
 		t.Fatalf("click node svc-us: %v", err)
 	}

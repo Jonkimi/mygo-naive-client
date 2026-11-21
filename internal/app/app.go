@@ -207,12 +207,14 @@ type app struct {
 	insightsFilter           string
 	insightsSearch           string
 	insightsShowManageRules  bool
+	insightsRulesScroll      ui.ScrollState
 	blockerAllowlistInput    string
 	blockerDenylistInput     string
 	blockerSubscriptionInput string
 
 	gatewayLogs        *runner.LogBuffer
 	logsSubTab         int
+	logsEngineLevel    string
 	logsLevelFilter    string
 	logsSourceFilter   string
 	logsSearchQuery    string
@@ -3206,6 +3208,7 @@ func (a *app) appendSystemLog(level, format string, args ...any) {
 
 func (a *app) setLogLevel(level string) {
 	norm := normalizeLogLevel(level)
+	a.logsEngineLevel = norm
 	if a.state.LogLevel == norm {
 		return
 	}

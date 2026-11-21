@@ -29,6 +29,9 @@ func (a *app) view(c *ui.Context) {
 		a.openRoutingMoreMenu = false
 		a.showRoutingStrategyHelp = false
 	}
+	if a.activeTab != TabInsights {
+		a.insightsShowManageRules = false
+	}
 
 	c.OnShortcut(0, ui.KeyEscape, func() {
 		if a.activeLogDrawerID != "" {
@@ -87,6 +90,7 @@ func (a *app) view(c *ui.Context) {
 	a.renderImportDialog(c, p)
 	a.renderDeleteDialog(c, p)
 	a.renderRuleEditorDrawer(c, p)
+	a.renderInsightsManageRulesDrawer(c, p)
 
 	if msg := a.consumePendingToast(); msg != "" {
 		c.Toast(msg)

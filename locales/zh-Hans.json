@@ -916,5 +916,10 @@
   "ruleEditorSectionCriteria": "匹配条件",
   "cloudflareStatusReady": "WARP 已就绪",
   "cloudflareStatusDirectTakeover": "Direct 接管中",
-  "cloudflareAttachedNodesHint": "点击打开节点详情抽屉"
+  "cloudflareAttachedNodesHint": "点击打开节点详情抽屉",
+  "insightsProtectionShort": "防护",
+  "insightsBuiltinAdsShort": "内置广告库",
+  "insightsDrawerEyebrow": "拦截配置",
+  "insightsRulesCountShort": "{count} 条规则",
+  "logsNodeSelectorLabel": "选择节点"
 }

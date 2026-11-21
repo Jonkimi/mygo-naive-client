@@ -943,5 +943,15 @@
   "ruleEditorSectionCriteria": "Matching Criteria",
   "cloudflareStatusReady": "WARP Ready",
   "cloudflareStatusDirectTakeover": "Direct ➔ WARP",
-  "cloudflareAttachedNodesHint": "Click a node to open details"
+  "cloudflareAttachedNodesHint": "Click a node to open details",
+  "insightsProtectionShort": "Protection",
+  "insightsBuiltinAdsShort": "Built-in Ads",
+  "insightsDrawerEyebrow": "Blocker Config",
+  "insightsRulesCountShort": "{count} rules",
+  "@insightsRulesCountShort": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "logsNodeSelectorLabel": "Select node"
 }
