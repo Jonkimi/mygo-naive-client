@@ -1595,6 +1595,16 @@ func TestEngine_DecomposedConfigBuilders(t *testing.T) {
 	if dnsMap["strategy"] != "prefer_ipv4" {
 		t.Errorf("expected prefer_ipv4 strategy, got %v", dnsMap["strategy"])
 	}
+	optsWithStrategy := opts
+	optsWithStrategy.DNSStrategy = "ipv4_only"
+	optsWithStrategy.DNSOptimisticCache = true
+	dnsMapStrategy := buildDNSConfig(optsWithStrategy, finalOutbound, allBootstrapDomains)
+	if dnsMapStrategy["strategy"] != "ipv4_only" {
+		t.Errorf("expected ipv4_only strategy, got %v", dnsMapStrategy["strategy"])
+	}
+	if dnsMapStrategy["optimistic"] != true {
+		t.Errorf("expected optimistic=true in dnsMap, got %v", dnsMapStrategy["optimistic"])
+	}
 	if dnsMap["final"] != "remote-doh" {
 		t.Errorf("expected dns final remote-doh, got %v", dnsMap["final"])
 	}

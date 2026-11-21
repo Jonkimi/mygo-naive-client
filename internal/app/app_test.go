@@ -3246,28 +3246,74 @@ func TestApp_DnsSelectDropdownUI(t *testing.T) {
 	}
 }
 
-// Tests that toggling PreferIPv4 switch updates persisted state.
+// Tests DNS IP strategy selector, Optimistic DNS cache toggle, and their '?' help popovers.
 func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
 	a.settingsSubTab = 1
+	cat := a.catalog()
 
-	if !a.state.PreferIPv4 {
-		t.Fatalf("expected PreferIPv4 to default to true")
+	if a.state.DNSStrategy != "ipv4_only" || !a.state.PreferIPv4 {
+		t.Fatalf("expected default DNSStrategy=ipv4_only and PreferIPv4=true, got %q / %v", a.state.DNSStrategy, a.state.PreferIPv4)
+	}
+	if !a.state.DNSOptimisticCache {
+		t.Fatalf("expected DNSOptimisticCache to default to true")
 	}
 
 	tt := ui.NewTester(func(c *ui.Context) {
 		a.renderSettingsPage(c, darkPalette)
 	}, 800, 2000)
 
-	// Click Prefer IPv4 switch row to toggle it off
-	if err := tt.Click(a.catalog().DnsPreferIPv4Label()); err != nil {
-		t.Fatalf("click %s: %v", a.catalog().DnsPreferIPv4Label(), err)
+	// 1. Open DNS strategy help popover via '?' and dismiss via Esc
+	if err := tt.Click(cat.DnsStrategyHelpButton()); err != nil {
+		t.Fatalf("click %s: %v", cat.DnsStrategyHelpButton(), err)
+	}
+	tt.Advance(250 * time.Millisecond)
+	if !a.dnsStrategyHelpOpen || !tt.HasText(cat.DnsStrategyHelpTitle()) {
+		t.Fatalf("expected DNS strategy help popover to open with %q, open=%v texts=%v", cat.DnsStrategyHelpTitle(), a.dnsStrategyHelpOpen, tt.Texts())
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Advance(250 * time.Millisecond)
+	if a.dnsStrategyHelpOpen {
+		t.Fatalf("expected Esc to close DNS strategy help popover")
+	}
+
+	// 2. Open Optimistic cache help popover via '?' and dismiss before selecting options
+	if err := tt.Click(cat.DnsOptimisticHelpButton()); err != nil {
+		t.Fatalf("click %s: %v", cat.DnsOptimisticHelpButton(), err)
+	}
+	tt.Advance(250 * time.Millisecond)
+	if !a.dnsOptimisticHelpOpen || !tt.HasText(cat.DnsOptimisticHelpTitle()) {
+		t.Fatalf("expected optimistic help popover to open with %q, open=%v", cat.DnsOptimisticHelpTitle(), a.dnsOptimisticHelpOpen)
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Advance(250 * time.Millisecond)
+	if a.dnsOptimisticHelpOpen {
+		t.Fatalf("expected Esc to close optimistic help popover")
+	}
+
+	// 3. Change DNS resolution strategy dropdown to Default Dual-Stack (as_is)
+	if err := tt.Click(cat.DnsStrategyIPv4Only()); err != nil {
+		t.Fatalf("click DNS strategy select trigger %s: %v", cat.DnsStrategyIPv4Only(), err)
+	}
+	tt.Frame()
+	if err := tt.Click(cat.DnsStrategyAsIs()); err != nil {
+		t.Fatalf("select DNS strategy %s: %v", cat.DnsStrategyAsIs(), err)
 	}
 	tt.Frame()
 
-	if a.state.PreferIPv4 {
-		t.Fatalf("expected state PreferIPv4 to be toggled to false")
+	if a.state.DNSStrategy != "as_is" || a.state.PreferIPv4 {
+		t.Fatalf("expected DNSStrategy=as_is and PreferIPv4=false, got %q / %v", a.state.DNSStrategy, a.state.PreferIPv4)
+	}
+
+	// 4. Toggle Optimistic DNS cache off
+	if err := tt.Click(cat.DnsOptimisticLabel()); err != nil {
+		t.Fatalf("click %s: %v", cat.DnsOptimisticLabel(), err)
+	}
+	tt.Frame()
+
+	if a.state.DNSOptimisticCache {
+		t.Fatalf("expected state DNSOptimisticCache to be toggled to false")
 	}
 }
 

@@ -45,6 +45,14 @@ var (
 		"180.76.76.76",
 		"1.12.12.12",
 	}
+
+	dnsStrategyCodes = []string{
+		"ipv4_only",
+		"prefer_ipv4",
+		"as_is",
+		"prefer_ipv6",
+		"ipv6_only",
+	}
 )
 
 func ensureSelectOption(opts []string, cur string) []string {
@@ -109,11 +117,59 @@ func (a *app) appIconLabels() []string {
 	return []string{cat.AppIconBoth(), cat.AppIconDock(), cat.AppIconMenubar()}
 }
 
+func (a *app) dnsStrategyLabels() []string {
+	cat := a.catalog()
+	return []string{
+		cat.DnsStrategyIPv4Only(),
+		cat.DnsStrategyPreferIPv4(),
+		cat.DnsStrategyAsIs(),
+		cat.DnsStrategyPreferIPv6(),
+		cat.DnsStrategyIPv6Only(),
+	}
+}
+
+func renderSettingsHelpButtonWithPopover(c *ui.Context, p palette, btnKey, btnLabel, popTitle, popDesc string, open *bool, onToggle func()) {
+	helpBtn := ui.ButtonBase(c.Key(btnKey)).
+		Label(btnLabel).
+		Size(18, 18).Radius(999).
+		AlignItems(ui.Center).Justify(ui.Center).
+		Background(p.elevated).
+		Tooltip(btnLabel)
+	if helpBtn.Hovered() {
+		helpBtn.Background(p.cardHover)
+	}
+	helpBtn.Children(func() {
+		ui.Text(c, "?").FontSize(10).FontWeight(700).TextColor(p.textMuted)
+	})
+	if helpBtn.Clicked() {
+		*open = !*open
+		if *open && onToggle != nil {
+			onToggle()
+		}
+	}
+	ui.PopoverBase(c, helpBtn, open, func(panel ui.Element) {
+		panel.Column().
+			AttachTo(helpBtn, ui.AnchorBottomStart, ui.AnchorTopStart).
+			Margin(6, 0, 0, 0).
+			Width(320).Padding(12).Gap(6).Radius(10).
+			Background(p.card).Border(1, p.border).
+			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.22)).
+			Children(func() {
+				ui.Text(c, popTitle).FontSize(12).FontWeight(700).TextColor(p.text)
+				ui.Text(c, popDesc).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+			})
+	})
+}
+
 func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 	cat := a.catalog()
 
 	if a.settingsSubTab < 0 || a.settingsSubTab > 3 {
 		a.settingsSubTab = 0
+	}
+	if a.settingsSubTab != 1 {
+		a.dnsStrategyHelpOpen = false
+		a.dnsOptimisticHelpOpen = false
 	}
 
 	ui.Column(c.Key("settings-page")).Grow(1).Fill().MinHeight(0).Children(func() {
@@ -289,19 +345,12 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 		}
 	})
 
-	// Split-DoH & DNS Resolution Card
+	// Split-DoH Upstreams Card
 	ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
 		ui.Column(c).Gap(2).Children(func() {
 			ui.Text(c, cat.DohSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 			ui.Text(c, cat.DohSectionDesc()).FontSize(11).TextColor(p.textDim)
 		})
-
-		if switchRow(c, p, "page-set-dns-prefer-ipv4", cat.DnsPreferIPv4Label(), &a.state.PreferIPv4) {
-			a.saveState()
-			a.initDNS()
-		}
-
-		ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
 
 		if dnsSelectRow(c, p, "page-set-dns-domestic", cat.DnsDomesticLabel(), &a.state.DomesticDNS, boxengine.DefaultDomesticDoH[0], domesticDNSPresets, cat.DnsDomesticHint()) {
 			a.saveState()
@@ -321,6 +370,70 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 			a.saveState()
 			a.initDNS()
 		}
+	})
+
+	// DNS Strategy & Cache Card
+	ui.Column(c).Gap(12).Padding(16).Radius(10).Background(p.card).Border(1, p.borderSubtle).Children(func() {
+		ui.Column(c).Gap(2).Children(func() {
+			ui.Text(c, cat.DnsPolicySectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+			ui.Text(c, cat.DnsPolicySectionDesc()).FontSize(11).TextColor(p.textDim)
+		})
+
+		strategyCode := normalizeDNSStrategy(a.state.DNSStrategy, a.state.PreferIPv4)
+		strategyLabels := a.dnsStrategyLabels()
+		curStrategyLabel := strategyLabels[indexOfCode(dnsStrategyCodes, strategyCode)]
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {
+			ui.Column(c).Gap(2).Grow(1).Shrink(1).MinWidth(140).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Text(c, cat.DnsPreferIPv4Label()).FontSize(13).FontWeight(500).TextColor(p.text)
+					renderSettingsHelpButtonWithPopover(
+						c, p,
+						"btn-dns-strategy-help",
+						cat.DnsStrategyHelpButton(),
+						cat.DnsStrategyHelpTitle(),
+						cat.DnsStrategyHelpDesc(),
+						&a.dnsStrategyHelpOpen,
+						func() { a.dnsOptimisticHelpOpen = false },
+					)
+				})
+				ui.Text(c, cat.DnsStrategyHint()).FontSize(11).TextColor(p.textDim)
+			})
+			if ui.Select(c.Key("page-set-dns-strategy"), &curStrategyLabel, strategyLabels).Label(cat.DnsPreferIPv4Label()).Width(250).MaxWidthPercent(100).Shrink(0).Changed() {
+				nextCode := dnsStrategyCodes[indexOfCode(strategyLabels, curStrategyLabel)]
+				a.state.DNSStrategy = nextCode
+				a.state.PreferIPv4 = nextCode == "ipv4_only" || nextCode == "prefer_ipv4"
+				a.saveState()
+				a.initDNS()
+			}
+		})
+
+		ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
+
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {
+			ui.Column(c).Gap(2).Grow(1).Shrink(1).MinWidth(140).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					if ui.Text(c, cat.DnsOptimisticLabel()).FontSize(13).FontWeight(500).TextColor(p.text).Clicked() {
+						a.state.DNSOptimisticCache = !a.state.DNSOptimisticCache
+						a.saveState()
+						a.initDNS()
+					}
+					renderSettingsHelpButtonWithPopover(
+						c, p,
+						"btn-dns-optimistic-help",
+						cat.DnsOptimisticHelpButton(),
+						cat.DnsOptimisticHelpTitle(),
+						cat.DnsOptimisticHelpDesc(),
+						&a.dnsOptimisticHelpOpen,
+						func() { a.dnsStrategyHelpOpen = false },
+					)
+				})
+				ui.Text(c, cat.DnsOptimisticHint()).FontSize(11).TextColor(p.textDim)
+			})
+			if ui.Switch(c.Key("page-set-dns-optimistic"), &a.state.DNSOptimisticCache).Label(cat.DnsOptimisticLabel()).Changed() {
+				a.saveState()
+				a.initDNS()
+			}
+		})
 	})
 }
 

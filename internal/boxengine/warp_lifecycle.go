@@ -244,8 +244,21 @@ func resolveWarpDomainViaDoH(
 		strategy = C.DomainStrategyIPv4Only
 	} else if !allowV4 && allowV6 {
 		strategy = C.DomainStrategyIPv6Only
-	} else if eng != nil && eng.preferIPv4 {
-		strategy = C.DomainStrategyPreferIPv4
+	} else if eng != nil {
+		switch eng.dnsStrategy {
+		case "ipv4_only":
+			strategy = C.DomainStrategyIPv4Only
+		case "prefer_ipv4":
+			strategy = C.DomainStrategyPreferIPv4
+		case "prefer_ipv6":
+			strategy = C.DomainStrategyPreferIPv6
+		case "ipv6_only":
+			strategy = C.DomainStrategyIPv6Only
+		default:
+			if eng.preferIPv4 {
+				strategy = C.DomainStrategyPreferIPv4
+			}
+		}
 	}
 	queryOpts := adapter.DNSQueryOptions{
 		Transport:      tr,

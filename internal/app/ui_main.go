@@ -32,6 +32,10 @@ func (a *app) view(c *ui.Context) {
 	if a.activeTab != TabInsights {
 		a.insightsShowManageRules = false
 	}
+	if a.activeTab != TabSettings {
+		a.dnsStrategyHelpOpen = false
+		a.dnsOptimisticHelpOpen = false
+	}
 
 	c.OnShortcut(0, ui.KeyEscape, func() {
 		if a.activeLogDrawerID != "" {
@@ -46,6 +50,8 @@ func (a *app) view(c *ui.Context) {
 		}
 		a.openRoutingMoreMenu = false
 		a.showRoutingStrategyHelp = false
+		a.dnsStrategyHelpOpen = false
+		a.dnsOptimisticHelpOpen = false
 	})
 	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
 	c.OnShortcut(ui.Cmd, ui.Key2, func() { a.activeTab = TabRouting })

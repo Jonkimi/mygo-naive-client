@@ -50,6 +50,8 @@ type PersistedState struct {
 	BootstrapDoH            string              `json:"bootstrapDoH,omitempty"` // Deprecated alias
 	RemoteDoH               string              `json:"remoteDoH,omitempty"`    // Deprecated alias
 	PreferIPv4              bool                `json:"preferIpv4"`
+	DNSStrategy             string              `json:"dnsStrategy,omitempty"`
+	DNSOptimisticCache      bool                `json:"dnsOptimisticCache"`
 	TrafficMode             string              `json:"trafficMode,omitempty"`
 	SystemProxyBypass       []string            `json:"systemProxyBypass,omitempty"`
 	RoutingRules            []routing.Rule      `json:"routingRules,omitempty"`
@@ -116,6 +118,17 @@ func normalizeLogLevel(lvl string) string {
 	}
 }
 
+func normalizeDNSStrategy(strategy string, preferIPv4 bool) string {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case "ipv4_only", "prefer_ipv4", "as_is", "prefer_ipv6", "ipv6_only":
+		return strings.ToLower(strings.TrimSpace(strategy))
+	}
+	if preferIPv4 {
+		return "ipv4_only"
+	}
+	return "as_is"
+}
+
 func defaultPersistedState() PersistedState {
 	return PersistedState{
 		Services:                []config.Service{},
@@ -125,6 +138,8 @@ func defaultPersistedState() PersistedState {
 		GatewayEnabled:          true,
 		GatewayPort:             10809,
 		PreferIPv4:              true,
+		DNSStrategy:             "ipv4_only",
+		DNSOptimisticCache:      true,
 		TrafficMode:             "port",
 		RoutingRules:            routing.DefaultPresets(),
 		RoutingFinal:            routing.RouteAction{Type: routing.ActionProxyPool},
@@ -335,8 +350,11 @@ func (a *app) loadState() {
 	raw, err := os.ReadFile(a.stateFilePath())
 	var needsResave bool
 	if err == nil && len(raw) > 0 {
+		st.DNSStrategy = ""
 		_ = json.Unmarshal(raw, &st)
 	}
+	st.DNSStrategy = normalizeDNSStrategy(st.DNSStrategy, st.PreferIPv4)
+	st.PreferIPv4 = st.DNSStrategy == "ipv4_only" || st.DNSStrategy == "prefer_ipv4"
 
 	if st.InstalledGeodataTag == "" && a.localGeodataVersion != "" {
 		st.InstalledGeodataTag = a.localGeodataVersion

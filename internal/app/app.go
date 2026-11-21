@@ -225,6 +225,8 @@ type app struct {
 	settingsSubTab         int
 	settingsExpandNaiveAdv bool
 	settingsExpandXrayAdv  bool
+	dnsStrategyHelpOpen    bool
+	dnsOptimisticHelpOpen  bool
 
 	batchTesting bool
 	batchStage   string
@@ -1902,10 +1904,12 @@ type gatewayConfigSnapshot struct {
 	GeoTag            string
 	BootstrapDomains  []string
 	BootstrapDNS      string
-	DomesticDNS       string
-	RemoteDNS         string
-	PreferIPv4        bool
-	LogLevel          string
+	DomesticDNS        string
+	RemoteDNS          string
+	PreferIPv4         bool
+	DNSStrategy        string
+	DNSOptimisticCache bool
+	LogLevel           string
 	TailnetEnabled    bool
 	TailnetMode       string
 	TailnetStateSig   string
@@ -1942,10 +1946,12 @@ func (a *app) buildGatewaySnapshotFromUI() gatewayConfigSnapshot {
 		GeoTag:            a.localGeodataVersion,
 		BootstrapDomains:  a.collectBootstrapDomains(),
 		BootstrapDNS:      a.state.BootstrapDNS,
-		DomesticDNS:       a.effectiveDomesticDNS(),
-		RemoteDNS:         a.effectiveRemoteDNS(),
-		PreferIPv4:        a.state.PreferIPv4,
-		LogLevel:          a.state.LogLevel,
+		DomesticDNS:        a.effectiveDomesticDNS(),
+		RemoteDNS:          a.effectiveRemoteDNS(),
+		PreferIPv4:         a.state.PreferIPv4,
+		DNSStrategy:        normalizeDNSStrategy(a.state.DNSStrategy, a.state.PreferIPv4),
+		DNSOptimisticCache: a.state.DNSOptimisticCache,
+		LogLevel:           a.state.LogLevel,
 		TailnetEnabled:    a.state.TailnetEnabled,
 		TailnetMode:       a.state.TailnetMode,
 		TailnetStateSig:   a.currentTailnetStateSig(),
@@ -2663,6 +2669,8 @@ func (a *app) startGatewayLocked() error {
 		DomesticDoH:           parseDNSList(snap.DomesticDNS, boxengine.DefaultDomesticDoH),
 		RemoteDoH:             parseDNSList(snap.RemoteDNS, boxengine.DefaultRemoteDoH),
 		PreferIPv4:            snap.PreferIPv4,
+		DNSStrategy:           snap.DNSStrategy,
+		DNSOptimisticCache:    snap.DNSOptimisticCache,
 		TailnetConfig:         &tnCfg,
 		TailnetMode:           tnMode,
 		TailnetHostExcludes:   tnInfo.Excludes,
@@ -3699,9 +3707,11 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		BootstrapDomains []string
 		Bootstrap        string
 		Domestic         string
-		Remote           string
-		PreferIPv4       bool
-		TailnetEnabled   bool
+		Remote             string
+		PreferIPv4         bool
+		DNSStrategy        string
+		DNSOptimisticCache bool
+		TailnetEnabled     bool
 		TailnetMode      string
 		TailnetStateSig  string
 		Cloudflare       warp.Config
@@ -3718,9 +3728,11 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		BootstrapDomains: snap.BootstrapDomains,
 		Bootstrap:        snap.BootstrapDNS,
 		Domestic:         snap.DomesticDNS,
-		Remote:           snap.RemoteDNS,
-		PreferIPv4:       snap.PreferIPv4,
-		TailnetEnabled:   snap.TailnetEnabled,
+		Remote:             snap.RemoteDNS,
+		PreferIPv4:         snap.PreferIPv4,
+		DNSStrategy:        snap.DNSStrategy,
+		DNSOptimisticCache: snap.DNSOptimisticCache,
+		TailnetEnabled:     snap.TailnetEnabled,
 		TailnetMode:      snap.TailnetMode,
 		TailnetStateSig:  snap.TailnetStateSig,
 		Cloudflare:       snap.Cloudflare,

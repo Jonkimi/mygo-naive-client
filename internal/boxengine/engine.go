@@ -65,9 +65,11 @@ type EngineOptions struct {
 	BootstrapDNS          []string
 	DomesticDoH    []string
 	RemoteDoH      []string
-	NodeIPResolver func(host string) []net.IP
-	PreferIPv4        bool
-	ActiveIDs         map[string]bool
+	NodeIPResolver     func(host string) []net.IP
+	PreferIPv4         bool
+	DNSStrategy        string
+	DNSOptimisticCache bool
+	ActiveIDs          map[string]bool
 	OnDemandStart     func(poolTag string)
 	OnTelemetryUpdate func()
 
@@ -175,6 +177,7 @@ type Engine struct {
 	logLevel              string
 	logWriter             *boxPlatformWriter
 	preferIPv4            bool
+	dnsStrategy           string
 	boxCtx                context.Context
 	cancel            context.CancelFunc
 	closersMu         sync.Mutex
@@ -259,6 +262,7 @@ func New(opts EngineOptions) (*Engine, error) {
 		logLevel:                  normLvl,
 		logWriter:                 newBoxPlatformWriter(parsedLvl, opts.OnLog),
 		preferIPv4:                opts.PreferIPv4,
+		dnsStrategy:               effectiveDNSStrategy(opts),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2182,13 +2186,29 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		"final":           dnsFinal,
 		"reverse_mapping": true,
 	}
-	if opts.PreferIPv4 {
-		dnsMap["strategy"] = "prefer_ipv4"
+	if strategy := effectiveDNSStrategy(opts); strategy != "" {
+		dnsMap["strategy"] = strategy
+	}
+	if opts.DNSOptimisticCache {
+		dnsMap["optimistic"] = true
 	}
 	if len(dnsRules) > 0 {
 		dnsMap["rules"] = dnsRules
 	}
 	return dnsMap
+}
+
+func effectiveDNSStrategy(opts EngineOptions) string {
+	switch strings.ToLower(strings.TrimSpace(opts.DNSStrategy)) {
+	case "ipv4_only", "prefer_ipv4", "prefer_ipv6", "ipv6_only":
+		return strings.ToLower(strings.TrimSpace(opts.DNSStrategy))
+	case "as_is", "default":
+		return ""
+	}
+	if opts.PreferIPv4 {
+		return "prefer_ipv4"
+	}
+	return ""
 }
 
 func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDomains []string) map[string]any {

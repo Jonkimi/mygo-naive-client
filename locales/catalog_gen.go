@@ -1760,14 +1760,174 @@ func (msgs Messages) DohSectionDesc() string {
 	return Catalog.Format(msgs.locale, "dohSectionDesc", nil)
 }
 
-// DnsPreferIPv4Label says "Prefer IPv4 (Disable IPv6 AAAA Resolution)"
+// DnsPolicySectionTitle says "DNS Strategy & Cache"
+// in the language the app shows.
+func DnsPolicySectionTitle() string { return In(i18n.Locale()).DnsPolicySectionTitle() }
+
+// DnsPolicySectionTitle says "DNS Strategy & Cache"
+// in the language of msgs.
+func (msgs Messages) DnsPolicySectionTitle() string {
+	return Catalog.Format(msgs.locale, "dnsPolicySectionTitle", nil)
+}
+
+// DnsPolicySectionDesc says "Configure global IP family filtering strategy and TTL cache refresh behavior"
+// in the language the app shows.
+func DnsPolicySectionDesc() string { return In(i18n.Locale()).DnsPolicySectionDesc() }
+
+// DnsPolicySectionDesc says "Configure global IP family filtering strategy and TTL cache refresh behavior"
+// in the language of msgs.
+func (msgs Messages) DnsPolicySectionDesc() string {
+	return Catalog.Format(msgs.locale, "dnsPolicySectionDesc", nil)
+}
+
+// DnsPreferIPv4Label says "DNS IP Resolution Strategy"
 // in the language the app shows.
 func DnsPreferIPv4Label() string { return In(i18n.Locale()).DnsPreferIPv4Label() }
 
-// DnsPreferIPv4Label says "Prefer IPv4 (Disable IPv6 AAAA Resolution)"
+// DnsPreferIPv4Label says "DNS IP Resolution Strategy"
 // in the language of msgs.
 func (msgs Messages) DnsPreferIPv4Label() string {
 	return Catalog.Format(msgs.locale, "dnsPreferIPv4Label", nil)
+}
+
+// DnsStrategyHint says "Controls how IPv4 (A) and IPv6 (AAAA) records are queried and filtered"
+// in the language the app shows.
+func DnsStrategyHint() string { return In(i18n.Locale()).DnsStrategyHint() }
+
+// DnsStrategyHint says "Controls how IPv4 (A) and IPv6 (AAAA) records are queried and filtered"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyHint() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyHint", nil)
+}
+
+// DnsStrategyIPv4Only says "IPv4 Only (Block AAAA)"
+// in the language the app shows.
+func DnsStrategyIPv4Only() string { return In(i18n.Locale()).DnsStrategyIPv4Only() }
+
+// DnsStrategyIPv4Only says "IPv4 Only (Block AAAA)"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyIPv4Only() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyIPv4Only", nil)
+}
+
+// DnsStrategyPreferIPv4 says "Prefer IPv4 (Dual-Stack)"
+// in the language the app shows.
+func DnsStrategyPreferIPv4() string { return In(i18n.Locale()).DnsStrategyPreferIPv4() }
+
+// DnsStrategyPreferIPv4 says "Prefer IPv4 (Dual-Stack)"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyPreferIPv4() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyPreferIPv4", nil)
+}
+
+// DnsStrategyAsIs says "Default Dual-Stack (As-Is)"
+// in the language the app shows.
+func DnsStrategyAsIs() string { return In(i18n.Locale()).DnsStrategyAsIs() }
+
+// DnsStrategyAsIs says "Default Dual-Stack (As-Is)"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyAsIs() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyAsIs", nil)
+}
+
+// DnsStrategyPreferIPv6 says "Prefer IPv6 (Dual-Stack)"
+// in the language the app shows.
+func DnsStrategyPreferIPv6() string { return In(i18n.Locale()).DnsStrategyPreferIPv6() }
+
+// DnsStrategyPreferIPv6 says "Prefer IPv6 (Dual-Stack)"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyPreferIPv6() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyPreferIPv6", nil)
+}
+
+// DnsStrategyIPv6Only says "IPv6 Only (Block A)"
+// in the language the app shows.
+func DnsStrategyIPv6Only() string { return In(i18n.Locale()).DnsStrategyIPv6Only() }
+
+// DnsStrategyIPv6Only says "IPv6 Only (Block A)"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyIPv6Only() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyIPv6Only", nil)
+}
+
+// DnsStrategyHelpButton says "DNS Strategy Help"
+// in the language the app shows.
+func DnsStrategyHelpButton() string { return In(i18n.Locale()).DnsStrategyHelpButton() }
+
+// DnsStrategyHelpButton says "DNS Strategy Help"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyHelpButton() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyHelpButton", nil)
+}
+
+// DnsStrategyHelpTitle says "DNS IP Resolution Strategy"
+// in the language the app shows.
+func DnsStrategyHelpTitle() string { return In(i18n.Locale()).DnsStrategyHelpTitle() }
+
+// DnsStrategyHelpTitle says "DNS IP Resolution Strategy"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyHelpTitle() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyHelpTitle", nil)
+}
+
+// DnsStrategyHelpDesc says "• IPv4 Only (Default): Queries A records only and answers AAAA locally with empty NODATA, eliminating uncached AAAA…"
+// in the language the app shows.
+func DnsStrategyHelpDesc() string { return In(i18n.Locale()).DnsStrategyHelpDesc() }
+
+// DnsStrategyHelpDesc says "• IPv4 Only (Default): Queries A records only and answers AAAA locally with empty NODATA, eliminating uncached AAAA…"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyHelpDesc() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyHelpDesc", nil)
+}
+
+// DnsOptimisticLabel says "Optimistic DNS Cache"
+// in the language the app shows.
+func DnsOptimisticLabel() string { return In(i18n.Locale()).DnsOptimisticLabel() }
+
+// DnsOptimisticLabel says "Optimistic DNS Cache"
+// in the language of msgs.
+func (msgs Messages) DnsOptimisticLabel() string {
+	return Catalog.Format(msgs.locale, "dnsOptimisticLabel", nil)
+}
+
+// DnsOptimisticHint says "Serve expired cached records immediately while refreshing in the background"
+// in the language the app shows.
+func DnsOptimisticHint() string { return In(i18n.Locale()).DnsOptimisticHint() }
+
+// DnsOptimisticHint says "Serve expired cached records immediately while refreshing in the background"
+// in the language of msgs.
+func (msgs Messages) DnsOptimisticHint() string {
+	return Catalog.Format(msgs.locale, "dnsOptimisticHint", nil)
+}
+
+// DnsOptimisticHelpButton says "Optimistic DNS Cache Help"
+// in the language the app shows.
+func DnsOptimisticHelpButton() string { return In(i18n.Locale()).DnsOptimisticHelpButton() }
+
+// DnsOptimisticHelpButton says "Optimistic DNS Cache Help"
+// in the language of msgs.
+func (msgs Messages) DnsOptimisticHelpButton() string {
+	return Catalog.Format(msgs.locale, "dnsOptimisticHelpButton", nil)
+}
+
+// DnsOptimisticHelpTitle says "How Optimistic DNS Cache Works"
+// in the language the app shows.
+func DnsOptimisticHelpTitle() string { return In(i18n.Locale()).DnsOptimisticHelpTitle() }
+
+// DnsOptimisticHelpTitle says "How Optimistic DNS Cache Works"
+// in the language of msgs.
+func (msgs Messages) DnsOptimisticHelpTitle() string {
+	return Catalog.Format(msgs.locale, "dnsOptimisticHelpTitle", nil)
+}
+
+// DnsOptimisticHelpDesc says "When enabled (default), expired DNS cache entries are returned immediately for zero-latency dialing while asynchronou…"
+// in the language the app shows.
+func DnsOptimisticHelpDesc() string { return In(i18n.Locale()).DnsOptimisticHelpDesc() }
+
+// DnsOptimisticHelpDesc says "When enabled (default), expired DNS cache entries are returned immediately for zero-latency dialing while asynchronou…"
+// in the language of msgs.
+func (msgs Messages) DnsOptimisticHelpDesc() string {
+	return Catalog.Format(msgs.locale, "dnsOptimisticHelpDesc", nil)
 }
 
 // DnsDomesticLabel says "Domestic DNS"
