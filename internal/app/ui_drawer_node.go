@@ -37,45 +37,23 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 	rt := a.mgr.StatusOf(svc.ID)
 	unhealthy := a.isNodeUnhealthy(svc, rt)
 
-	// Backdrop (fades in and out, click to dismiss)
-	backdrop := ui.Box(c.Key("node-drawer-backdrop")).
-		Absolute().Top(0).Left(0).Right(0).Bottom(0).
-		Background(ui.RGBA(0, 0, 0, 0.3)).
-		Transition(ui.ElementTransition{
-			Enter: &ui.Motion{Opacity: 0},
-			Exit:  &ui.Motion{Opacity: 0},
-		})
-	if backdrop.Clicked() {
-		a.activeNodeDrawerID = ""
-		a.nodeDrawerHelpOpen = false
-	}
+	dsDrawerShell(c, p, dsDrawerSpec{
+		BackdropKey: "node-drawer-backdrop",
+		PanelKey:    "node-drawer-panel",
+		OnDismiss: func() {
+			a.activeNodeDrawerID = ""
+			a.nodeDrawerHelpOpen = false
+		},
+	}, func() {
+		a.renderNodeDrawerHeader(c, p, svc, rt, unhealthy)
 
-	// Slide-over drawer panel anchored to right edge (460px unified width)
-	ui.Column(c.Key("node-drawer-panel")).
-		Absolute().Top(0).Right(0).Bottom(0).Width(460).
-		Transition(ui.ElementTransition{
-			Enter: &ui.Motion{X: 460},
-			Exit:  &ui.Motion{X: 460},
-		}).
-		Background(p.drawerBg).
-		BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-		Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4)).
-		Children(func() {
-			a.renderNodeDrawerHeader(c, p, svc, rt, unhealthy)
-
-			ui.Scroll(c.Key("node-drawer-scroll")).
-				Grow(1).Fill().
-				Background(p.surface).
-				Padding(16, 20, 20, 20).
-				Children(func() {
-					ui.Column(c).Gap(12).Children(func() {
-						a.renderNodeDrawerDiagnosticBanner(c, p, svc, rt, unhealthy)
-						a.renderNodeDrawerTelemetryCard(c, p, svc, rt, unhealthy)
-						a.renderNodeDrawerParamsCard(c, p, svc, rt)
-						a.renderNodeDrawerConfigCard(c, p, svc)
-					})
-				})
+		dsDrawerBody(c, p, "node-drawer-scroll", nil, func() {
+			a.renderNodeDrawerDiagnosticBanner(c, p, svc, rt, unhealthy)
+			a.renderNodeDrawerTelemetryCard(c, p, svc, rt, unhealthy)
+			a.renderNodeDrawerParamsCard(c, p, svc, rt)
+			a.renderNodeDrawerConfigCard(c, p, svc)
 		})
+	})
 }
 
 func (a *app) renderNodeDrawerHeader(c *ui.Context, p palette, svc config.Service, rt runner.Status, unhealthy bool) {

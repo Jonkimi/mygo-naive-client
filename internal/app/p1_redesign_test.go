@@ -453,6 +453,10 @@ func TestP1Redesign_RuleEditorActionSegmentedLayout(t *testing.T) {
 				t.Fatalf("[%s] expected dispatch segments aligned on same row, got smart=%+v order=%+v",
 					mode, smartRect, orderRect)
 			}
+			if math.Abs(float64(smartRect.H-proxyRect.H)) > 0.5 {
+				t.Fatalf("[%s] expected dispatch and action segments to share unified standard height, got smart=%.2f proxy=%.2f",
+					mode, smartRect.H, proxyRect.H)
+			}
 		}
 	}
 

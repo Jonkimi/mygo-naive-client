@@ -72,32 +72,15 @@ func (a *app) renderLogDrawer(c *ui.Context, p palette) {
 	a.logDrawerLastMaxSeq = latestSeq
 
 	// Backdrop (fades in and out, click to dismiss)
-	backdrop := ui.Box(c.Key("drawer-backdrop")).
-		Absolute().Top(0).Left(0).Right(0).Bottom(0).
-		Background(ui.RGBA(0, 0, 0, 0.3)).
-		Transition(ui.ElementTransition{
-			Enter: &ui.Motion{Opacity: 0},
-			Exit:  &ui.Motion{Opacity: 0},
-		})
-	if backdrop.Clicked() {
-		a.dismissLogDrawer()
-	}
-
-	// Slide-over drawer panel anchored to right edge (460px unified width)
-	ui.Column(c.Key("drawer-panel")).
-		Absolute().Top(0).Right(0).Bottom(0).Width(460).
-		Transition(ui.ElementTransition{
-			Enter: &ui.Motion{X: 460},
-			Exit:  &ui.Motion{X: 460},
-		}).
-		Background(p.drawerBg).
-		BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-		Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4)).
-		Children(func() {
-			a.renderLogDrawerHeader(c, p, svc, svcOK, name, rt, unhealthy, logs, rawEntries, filtered)
-			a.renderLogDrawerToolbar(c, p, filtered)
-			a.renderLogDrawerViewport(c, p, rawEntries, filtered)
-		})
+	dsDrawerShell(c, p, dsDrawerSpec{
+		BackdropKey: "drawer-backdrop",
+		PanelKey:    "drawer-panel",
+		OnDismiss:   a.dismissLogDrawer,
+	}, func() {
+		a.renderLogDrawerHeader(c, p, svc, svcOK, name, rt, unhealthy, logs, rawEntries, filtered)
+		a.renderLogDrawerToolbar(c, p, filtered)
+		a.renderLogDrawerViewport(c, p, rawEntries, filtered)
+	})
 }
 
 func (a *app) renderLogDrawerHeader(

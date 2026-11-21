@@ -719,10 +719,7 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 		})
 
 		// Unified Chip Box + Quick-Pick Palette
-		ui.Column(c.Key("rule-target-picker-box")).
-			Gap(6).Padding(8).Radius(8).
-			Background(p.surface).Border(1, p.borderSubtle).
-			Children(func() {
+		dsInsetBox(c, p, "rule-target-picker-box", func() {
 				// Selected Chips + Inline Query Input
 				ui.Row(c.Key("rule-target-chips-row")).
 					AlignItems(ui.Center).Gap(6).Wrap().
@@ -953,51 +950,38 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 			})
 
 		// Dispatch Policy & Isolation Bar (Dispatch mode always visible under Proxy; Isolation shown when specific targets are selected)
-		ui.Column(c.Key("rule-policy-bar")).
-			Gap(6).Padding(8).Radius(8).
-			Background(p.surface).Border(1, p.borderSubtle).
-			Children(func() {
-				polIdx := 0
-				if a.ruleEditor.dispatchPolicy == routing.DispatchOrder {
-					polIdx = 1
-				}
-				ui.Column(c).Gap(3).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
-						ui.Text(c, cat.RuleDispatchPolicyLabel()).FontSize(12).FontWeight(600).TextColor(p.text).Grow(1).MinWidth(0)
-						ui.Row(c).Shrink(0).Children(func() {
-							if segmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
-								if polIdx == 1 {
-									a.ruleEditor.dispatchPolicy = routing.DispatchOrder
-								} else {
-									a.ruleEditor.dispatchPolicy = routing.DispatchSmart
-								}
-							}
-						})
-					})
-					desc := cat.RuleDispatchSmartDesc()
+		dsInsetBox(c, p, "rule-policy-bar", func() {
+			polIdx := 0
+			if a.ruleEditor.dispatchPolicy == routing.DispatchOrder {
+				polIdx = 1
+			}
+			desc := cat.RuleDispatchSmartDesc()
+			if polIdx == 1 {
+				desc = cat.RuleDispatchOrderDesc()
+			}
+			dsSettingHeaderRow(c, p, "", cat.RuleDispatchPolicyLabel(), desc, func() {
+				if segmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
 					if polIdx == 1 {
-						desc = cat.RuleDispatchOrderDesc()
+						a.ruleEditor.dispatchPolicy = routing.DispatchOrder
+					} else {
+						a.ruleEditor.dispatchPolicy = routing.DispatchSmart
 					}
-					ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-				})
-
-				if len(a.ruleEditor.targets) > 0 {
-					ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
-
-					ui.Column(c.Key("rule-isolation-row")).Gap(3).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
-							ui.Text(c, cat.RuleStrictIsolationLabel()).FontSize(12).FontWeight(500).TextColor(p.text).Grow(1)
-							ui.Switch(c.Key("toggle-rule-strict-isolation"), &a.ruleEditor.strictIsolation).
-								Label("toggle-rule-strict-isolation")
-						})
-						isoDesc := cat.RuleFallbackStrictDesc()
-						if !a.ruleEditor.strictIsolation {
-							isoDesc = cat.RuleFallbackOpenDesc()
-						}
-						ui.Text(c, isoDesc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-					})
 				}
 			})
+
+			if len(a.ruleEditor.targets) > 0 {
+				ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+
+				isoDesc := cat.RuleFallbackStrictDesc()
+				if !a.ruleEditor.strictIsolation {
+					isoDesc = cat.RuleFallbackOpenDesc()
+				}
+				dsSettingHeaderRow(c, p, "rule-isolation-row", cat.RuleStrictIsolationLabel(), isoDesc, func() {
+					ui.Switch(c.Key("toggle-rule-strict-isolation"), &a.ruleEditor.strictIsolation).
+						Label("toggle-rule-strict-isolation")
+				})
+			}
+		})
 	})
 }
 
@@ -1810,215 +1794,149 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 			return
 		}
 
-		// Backdrop (fades in and out, click to dismiss)
-		backdrop := ui.Box(c.Key("rule-editor-backdrop")).
-			Absolute().Top(0).Left(0).Right(0).Bottom(0).
-			Background(ui.RGBA(0, 0, 0, 0.35)).
-			Transition(ui.ElementTransition{
-				Enter: &ui.Motion{Opacity: 0},
-				Exit:  &ui.Motion{Opacity: 0},
-			})
-		if backdrop.Clicked() {
-			a.dismissRuleEditorDrawer(false)
-		}
-
-		// Slide-over drawer panel anchored to right edge (460px unified width)
-		panel := ui.Column(c.Key("rule-editor-panel")).
-			Absolute().Top(0).Right(0).Bottom(0).Width(460).MaxWidthPercent(100).
-			Modal().
-			Transition(ui.ElementTransition{
-				Enter: &ui.Motion{X: 460},
-				Exit:  &ui.Motion{X: 460},
-			}).
-			Background(p.drawerBg).
-			BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-			Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4))
-
-		if panel.OverlayShortcut(0, ui.KeyEscape) {
-			a.dismissRuleEditorDrawer(false)
-		}
-
-		panel.Children(func() {
-			// Header
-			ui.Row(c).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-				Padding(14, 20, 14, 20).
-				BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
-						if a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew {
-							if quietRowIconButton(c.Key("rule-editor-back-header"), p, iconArrowLeft, cat.EditorBackToDetails(), false, false).
-								Tooltip(cat.EditorBackToDetails()).
-								Clicked() {
-								a.dismissRuleEditorDrawer(true)
-							}
-						}
-						title := cat.EditRule()
-						if a.ruleEditor.isFinal {
-							title = cat.EditFinalRule()
-						} else if a.ruleEditor.isNew {
-							title = cat.NewRule()
-						}
-						ui.Text(c, title).FontSize(15).FontWeight(700).TextColor(p.text).
-							SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
-					})
-
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
-						if !a.ruleEditor.isFinal {
-							segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
-								cat.RuleTabGeoData(),
-								cat.RuleTabCriteria(),
-							})
-						}
-						if quietRowIconButton(c.Key("btn-close-rule-editor"), p, iconClose, cat.RuleDrawerClose(), false, false).
-							Label("btn-close-rule-editor").
-							Tooltip(cat.RuleDrawerClose()).
-							Clicked() {
-							a.dismissRuleEditorDrawer(false)
-						}
-					})
-				})
-
-			// Error display
-			if a.ruleEditor.errText != "" {
-				ui.Box(c).Padding(12, 20, 0, 20).Children(func() {
-					ui.Row(c.Key("rule-editor-error-row")).
-						AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-						PaddingX(12).PaddingY(8).Radius(8).
-						Background(p.redBg).Border(1, p.red.Alpha(0.24)).
-						Children(func() {
-							ui.Text(c, a.ruleEditor.errText).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
-							btnCopy := ui.ButtonBase(c.Key("btn-copy-rule-error")).
-								Label("btn-copy-rule-error").
-								Padding(2, 6, 2, 6).Radius(4).
-								Background(p.card).Border(1, p.borderSubtle).
-								Tooltip(cat.ActionCopyError()).
-								Children(func() {
-									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
-								})
-							if btnCopy.Clicked() {
-								a.writeClipboard(a.ruleEditor.errText, cat.ToastErrorCopied())
-							}
-						})
-				})
-			}
-
-			// Scrollable drawer body
-			ruleEditorCompactCard := func(children func()) {
-				ui.Column(c).Gap(8).Padding(10, 12, 10, 12).Radius(10).
-					Background(p.card).Border(1, p.borderSubtle).
-					Children(children)
-			}
-			ui.Scroll(c.Key("rule-editor-scroll")).
-				TrackScroll(&a.ruleEditor.scroll).
-				Grow(1).Fill().
-				Background(p.surface).
-				Padding(12, 16, 16, 16).
-				Gap(10).
-				Children(func() {
-					// Card 1: Rule Identity
-					ruleEditorCompactCard(func() {
-						if !a.ruleEditor.isFinal {
-							ui.Grid(c.Key("rule-editor-identity-grid")).Columns(2).Gap(10).Children(func() {
-								labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
-								labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
-							})
-						} else {
-							ui.Text(c, cat.RoutingFinalDesc()).FontSize(12).TextColor(p.textMuted).LineHeight(1.4)
-						}
-					})
-
-					// Card 2: Outbound Action & Scheduling
-					ruleEditorCompactCard(func() {
-						ui.Column(c).Gap(6).Children(func() {
-							ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
-							actionOpts := []segmentedOption{
-								{Label: cat.RoutingProxy(), ActiveColor: p.accentText},
-								{Label: cat.RoutingDirect(), ActiveColor: p.text},
-								{Label: cat.RoutingBlock(), ActiveColor: p.red},
-							}
-							fullWidthSegmentedOptions(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actionOpts)
-							switch a.ruleEditor.actionIndex {
-							case 0: // Proxy
-								ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
-							case 1: // Direct
-								if a.ruleEditor.ruleID == "preset-lan-direct" {
-									ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
-								}
-							case 2: // Block
-								ui.Text(c, cat.RuleDrawerDescBlock()).FontSize(11).TextColor(p.red).LineHeight(1.35)
-							}
-						})
-
-						if a.ruleEditor.actionIndex == 0 {
-							a.renderProxyTargetPicker(c, p, runningIDs)
-						} else if a.ruleEditor.actionIndex == 1 && a.ruleEditor.ruleID != "preset-lan-direct" {
-							ui.Column(c.Key("rule-direct-warp-box")).
-								Gap(8).Padding(10).Radius(8).
-								Background(p.surface).Border(1, p.borderSubtle).
-								Children(func() {
-									ui.Column(c).Gap(4).Children(func() {
-										ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
-											ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
-												ui.Text(c, cat.RuleDirectWarpTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-												if a.ruleEditor.directWarp {
-													tagPill(c, cat.RoutingWarp(), p.green, p.greenBg)
-												}
-											})
-											ui.Switch(c.Key("toggle-rule-direct-warp"), &a.ruleEditor.directWarp).Label("toggle-rule-direct-warp")
-										})
-										ui.Text(c, cat.RuleDirectWarpDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-									})
-									ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
-									if a.ruleEditor.directWarp {
-										ui.Text(c, cat.RuleActionWarpHint()).FontSize(11).TextColor(p.green).LineHeight(1.35)
-									} else {
-										ui.Text(c, cat.RuleActionDirectHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
-									}
-								})
-						}
-					})
-
-					// Card 3: Matching Criteria
-					if !a.ruleEditor.isFinal {
-						ruleEditorCompactCard(func() {
-							if a.ruleEditor.tab == 0 {
-								a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags(), true)
-								a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags(), true)
-							} else {
-								labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
-								labeledTextArea(c, p, "rule-set-full-domains", cat.RuleFullDomainsLabel(), &a.ruleEditor.fullDomainsInput, cat.RuleFullDomainsHint(), 2, 3)
-								labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
-								labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
-							}
-						})
-					}
-				})
-
-			// Sticky footer
-			ui.Row(c).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-				Padding(12, 20, 14, 20).
-				Background(p.drawerBg).
-				BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
-				Children(func() {
+		dsDrawerShell(c, p, dsDrawerSpec{
+			BackdropKey: "rule-editor-backdrop",
+			PanelKey:    "rule-editor-panel",
+			Modal:       true,
+			OnDismiss:   func() { a.dismissRuleEditorDrawer(false) },
+		}, func() {
+			dsDrawerHeader(c, p, func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).MinWidth(0).Shrink(1).Children(func() {
 					if a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew {
-						if subtleActionChip(c.Key("rule-editor-back-to-details"), p, iconArrowLeft, cat.EditorBackToDetails(), false).Clicked() {
+						if quietRowIconButton(c.Key("rule-editor-back-header"), p, iconArrowLeft, cat.EditorBackToDetails(), false, false).
+							Tooltip(cat.EditorBackToDetails()).
+							Clicked() {
 							a.dismissRuleEditorDrawer(true)
 						}
-					} else {
-						ui.Box(c)
 					}
+					title := cat.EditRule()
+					if a.ruleEditor.isFinal {
+						title = cat.EditFinalRule()
+					} else if a.ruleEditor.isNew {
+						title = cat.NewRule()
+					}
+					ui.Text(c, title).FontSize(dsFontDrawerTitle).FontWeight(700).TextColor(p.text).
+						SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
+				})
+			}, func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Shrink(0).Children(func() {
+					if !a.ruleEditor.isFinal {
+						segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
+							cat.RuleTabGeoData(),
+							cat.RuleTabCriteria(),
+						})
+					}
+					if quietRowIconButton(c.Key("btn-close-rule-editor"), p, iconClose, cat.RuleDrawerClose(), false, false).
+						Label("btn-close-rule-editor").
+						Tooltip(cat.RuleDrawerClose()).
+						Clicked() {
+						a.dismissRuleEditorDrawer(false)
+					}
+				})
+			})
 
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
-						if ui.Button(c.Key("btn-cancel-rule-editor"), cat.Cancel()).Clicked() {
-							a.dismissRuleEditorDrawer(false)
+			dsDrawerErrorBanner(
+				c, p,
+				"rule-editor-error-row", "btn-copy-rule-error",
+				a.ruleEditor.errText, cat.BtnCopy(), cat.ActionCopyError(),
+				func() { a.writeClipboard(a.ruleEditor.errText, cat.ToastErrorCopied()) },
+			)
+
+			dsDrawerBody(c, p, "rule-editor-scroll", &a.ruleEditor.scroll, func() {
+				// Card 1: Rule Identity
+				dsCard(c, p, func() {
+					if !a.ruleEditor.isFinal {
+						ui.Grid(c.Key("rule-editor-identity-grid")).Columns(2).Gap(10).Children(func() {
+							labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
+							labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
+						})
+					} else {
+						ui.Text(c, cat.RoutingFinalDesc()).FontSize(dsFontBody).TextColor(p.textMuted).LineHeight(dsLineHeightBody)
+					}
+				})
+
+				// Card 2: Outbound Action & Scheduling
+				dsCard(c, p, func() {
+					ui.Column(c).Gap(dsSpaceSM).Children(func() {
+						dsSectionLabel(c, p, cat.RuleActionLabel())
+						actionOpts := []segmentedOption{
+							{Label: cat.RoutingProxy(), ActiveColor: p.accentText},
+							{Label: cat.RoutingDirect(), ActiveColor: p.text},
+							{Label: cat.RoutingBlock(), ActiveColor: p.red},
 						}
-						if primaryPillButton(c.Key("btn-save-rule-editor"), p, nil, cat.Confirm(), p.accent, false).Clicked() {
-							a.saveRuleEditor()
+						fullWidthSegmentedOptions(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actionOpts)
+						switch a.ruleEditor.actionIndex {
+						case 0: // Proxy
+							dsHintText(c, cat.RuleActionProxyHint(), p.textDim)
+						case 1: // Direct
+							if a.ruleEditor.ruleID == "preset-lan-direct" {
+								dsHintText(c, cat.RuleActionDirectHint(), p.textDim)
+							}
+						case 2: // Block
+							dsHintText(c, cat.RuleDrawerDescBlock(), p.red)
 						}
 					})
+
+					if a.ruleEditor.actionIndex == 0 {
+						a.renderProxyTargetPicker(c, p, runningIDs)
+					} else if a.ruleEditor.actionIndex == 1 && a.ruleEditor.ruleID != "preset-lan-direct" {
+						dsInsetBox(c, p, "rule-direct-warp-box", func() {
+							ui.Column(c).Gap(dsSpaceXS).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(dsSpaceMD).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Grow(1).Children(func() {
+										dsSectionLabel(c, p, cat.RuleDirectWarpTitle())
+										if a.ruleEditor.directWarp {
+											tagPill(c, cat.RoutingWarp(), p.green, p.greenBg)
+										}
+									})
+									ui.Switch(c.Key("toggle-rule-direct-warp"), &a.ruleEditor.directWarp).Label("toggle-rule-direct-warp")
+								})
+								dsHintText(c, cat.RuleDirectWarpDesc(), p.textMuted)
+							})
+							ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
+							if a.ruleEditor.directWarp {
+								dsHintText(c, cat.RuleActionWarpHint(), p.green)
+							} else {
+								dsHintText(c, cat.RuleActionDirectHint(), p.textDim)
+							}
+						})
+					}
 				})
+
+				// Card 3: Matching Criteria
+				if !a.ruleEditor.isFinal {
+					dsCard(c, p, func() {
+						if a.ruleEditor.tab == 0 {
+							a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags(), true)
+							a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags(), true)
+						} else {
+							labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
+							labeledTextArea(c, p, "rule-set-full-domains", cat.RuleFullDomainsLabel(), &a.ruleEditor.fullDomainsInput, cat.RuleFullDomainsHint(), 2, 3)
+							labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
+							labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
+						}
+					})
+				}
+			})
+
+			var footerLeft func()
+			if a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew {
+				footerLeft = func() {
+					if subtleActionChip(c.Key("rule-editor-back-to-details"), p, iconArrowLeft, cat.EditorBackToDetails(), false).Clicked() {
+						a.dismissRuleEditorDrawer(true)
+					}
+				}
+			}
+			dsDrawerFooter(c, p, footerLeft, func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceMD).Shrink(0).Children(func() {
+					if ui.Button(c.Key("btn-cancel-rule-editor"), cat.Cancel()).Clicked() {
+						a.dismissRuleEditorDrawer(false)
+					}
+					if primaryPillButton(c.Key("btn-save-rule-editor"), p, nil, cat.Confirm(), p.accent, false).Clicked() {
+						a.saveRuleEditor()
+					}
+				})
+			})
 		})
 	})
 }

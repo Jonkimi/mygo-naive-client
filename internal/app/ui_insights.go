@@ -571,62 +571,28 @@ func (a *app) renderInsightsManageRulesDrawer(c *ui.Context, p palette) {
 			return
 		}
 
-		// Backdrop (fades in and out, click to dismiss)
-		backdrop := ui.Box(c.Key("insights-rules-backdrop")).
-			Absolute().Top(0).Left(0).Right(0).Bottom(0).
-			Background(ui.RGBA(0, 0, 0, 0.35)).
-			Transition(ui.ElementTransition{
-				Enter: &ui.Motion{Opacity: 0},
-				Exit:  &ui.Motion{Opacity: 0},
-			})
-		if backdrop.Clicked() {
-			a.insightsShowManageRules = false
-		}
-
-		// Slide-over drawer panel anchored to right edge (460px unified width)
-		panel := ui.Column(c.Key("insights-rules-panel")).
-			Absolute().Top(0).Right(0).Bottom(0).Width(460).MaxWidthPercent(100).
-			Modal().
-			Transition(ui.ElementTransition{
-				Enter: &ui.Motion{X: 460},
-				Exit:  &ui.Motion{X: 460},
-			}).
-			Background(p.drawerBg).
-			BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-			Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4))
-
-		if panel.OverlayShortcut(0, ui.KeyEscape) {
-			a.insightsShowManageRules = false
-		}
-
-		panel.Children(func() {
-			// Header
-			ui.Row(c).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-				Padding(14, 20, 14, 20).
-				BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-				Children(func() {
-					ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Children(func() {
-						ui.Text(c, cat.InsightsDrawerEyebrow()).FontSize(11).FontWeight(600).TextColor(p.textDim).NoWrap()
-						ui.Text(c, cat.InsightsModalTitle()).FontSize(15).FontWeight(700).TextColor(p.text).
-							SingleLine().Ellipsis("…")
-					})
-
-					closeBtn := quietRowIconButton(c.Key("btn-close-rules"), p, iconClose, "btn-close-rules", false, false).
-						Tooltip(cat.InsightsModalClose())
-					if closeBtn.Clicked() {
-						a.insightsShowManageRules = false
-					}
+		dsDrawerShell(c, p, dsDrawerSpec{
+			BackdropKey: "insights-rules-backdrop",
+			PanelKey:    "insights-rules-panel",
+			Modal:       true,
+			OnDismiss:   func() { a.insightsShowManageRules = false },
+		}, func() {
+			dsDrawerHeader(c, p, func() {
+				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Children(func() {
+					ui.Text(c, cat.InsightsDrawerEyebrow()).FontSize(dsFontCaption).FontWeight(600).TextColor(p.textDim).NoWrap()
+					ui.Text(c, cat.InsightsModalTitle()).FontSize(dsFontDrawerTitle).FontWeight(700).TextColor(p.text).
+						SingleLine().Ellipsis("…")
 				})
+			}, func() {
+				closeBtn := quietRowIconButton(c.Key("btn-close-rules"), p, iconClose, "btn-close-rules", false, false).
+					Tooltip(cat.InsightsModalClose())
+				if closeBtn.Clicked() {
+					a.insightsShowManageRules = false
+				}
+			})
 
 			// Scrollable drawer body
-			ui.Scroll(c.Key("insights-rules-scroll")).
-				TrackScroll(&a.insightsRulesScroll).
-				Grow(1).Fill().
-				Background(p.surface).
-				Padding(16, 20, 20, 20).
-				Gap(12).
-				Children(func() {
+			dsDrawerBody(c, p, "insights-rules-scroll", &a.insightsRulesScroll, func() {
 					// 1. User Allowlist
 					editorSectionCard(c, p, func() {
 						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {

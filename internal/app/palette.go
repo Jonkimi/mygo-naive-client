@@ -148,7 +148,7 @@ func actionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disable
 		bg = p.elevated.Alpha(0.5)
 	}
 	btn := ui.ButtonBase(c).
-		Height(28).PaddingX(10).Radius(6).
+		Height(dsHeightRowAction).PaddingX(10).Radius(dsRadiusSM).
 		Background(bg).
 		Border(1, p.borderSubtle)
 	if !disabled && btn.Hovered() {
@@ -159,7 +159,7 @@ func actionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disable
 			if iconSVG != nil {
 				ui.Icon(c, iconSVG).Size(13, 13)
 			}
-			ui.Text(c, label).FontSize(12).FontWeight(500)
+			ui.Text(c, label).FontSize(dsFontBody).FontWeight(500)
 		})
 	})
 }
@@ -171,7 +171,7 @@ func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 		fg = p.textDim.Alpha(0.6)
 	}
 	btn := ui.ButtonBase(c).
-		Height(28).PaddingX(8).Radius(6).
+		Height(dsHeightRowAction).PaddingX(dsSpaceMD).Radius(dsRadiusSM).
 		Background(bg).
 		Disabled(disabled)
 	if !disabled && btn.Hovered() {
@@ -183,7 +183,7 @@ func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 			if iconSVG != nil {
 				ui.Icon(c, iconSVG).Size(13, 13)
 			}
-			ui.Text(c, label).FontSize(12).FontWeight(500)
+			ui.Text(c, label).FontSize(dsFontBody).FontWeight(500)
 		})
 	})
 }
@@ -195,7 +195,7 @@ func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 		fg = p.textDim.Alpha(0.6)
 	}
 	btn := ui.ButtonBase(c).
-		Height(28).PaddingX(8).Radius(6).
+		Height(dsHeightRowAction).PaddingX(dsSpaceMD).Radius(dsRadiusSM).
 		Background(bg).
 		Disabled(disabled)
 	if !disabled && btn.Hovered() {
@@ -207,7 +207,7 @@ func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 			if iconSVG != nil {
 				ui.Icon(c, iconSVG).Size(13, 13)
 			}
-			ui.Text(c, label).FontSize(12).FontWeight(500)
+			ui.Text(c, label).FontSize(dsFontBody).FontWeight(500)
 		})
 	})
 }
@@ -220,18 +220,18 @@ func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, 
 		fillBg = bg.Alpha(0.5)
 	}
 	btn := ui.ButtonBase(c).
-		Height(32).PaddingX(13).Radius(8).
+		Height(dsHeightControl).PaddingX(13).Radius(dsRadiusMD).
 		Background(fillBg).
 		Disabled(disabled)
 	if !disabled && btn.Hovered() {
 		btn.Background(bg.Alpha(0.88))
 	}
 	return btn.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(6).TextColor(fg).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).TextColor(fg).Children(func() {
 			if iconSVG != nil {
 				ui.Icon(c, iconSVG).Size(14, 14)
 			}
-			ui.Text(c, label).FontSize(12).FontWeight(600)
+			ui.Text(c, label).FontSize(dsFontBody).FontWeight(600)
 		})
 	})
 }
@@ -266,19 +266,15 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 	parts := ui.SegmentedBase(c, selected, len(opts))
 	track := parts.Track
 
-	trackPad, trackGap, trackRadius := float32(2), float32(2), float32(8)
-	segPadV, segPadH, segRadius := float32(5), float32(10), float32(6)
-	fontSize := float32(12)
+	trackPad, trackGap, trackRadius := float32(3), float32(3), dsRadiusMD
+	segPadV, segPadH, segRadius := float32(5), float32(10), dsRadiusSM
+	fontSize := dsFontBody
 	shBlur, shAlpha := float32(2), float32(0.08)
-	switch style {
-	case segmentedCompact:
-		trackRadius = 6
-		segPadV, segPadH, segRadius = 3, 8, 4
-		fontSize = 11
+	if style == segmentedCompact {
+		trackPad, trackGap, trackRadius = 2, 2, dsRadiusSM
+		segPadV, segPadH, segRadius = 3.5, dsSpaceMD, dsRadiusXS
+		fontSize = dsFontCaption
 		shBlur, shAlpha = 1, 0.06
-	case segmentedFullWidth:
-		trackPad, trackGap = 3, 3
-		segPadV = 6
 	}
 
 	track.AlignItems(ui.Stretch).Padding(trackPad).Gap(trackGap).Radius(trackRadius)
@@ -309,9 +305,8 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 			}
 
 			fg := p.textMuted
-			weight := 400
+			const weight = 500
 			if active {
-				weight = 600
 				if opt.ActiveColor.A > 0 {
 					fg = opt.ActiveColor
 				} else {
@@ -344,13 +339,13 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 	return track.Changed()
 }
 
-// segmentedControl renders a standard (~28px) palette-driven segmented control for page headers,
+// segmentedControl renders a standard (~30px) palette-driven segmented control for page headers,
 // drawer top tabs, Settings general rows, and Logs filter bars.
 func segmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
 	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), segmentedStandard)
 }
 
-// segmentedOptions renders a standard (~28px) palette-driven segmented control with custom a11y labels and active colors.
+// segmentedOptions renders a standard (~30px) palette-driven segmented control with custom a11y labels and active colors.
 func segmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
 	return renderSegmentedTrack(c, p, selected, opts, segmentedStandard)
 }
@@ -365,7 +360,7 @@ func compactSegmentedOptions(c *ui.Context, p palette, selected *int, opts []seg
 	return renderSegmentedTrack(c, p, selected, opts, segmentedCompact)
 }
 
-// fullWidthSegmentedOptions renders a full-width (~34px) equal-segment control for prominent form choices.
+// fullWidthSegmentedOptions renders an equal-width standard (~30px) segmented control for prominent form choices.
 func fullWidthSegmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
 	return renderSegmentedTrack(c, p, selected, opts, segmentedFullWidth)
 }
@@ -533,9 +528,7 @@ func hollowStatusDot(c *ui.Context, borderCol ui.Color) {
 }
 
 func editorSectionCard(c *ui.Context, p palette, children func()) {
-	ui.Column(c).Gap(10).Padding(14).Radius(10).
-		Background(p.card).Border(1, p.borderSubtle).
-		Children(children)
+	dsCard(c, p, children)
 }
 
 func quietToolbarButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, dimmed bool) ui.Element {
@@ -544,7 +537,7 @@ func quietToolbarButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string,
 		fg = p.textDim
 	}
 	btn := ui.ButtonBase(c).
-		Height(32).PaddingX(10).Radius(8).
+		Height(dsHeightControl).PaddingX(10).Radius(dsRadiusMD).
 		Background(p.card).Border(1, p.border)
 	if !dimmed && btn.Hovered() {
 		btn.Background(p.cardHover)
@@ -558,7 +551,7 @@ func quietToolbarButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string,
 				}
 				ui.Icon(c, iconSVG).Size(13, 13).TextColor(iconCol)
 			}
-			ui.Text(c, label).FontSize(12).FontWeight(500).NoWrap()
+			ui.Text(c, label).FontSize(dsFontBody).FontWeight(500).NoWrap()
 		})
 	})
 }
@@ -572,7 +565,7 @@ func quietToolbarIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label str
 	}
 	btn := ui.ButtonBase(c).
 		Label(label).
-		Size(32, 32).Radius(8).
+		Size(dsHeightControl, dsHeightControl).Radius(dsRadiusMD).
 		Background(bg).Border(1, p.border)
 	if btn.Hovered() {
 		btn.Background(p.cardHover)
@@ -594,7 +587,7 @@ func quietRowIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string,
 	}
 	btn := ui.ButtonBase(c).
 		Label(label).
-		Size(28, 28).Radius(6).
+		Size(dsHeightRowAction, dsHeightRowAction).Radius(dsRadiusSM).
 		Background(bg)
 	if !dimmed && btn.Hovered() {
 		fg = p.text

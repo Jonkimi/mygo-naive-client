@@ -48,29 +48,11 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 		}
 	}
 
-	// Backdrop (fades in and out, click to dismiss)
-	backdrop := ui.Box(c.Key("rule-drawer-backdrop")).
-		Absolute().Top(0).Left(0).Right(0).Bottom(0).
-		Background(ui.RGBA(0, 0, 0, 0.3)).
-		Transition(ui.ElementTransition{
-			Enter: &ui.Motion{Opacity: 0},
-			Exit:  &ui.Motion{Opacity: 0},
-		})
-	if backdrop.Clicked() {
-		a.activeRuleDrawerID = ""
-	}
-
-	// Slide-over drawer panel anchored to right edge (460px unified width)
-	ui.Column(c.Key("rule-drawer-panel")).
-		Absolute().Top(0).Right(0).Bottom(0).Width(460).MaxWidthPercent(100).
-		Transition(ui.ElementTransition{
-			Enter: &ui.Motion{X: 460},
-			Exit:  &ui.Motion{X: 460},
-		}).
-		Background(p.drawerBg).
-		BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-		Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4)).
-		Children(func() {
+	dsDrawerShell(c, p, dsDrawerSpec{
+		BackdropKey: "rule-drawer-backdrop",
+		PanelKey:    "rule-drawer-panel",
+		OnDismiss:   func() { a.activeRuleDrawerID = "" },
+	}, func() {
 			// Header aligned with ui_drawer_node.go
 			statusText := cat.StatusStopped()
 			statusCol := p.textDim

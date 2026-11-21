@@ -625,140 +625,83 @@ func (a *app) renderEditorDrawer(c *ui.Context, p palette) {
 			return
 		}
 
-		// Backdrop (fades in and out, click to dismiss)
-		backdrop := ui.Box(c.Key("editor-drawer-backdrop")).
-			Absolute().Top(0).Left(0).Right(0).Bottom(0).
-			Background(ui.RGBA(0, 0, 0, 0.35)).
-			Transition(ui.ElementTransition{
-				Enter: &ui.Motion{Opacity: 0},
-				Exit:  &ui.Motion{Opacity: 0},
-			})
-		if backdrop.Clicked() {
-			a.dismissEditorDrawer(false)
-		}
-
-		// Slide-over drawer panel anchored to right edge (460px unified width)
-		panel := ui.Column(c.Key("editor-drawer-panel")).
-			Absolute().Top(0).Right(0).Bottom(0).Width(460).
-			Modal().
-			Transition(ui.ElementTransition{
-				Enter: &ui.Motion{X: 460},
-				Exit:  &ui.Motion{X: 460},
-			}).
-			Background(p.drawerBg).
-			BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-			Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4))
-
-		if panel.OverlayShortcut(0, ui.KeyEscape) {
-			a.dismissEditorDrawer(false)
-		}
-
-		panel.Children(func() {
-			// Header
-			ui.Row(c).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-				Padding(14, 20, 14, 20).
-				BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
-						if a.editor.returnToDrawer && !a.editor.isNew {
-							backBtn := quietRowIconButton(c.Key("editor-back-header"), p, iconArrowLeft, cat.EditorBackToDetails(), false, false).
-								Tooltip(cat.EditorBackToDetails())
-							if backBtn.Clicked() {
-								a.dismissEditorDrawer(true)
-							}
-						}
-						title := cat.EditNodeTitle()
-						if a.editor.isNew {
-							title = cat.NewNodeTitle()
-						}
-						ui.Text(c, title).FontSize(15).FontWeight(700).TextColor(p.text).
-							SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
-					})
-
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
-						segmentedControl(c.Key("editor-tabs"), p, &a.editor.tab, []string{
-							cat.EditorTabBasic(),
-							cat.EditorTabAdvanced(),
-							cat.EditorTabPreview(),
-						})
-						closeBtn := quietRowIconButton(c.Key("editor-close"), p, iconClose, cat.NodeDrawerClose(), false, false).
-							Tooltip(cat.NodeDrawerClose())
-						if closeBtn.Clicked() {
-							a.dismissEditorDrawer(false)
-						}
-					})
-				})
-
-			if a.editor.errText != "" {
-				ui.Box(c).Padding(12, 20, 0, 20).Children(func() {
-					ui.Row(c.Key("editor-error-row")).
-						AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-						PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).
-						Border(1, p.red.Alpha(0.24)).
-						Children(func() {
-							ui.Text(c, a.editor.errText).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
-							btnCopy := ui.ButtonBase(c.Key("btn-copy-editor-error")).
-								Label("btn-copy-editor-error").
-								Padding(2, 6, 2, 6).Radius(4).
-								Background(p.card).Border(1, p.borderSubtle).
-								Tooltip(cat.ActionCopyError()).
-								Children(func() {
-									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
-								})
-							if btnCopy.Clicked() {
-								a.writeClipboard(a.editor.errText, cat.ToastErrorCopied())
-							}
-						})
-				})
-			}
-
-			// Scrollable drawer body
-			ui.Scroll(c.Key("editor-scroll")).
-				TrackScroll(&a.editor.scroll).
-				Grow(1).Fill().
-				Background(p.surface).
-				Padding(16, 20, 20, 20).
-				Gap(12).
-				Children(func() {
-					switch a.editor.tab {
-					case 0:
-						a.renderEditorBasicTab(c, p)
-					case 1:
-						a.renderEditorAdvancedTab(c, p)
-					case 2:
-						a.renderEditorPreviewTab(c, p)
-					}
-				})
-
-			// Sticky footer
-			ui.Row(c).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
-				Padding(12, 20, 14, 20).
-				Background(p.drawerBg).
-				BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
-				Children(func() {
+		dsDrawerShell(c, p, dsDrawerSpec{
+			BackdropKey: "editor-drawer-backdrop",
+			PanelKey:    "editor-drawer-panel",
+			Modal:       true,
+			OnDismiss:   func() { a.dismissEditorDrawer(false) },
+		}, func() {
+			dsDrawerHeader(c, p, func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).MinWidth(0).Shrink(1).Children(func() {
 					if a.editor.returnToDrawer && !a.editor.isNew {
-						if subtleActionChip(c.Key("editor-back-to-details"), p, iconArrowLeft, cat.EditorBackToDetails(), false).Clicked() {
+						backBtn := quietRowIconButton(c.Key("editor-back-header"), p, iconArrowLeft, cat.EditorBackToDetails(), false, false).
+							Tooltip(cat.EditorBackToDetails())
+						if backBtn.Clicked() {
 							a.dismissEditorDrawer(true)
 						}
-					} else {
-						ui.Box(c)
 					}
-
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
-						if ui.Button(c.Key("editor-cancel"), cat.Cancel()).Clicked() {
-							a.dismissEditorDrawer(false)
-						}
-						saveLabel := cat.EditorSaveEdit()
-						if a.editor.isNew {
-							saveLabel = cat.EditorSaveCreate()
-						}
-						if ui.PrimaryButton(c.Key("editor-save"), saveLabel).Clicked() {
-							a.saveEditorService()
-						}
-					})
+					title := cat.EditNodeTitle()
+					if a.editor.isNew {
+						title = cat.NewNodeTitle()
+					}
+					ui.Text(c, title).FontSize(dsFontDrawerTitle).FontWeight(700).TextColor(p.text).
+						SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
 				})
+			}, func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Shrink(0).Children(func() {
+					segmentedControl(c.Key("editor-tabs"), p, &a.editor.tab, []string{
+						cat.EditorTabBasic(),
+						cat.EditorTabAdvanced(),
+						cat.EditorTabPreview(),
+					})
+					closeBtn := quietRowIconButton(c.Key("editor-close"), p, iconClose, cat.NodeDrawerClose(), false, false).
+						Tooltip(cat.NodeDrawerClose())
+					if closeBtn.Clicked() {
+						a.dismissEditorDrawer(false)
+					}
+				})
+			})
+
+			dsDrawerErrorBanner(
+				c, p,
+				"editor-error-row", "btn-copy-editor-error",
+				a.editor.errText, cat.BtnCopy(), cat.ActionCopyError(),
+				func() { a.writeClipboard(a.editor.errText, cat.ToastErrorCopied()) },
+			)
+
+			dsDrawerBody(c, p, "editor-scroll", &a.editor.scroll, func() {
+				switch a.editor.tab {
+				case 0:
+					a.renderEditorBasicTab(c, p)
+				case 1:
+					a.renderEditorAdvancedTab(c, p)
+				case 2:
+					a.renderEditorPreviewTab(c, p)
+				}
+			})
+
+			var footerLeft func()
+			if a.editor.returnToDrawer && !a.editor.isNew {
+				footerLeft = func() {
+					if subtleActionChip(c.Key("editor-back-to-details"), p, iconArrowLeft, cat.EditorBackToDetails(), false).Clicked() {
+						a.dismissEditorDrawer(true)
+					}
+				}
+			}
+			dsDrawerFooter(c, p, footerLeft, func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceMD).Shrink(0).Children(func() {
+					if ui.Button(c.Key("editor-cancel"), cat.Cancel()).Clicked() {
+						a.dismissEditorDrawer(false)
+					}
+					saveLabel := cat.EditorSaveEdit()
+					if a.editor.isNew {
+						saveLabel = cat.EditorSaveCreate()
+					}
+					if ui.PrimaryButton(c.Key("editor-save"), saveLabel).Clicked() {
+						a.saveEditorService()
+					}
+				})
+			})
 		})
 	})
 }
