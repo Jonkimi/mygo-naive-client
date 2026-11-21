@@ -689,7 +689,7 @@ func TestHostTailnetNodeOutbound_UsesMagicDNSResolverAndInterfaceAndExcludesBoot
 	if _, hasBind := byTag["node-lan-short"]["bind_interface"]; hasBind {
 		t.Errorf("node-lan-short should not set bind_interface=%v", byTag["node-lan-short"]["bind_interface"])
 	}
-	if byTag["node-public-vps"]["domain_resolver"] != "bootstrap-dns" {
+	if byTag["node-public-vps"]["domain_resolver"] != "domestic-doh" {
 		t.Errorf("node-public-vps domain_resolver = %v, want bootstrap-dns", byTag["node-public-vps"]["domain_resolver"])
 	}
 	if _, hasBind := byTag["node-public-vps"]["bind_interface"]; hasBind {
@@ -784,8 +784,8 @@ func TestEmbeddedTailnetNodeOutbound_DetoursThroughTailscaleEndpoint(t *testing.
 				t.Errorf("node-vless-ts = %+v, want detour=tailscale-ep domain_resolver=tailscale-dns", ob)
 			}
 		case "node-public-vps":
-			if ob["domain_resolver"] != "bootstrap-dns" || ob["detour"] != nil {
-				t.Errorf("node-public-vps = %+v, want bootstrap-dns with no detour", ob)
+			if ob["domain_resolver"] != "domestic-doh" || ob["detour"] != nil {
+				t.Errorf("node-public-vps = %+v, want domestic-doh with no detour", ob)
 			}
 		}
 	}
@@ -982,3 +982,29 @@ func TestTailscaleHostDNSTransport_SingleLabelExpansionAndHostRecordFallback(t *
 
 
 
+
+// Regression: proxy node domains must resolve via domestic-doh (encrypted, direct),
+// while the DoH server's own hostname must stay on bootstrap-dns, since a server
+// cannot resolve itself.
+func TestBuildDNSConfig_NodeDomainsUseDomesticDoHAndDoHHostUsesBootstrap(t *testing.T) {
+	opts := EngineOptions{
+		DomesticDoH: []string{"https://dns.alidns.com/dns-query"},
+	}
+	cfg := buildDNSConfig(opts, "PROXY_POOL", []string{"dns.alidns.com", "node.example.com"})
+	rules, _ := cfg["rules"].([]map[string]any)
+	got := map[string]string{}
+	for _, r := range rules {
+		doms, _ := r["domain"].([]string)
+		for _, d := range doms {
+			if s, ok := r["server"].(string); ok {
+				got[d] = s
+			}
+		}
+	}
+	if got["node.example.com"] != "domestic-doh" {
+		t.Errorf("node domain server = %q, want domestic-doh", got["node.example.com"])
+	}
+	if got["dns.alidns.com"] != "bootstrap-dns" {
+		t.Errorf("DoH host server = %q, want bootstrap-dns", got["dns.alidns.com"])
+	}
+}

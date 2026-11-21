@@ -28,8 +28,8 @@ flowchart TD
     S3 -->|未命中缓存| S4{"阶段 4: sing-box DNS 规则分流<br/>(DNS Rule Evaluation)"}
 
     %% 阶段 4
-    S4 -->|节点自身域名 / DoH 域名<br/>domain_resolver: bootstrap-dns| S4_Boot["4.1 Bootstrap DNS (直连 223.5.5.5 / 1.12.12.12)<br/>强制走 direct 出站，破除先有鸡还是先有蛋死锁"]
-    S4 -->|私有域名 / 命中 DIRECT 规则 / geosite:cn<br/>server: domestic-doh| S4_Dom["4.2 国内直连 DoH (https://223.5.5.5/dns-query)<br/>detour: direct，保障国内 CDN 就近调度"]
+    S4 -->|DoH 服务器自身域名<br/>domain_resolver: bootstrap-dns| S4_Boot["4.1 Bootstrap DNS (直连 223.5.5.5 / 1.12.12.12)<br/>纯 IP、无 detour，仅解析 DoH 自身域名，避免自引用"]
+    S4 -->|节点自身域名 / 私有域名 / 命中 DIRECT 规则 / geosite:cn<br/>server: domestic-doh| S4_Dom["4.2 国内直连 DoH (https://223.5.5.5/dns-query)<br/>无 detour 直连物理网卡，节点域名解析不依赖代理隧道"]
     S4 -->|其余境外域名 / 命中代理规则<br/>server: remote-doh| S4_Remote["4.3 海外防污染 DoH (https://1.1.1.1/dns-query)<br/>detour: PROXY_POOL (经智能代理池隧道出境)"]
 
     %% 阶段 5
@@ -67,10 +67,11 @@ flowchart TD
 ### 阶段 3 & 4：`sing-box` 原生分流 DoH 与 Bootstrap 防死锁
 借助 `sing-box` 原生 DNS Transports 与 `detour` 机制，彻底淘汰手写的 `miekg/dns` 转发代码：
 1. **Bootstrap DNS (`bootstrap-dns`)**：
-   - 绑定为所有节点 Outbound（含 Sidecar 远端服务器域名与原生 Outbound 域名）及 DoH Server 自身的 `domain_resolver`。
-   - 强制通过 `direct` 物理网卡直连解析（默认 `https://223.5.5.5/dns-query` 或 `223.5.5.5:53`），从根源上消除 TUN 模式下“解析代理服务器域名又需要走代理隧道”的死锁。
+   - 仅用于解析 DoH 服务器自身的域名（`domestic-doh` / `remote-doh` 的 `domain_resolver`，以及 DNS 规则中 DoH 自身域名）；服务器不能经由自己解析自己。
+   - 通过物理网卡直连（默认 `223.5.5.5` / `1.12.12.12`，纯 IP、无 detour）。
 2. **国内直连 DoH (`domestic-doh`)**：
-   - 匹配 `geosite:cn`、`geosite:private` 及用户自定义 `DIRECT` 规则的域名，通过 `detour: "direct"` 走物理网卡请求国内加密 DoH，兼顾防劫持与最佳本地 CDN 调度。
+   - 绑定为所有节点 Outbound（含 Sidecar 远端服务器域名与原生 Outbound 域名）的 `domain_resolver`，并匹配 `geosite:cn`、`geosite:private` 及用户自定义 `DIRECT` 规则的域名。
+   - 无 detour，走默认拨号器（`auto_detect_interface` 绑定物理网卡），解析节点域名不依赖代理隧道，因此不会死锁；DoH 失败时洞察日志会记录 `FailureDNS`，不做 fallback。
 3. **海外代理隧道 DoH (`remote-doh`)**：
    - 其余非大陆域名通过 `detour: "PROXY_POOL"`（复用我们自定义的 `PoolOutbound` 智能代理池）经由健康度最优的代理隧道请求 `https://1.1.1.1/dns-query` 或 `https://dns.google/dns-query`，返回 **100% 真实无污染 IP（不使用 FakeIP）**。
 

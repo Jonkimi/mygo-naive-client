@@ -1180,6 +1180,35 @@ func resolveFinalOutbound(opts EngineOptions) string {
 	return resolveFinalPoolSpec(opts).OutboundTag
 }
 
+// collectDoHBootstrapDomains returns the hostnames of the DNS servers themselves
+// (domestic DoH and bootstrap DNS). These must stay on bootstrap-dns: a server
+// cannot resolve its own address through itself.
+func collectDoHBootstrapDomains(opts EngineOptions) map[string]bool {
+	set := make(map[string]bool)
+	add := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+			raw = u.Hostname()
+		} else if host, _, err := net.SplitHostPort(raw); err == nil {
+			raw = host
+		}
+		raw = tailnet.NormalizeHost(raw)
+		if raw != "" && net.ParseIP(raw) == nil {
+			set[raw] = true
+		}
+	}
+	for _, ep := range opts.DomesticDoH {
+		add(ep)
+	}
+	for _, ep := range opts.BootstrapDNS {
+		add(ep)
+	}
+	return set
+}
+
 func collectAllBootstrapDomains(opts EngineOptions) []string {
 	bootstrapDomainSet := make(map[string]bool)
 	addDomain := func(raw string) {
@@ -1749,7 +1778,7 @@ func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, ta
 		ep["detour"] = detour
 	}
 	if net.ParseIP(peerHost) == nil {
-		ep["domain_resolver"] = "bootstrap-dns"
+		ep["domain_resolver"] = "domestic-doh"
 	}
 	return ep
 }
@@ -1978,10 +2007,28 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		"domain_suffix": []string{".miui.com", ".xiaomi.com", ".qualcomm.cn"},
 		"server":        "domestic-doh",
 	})
-	if len(allBootstrapDomains) > 0 {
+	// DNS server hostnames (domestic DoH / bootstrap) stay on bootstrap-dns since a server
+	// cannot resolve itself. Proxy node domains go through domestic-doh, which is direct
+	// (no detour), so resolving them never depends on the proxy.
+	dohDomains := collectDoHBootstrapDomains(opts)
+	var dohRuleDomains, nodeRuleDomains []string
+	for _, d := range allBootstrapDomains {
+		if dohDomains[d] {
+			dohRuleDomains = append(dohRuleDomains, d)
+		} else {
+			nodeRuleDomains = append(nodeRuleDomains, d)
+		}
+	}
+	if len(dohRuleDomains) > 0 {
 		dnsRules = append(dnsRules, map[string]any{
-			"domain": allBootstrapDomains,
+			"domain": dohRuleDomains,
 			"server": "bootstrap-dns",
+		})
+	}
+	if len(nodeRuleDomains) > 0 {
+		dnsRules = append(dnsRules, map[string]any{
+			"domain": nodeRuleDomains,
+			"server": "domestic-doh",
 		})
 	}
 	if opts.TailnetMode == tailnet.ModeHost {

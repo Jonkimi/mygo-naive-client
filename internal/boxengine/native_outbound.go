@@ -16,7 +16,7 @@ var buildNativeOutbound = BuildNativeOutbound
 func BuildNativeOutbound(svc config.Service) map[string]any {
 	ob := buildNativeOutboundInner(svc)
 	if srv, ok := ob["server"].(string); ok && srv != "" && net.ParseIP(srv) == nil {
-		ob["domain_resolver"] = "bootstrap-dns"
+		ob["domain_resolver"] = "domestic-doh"
 	}
 	return ob
 }
