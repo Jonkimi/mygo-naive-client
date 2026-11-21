@@ -132,6 +132,31 @@ func (d *outboundDialerAdapter) ListenPacket(ctx context.Context, network, addr 
 	return d.ob.ListenPacket(ctx, M.ParseSocksaddr(addr))
 }
 
+type masqueTunnelDialer struct {
+	tun *warp.MASQUETunnel
+}
+
+func (d *masqueTunnelDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if d == nil || d.tun == nil {
+		return nil, errors.New("nil masque tunnel")
+	}
+	if strings.HasPrefix(strings.ToLower(network), "udp") {
+		return d.tun.DialUDP(ctx, destination.String())
+	}
+	return d.tun.DialContextTCP(ctx, destination.String())
+}
+
+func (d *masqueTunnelDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if d == nil || d.tun == nil {
+		return nil, errors.New("nil masque tunnel")
+	}
+	conn, err := d.tun.DialUDP(ctx, destination.String())
+	if err != nil {
+		return nil, err
+	}
+	return &udpPacketConnAdapter{Conn: conn, raddr: destination.UDPAddr()}, nil
+}
+
 func (w *warpMasqueOutbound) getFallbackOutbound() adapter.Outbound {
 	if w.opts.WireGuardFallback == "" {
 		return nil
@@ -347,8 +372,29 @@ func (w *warpMasqueOutbound) invalidateTunnel(tun *warp.MASQUETunnel) {
 		return
 	}
 	defer w.wg.Done()
+	if w.eng != nil {
+		w.eng.resetWarpRemoteDoHTransport(w.tag)
+	}
 	w.markEndpointFailedIfAuto(failedEP)
 	_ = tun.Close()
+}
+
+func (w *warpMasqueOutbound) resolveDestination(ctx context.Context, tun *warp.MASQUETunnel, destination M.Socksaddr) (M.Socksaddr, error) {
+	if !destination.IsDomain() {
+		return destination, nil
+	}
+	allowV4, allowV6 := true, true
+	if tun != nil && tun.Netstack != nil {
+		allowV4 = tun.Netstack.IPv4.IsValid() || !tun.Netstack.IPv6.IsValid()
+		allowV6 = tun.Netstack.IPv6.IsValid()
+	}
+	rCtx, rCancel := w.deriveContext(ctx, 0)
+	defer rCancel()
+	ip, err := resolveWarpDomainViaDoH(rCtx, w.eng, w.closeCtx, w.tag, w.opts.Detour != "", &masqueTunnelDialer{tun: tun}, destination.Fqdn, allowV4, allowV6)
+	if err != nil {
+		return destination, err
+	}
+	return M.SocksaddrFrom(ip, destination.Port), nil
 }
 
 func (w *warpMasqueOutbound) resolveFallbackDestination(ctx context.Context, fbOb adapter.Outbound, destination M.Socksaddr) (M.Socksaddr, error) {
@@ -361,7 +407,7 @@ func (w *warpMasqueOutbound) resolveFallbackDestination(ctx context.Context, fbO
 	}
 	rCtx, rCancel := w.deriveContext(ctx, 0)
 	defer rCancel()
-	ip, err := resolveDomainViaDialerDNS(rCtx, fbOb, destination.Fqdn, true, true)
+	ip, err := resolveWarpDomainViaDoH(rCtx, w.eng, w.closeCtx, w.tag, w.opts.Detour != "", fbOb, destination.Fqdn, true, true)
 	if err != nil {
 		return destination, err
 	}
@@ -385,17 +431,25 @@ func (w *warpMasqueOutbound) wrapFallbackOrDialError(ep string, fbErr, dialErr e
 }
 
 func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if d := warpInternalDNSDialer(ctx, w.tag); d != nil && !destination.IsDomain() {
+		return d.DialContext(ctx, network, destination)
+	}
 	t0 := time.Now()
 	tun, err := w.getOrCreateTunnel(ctx)
 	t1 := time.Now()
 	var ep string
 	if err == nil {
 		ep = w.ActiveEndpoint()
+		if destination.IsDomain() {
+			destination, err = w.resolveDestination(ctx, tun, destination)
+		}
 		var conn net.Conn
-		if strings.HasPrefix(strings.ToLower(network), "udp") {
-			conn, err = tun.DialUDP(ctx, destination.String())
-		} else {
-			conn, err = tun.DialContextTCP(ctx, destination.String())
+		if err == nil {
+			if strings.HasPrefix(strings.ToLower(network), "udp") {
+				conn, err = tun.DialUDP(ctx, destination.String())
+			} else {
+				conn, err = tun.DialContextTCP(ctx, destination.String())
+			}
 		}
 		t2 := time.Now()
 		if err == nil {
@@ -458,12 +512,20 @@ func (w *warpMasqueOutbound) DialContext(ctx context.Context, network string, de
 }
 
 func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if d := warpInternalDNSDialer(ctx, w.tag); d != nil && !destination.IsDomain() {
+		return d.ListenPacket(ctx, destination)
+	}
 	tun, err := w.getOrCreateTunnel(ctx)
 	var ep string
 	if err == nil {
 		ep = w.ActiveEndpoint()
+		if destination.IsDomain() {
+			destination, err = w.resolveDestination(ctx, tun, destination)
+		}
 		var conn net.Conn
-		conn, err = tun.DialUDP(ctx, destination.String())
+		if err == nil {
+			conn, err = tun.DialUDP(ctx, destination.String())
+		}
 		if err == nil {
 			return &udpPacketConnAdapter{Conn: conn, raddr: destination.UDPAddr()}, nil
 		}
@@ -512,6 +574,9 @@ func (w *warpMasqueOutbound) ListenPacket(ctx context.Context, destination M.Soc
 }
 
 func (w *warpMasqueOutbound) Close() error {
+	if w.eng != nil {
+		w.eng.resetWarpRemoteDoHTransport(w.tag)
+	}
 	return w.close(func() func() error {
 		tun := w.tun
 		w.tun = nil

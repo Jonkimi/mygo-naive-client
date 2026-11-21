@@ -173,8 +173,9 @@ type Engine struct {
 	tailnetMagicDNSSuffix string
 	tailnetHostRecords    map[string][]string
 	logLevel              string
-	logWriter         *boxPlatformWriter
-	boxCtx            context.Context
+	logWriter             *boxPlatformWriter
+	preferIPv4            bool
+	boxCtx                context.Context
 	cancel            context.CancelFunc
 	closersMu         sync.Mutex
 	closers           []func() error
@@ -257,6 +258,7 @@ func New(opts EngineOptions) (*Engine, error) {
 		tailnetHostRecords:        opts.TailnetHostRecords,
 		logLevel:                  normLvl,
 		logWriter:                 newBoxPlatformWriter(parsedLvl, opts.OnLog),
+		preferIPv4:                opts.PreferIPv4,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -768,12 +770,40 @@ func (e *Engine) ResolveWarpDomain(ctx context.Context, nodeID string, ob adapte
 	boxCtx := e.boxCtx
 	e.mu.RUnlock()
 	rCtx, rCancel := deriveLifecycleContext(ctx, boxCtx, 0)
-	ip, rErr := resolveDomainViaDialerDNS(rCtx, ob, dest.Fqdn, true, true)
+	ip, rErr := resolveWarpDomainViaDoH(rCtx, e, boxCtx, "node-"+cleanID, e.IsChainedWarp(cleanID), ob, dest.Fqdn, true, true)
 	rCancel()
 	if rErr != nil {
 		return dest, rErr
 	}
 	return M.SocksaddrFrom(ip, dest.Port), nil
+}
+
+func (e *Engine) resetWarpRemoteDoHTransport(warpOutboundTag string) {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	boxCtx := e.boxCtx
+	e.mu.RUnlock()
+	if boxCtx == nil {
+		return
+	}
+	transportMgr := service.FromContext[adapter.DNSTransportManager](boxCtx)
+	if transportMgr == nil {
+		return
+	}
+	baseTag := strings.TrimPrefix(warpOutboundTag, "wg-")
+	for _, tag := range []string{
+		remoteDoHTagForOutbound(baseTag),
+		remoteDoHTagForOutbound(warpOutboundTag),
+	} {
+		if tr, ok := transportMgr.Transport(tag); ok && tr != nil {
+			tr.Reset()
+		}
+		if baseTag == warpOutboundTag {
+			break
+		}
+	}
 }
 
 // DialNode dials a destination address through the specified node outbound.
@@ -1995,6 +2025,18 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		dnsServers = append(dnsServers, buildDNSServerMap(tag, remoteDoH[0], outboundTag, "bootstrap-dns"))
 		return tag
 	}
+	for _, svc := range opts.Services {
+		if svc.EffectiveProtocol() == config.ProtoWARP || !svc.EnableWARP {
+			continue
+		}
+		if isSidecarService(svc) {
+			allocPort, hasAutoZero := resolveSidecarPort(svc, opts.AllocatedPorts)
+			if allocPort <= 0 && hasAutoZero {
+				continue
+			}
+		}
+		ensureRemoteDoHForOutbound("node-" + svc.ID)
+	}
 
 	var dnsRules []map[string]any
 	dnsRules = append(dnsRules, map[string]any{
@@ -2347,6 +2389,9 @@ func (e *Engine) buildConfig(ctx context.Context, opts EngineOptions, host strin
 
 	finalOutbound := resolveFinalOutbound(opts)
 	allBootstrapDomains := collectAllBootstrapDomains(opts)
+	if opts.AllocatedPorts == nil && len(e.allocatedPorts) > 0 {
+		opts.AllocatedPorts = e.allocatedPorts
+	}
 
 	if opts.NodeIPResolver == nil {
 		opts.NodeIPResolver = defaultNodeIPResolver()

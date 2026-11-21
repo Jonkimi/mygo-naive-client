@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"naive-client/internal/routing"
 	"naive-client/internal/warp"
 
+	"github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
 	boxLog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
@@ -1742,5 +1745,238 @@ func TestWarpDNSLeakAndCancelClassification_Regressions(t *testing.T) {
 	_, poolErr := pool.DialContext(cCtx, "tcp", M.ParseSocksaddr("domain-must-not-leak.example:443"))
 	if !errors.Is(poolErr, context.Canceled) {
 		t.Fatalf("expected PoolOutbound domain dial over static WG WARP with canceled ctx to fail via ResolveWarpDomain, got %v", poolErr)
+	}
+}
+
+type countingWarpTestDialer struct {
+	redirectAddr string
+	dials        atomic.Int32
+}
+
+func (d *countingWarpTestDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if destination.IsDomain() {
+		return nil, fmt.Errorf("unexpected domain dial in internal DNS tunnel dialer: %s", destination)
+	}
+	d.dials.Add(1)
+	target := destination.String()
+	if d.redirectAddr != "" {
+		target = d.redirectAddr
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, target)
+}
+
+func (d *countingWarpTestDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if destination.IsDomain() {
+		return nil, fmt.Errorf("unexpected domain packet dial in internal DNS tunnel dialer: %s", destination)
+	}
+	d.dials.Add(1)
+	return (&net.ListenConfig{}).ListenPacket(ctx, "udp", "127.0.0.1:0")
+}
+
+func startMockWARPDNSServer(t *testing.T, answerIP string) (string, *atomic.Int32) {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen mock dns: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	var count atomic.Int32
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, addr, rErr := pc.ReadFrom(buf)
+			if rErr != nil {
+				return
+			}
+			var req dns.Msg
+			if err := req.Unpack(buf[:n]); err != nil || len(req.Question) == 0 {
+				continue
+			}
+			count.Add(1)
+			resp := new(dns.Msg)
+			resp.SetReply(&req)
+			q := req.Question[0]
+			if q.Qtype == dns.TypeA {
+				resp.Answer = append(resp.Answer, &dns.A{
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeA,
+						Class:  dns.ClassINET,
+						Ttl:    120,
+					},
+					A: net.ParseIP(answerIP).To4(),
+				})
+			} else {
+				// Return SOA so sing-box caches negative AAAA answers with positive TTL.
+				resp.Ns = append(resp.Ns, &dns.SOA{
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeSOA,
+						Class:  dns.ClassINET,
+						Ttl:    120,
+					},
+					Ns:     "ns1.example.",
+					Mbox:   "hostmaster.example.",
+					Serial: 1,
+					Minttl: 120,
+				})
+			}
+			if raw, pErr := resp.Pack(); pErr == nil {
+				_, _ = pc.WriteTo(raw, addr)
+			}
+		}
+	}()
+	return pc.LocalAddr().String(), &count
+}
+
+func TestWarpDoHDomainResolution_DirectVsChainedAndCache(t *testing.T) {
+	domesticAddr, domesticCount := startMockWARPDNSServer(t, "11.22.33.44")
+	remoteAddr, remoteCount := startMockWARPDNSServer(t, "55.66.77.88")
+
+	// 1. buildDNSConfig pre-registers remote-doh-<hash> for active WARP services and skips unstarted :0 sidecars.
+	directWarpSvc := config.Service{
+		ID:       config.BuiltinWarpServiceID,
+		Name:     "Cloudflare WARP",
+		Protocol: config.ProtoWARP,
+	}
+	chainedWarpSvc := config.Service{
+		ID:          "chained-warp",
+		Name:        "Chained WARP",
+		Kind:        config.KindExternalProxy,
+		Protocol:    config.ProtoSOCKS5,
+		Engine:      config.EngineSingBox,
+		ExternalURI: "socks5://127.0.0.1:1080",
+		EnableWARP:  true,
+		WARPConfig: &config.WarpNodeConfig{
+			Transport: config.WarpTransportWireGuard,
+		},
+	}
+	stoppedSidecarWarpSvc := config.Service{
+		ID:         "sidecar-stopped",
+		Name:       "Stopped Sidecar WARP",
+		Protocol:   config.ProtoNaive,
+		Engine:     config.EngineSidecar,
+		Listens:    []string{"socks://127.0.0.1:0"},
+		Proxies:    []string{"https://u:p@example.com"},
+		EnableWARP: true,
+	}
+
+	rules := []routing.Rule{
+		{
+			ID:           "preset-cn-direct",
+			Enabled:      true,
+			DomainSuffix: []string{"cn.example.com"},
+			Action:       routing.NewWarpTargetAction(),
+		},
+		{
+			ID:           "rule-direct-corp",
+			Enabled:      true,
+			DomainSuffix: []string{"corp-direct.example.com"},
+			Action:       routing.RouteAction{Type: routing.ActionDirect},
+		},
+	}
+
+	dnsMap := buildDNSConfig(EngineOptions{
+		Services:    []config.Service{directWarpSvc, chainedWarpSvc, stoppedSidecarWarpSvc},
+		Rules:       rules,
+		FinalAction: "direct",
+		FinalRoute:  routing.RouteAction{Type: routing.ActionDirect},
+	}, "direct", nil)
+
+	serverDetour := make(map[string]string)
+	for _, s := range dnsMap["servers"].([]map[string]any) {
+		tag, _ := s["tag"].(string)
+		detour, _ := s["detour"].(string)
+		serverDetour[tag] = detour
+	}
+	directRemoteTag := remoteDoHTagForOutbound("node-" + config.BuiltinWarpServiceID)
+	chainedRemoteTag := remoteDoHTagForOutbound("node-" + chainedWarpSvc.ID)
+	stoppedRemoteTag := remoteDoHTagForOutbound("node-" + stoppedSidecarWarpSvc.ID)
+	if _, exists := serverDetour[directRemoteTag]; exists {
+		t.Fatalf("expected standalone direct WARP %s not to register a dedicated remote-doh server", directRemoteTag)
+	}
+	if serverDetour[chainedRemoteTag] != "node-"+chainedWarpSvc.ID {
+		t.Fatalf("expected %s detour=node-%s, got %q", chainedRemoteTag, chainedWarpSvc.ID, serverDetour[chainedRemoteTag])
+	}
+	if _, exists := serverDetour[stoppedRemoteTag]; exists {
+		t.Fatalf("expected stopped :0 sidecar WARP %s not to register a remote-doh server", stoppedRemoteTag)
+	}
+
+	// 2. Start Engine and verify Direct WARP vs Chained WARP DoH resolution + caching.
+	eng, err := New(EngineOptions{
+		ListenAddr:   "127.0.0.1:0",
+		TrafficMode:  "port",
+		Services:     []config.Service{directWarpSvc, chainedWarpSvc},
+		ActiveIDs:    map[string]bool{config.BuiltinWarpServiceID: true, chainedWarpSvc.ID: true},
+		Rules:        rules,
+		FinalAction:  "direct",
+		FinalRoute:   routing.RouteAction{Type: routing.ActionDirect},
+		BootstrapDNS: []string{domesticAddr},
+		DomesticDoH:  []string{domesticAddr},
+		RemoteDoH:    []string{"198.51.100.53:53"},
+	})
+	if err != nil {
+		t.Fatalf("New engine: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		_ = eng.Close()
+		t.Fatalf("Start engine: %v", err)
+	}
+	defer eng.Close()
+
+	eng.mu.RLock()
+	boxCtx := eng.boxCtx
+	eng.mu.RUnlock()
+
+	directTunnel := &countingWarpTestDialer{redirectAddr: remoteAddr}
+	chainedTunnel := &countingWarpTestDialer{redirectAddr: remoteAddr}
+
+	// 2a. Direct WARP -> always domestic-doh (11.22.33.44), cached on repeat.
+	ctx := context.Background()
+	ip1, err := resolveWarpDomainViaDoH(ctx, eng, boxCtx, "node-"+config.BuiltinWarpServiceID, false, directTunnel, "api.cn.example.com", true, true)
+	if err != nil {
+		t.Fatalf("direct WARP resolve failed: %v", err)
+	}
+	if ip1 != netip.MustParseAddr("11.22.33.44") {
+		t.Fatalf("expected 11.22.33.44 from domestic-doh, got %v", ip1)
+	}
+	if directTunnel.dials.Load() != 0 || remoteCount.Load() != 0 {
+		t.Fatalf("expected direct WARP not to hit remote tunnel/DNS, dials=%d remote=%d", directTunnel.dials.Load(), remoteCount.Load())
+	}
+	domAfterFirst := domesticCount.Load()
+	if domAfterFirst == 0 {
+		t.Fatalf("expected domestic DNS server to be queried")
+	}
+	ip1Cached, err := resolveWarpDomainViaDoH(ctx, eng, boxCtx, "node-"+config.BuiltinWarpServiceID, false, directTunnel, "api.cn.example.com", true, true)
+	if err != nil || ip1Cached != ip1 {
+		t.Fatalf("expected cached direct WARP resolve to return %v, got %v (err=%v)", ip1, ip1Cached, err)
+	}
+	if domesticCount.Load() != domAfterFirst {
+		t.Fatalf("expected repeat direct WARP resolve to hit DNS cache (queries before=%d after=%d)", domAfterFirst, domesticCount.Load())
+	}
+
+	// 2b. Chained WARP -> always remote-doh-<chained> (55.66.77.88) via tunnel even for domestic domain, cached on repeat.
+	ip2, err := resolveWarpDomainViaDoH(ctx, eng, boxCtx, "node-"+chainedWarpSvc.ID, true, chainedTunnel, "api.cn.example.com", true, true)
+	if err != nil {
+		t.Fatalf("chained WARP resolve failed: %v", err)
+	}
+	if ip2 != netip.MustParseAddr("55.66.77.88") {
+		t.Fatalf("expected chained WARP to resolve via remote-doh (55.66.77.88), got %v", ip2)
+	}
+	if domesticCount.Load() != domAfterFirst {
+		t.Fatalf("expected chained WARP never to query domestic-doh, domesticCount=%d (was %d)", domesticCount.Load(), domAfterFirst)
+	}
+	chainedDialsAfterFirst := chainedTunnel.dials.Load()
+	remoteAfterChained := remoteCount.Load()
+	if chainedDialsAfterFirst == 0 || remoteAfterChained == 0 {
+		t.Fatalf("expected chained WARP to dial remote DNS via chained tunnel, dials=%d remote=%d", chainedDialsAfterFirst, remoteAfterChained)
+	}
+	ip2Cached, err := resolveWarpDomainViaDoH(ctx, eng, boxCtx, "node-"+chainedWarpSvc.ID, true, chainedTunnel, "api.cn.example.com", true, true)
+	if err != nil || ip2Cached != ip2 {
+		t.Fatalf("expected cached chained resolve to return %v, got %v (err=%v)", ip2, ip2Cached, err)
+	}
+	if remoteCount.Load() != remoteAfterChained || chainedTunnel.dials.Load() != chainedDialsAfterFirst {
+		t.Fatalf("expected repeat chained resolve to hit DNS cache (remote %d->%d, dials %d->%d)", remoteAfterChained, remoteCount.Load(), chainedDialsAfterFirst, chainedTunnel.dials.Load())
 	}
 }

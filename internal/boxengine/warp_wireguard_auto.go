@@ -454,6 +454,9 @@ func (w *warpAutoWireGuardOutbound) recordDialResult(ctx context.Context, ep *wi
 
 	if shouldRotate {
 		defer w.wg.Done()
+		if w.eng != nil {
+			w.eng.resetWarpRemoteDoHTransport(w.tag)
+		}
 		if failedAddr != "" {
 			selectEndpointSelector(w.eng).MarkFailed(warp.EndpointCacheKey{
 				ScopeKey: w.scopeKey(),
@@ -475,9 +478,9 @@ func (w *warpAutoWireGuardOutbound) resolveDestination(ctx context.Context, ep *
 	rCtx, rCancel := w.deriveContext(ctx, 0)
 	defer rCancel()
 
-	// Resolve inside the WARP WireGuard tunnel via Cloudflare DNS for both direct
-	// and chained configurations so user domains never leak to host/domestic DNS.
-	ip, err := resolveDomainViaDialerDNS(rCtx, ep, destination.Fqdn, true, true)
+	// Resolve through sing-box DoH transport (with cache & dedup), routing direct domestic
+	// domains via domestic-doh and overseas / chained WARP domains via the node's remote-doh.
+	ip, err := resolveWarpDomainViaDoH(rCtx, w.eng, w.ctx, w.tag, w.opts.Detour != "", ep, destination.Fqdn, true, true)
 	if err != nil {
 		return destination, err
 	}
@@ -495,6 +498,9 @@ func (w *warpAutoWireGuardOutbound) wrapDialError(ctx context.Context, epAddr st
 }
 
 func (w *warpAutoWireGuardOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if d := warpInternalDNSDialer(ctx, w.tag); d != nil && !destination.IsDomain() {
+		return d.DialContext(ctx, network, destination)
+	}
 	ep, err := w.ensureEndpoint(ctx)
 	if err != nil {
 		return nil, w.wrapDialError(ctx, w.activeOrAuto(), err)
@@ -514,6 +520,9 @@ func (w *warpAutoWireGuardOutbound) DialContext(ctx context.Context, network str
 }
 
 func (w *warpAutoWireGuardOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if d := warpInternalDNSDialer(ctx, w.tag); d != nil && !destination.IsDomain() {
+		return d.ListenPacket(ctx, destination)
+	}
 	ep, err := w.ensureEndpoint(ctx)
 	if err != nil {
 		return nil, w.wrapDialError(ctx, w.activeOrAuto(), err)
@@ -540,6 +549,9 @@ func (w *warpAutoWireGuardOutbound) activeOrAuto() string {
 }
 
 func (w *warpAutoWireGuardOutbound) Close() error {
+	if w.eng != nil {
+		w.eng.resetWarpRemoteDoHTransport(w.tag)
+	}
 	return w.close(func() func() error {
 		ep := w.ep
 		w.ep = nil

@@ -8,14 +8,19 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"naive-client/internal/warp"
 
 	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	boxDNS "github.com/sagernet/sing-box/dns"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 // warpOutboundLifecycle coordinates lazy initialization, shutdown cancellation,
@@ -122,6 +127,164 @@ func (l *warpOutboundLifecycle) acquireInit(ctx context.Context, tryFast func() 
 
 func (l *warpOutboundLifecycle) deriveContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return deriveLifecycleContext(ctx, l.closeCtx, timeout)
+}
+
+type warpInternalDNSDialKey struct{}
+
+type warpInternalDNSDialInfo struct {
+	outboundTag string
+	dialer      N.Dialer
+}
+
+func withWarpInternalDNSDial(ctx context.Context, outboundTag string, d N.Dialer) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d == nil || outboundTag == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, warpInternalDNSDialKey{}, warpInternalDNSDialInfo{
+		outboundTag: strings.TrimPrefix(outboundTag, "wg-"),
+		dialer:      d,
+	})
+}
+
+func warpInternalDNSDialer(ctx context.Context, outboundTag string) N.Dialer {
+	if ctx == nil || outboundTag == "" {
+		return nil
+	}
+	info, ok := ctx.Value(warpInternalDNSDialKey{}).(warpInternalDNSDialInfo)
+	if !ok || info.dialer == nil {
+		return nil
+	}
+	if info.outboundTag == outboundTag || info.outboundTag == strings.TrimPrefix(outboundTag, "wg-") {
+		return info.dialer
+	}
+	return nil
+}
+
+func isDNSNoRecordsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, warp.ErrNoDNSRecords) || errors.Is(err, boxDNS.RcodeNameError) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "empty result") || strings.Contains(lower, "nxdomain")
+}
+
+func resolveWarpDomainViaDoH(
+	ctx context.Context,
+	eng *Engine,
+	boxCtx context.Context,
+	warpOutboundTag string,
+	isChained bool,
+	tunnelDialer N.Dialer,
+	host string,
+	allowV4, allowV6 bool,
+) (netip.Addr, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return netip.Addr{}, err
+	}
+	cleanHost := strings.Trim(strings.TrimSpace(host), ".")
+	if addr, err := netip.ParseAddr(cleanHost); err == nil {
+		return addr, nil
+	}
+	if strings.EqualFold(cleanHost, "localhost") {
+		if !allowV4 && allowV6 {
+			return netip.IPv6Loopback(), nil
+		}
+		return netip.MustParseAddr("127.0.0.1"), nil
+	}
+
+	lookupBoxCtx := boxCtx
+	if eng != nil {
+		eng.mu.RLock()
+		if eng.boxCtx != nil {
+			lookupBoxCtx = eng.boxCtx
+		}
+		eng.mu.RUnlock()
+	}
+	if lookupBoxCtx == nil {
+		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, allowV4, allowV6)
+	}
+
+	dnsRouter := service.FromContext[adapter.DNSRouter](lookupBoxCtx)
+	transportMgr := service.FromContext[adapter.DNSTransportManager](lookupBoxCtx)
+	if dnsRouter == nil || transportMgr == nil {
+		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, allowV4, allowV6)
+	}
+
+	var targetTag string
+	var tr adapter.DNSTransport
+	var ok bool
+	lookupCtx := ctx
+	if isChained {
+		targetTag = remoteDoHTagForOutbound(strings.TrimPrefix(warpOutboundTag, "wg-"))
+		tr, ok = transportMgr.Transport(targetTag)
+		if !ok || tr == nil {
+			targetTag = "remote-doh"
+			tr, ok = transportMgr.Transport("remote-doh")
+		}
+		lookupCtx = withWarpInternalDNSDial(ctx, warpOutboundTag, tunnelDialer)
+	} else {
+		targetTag = "domestic-doh"
+		tr, ok = transportMgr.Transport("domestic-doh")
+	}
+	if !ok || tr == nil {
+		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, allowV4, allowV6)
+	}
+
+	var strategy C.DomainStrategy
+	if !allowV6 && allowV4 {
+		strategy = C.DomainStrategyIPv4Only
+	} else if !allowV4 && allowV6 {
+		strategy = C.DomainStrategyIPv6Only
+	} else if eng != nil && eng.preferIPv4 {
+		strategy = C.DomainStrategyPreferIPv4
+	}
+	queryOpts := adapter.DNSQueryOptions{
+		Transport:      tr,
+		Strategy:       strategy,
+		LookupStrategy: strategy,
+	}
+
+	addrs, err := dnsRouter.Lookup(lookupCtx, cleanHost, queryOpts)
+	if err != nil {
+		if isDNSNoRecordsError(err) {
+			return netip.Addr{}, fmt.Errorf("%w: %v", warp.ErrNoDNSRecords, err)
+		}
+		if strings.HasPrefix(targetTag, "remote-doh") {
+			tr.Reset()
+		}
+		return netip.Addr{}, err
+	}
+
+	var sawUnspecified bool
+	for _, addr := range addrs {
+		addr = addr.Unmap()
+		if !addr.IsValid() {
+			continue
+		}
+		if addr.IsUnspecified() {
+			sawUnspecified = true
+			continue
+		}
+		if addr.Is4() && allowV4 {
+			return addr, nil
+		}
+		if addr.Is6() && allowV6 {
+			return addr, nil
+		}
+	}
+	if sawUnspecified {
+		return netip.Addr{}, syscall.ECONNREFUSED
+	}
+	return netip.Addr{}, warp.ErrNoDNSRecords
 }
 
 func resolveDomainViaDialerDNS(ctx context.Context, d N.Dialer, host string, allowV4, allowV6 bool) (netip.Addr, error) {
