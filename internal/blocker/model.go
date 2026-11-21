@@ -37,6 +37,10 @@ type QueryLogEntry struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	// Network is the transport of a Gateway connection: "tcp" or "udp". Empty for DNS entries.
 	Network string `json:"network,omitempty"`
+	// Process is the normalized application or executable name (e.g. "Google Chrome", "curl").
+	Process string `json:"process,omitempty"`
+	// ProcessPath is the full executable path resolved from the OS socket table.
+	ProcessPath string `json:"process_path,omitempty"`
 }
 
 // HourlyBucket records aggregate queries in a one-hour window.

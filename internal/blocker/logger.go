@@ -289,6 +289,15 @@ func sliceTopItems(src []TopDomainItem, limit int) []TopDomainItem {
 	return res
 }
 
+func matchesQueryFilter(e QueryLogEntry, q string) bool {
+	if q == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(e.Domain), q) ||
+		strings.Contains(strings.ToLower(e.Process), q) ||
+		strings.Contains(strings.ToLower(e.ProcessPath), q)
+}
+
 // GetFilteredEntries scans newest-first and returns up to limit matching entries along with total recorded count.
 func (l *QueryLogger) GetFilteredEntries(verdictFilter string, domainQuery string, limit int) (entries []QueryLogEntry, totalRecorded int) {
 	l.mu.RLock()
@@ -312,7 +321,7 @@ func (l *QueryLogger) GetFilteredEntries(verdictFilter string, domainQuery strin
 		if verdictFilter == "allowed" && e.Verdict != VerdictAllowed && e.Verdict != VerdictWhitelisted {
 			continue
 		}
-		if q != "" && !strings.Contains(strings.ToLower(e.Domain), q) {
+		if !matchesQueryFilter(e, q) {
 			continue
 		}
 
@@ -334,8 +343,8 @@ type FoldedEntry struct {
 
 func sameBlockedRun(a, b QueryLogEntry) bool {
 	return a.Verdict == VerdictBlocked && b.Verdict == VerdictBlocked &&
-		a.Domain == b.Domain && a.Source == b.Source && a.Rule == b.Rule &&
-		a.Chain == b.Chain && a.Error == b.Error
+		a.Domain == b.Domain && a.Source == b.Source && a.Process == b.Process &&
+		a.Rule == b.Rule && a.Chain == b.Chain && a.Error == b.Error
 }
 
 // FoldConsecutive collapses adjacent identical blocked entries (input is newest-first).
@@ -374,7 +383,7 @@ func (l *QueryLogger) GetFoldedEntries(verdictFilter string, domainQuery string,
 		if verdictFilter == "allowed" && e.Verdict != VerdictAllowed && e.Verdict != VerdictWhitelisted {
 			continue
 		}
-		if q != "" && !strings.Contains(strings.ToLower(e.Domain), q) {
+		if !matchesQueryFilter(e, q) {
 			continue
 		}
 		if n := len(rows); n > 0 && sameBlockedRun(rows[n-1].QueryLogEntry, e) {
@@ -508,6 +517,24 @@ func (l *QueryLogger) notifyUpdated() {
 	(*fn)()
 }
 
+func (l *QueryLogger) findEntryByIDLocked(id int64) *QueryLogEntry {
+	offset := int(l.nextID - id)
+	if offset >= 0 && offset < l.count {
+		idx := (l.start + l.count - 1 - offset + l.capacity) % l.capacity
+		entry := &l.entries[idx]
+		if entry.ID == id {
+			return entry
+		}
+	}
+	for i := 0; i < l.count; i++ {
+		idx := (l.start + i) % l.capacity
+		if l.entries[idx].ID == id {
+			return &l.entries[idx]
+		}
+	}
+	return nil
+}
+
 // SetNetworkByLogID records the transport ("tcp"/"udp") of the entry with the given ID.
 func (l *QueryLogger) SetNetworkByLogID(id int64, network string) bool {
 	if l == nil || id <= 0 || network == "" {
@@ -515,15 +542,27 @@ func (l *QueryLogger) SetNetworkByLogID(id int64, network string) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for i := l.count - 1; i >= 0; i-- {
-		idx := (l.start + i) % l.capacity
-		if l.entries[idx].ID == id {
-			l.entries[idx].Network = network
-			return true
-		}
-		if l.entries[idx].ID < id {
-			break
-		}
+	if entry := l.findEntryByIDLocked(id); entry != nil {
+		entry.Network = network
+		return true
+	}
+	return false
+}
+
+// SetProcessByLogID records the normalized process name and executable path of the entry with the given ID.
+func (l *QueryLogger) SetProcessByLogID(id int64, process, processPath string) bool {
+	if l == nil || id <= 0 || (process == "" && processPath == "") {
+		return false
+	}
+	if process == "" && processPath != "" {
+		process = ExtractAppName(processPath)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if entry := l.findEntryByIDLocked(id); entry != nil {
+		entry.Process = process
+		entry.ProcessPath = processPath
+		return true
 	}
 	return false
 }
@@ -543,23 +582,9 @@ func (l *QueryLogger) setDurationByLogIDLocked(id int64, d time.Duration) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-
-	offset := int(l.nextID - id)
-	if offset >= 0 && offset < l.count {
-		idx := (l.start + l.count - 1 - offset + l.capacity) % l.capacity
-		entry := &l.entries[idx]
-		if entry.ID == id {
-			entry.Duration = d
-			return true
-		}
-	}
-
-	for i := 0; i < l.count; i++ {
-		idx := (l.start + i) % l.capacity
-		if l.entries[idx].ID == id {
-			l.entries[idx].Duration = d
-			return true
-		}
+	if entry := l.findEntryByIDLocked(id); entry != nil {
+		entry.Duration = d
+		return true
 	}
 	return false
 }
@@ -579,27 +604,11 @@ func (l *QueryLogger) annotateByLogIDLocked(id int64, errReason string) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-
-	offset := int(l.nextID - id)
-	if offset >= 0 && offset < l.count {
-		idx := (l.start + l.count - 1 - offset + l.capacity) % l.capacity
-		entry := &l.entries[idx]
-		if entry.ID == id {
-			if entry.Error == "" {
-				entry.Error = errReason
-			}
-			return true
+	if entry := l.findEntryByIDLocked(id); entry != nil {
+		if entry.Error == "" {
+			entry.Error = errReason
 		}
-	}
-
-	for i := 0; i < l.count; i++ {
-		idx := (l.start + i) % l.capacity
-		if l.entries[idx].ID == id {
-			if l.entries[idx].Error == "" {
-				l.entries[idx].Error = errReason
-			}
-			return true
-		}
+		return true
 	}
 	return false
 }

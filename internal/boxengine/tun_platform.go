@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/netip"
 	"os"
+	"strings"
+
+	"naive-client/internal/tunhelper"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
@@ -73,14 +76,6 @@ func (s *platformInterfaceStub) RequestPermissionForWIFIState() error {
 
 func (s *platformInterfaceStub) ReadWIFIState(ctx context.Context) adapter.WIFIState {
 	return adapter.WIFIState{}
-}
-
-func (s *platformInterfaceStub) UsePlatformConnectionOwnerFinder() bool {
-	return false
-}
-
-func (s *platformInterfaceStub) FindConnectionOwner(request *adapter.FindConnectionOwnerRequest) (*adapter.ConnectionOwner, error) {
-	return nil, os.ErrInvalid
 }
 
 func (s *platformInterfaceStub) UsePlatformWIFIMonitor() bool {
@@ -154,9 +149,10 @@ func (s *platformInterfaceStub) CreateBridge(options adapter.BridgeOptions) (ada
 // TunPlatform wraps a pre-opened TUN file descriptor and passes it into sing-tun.
 type TunPlatform struct {
 	platformInterfaceStub
-	TunFD      int
-	TunName    string
-	TunCreator func(options tun.Options) (tun.Tun, error)
+	TunFD        int
+	TunName      string
+	TunAddresses []string
+	TunCreator   func(options tun.Options) (tun.Tun, error)
 }
 
 func (p *TunPlatform) UsePlatformInterface() bool {
@@ -172,4 +168,27 @@ func (p *TunPlatform) OpenInterface(options *tun.Options, platformOptions option
 		return p.TunCreator(*options)
 	}
 	return tun.New(*options)
+}
+
+func (p *TunPlatform) MyInterfaceAddress() []netip.Addr {
+	rawAddrs := p.TunAddresses
+	if len(rawAddrs) == 0 && p.TunFD > 0 {
+		rawAddrs = []string{tunhelper.TunIPv4Prefix, tunhelper.TunIPv6Prefix}
+	}
+	if len(rawAddrs) == 0 {
+		return nil
+	}
+	addrs := make([]netip.Addr, 0, len(rawAddrs))
+	for _, raw := range rawAddrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(raw); err == nil {
+			addrs = append(addrs, prefix.Addr())
+		} else if addr, err := netip.ParseAddr(raw); err == nil {
+			addrs = append(addrs, addr)
+		}
+	}
+	return addrs
 }

@@ -413,7 +413,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 			// Table header
 			ui.Row(c).Padding(4, 6, 4, 6).Background(p.surface).Radius(6).AlignItems(ui.Center).Gap(8).Children(func() {
 				ui.Text(c, cat.InsightsColTime()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
-				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(52)
+				ui.Text(c, cat.InsightsColSource()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(84)
 				ui.Text(c, cat.InsightsColVerdict()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(84)
 				ui.Text(c, cat.InsightsColDuration()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(55)
 				ui.Text(c, cat.InsightsColDomain()).FontSize(10).FontWeight(600).TextColor(p.textDim).Width(175)
@@ -447,8 +447,16 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							// Col 1: Time
 							ui.Text(c, timeStr).FontSize(10).FontFeatures("tnum").TextColor(p.textDim).Width(55)
 
-							// Col 2: Source
-							ui.Text(c, string(e.Source)).FontSize(10).FontWeight(500).TextColor(p.textMuted).Width(52).NoWrap()
+							// Col 2: Source / Application
+							srcLabel := e.SourceDisplay()
+							srcTip := e.SourceTooltip()
+							srcColor := p.textMuted
+							if e.Process != "" && srcLabel == e.Process {
+								srcColor = p.text
+							}
+							ui.Row(c).Width(84).AlignItems(ui.Center).Tooltip(srcTip).Children(func() {
+								ui.Text(c, srcLabel).FontSize(10).FontWeight(500).TextColor(srcColor).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+							})
 
 							// Col 3: Verdict (7px dot + label, no pill)
 							ui.Row(c).Width(84).AlignItems(ui.Center).Gap(6).Children(func() {

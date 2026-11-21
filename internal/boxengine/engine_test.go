@@ -127,10 +127,14 @@ func TestEngine_StartAndDirectRouting(t *testing.T) {
 	// Wait briefly for async source duration annotation on loopback-direct
 	deadline := time.Now().Add(500 * time.Millisecond)
 	var foundLoopbackDur bool
+	var foundProcess bool
 	for time.Now().Before(deadline) {
 		for _, entry := range bl.Logger().GetEntries(10) {
 			if entry.Domain == "127.0.0.1" && entry.Source == blocker.SourceGateway && entry.Duration > 0 {
 				foundLoopbackDur = true
+				if entry.Process != "" && entry.ProcessPath != "" {
+					foundProcess = true
+				}
 				break
 			}
 		}
@@ -141,6 +145,9 @@ func TestEngine_StartAndDirectRouting(t *testing.T) {
 	}
 	if !foundLoopbackDur {
 		t.Errorf("expected 127.0.0.1 gateway log entry to have Duration > 0, got entries: %+v", bl.Logger().GetEntries(10))
+	}
+	if !foundProcess {
+		t.Errorf("expected 127.0.0.1 gateway log entry to record source Process and ProcessPath, got entries: %+v", bl.Logger().GetEntries(10))
 	}
 }
 

@@ -249,7 +249,7 @@ func (t *blockerDNSTransport) Reset() {
 	t.underlying.Reset()
 }
 
-func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool, int64) {
+func (t *blockerDNSTransport) handleQuery(ctx context.Context, q mDNS.Question) (*mDNS.Msg, bool, int64) {
 	if t.blocker == nil {
 		return nil, false, 0
 	}
@@ -262,6 +262,7 @@ func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool, int
 	var logID int64
 	if t.blocker.Logger() != nil {
 		logID = t.blocker.Logger().RecordWithChain(domain, blocker.SourceDNS, verdict, rule, chain)
+		recordProcessMetadata(t.blocker.Logger(), logID, adapter.ContextFrom(ctx))
 	}
 	if blocked {
 		var addrs []netip.Addr
@@ -280,7 +281,7 @@ func (t *blockerDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (
 	if len(message.Question) > 0 {
 		var resp *mDNS.Msg
 		var blocked bool
-		resp, blocked, logID = t.handleQuery(message.Question[0])
+		resp, blocked, logID = t.handleQuery(ctx, message.Question[0])
 		if blocked {
 			resp.Id = message.Id
 			return resp, nil
@@ -312,7 +313,7 @@ func (t *blockerDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.M
 	if len(message.Question) > 0 {
 		var resp *mDNS.Msg
 		var blocked bool
-		resp, blocked, logID = t.handleQuery(message.Question[0])
+		resp, blocked, logID = t.handleQuery(ctx, message.Question[0])
 		if blocked {
 			resp.Id = message.Id
 			callback(resp, nil)
@@ -575,6 +576,7 @@ func (t *BlockerConnectionTracker) RoutedConnection(ctx context.Context, conn ne
 
 	if target != "" {
 		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound, "tcp")
+		recordProcessMetadata(t.blocker.Logger(), logID, &metadata)
 		if blocked {
 			_ = conn.Close()
 			return conn
@@ -607,6 +609,7 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 	}
 	if target != "" {
 		blocked, logID := t.recordConnectionWithID(target, matchedRule, matchOutbound, "udp")
+		recordProcessMetadata(t.blocker.Logger(), logID, &metadata)
 		if blocked {
 			_ = conn.Close()
 			return conn
@@ -616,6 +619,29 @@ func (t *BlockerConnectionTracker) RoutedPacketConnection(ctx context.Context, c
 		}
 	}
 	return conn
+}
+
+func recordProcessMetadata(logger *blocker.QueryLogger, logID int64, metadata *adapter.InboundContext) {
+	if logger == nil || logID <= 0 || metadata == nil {
+		return
+	}
+	if procName, procPath := extractProcessInfoFromMetadata(metadata); procName != "" || procPath != "" {
+		logger.SetProcessByLogID(logID, procName, procPath)
+	}
+}
+
+func extractProcessInfoFromMetadata(metadata *adapter.InboundContext) (processName, processPath string) {
+	if metadata == nil || metadata.ProcessInfo == nil {
+		return "", ""
+	}
+	if rawPath := strings.TrimSpace(metadata.ProcessInfo.ProcessPath); rawPath != "" {
+		return blocker.ExtractAppName(rawPath), rawPath
+	}
+	if len(metadata.ProcessInfo.AndroidPackageNames) > 0 {
+		pkg := metadata.ProcessInfo.AndroidPackageNames[0]
+		return pkg, pkg
+	}
+	return "", ""
 }
 
 func (t *BlockerConnectionTracker) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) tun.FlowTracker {

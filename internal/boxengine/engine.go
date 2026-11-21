@@ -148,6 +148,13 @@ func (w *boxPlatformWriter) WriteMessage(level log.Level, message string) {
 	if clean == "" {
 		return
 	}
+	if w.maxLevel.Load() < uint32(log.LevelDebug) &&
+		(strings.Contains(clean, "found process path: ") ||
+			strings.Contains(clean, "failed to search process: ") ||
+			strings.Contains(clean, "found user: ") ||
+			strings.Contains(clean, "found user id: ")) {
+		return
+	}
 	lvlStr := strings.ToUpper(log.FormatLevel(level))
 	w.onLog(lvlStr, clean)
 }
@@ -275,11 +282,14 @@ func New(opts EngineOptions) (*Engine, error) {
 	boxCtx := createBoxContext(ctx, eng)
 	if opts.TrafficMode == "tun" && opts.TunFD > 0 {
 		tunPlatform := &TunPlatform{
-			TunFD:      opts.TunFD,
-			TunName:    opts.TunInterface,
-			TunCreator: opts.TunCreator,
+			TunFD:        opts.TunFD,
+			TunName:      opts.TunInterface,
+			TunAddresses: opts.TunAddresses,
+			TunCreator:   opts.TunCreator,
 		}
 		boxCtx = service.ContextWith[adapter.PlatformInterface](boxCtx, tunPlatform)
+	} else {
+		boxCtx = service.ContextWith[adapter.PlatformInterface](boxCtx, &platformInterfaceStub{})
 	}
 
 	boxOpts, err := eng.buildConfig(boxCtx, opts, listenHost, listenPort)
@@ -2475,6 +2485,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"rules":                 singRules,
 		"final":                 finalOutbound,
 		"auto_detect_interface": true,
+		"find_process":          true,
 	}
 }
 

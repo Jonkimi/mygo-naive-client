@@ -413,4 +413,41 @@ func TestInsights_TrendChartLayoutAndXAxis(t *testing.T) {
 	}
 }
 
+// Tests that Insights renders normalized parent app names instead of nested Helper names
+// or raw "Gateway" labels, and allows filtering query logs by application name.
+func TestInsights_SourceDisplaysNormalizedAppName(t *testing.T) {
+	a, tt, _ := newTestApp(t, []config.Service{})
+	a.activeTab = TabInsights
+	tt.Frame()
+
+	idChrome := a.blocker.Logger().RecordWithChain("api.openai.com", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> direct")
+	a.blocker.Logger().SetProcessByLogID(idChrome, "", "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/131.0.6778.86/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper")
+
+	idCurl := a.blocker.Logger().RecordWithChain("example.org", blocker.SourceGateway, blocker.VerdictAllowed, "", "final -> direct")
+	a.blocker.Logger().SetProcessByLogID(idCurl, "", "/usr/bin/curl")
+	tt.Frame()
+
+	if !tt.HasText("Google Chrome") || !tt.HasText("curl") {
+		t.Fatalf("expected Insights log to render 'Google Chrome' and 'curl', got texts: %v", tt.Texts())
+	}
+	if tt.HasText("Google Chrome Helper") {
+		t.Fatalf("did not expect raw helper name 'Google Chrome Helper' in Insights log, got texts: %v", tt.Texts())
+	}
+	if tt.HasText("Gateway") {
+		t.Fatalf("did not expect raw 'Gateway' label when process is known, got texts: %v", tt.Texts())
+	}
+
+	// Filtering by process name "chrome" should keep the Chrome query log row and hide the curl row
+	a.insightsSearch = "chrome"
+	tt.Frame()
+
+	if _, ok := tt.Find("btn-log-block-api.openai.com"); !ok {
+		t.Fatalf("expected Chrome query log row when searching 'chrome', got texts: %v", tt.Texts())
+	}
+	if _, ok := tt.Find("btn-log-block-example.org"); ok || tt.HasText("curl") {
+		t.Fatalf("did not expect curl query log row when searching 'chrome', got texts: %v", tt.Texts())
+	}
+}
+
+
 
