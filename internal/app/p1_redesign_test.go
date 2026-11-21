@@ -1,6 +1,8 @@
 package app
 
 import (
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -8,6 +10,8 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
+	"naive-client/internal/runner"
+	"naive-client/internal/warp"
 	"naive-client/locales"
 )
 
@@ -164,6 +168,7 @@ func TestP1Redesign_IdleFrameBudgetAndWidthsAndLocales(t *testing.T) {
 
 	for _, lang := range []string{locales.LangZhHans, locales.LangEn} {
 		a.state.Language = lang
+		a.applyLanguagePolicy()
 		for _, width := range []int{440, 900} {
 			tt.SetSize(width, 660)
 
@@ -197,14 +202,208 @@ func TestP1Redesign_IdleFrameBudgetAndWidthsAndLocales(t *testing.T) {
 			a.ruleEditor.open = false
 			tt.Frame()
 
-			// Cloudflare page idle check
+			// Cloudflare WARP & Tunnel subtabs idle check
 			a.activeTab = TabCloudflare
-			a.cloudflareSubTab = 0
-			tt.Frame()
-			tt.Advance(500 * time.Millisecond)
-			if tt.FramePending() {
-				t.Fatalf("idle Cloudflare page requested frames (lang=%s width=%d)", lang, width)
+			for sub := 0; sub <= 1; sub++ {
+				a.cloudflareSubTab = sub
+				tt.Frame()
+				tt.Advance(500 * time.Millisecond)
+				if tt.FramePending() {
+					t.Fatalf("idle Cloudflare subtab %d requested frames (lang=%s width=%d)", sub, lang, width)
+				}
 			}
 		}
+	}
+}
+
+func TestP1Redesign_CloudflareHTMLAlignment(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.state.Cloudflare.Account = warp.Account{
+		DeviceID:     "dev-html-123",
+		WGPrivateKey: "wg-priv-ok",
+		IPv4:         "172.16.0.2/32",
+		IPv6:         "2606:4700:110::2/128",
+	}
+	a.saveState()
+
+	tt.Key(ui.Cmd, ui.Key5)
+	tt.Frame()
+	if a.activeTab != TabCloudflare {
+		t.Fatalf("expected TabCloudflare, got %v", a.activeTab)
+	}
+
+	cat := a.catalog()
+
+	// 1. Whole Device ID cell copies device ID cleanly
+	if err := tt.Click("btn-copy-warp-device-id"); err != nil {
+		t.Fatalf("click btn-copy-warp-device-id: %v", err)
+	}
+	tt.Frame()
+	if a.clipboardMem != "dev-html-123" {
+		t.Fatalf("expected clipboard = dev-html-123, got %q", a.clipboardMem)
+	}
+	if !tt.HasText(cat.CloudflareWarpToastCopiedDeviceID()) {
+		t.Fatalf("expected copied toast %q", cat.CloudflareWarpToastCopiedDeviceID())
+	}
+
+	// 2. Side-by-side Direct & Chained transport switches operate independently
+	if err := tt.Click(cat.CloudflareWarpTransportWireGuard()); err != nil {
+		t.Fatalf("click direct WireGuard: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("btn-warp-chained-masque"); err != nil {
+		t.Fatalf("click chained MASQUE: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.DefaultMode != warp.ModeWireGuard || a.state.Cloudflare.ChainedMode != warp.ModeMASQUE {
+		t.Fatalf("expected independent Direct=wireguard Chained=masque, got direct=%s chained=%s",
+			a.state.Cloudflare.DefaultMode, a.state.Cloudflare.ChainedMode)
+	}
+
+	// 3. Switch to Tunnel subtab and verify unified card controls
+	if err := tt.Click(cat.CloudflareSubtabTunnel()); err != nil {
+		t.Fatalf("click CloudflareSubtabTunnel: %v", err)
+	}
+	tt.Frame()
+	if a.cloudflareSubTab != 1 {
+		t.Fatalf("expected cloudflareSubTab = 1, got %d", a.cloudflareSubTab)
+	}
+
+	if err := tt.Click(cat.CloudflareTunnelEnable()); err != nil {
+		t.Fatalf("click CloudflareTunnelEnable: %v", err)
+	}
+	tt.Frame()
+	if !a.state.Cloudflare.Tunnel.Enabled {
+		t.Fatalf("expected Tunnel.Enabled = true")
+	}
+
+	if err := tt.Click("QUIC"); err != nil {
+		t.Fatalf("click QUIC protocol: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.Tunnel.Protocol != "quic" {
+		t.Fatalf("expected Tunnel.Protocol = quic, got %q", a.state.Cloudflare.Tunnel.Protocol)
+	}
+	if err := tt.Click("HTTP/2"); err != nil {
+		t.Fatalf("click HTTP/2 protocol: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.Tunnel.Protocol != "http2" {
+		t.Fatalf("expected Tunnel.Protocol = http2, got %q", a.state.Cloudflare.Tunnel.Protocol)
+	}
+
+	if err := tt.Click(cat.CloudflareTunnelPostQuantum()); err != nil {
+		t.Fatalf("click CloudflareTunnelPostQuantum: %v", err)
+	}
+	tt.Frame()
+	if !a.state.Cloudflare.Tunnel.PostQuantum {
+		t.Fatalf("expected Tunnel.PostQuantum = true")
+	}
+}
+
+// Regression: ButtonBase defaults to centered flex alignment, which centered scan candidates
+// and attached WARP node rows instead of stretching edge-to-edge, while raw H3/H2 protocol
+// strings, duplicate "→ WARP" suffixes, "warp://auto", and un-unified latency formatting
+// diverged from the design system.
+func TestP1Redesign_CloudflareScanAndAttachedNodesAlignmentAndContent(t *testing.T) {
+	chainedSvc := config.Service{
+		ID:         "cf-sg-warp",
+		Name:       "SG-Xray-WARP",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSingBox,
+		Server:     "sg.example.com",
+		ServerPort: 443,
+		UUID:       "11111111-2222-3333-4444-555555555555",
+		EnableWARP: true,
+	}
+	a, tt, _ := newTestApp(t, []config.Service{chainedSvc})
+	a.warpRegistering = true
+	a.setCnDirectWarpEnabled(true)
+
+	// Mark built-in WARP running with timeout error, and chained node healthy at 48ms.
+	a.mgr.SetStatusForTest(config.BuiltinWarpServiceID, runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "warp server (162.159.198.2:443) connection failed: i/o timeout",
+	})
+	a.mgr.SetStatusForTest(chainedSvc.ID, runner.Status{
+		State:   runner.StateRunning,
+		Latency: 48 * time.Millisecond,
+	})
+
+	a.warpScanResults = []warp.EndpointCandidateResult{
+		{Endpoint: "162.159.193.5:2408", Protocol: "wireguard", RTT: 34 * time.Millisecond, LossRate: 0},
+		{Endpoint: "162.159.198.2:443", Protocol: "h3", RTT: 41 * time.Millisecond, LossRate: 0.02},
+		{Endpoint: "188.114.97.3:443", Protocol: "h2", RTT: 55 * time.Millisecond, LossRate: 0.05},
+	}
+
+	tt.SetSize(900, 660)
+	a.activeTab = TabCloudflare
+	a.cloudflareSubTab = 0
+	tt.Frame()
+
+	// 1. Verify scan result data formatting
+	for _, want := range []string{"WireGuard", "MASQUE H3", "MASQUE H2", "34 ms", "41 ms", "55 ms"} {
+		if !tt.HasText(want) {
+			t.Fatalf("expected scan results to contain %q, got texts: %v", want, tt.Texts())
+		}
+	}
+
+	// 2. Verify attached nodes data content & clean metadata (no duplicate "→ WARP" or "warp://auto")
+	cat := a.catalog()
+	for _, want := range []string{"48 ms", "sg.example.com:443", "Built-in", cat.StatusUnhealthy(), cat.WarpServerUnreachablePill()} {
+		if !tt.HasText(want) {
+			t.Fatalf("expected attached WARP nodes to display %q, got texts: %v", want, tt.Texts())
+		}
+	}
+	for _, txt := range tt.Texts() {
+		if strings.Contains(txt, "→ WARP") {
+			t.Fatalf("unexpected duplicate '→ WARP' suffix in Cloudflare attached node metadata: %q", txt)
+		}
+		if strings.Contains(txt, "warp://auto") {
+			t.Fatalf("unexpected 'warp://auto' in Cloudflare attached node metadata: %q", txt)
+		}
+	}
+
+	// 3. Verify scan rows stretch edge-to-edge and align vertically across columns on 900x660
+	ep1, ok := tt.Find("162.159.193.5:2408")
+	if !ok || ep1.X >= 300 {
+		t.Fatalf("expected scan endpoint flush-left (X < 300), got ok=%v rect=%+v", ok, ep1)
+	}
+	rtt1, ok1 := tt.Find("34 ms")
+	rtt2, ok2 := tt.Find("41 ms")
+	if !ok1 || !ok2 {
+		t.Fatalf("missing scan RTT rects: ok1=%v ok2=%v", ok1, ok2)
+	}
+	if rtt1.X+rtt1.W <= 780 {
+		t.Fatalf("expected scan RTT flush-right (X+W > 780), got rect=%+v", rtt1)
+	}
+	if diff := math.Abs(float64((rtt1.X + rtt1.W) - (rtt2.X + rtt2.W))); diff > 1 {
+		t.Fatalf("expected scan RTT right edges aligned within 1px, diff=%.2f (%+v vs %+v)", diff, rtt1, rtt2)
+	}
+	loss1, okL1 := tt.Find("0% loss")
+	loss2, okL2 := tt.Find("2% loss")
+	if !okL1 || !okL2 {
+		t.Fatalf("missing scan loss rects: okL1=%v okL2=%v", okL1, okL2)
+	}
+	if diff := math.Abs(float64((loss1.X + loss1.W) - (loss2.X + loss2.W))); diff > 1 {
+		t.Fatalf("expected scan loss right edges aligned within 1px, diff=%.2f (%+v vs %+v)", diff, loss1, loss2)
+	}
+	pH3, okP1 := tt.Find("MASQUE H3")
+	pH2, okP2 := tt.Find("MASQUE H2")
+	if !okP1 || !okP2 {
+		t.Fatalf("missing scan protocol rects: okP1=%v okP2=%v", okP1, okP2)
+	}
+	if diff := math.Abs(float64((pH3.X + pH3.W) - (pH2.X + pH2.W))); diff > 1 {
+		t.Fatalf("expected scan protocol right edges aligned within 1px, diff=%.2f (%+v vs %+v)", diff, pH3, pH2)
+	}
+
+	// 4. Verify attached WARP node rows stretch edge-to-edge on 900x660
+	nameRect, okName := tt.Find("SG-Xray-WARP")
+	if !okName || nameRect.X >= 300 {
+		t.Fatalf("expected attached node name flush-left (X < 300), got ok=%v rect=%+v", okName, nameRect)
+	}
+	latRect, okLat := tt.Find("48 ms")
+	if !okLat || latRect.X <= 700 {
+		t.Fatalf("expected attached node latency aligned right (X > 700), got ok=%v rect=%+v", okLat, latRect)
 	}
 }

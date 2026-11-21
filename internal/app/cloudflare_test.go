@@ -992,7 +992,7 @@ func TestCloudflarePage_ProgressiveDisclosureAndAttachedNodeDrawer(t *testing.T)
 	if !tt.HasText(cat.CloudflareWarpTransportWireGuardSummary()) {
 		t.Fatalf("expected WireGuard chained summary initially")
 	}
-	if err := tt.Click("MASQUE"); err != nil {
+	if err := tt.Click("btn-warp-chained-masque"); err != nil {
 		t.Fatalf("click chained MASQUE segment: %v", err)
 	}
 	tt.Frame()

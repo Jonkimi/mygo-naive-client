@@ -5478,21 +5478,21 @@ func (msgs Messages) CloudflarePageDesc() string {
 	return Catalog.Format(msgs.locale, "cloudflarePageDesc", nil)
 }
 
-// CloudflareSubtabWarp says "WARP Egress Anonymity"
+// CloudflareSubtabWarp says "WARP Egress"
 // in the language the app shows.
 func CloudflareSubtabWarp() string { return In(i18n.Locale()).CloudflareSubtabWarp() }
 
-// CloudflareSubtabWarp says "WARP Egress Anonymity"
+// CloudflareSubtabWarp says "WARP Egress"
 // in the language of msgs.
 func (msgs Messages) CloudflareSubtabWarp() string {
 	return Catalog.Format(msgs.locale, "cloudflareSubtabWarp", nil)
 }
 
-// CloudflareSubtabTunnel says "Tunnel Ingress Penetration"
+// CloudflareSubtabTunnel says "Zero Trust Tunnel"
 // in the language the app shows.
 func CloudflareSubtabTunnel() string { return In(i18n.Locale()).CloudflareSubtabTunnel() }
 
-// CloudflareSubtabTunnel says "Tunnel Ingress Penetration"
+// CloudflareSubtabTunnel says "Zero Trust Tunnel"
 // in the language of msgs.
 func (msgs Messages) CloudflareSubtabTunnel() string {
 	return Catalog.Format(msgs.locale, "cloudflareSubtabTunnel", nil)
@@ -5598,6 +5598,38 @@ func CloudflareWarpMetricDevice() string { return In(i18n.Locale()).CloudflareWa
 // in the language of msgs.
 func (msgs Messages) CloudflareWarpMetricDevice() string {
 	return Catalog.Format(msgs.locale, "cloudflareWarpMetricDevice", nil)
+}
+
+// CloudflareWarpMetricDeviceCopy says "Device ID (click to copy)"
+// in the language the app shows.
+func CloudflareWarpMetricDeviceCopy() string {
+	return In(i18n.Locale()).CloudflareWarpMetricDeviceCopy()
+}
+
+// CloudflareWarpMetricDeviceCopy says "Device ID (click to copy)"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpMetricDeviceCopy() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpMetricDeviceCopy", nil)
+}
+
+// CloudflareWarpMetricIPv4 says "Virtual IPv4"
+// in the language the app shows.
+func CloudflareWarpMetricIPv4() string { return In(i18n.Locale()).CloudflareWarpMetricIPv4() }
+
+// CloudflareWarpMetricIPv4 says "Virtual IPv4"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpMetricIPv4() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpMetricIPv4", nil)
+}
+
+// CloudflareWarpMetricIPv6 says "Virtual IPv6"
+// in the language the app shows.
+func CloudflareWarpMetricIPv6() string { return In(i18n.Locale()).CloudflareWarpMetricIPv6() }
+
+// CloudflareWarpMetricIPv6 says "Virtual IPv6"
+// in the language of msgs.
+func (msgs Messages) CloudflareWarpMetricIPv6() string {
+	return Catalog.Format(msgs.locale, "cloudflareWarpMetricIPv6", nil)
 }
 
 // CloudflareWarpFreeTierBadge says "Free"
