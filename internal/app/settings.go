@@ -13,6 +13,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"naive-client/internal/blocker"
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/tailnet"
@@ -566,6 +567,16 @@ func (a *app) loadState() {
 			}
 		}
 	}
+	normAllow, allowChanged := normalizeUserDomainList(st.BlockerAllowlist)
+	if allowChanged {
+		st.BlockerAllowlist = normAllow
+		needsResave = true
+	}
+	normDeny, denyChanged := normalizeUserDomainList(st.BlockerDenylist)
+	if denyChanged {
+		st.BlockerDenylist = normDeny
+		needsResave = true
+	}
 	a.gatewayMu.Lock()
 	a.state = st
 	a.gatewayMu.Unlock()
@@ -582,6 +593,32 @@ func (a *app) loadState() {
 	}
 }
 
+func normalizeUserDomainList(raw []string) ([]string, bool) {
+	if len(raw) == 0 {
+		return raw, false
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	changed := false
+	for _, entry := range raw {
+		norm := blocker.NormalizeUserDomain(entry)
+		if norm == "" {
+			changed = true
+			continue
+		}
+		if norm != entry {
+			changed = true
+		}
+		if seen[norm] {
+			changed = true
+			continue
+		}
+		seen[norm] = true
+		out = append(out, norm)
+	}
+	return out, changed
+}
+
 func (a *app) snapshotPersistedStateLocked() (PersistedState, uint64) {
 	a.stateRev++
 	snap := a.state
@@ -590,6 +627,9 @@ func (a *app) snapshotPersistedStateLocked() (PersistedState, uint64) {
 	snap.RoutingRules = cloneRoutingRules(a.state.RoutingRules)
 	snap.RoutingFinal = cloneRouteAction(a.state.RoutingFinal)
 	snap.SystemProxyBypass = append([]string(nil), a.state.SystemProxyBypass...)
+	snap.BlockerAllowlist = append([]string(nil), a.state.BlockerAllowlist...)
+	snap.BlockerDenylist = append([]string(nil), a.state.BlockerDenylist...)
+	snap.BlockerSubscriptions = append([]string(nil), a.state.BlockerSubscriptions...)
 	return snap, a.stateRev
 }
 

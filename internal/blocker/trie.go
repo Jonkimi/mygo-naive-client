@@ -1,6 +1,8 @@
 package blocker
 
 import (
+	"net"
+	"net/url"
 	"strings"
 )
 
@@ -100,6 +102,48 @@ func (t *SuffixTrie) Count() int {
 
 func normalizeDomain(domain string) string {
 	return strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+}
+
+// NormalizeUserDomain normalizes a user-supplied allowlist or denylist entry
+// (domains, *.wildcards, URLs, host:port, AdGuard ||domain^, or IPs).
+func NormalizeUserDomain(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "@@||") {
+		s = strings.TrimPrefix(s, "@@||")
+	} else if strings.HasPrefix(s, "||") {
+		s = strings.TrimPrefix(s, "||")
+	}
+	if idx := strings.IndexAny(s, "^$"); idx >= 0 {
+		s = s[:idx]
+	}
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil && u.Hostname() != "" {
+			s = u.Hostname()
+		} else {
+			return ""
+		}
+	} else if idx := strings.Index(s, "/"); idx >= 0 {
+		s = s[:idx]
+	}
+	if host, _, err := net.SplitHostPort(s); err == nil && host != "" {
+		s = host
+	}
+	s = strings.TrimPrefix(s, "[")
+	s = strings.TrimSuffix(s, "]")
+	for strings.HasPrefix(s, "*.") {
+		s = strings.TrimPrefix(s, "*.")
+	}
+	s = strings.Trim(strings.ToLower(strings.TrimSpace(s)), ".")
+	if s == "" || s == "*" || strings.ContainsAny(s, " \t\r\n*?/") {
+		return ""
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.String()
+	}
+	return s
 }
 
 // ExactMap holds domain rules requiring exact string equality with uint16 interned rule IDs.

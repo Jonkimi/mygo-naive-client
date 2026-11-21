@@ -1,6 +1,7 @@
 package blocker
 
 import (
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -172,7 +173,7 @@ func (e *Engine) SwapRuleset(parsed *ParsedRules) {
 
 // AddAllowlist adds a domain to the user allowlist.
 func (e *Engine) AddAllowlist(domain string) {
-	d := normalizeDomain(domain)
+	d := NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
@@ -184,12 +185,26 @@ func (e *Engine) AddAllowlist(domain string) {
 
 // RemoveAllowlist removes a domain from the user allowlist.
 func (e *Engine) RemoveAllowlist(domain string) {
-	d := normalizeDomain(domain)
+	d := NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
 	e.allowMu.Lock()
 	delete(e.userAllow, d)
+	e.allowMu.Unlock()
+	e.notifyUpdate()
+}
+
+// SetAllowlist replaces the user allowlist with the provided domains.
+func (e *Engine) SetAllowlist(domains []string) {
+	next := make(map[string]bool, len(domains))
+	for _, domain := range domains {
+		if d := NormalizeUserDomain(domain); d != "" {
+			next[d] = true
+		}
+	}
+	e.allowMu.Lock()
+	e.userAllow = next
 	e.allowMu.Unlock()
 	e.notifyUpdate()
 }
@@ -207,7 +222,7 @@ func (e *Engine) GetAllowlist() []string {
 
 // AddDenylist adds a domain to the user denylist.
 func (e *Engine) AddDenylist(domain string) {
-	d := normalizeDomain(domain)
+	d := NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
@@ -219,12 +234,26 @@ func (e *Engine) AddDenylist(domain string) {
 
 // RemoveDenylist removes a domain from the user denylist.
 func (e *Engine) RemoveDenylist(domain string) {
-	d := normalizeDomain(domain)
+	d := NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
 	e.denyMu.Lock()
 	delete(e.userDeny, d)
+	e.denyMu.Unlock()
+	e.notifyUpdate()
+}
+
+// SetDenylist replaces the user denylist with the provided domains.
+func (e *Engine) SetDenylist(domains []string) {
+	next := make(map[string]bool, len(domains))
+	for _, domain := range domains {
+		if d := NormalizeUserDomain(domain); d != "" {
+			next[d] = true
+		}
+	}
+	e.denyMu.Lock()
+	e.userDeny = next
 	e.denyMu.Unlock()
 	e.notifyUpdate()
 }
@@ -244,6 +273,9 @@ func (e *Engine) matchesUserMap(m map[string]bool, domain string) bool {
 	if m[domain] {
 		return true
 	}
+	if net.ParseIP(domain) != nil {
+		return false
+	}
 	// Check parent suffix: e.g. "sub.example.com" matches "example.com"
 	parts := strings.Split(domain, ".")
 	for i := 1; i < len(parts); i++ {
@@ -258,8 +290,8 @@ func (e *Engine) matchesUserMap(m map[string]bool, domain string) bool {
 // Match evaluates a domain against the 5-tier strict priority:
 // 1. Tailnet (*.ts.net)
 // 2. User Allowlist
-// 3. Subscription Exemptions (@@||)
-// 4. User Denylist
+// 3. User Denylist
+// 4. Subscription Exemptions (@@||)
 // 5. External Subscriptions & Built-in Rules
 func (e *Engine) Match(domain string) (blocked bool, rule string) {
 	blocked, rule, _ = e.Evaluate(domain)
@@ -299,9 +331,17 @@ func (e *Engine) Evaluate(domain string) (blocked bool, rule string, verdict Ver
 		return false, RuleUserAllowlist, VerdictWhitelisted
 	}
 
+	// 3. User Denylist (user-configured rules override external subscriptions)
+	e.denyMu.RLock()
+	inDeny := e.matchesUserMap(e.userDeny, d)
+	e.denyMu.RUnlock()
+	if inDeny {
+		return true, RuleUserDenylist, VerdictBlocked
+	}
+
 	rs := e.ruleset.Load()
 
-	// 3. Subscription Exemption (@@||)
+	// 4. Subscription Exemption (@@||)
 	if rs != nil && rs.ExemptTrie != nil {
 		if matched, r := rs.ExemptTrie.Match(d); matched {
 			if r == "" {
@@ -309,14 +349,6 @@ func (e *Engine) Evaluate(domain string) (blocked bool, rule string, verdict Ver
 			}
 			return false, r, VerdictWhitelisted
 		}
-	}
-
-	// 4. User Denylist
-	e.denyMu.RLock()
-	inDeny := e.matchesUserMap(e.userDeny, d)
-	e.denyMu.RUnlock()
-	if inDeny {
-		return true, RuleUserDenylist, VerdictBlocked
 	}
 
 	// 5. External Subscriptions & Built-in Rules

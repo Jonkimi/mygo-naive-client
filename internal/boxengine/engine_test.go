@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -891,13 +892,54 @@ func TestEngine_TailnetEmbeddedMode_Config(t *testing.T) {
 }
 
 // Tests that Blocker dynamically blocks/allows domains at runtime and flushes sing-box DNS cache.
+// Regression: createBoxContext previously did not install a default service registry, so box.New
+// registered DNSRouter in a child context and eng.ClearDNSCache() always saw dnsRouter == nil.
 func TestEngine_DynamicDenylistAndClearDNSCache(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp dns: %v", err)
+	}
+	defer pc.Close()
+
+	var upstreamHits atomic.Int32
+	srvDone := make(chan struct{})
+	go func() {
+		defer close(srvDone)
+		buf := make([]byte, 2048)
+		for {
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var req dns.Msg
+			if err := req.Unpack(buf[:n]); err != nil || len(req.Question) == 0 {
+				continue
+			}
+			upstreamHits.Add(1)
+			resp := new(dns.Msg)
+			resp.SetReply(&req)
+			resp.Answer = append(resp.Answer, &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   req.Question[0].Name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    300,
+				},
+				A: net.ParseIP("93.184.216.34"),
+			})
+			if packed, err := resp.Pack(); err == nil {
+				_, _ = pc.WriteTo(packed, addr)
+			}
+		}
+	}()
+
 	bl := blocker.NewEngine(blocker.Options{})
 
 	opts := EngineOptions{
 		ListenAddr:  "127.0.0.1:0",
 		Blocker:     bl,
 		FinalAction: "direct",
+		DomesticDoH: []string{pc.LocalAddr().String()},
 	}
 
 	eng, err := New(opts)
@@ -909,20 +951,72 @@ func TestEngine_DynamicDenylistAndClearDNSCache(t *testing.T) {
 	}
 	defer func() {
 		_ = eng.Close()
+		_ = pc.Close()
+		<-srvDone
 	}()
 
-	// Verify ClearDNSCache does not panic
-	eng.ClearDNSCache()
+	if service.FromContext[adapter.DNSRouter](eng.boxCtx) == nil {
+		t.Fatalf("expected adapter.DNSRouter registered on eng.boxCtx")
+	}
 
-	// 1. Dynamic AddDenylist triggers onUpdate and blocks domain
+	queryA := func(name string) string {
+		msg := new(dns.Msg)
+		msg.SetQuestion(name, dns.TypeA)
+		raw, err := msg.Pack()
+		if err != nil {
+			t.Fatalf("pack dns: %v", err)
+		}
+		writer := &testPacketWriter{done: make(chan struct{})}
+		eng.box.Router().HijackDNSPacket(context.Background(), raw, writer, adapter.InboundContext{})
+		select {
+		case <-writer.done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for DNS response for %s", name)
+		}
+		var resp dns.Msg
+		if err := resp.Unpack(writer.payload); err != nil {
+			t.Fatalf("unpack dns: %v", err)
+		}
+		if len(resp.Answer) == 0 {
+			t.Fatalf("expected DNS answer for %s, got rcode=%d", name, resp.Rcode)
+		}
+		ansA, ok := resp.Answer[0].(*dns.A)
+		if !ok {
+			t.Fatalf("expected A record, got %T", resp.Answer[0])
+		}
+		return ansA.A.String()
+	}
+
+	// 1. First query populates sing-box DNS cache from upstream
+	if ip := queryA("dynamic-ads.org."); ip != "93.184.216.34" {
+		t.Fatalf("expected initial DNS answer 93.184.216.34, got %s", ip)
+	}
+	if hits := upstreamHits.Load(); hits != 1 {
+		t.Fatalf("expected 1 upstream DNS hit, got %d", hits)
+	}
+	// Second query should hit sing-box cache
+	if ip := queryA("dynamic-ads.org."); ip != "93.184.216.34" {
+		t.Fatalf("expected cached DNS answer 93.184.216.34, got %s", ip)
+	}
+	if hits := upstreamHits.Load(); hits != 1 {
+		t.Fatalf("expected cache hit (still 1 upstream hit), got %d", hits)
+	}
+
+	// 2. Dynamic AddDenylist triggers onUpdate -> eng.ClearDNSCache(), so next query is blocked as 0.0.0.0
 	bl.AddDenylist("dynamic-ads.org")
+	if ip := queryA("dynamic-ads.org."); ip != "0.0.0.0" {
+		t.Fatalf("expected blocked DNS answer 0.0.0.0 after AddDenylist cleared cache, got %s", ip)
+	}
 	matchBlocked, rule := bl.AsGateway().Match("dynamic-ads.org")
 	if !matchBlocked || rule != blocker.RuleUserDenylist {
 		t.Fatalf("expected dynamic-ads.org to be blocked by user-denylist, got %v (%s)", matchBlocked, rule)
 	}
 
-	// 2. Dynamic AddAllowlist unblocks domain immediately
+	// 3. Dynamic AddAllowlist clears the cached 0.0.0.0 and unblocks domain immediately
 	bl.AddAllowlist("dynamic-ads.org")
+	if ip := queryA("dynamic-ads.org."); ip != "93.184.216.34" {
+		t.Fatalf("expected restored DNS answer 93.184.216.34 after AddAllowlist, got %s", ip)
+	}
 	matchBlocked2, _ := bl.AsGateway().Match("dynamic-ads.org")
 	if matchBlocked2 {
 		t.Fatalf("expected dynamic-ads.org to be allowed after AddAllowlist")

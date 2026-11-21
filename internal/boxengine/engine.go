@@ -419,6 +419,9 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 		}
 	}
 
+	// Pre-install the service registry on boxCtx so box.New registers DNSRouter and other
+	// core services into the same context that ClearDNSCache queries later.
+	ctx = service.ContextWithDefaultRegistry(ctx)
 	return box.Context(
 		ctx,
 		include.InboundRegistry(),
@@ -2562,9 +2565,10 @@ func (e *Engine) TailscaleEndpoint() adapter.TailscaleEndpoint {
 // ClearDNSCache clears sing-box internal DNS cache (memory LRU and persistent store).
 func (e *Engine) ClearDNSCache() {
 	e.mu.RLock()
+	b := e.box
 	boxCtx := e.boxCtx
 	e.mu.RUnlock()
-	if boxCtx == nil {
+	if b == nil || boxCtx == nil {
 		return
 	}
 	dnsRouter := service.FromContext[adapter.DNSRouter](boxCtx)

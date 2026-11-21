@@ -636,12 +636,13 @@ func (a *app) renderInsightsManageRulesDrawer(c *ui.Context, p palette) {
 						ui.Text(c, cat.InsightsAllowlistDesc()).FontSize(11).TextColor(p.textMuted)
 
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.TextInput(c.Key("input-add-allowlist"), &a.blockerAllowlistInput).
+							allowInp := ui.TextInput(c.Key("input-add-allowlist"), &a.blockerAllowlistInput).
 								Placeholder(cat.InsightsAllowlistPlaceholder()).
 								FontSize(12).Grow(1)
 
-							if primaryPillButton(c.Key("btn-add-allowlist"), p, nil, cat.InsightsActionAdd(), p.accent, false).
-								Label("btn-add-allowlist").Height(30).Clicked() {
+							allowClicked := primaryPillButton(c.Key("btn-add-allowlist"), p, nil, cat.InsightsActionAdd(), p.accent, false).
+								Label("btn-add-allowlist").Height(30).Clicked()
+							if allowClicked || allowInp.Submitted() {
 								if d := strings.TrimSpace(a.blockerAllowlistInput); d != "" {
 									a.addBlockerAllowlist(d)
 									a.blockerAllowlistInput = ""
@@ -684,12 +685,13 @@ func (a *app) renderInsightsManageRulesDrawer(c *ui.Context, p palette) {
 						ui.Text(c, cat.InsightsDenylistDesc()).FontSize(11).TextColor(p.textMuted)
 
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.TextInput(c.Key("input-add-denylist"), &a.blockerDenylistInput).
+							denyInp := ui.TextInput(c.Key("input-add-denylist"), &a.blockerDenylistInput).
 								Placeholder(cat.InsightsDenylistPlaceholder()).
 								FontSize(12).Grow(1)
 
-							if primaryPillButton(c.Key("btn-add-denylist"), p, nil, cat.InsightsActionDenylist(), p.red, false).
-								Label("btn-add-denylist").Height(30).Clicked() {
+							denyClicked := primaryPillButton(c.Key("btn-add-denylist"), p, nil, cat.InsightsActionDenylist(), p.red, false).
+								Label("btn-add-denylist").Height(30).Clicked()
+							if denyClicked || denyInp.Submitted() {
 								if d := strings.TrimSpace(a.blockerDenylistInput); d != "" {
 									a.addBlockerDenylist(d)
 									a.blockerDenylistInput = ""

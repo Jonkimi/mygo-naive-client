@@ -3891,9 +3891,12 @@ func (a *app) blockerAsGateway() blocker.Blocker {
 }
 
 func (a *app) blockerMatchesAllowlist(domain string) bool {
-	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	domain = blocker.NormalizeUserDomain(domain)
+	if domain == "" {
+		return false
+	}
 	for _, d := range a.state.BlockerAllowlist {
-		if strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".") == domain {
+		if blocker.NormalizeUserDomain(d) == domain {
 			return true
 		}
 	}
@@ -3901,9 +3904,12 @@ func (a *app) blockerMatchesAllowlist(domain string) bool {
 }
 
 func (a *app) blockerMatchesDenylist(domain string) bool {
-	domain = strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	domain = blocker.NormalizeUserDomain(domain)
+	if domain == "" {
+		return false
+	}
 	for _, d := range a.state.BlockerDenylist {
-		if strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".") == domain {
+		if blocker.NormalizeUserDomain(d) == domain {
 			return true
 		}
 	}
@@ -3919,6 +3925,8 @@ func (a *app) syncBlocker() {
 		})
 	} else {
 		a.blocker.SetEnabled(a.state.BlockerEnabled)
+		a.blocker.SetAllowlist(a.state.BlockerAllowlist)
+		a.blocker.SetDenylist(a.state.BlockerDenylist)
 	}
 	a.syncBlockerRules()
 }
@@ -4021,7 +4029,7 @@ func (a *app) clearDNSCache() {
 }
 
 func (a *app) addBlockerAllowlist(domain string) {
-	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	d := blocker.NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
@@ -4052,7 +4060,7 @@ func (a *app) addBlockerAllowlist(domain string) {
 }
 
 func (a *app) removeBlockerAllowlist(domain string) {
-	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	d := blocker.NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
@@ -4072,7 +4080,7 @@ func (a *app) removeBlockerAllowlist(domain string) {
 }
 
 func (a *app) addBlockerDenylist(domain string) {
-	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	d := blocker.NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}
@@ -4103,7 +4111,7 @@ func (a *app) addBlockerDenylist(domain string) {
 }
 
 func (a *app) removeBlockerDenylist(domain string) {
-	d := strings.Trim(strings.ToLower(strings.TrimSpace(domain)), ".")
+	d := blocker.NormalizeUserDomain(domain)
 	if d == "" {
 		return
 	}

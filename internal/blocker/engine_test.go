@@ -6,7 +6,7 @@ import (
 )
 
 // Tests that Engine enforces the strict 5-tier matching priority:
-// Tailnet -> User Allowlist -> Subscription @@|| -> User Denylist -> Subscriptions/category-ads-all
+// Tailnet -> User Allowlist -> User Denylist -> Subscription @@|| -> Subscriptions/category-ads-all
 func TestEngine_StrictPriorityOrder(t *testing.T) {
 	subInput := `
 ||ads.tracking.com^
@@ -65,5 +65,61 @@ func TestEngine_StrictPriorityOrder(t *testing.T) {
 	// 6. External subscriptions & hosts format
 	if blocked, _ := engine.Match("hosts-bad.com"); !blocked {
 		t.Fatalf("expected hosts-bad.com to be blocked by hosts rule")
+	}
+
+	// 7. Regression: User Denylist must override external subscription @@|| exemptions
+	engine.AddDenylist("exempt.analytics.service.com")
+	if blocked, rule := engine.Match("exempt.analytics.service.com"); !blocked || rule != RuleUserDenylist {
+		t.Fatalf("expected User Denylist to override subscription @@|| exemption, got (%v, %q)", blocked, rule)
+	}
+}
+
+// Regression: User-supplied wildcards, URLs, host:port, and AdGuard rules in denylist/allowlist
+// previously failed to match because only leading/trailing dots were trimmed.
+func TestEngine_NormalizeUserDomainAndSetLists(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"*.example.com", "example.com"},
+		{".Sub.Example.COM.", "sub.example.com"},
+		{"https://ads.example.com:8443/banner.js?v=1", "ads.example.com"},
+		{"tracker.example.com/pixel", "tracker.example.com"},
+		{"host.example.com:443", "host.example.com"},
+		{"||adguard.example.com^$third-party", "adguard.example.com"},
+		{"1.2.3.4:8080", "1.2.3.4"},
+		{"[2001:db8::1]:443", "2001:db8::1"},
+		{"*", ""},
+		{"https://", ""},
+	}
+	for _, tc := range cases {
+		if got := NormalizeUserDomain(tc.in); got != tc.want {
+			t.Errorf("NormalizeUserDomain(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	engine := NewEngine(Options{})
+	engine.SetDenylist([]string{"*.wild.example", "https://url.example/track", "1.2.3.4"})
+	if blocked, rule := engine.Match("a.b.wild.example"); !blocked || rule != RuleUserDenylist {
+		t.Fatalf("expected a.b.wild.example blocked by normalized wildcard, got (%v, %q)", blocked, rule)
+	}
+	if blocked, _ := engine.Match("url.example"); !blocked {
+		t.Fatalf("expected url.example blocked by normalized URL")
+	}
+	if blocked, _ := engine.Match("1.2.3.4"); !blocked {
+		t.Fatalf("expected 1.2.3.4 blocked")
+	}
+	// IP addresses must not match via dot-suffix splitting
+	engine.SetDenylist([]string{"3.4"})
+	if blocked, _ := engine.Match("1.2.3.4"); blocked {
+		t.Fatalf("did not expect IP 1.2.3.4 to match suffix 3.4")
+	}
+	// SetDenylist replaces previous entries
+	engine.SetDenylist([]string{"only.example"})
+	if blocked, _ := engine.Match("1.2.3.4"); blocked {
+		t.Fatalf("expected SetDenylist to replace prior entries")
+	}
+	if blocked, _ := engine.Match("only.example"); !blocked {
+		t.Fatalf("expected only.example to be blocked after SetDenylist")
 	}
 }

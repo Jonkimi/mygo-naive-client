@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -446,6 +447,60 @@ func TestInsights_SourceDisplaysNormalizedAppName(t *testing.T) {
 	}
 	if _, ok := tt.Find("btn-log-block-example.org"); ok || tt.HasText("curl") {
 		t.Fatalf("did not expect curl query log row when searching 'chrome', got texts: %v", tt.Texts())
+	}
+}
+
+// Regression: newApp initialized a.blocker before loadState(), and syncBlocker() previously
+// skipped syncing BlockerDenylist/BlockerAllowlist when a.blocker != nil, leaving persisted
+// blacklists completely inactive after app restart. Wildcards and URLs also failed to match.
+func TestInsights_DenylistPersistedAcrossLoadStateAndFormats(t *testing.T) {
+	tmp := t.TempDir()
+	st := defaultPersistedState()
+	st.BlockerEnabled = true
+	st.BlockerDenylist = []string{"*.ads.example.com", "https://tracker.test:443/collect"}
+	st.BlockerAllowlist = []string{"allow.example.com"}
+
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "state.json"), raw, 0o600); err != nil {
+		t.Fatalf("write state.json: %v", err)
+	}
+
+	a := newApp(tmp)
+	a.loadState()
+
+	if blocked, rule := a.blocker.Match("sub.ads.example.com"); !blocked || rule != blocker.RuleUserDenylist {
+		t.Fatalf("expected persisted *.ads.example.com to block sub.ads.example.com after loadState, got (%v, %q)", blocked, rule)
+	}
+	if blocked, rule := a.blocker.Match("tracker.test"); !blocked || rule != blocker.RuleUserDenylist {
+		t.Fatalf("expected persisted URL tracker.test to block after loadState, got (%v, %q)", blocked, rule)
+	}
+	if blocked, _ := a.blocker.Match("sub.allow.example.com"); blocked {
+		t.Fatalf("expected persisted allowlist to remain allowed after loadState")
+	}
+	if !a.blockerMatchesDenylist("ads.example.com") || !a.blockerMatchesDenylist("tracker.test") {
+		t.Fatalf("expected state denylist normalized to [ads.example.com tracker.test], got %v", a.state.BlockerDenylist)
+	}
+
+	// Verify UI input normalization when adding wildcard/URL denylist entries
+	a2, tt2, _ := newTestApp(t, []config.Service{})
+	a2.activeTab = TabInsights
+	a2.insightsShowManageRules = true
+	tt2.Frame()
+
+	a2.blockerDenylistInput = "*.manual-bad.example"
+	if err := tt2.Click("btn-add-denylist"); err != nil {
+		t.Fatalf("click btn-add-denylist: %v", err)
+	}
+	tt2.Frame()
+
+	if blocked, rule := a2.blocker.Match("cdn.manual-bad.example"); !blocked || rule != blocker.RuleUserDenylist {
+		t.Fatalf("expected cdn.manual-bad.example blocked after adding *.manual-bad.example, got (%v, %q)", blocked, rule)
+	}
+	if !a2.blockerMatchesDenylist("manual-bad.example") {
+		t.Fatalf("expected manual-bad.example stored normalized in denylist, got %v", a2.state.BlockerDenylist)
 	}
 }
 
