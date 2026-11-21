@@ -74,6 +74,7 @@ type editorForm struct {
 	vmessSecIndex int // 0: tls, 1: none
 	sni           string
 	alpnInput     string
+	alpnHandle    ui.Handle
 	fingerprint   string
 	publicKey     string
 	shortID       string
@@ -714,6 +715,24 @@ func (a *app) syncEditorFieldsForProtocolSwitch(oldProto, newProto config.Protoc
 	}
 }
 
+func (a *app) renderALPNField(c *ui.Context, p palette, key string) {
+	cat := a.catalog()
+	options := []comboboxOption{
+		{Value: "", Label: cat.AlpnAutoOption()},
+		{Value: "http/1.1", Label: "http/1.1"},
+		{Value: "h2", Label: "h2"},
+		{Value: "h2, http/1.1", Label: "h2, http/1.1"},
+		{Value: "h3", Label: "h3"},
+		{Value: "h3, h2, http/1.1", Label: "h3, h2, http/1.1"},
+	}
+	labeledCombobox(
+		c, p, key,
+		cat.AlpnLabel(), cat.AlpnDropdownLabel(),
+		&a.editor.alpnInput, &a.editor.alpnHandle,
+		cat.AlpnPlaceholder(), options,
+	)
+}
+
 func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 	cat := a.catalog()
 	ui.Column(c).Gap(12).Children(func() {
@@ -838,6 +857,9 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 					labeledInput(c, p, "inp-vless-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
 				})
 			})
+			if a.editor.securityIndex == 0 { // TLS
+				a.renderALPNField(c, p, "inp-vless-alpn")
+			}
 
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
@@ -884,6 +906,7 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 						labeledInput(c, p, "inp-vmess-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
 					})
 				})
+				a.renderALPNField(c, p, "inp-vmess-alpn")
 			}
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
@@ -913,7 +936,7 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 			})
 			labeledInput(c, p, "inp-trojan-password", cat.PasswordLabel(), &a.editor.password, "password")
 			labeledInput(c, p, "inp-trojan-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-			labeledInput(c, p, "inp-trojan-alpn", cat.AlpnLabel(), &a.editor.alpnInput, "h2, http/1.1")
+			a.renderALPNField(c, p, "inp-trojan-alpn")
 
 		case config.ProtoShadowsocks:
 			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {

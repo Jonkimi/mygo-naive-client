@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/egoist/mygo/ui"
 )
 
@@ -225,6 +227,123 @@ func labeledInput(c *ui.Context, p palette, key, label string, value *string, pl
 		inp = ui.TextInput(c.Key(key), value).
 			Label(label).
 			Placeholder(placeholder)
+	})
+	return inp
+}
+
+type comboboxOption struct {
+	Value string
+	Label string
+}
+
+// labeledCombobox builds an editable text input with a dropdown list of preset
+// candidates. Clicking the field or trailing chevron opens all options; typing
+// filters options while still preserving custom comma-separated input on blur.
+func labeledCombobox(c *ui.Context, p palette, key, label, toggleLabel string, value *string, handle *ui.Handle, placeholder string, options []comboboxOption) ui.Element {
+	var inp ui.Element
+	ui.Column(c).Gap(5).Children(func() {
+		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.text)
+		ui.Column(c).Children(func() {
+			t := c.Theme()
+			cb := ui.ComboboxBase(c.Key(key), value)
+			inp = cb.Input
+
+			borderCol := t.Border
+			if handle != nil && handle.Focused(c) {
+				borderCol = t.Accent
+			} else if inp.Hovered() {
+				borderCol = p.textDim
+			}
+			inp.Label(label).
+				Placeholder(placeholder).
+				Padding(t.Space(1.5), t.Space(2.5)).
+				PaddingEnd(t.Space(7)).
+				Radius(t.Radius).
+				Background(t.Surface).
+				Border(1, borderCol)
+			if handle != nil {
+				inp.Bind(handle)
+			}
+
+			shown := options
+			if cb.Filtering() {
+				q := strings.ToLower(strings.TrimSpace(*value))
+				if q != "" {
+					var starts, contains []comboboxOption
+					for _, opt := range options {
+						if opt.Value == "" {
+							continue
+						}
+						lv := strings.ToLower(opt.Value)
+						switch {
+						case strings.HasPrefix(lv, q):
+							starts = append(starts, opt)
+						case strings.Contains(lv, q):
+							contains = append(contains, opt)
+						}
+					}
+					shown = append(starts, contains...)
+				}
+			}
+
+			cb.Popup(func(panel ui.Element) {
+				panel.Margin(4, 0, 0, 0).
+					Padding(4).
+					Radius(t.Radius+2).
+					Background(p.card).
+					Border(1, p.border).
+					Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18)).
+					Children(func() {
+						cur := strings.TrimSpace(*value)
+						for _, opt := range shown {
+							item := cb.Item(opt.Value).
+								PaddingX(10).PaddingY(6).
+								Radius(t.Radius)
+							isCurrent := opt.Value == cur
+							switch {
+							case item.Highlighted():
+								item.Background(p.accent).TextColor(t.AccentText)
+							case isCurrent:
+								item.Background(p.elevated)
+							}
+							item.Children(func() {
+								fg := p.text
+								if item.Highlighted() {
+									fg = t.AccentText
+								} else if opt.Value == "" {
+									fg = p.textMuted
+								}
+								ui.Text(c, opt.Label).FontSize(12).TextColor(fg).NoWrap()
+							})
+						}
+					})
+			})
+
+			chevIcon := iconChevronDown
+			if cb.Open() {
+				chevIcon = iconChevronUp
+			}
+			toggleBtn := ui.ButtonBase(c.Key(key+"-toggle")).
+				KeepFocus().
+				Absolute().Top(0).Bottom(0).Right(2).Width(26).
+				AlignItems(ui.Center).Justify(ui.Center).
+				Label(toggleLabel).
+				Children(func() {
+					ui.Icon(c, chevIcon).Size(12, 12).TextColor(p.textMuted)
+				})
+			if toggleBtn.Clicked() {
+				if cb.Open() {
+					cb.SetOpen(false)
+				} else {
+					inp.Focus()
+					cb.SetOpen(true)
+				}
+			}
+
+			if chosen, ok := cb.Chosen(); ok {
+				*value = chosen
+			}
+		})
 	})
 	return inp
 }

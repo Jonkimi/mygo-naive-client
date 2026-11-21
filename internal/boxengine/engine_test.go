@@ -1973,6 +1973,7 @@ func TestEngine_VMessWebSocket_E2E(t *testing.T) {
 				"tls": map[string]any{
 					"enabled":     true,
 					"server_name": "sni.test.local",
+					"alpn":        []string{"h2", "http/1.1"},
 					"certificate": []string{certPEM},
 					"key":         []string{keyPEM},
 				},
@@ -2025,6 +2026,7 @@ func TestEngine_VMessWebSocket_E2E(t *testing.T) {
 		UUID:        testUUID,
 		Security:    "tls",
 		SNI:         "sni.test.local",
+		ALPN:        []string{"h2"},
 		Fingerprint: "chrome",
 		Network:     "ws",
 		Path:        "/ws-test?ed=2048",

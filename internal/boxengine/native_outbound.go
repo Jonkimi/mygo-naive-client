@@ -204,8 +204,8 @@ func buildNativeTLS(svc config.Service, forceEnabled bool) map[string]any {
 	if serverName := svc.EffectiveTLSServerName(); serverName != "" {
 		tlsMap["server_name"] = serverName
 	}
-	if len(svc.ALPN) > 0 {
-		tlsMap["alpn"] = svc.ALPN
+	if alpn := effectiveNativeALPN(svc); len(alpn) > 0 {
+		tlsMap["alpn"] = alpn
 	}
 	if fp := strings.TrimSpace(svc.Fingerprint); fp != "" {
 		tlsMap["utls"] = map[string]any{
@@ -226,6 +226,30 @@ func buildNativeTLS(svc config.Service, forceEnabled bool) map[string]any {
 		tlsMap["reality"] = realityMap
 	}
 	return tlsMap
+}
+
+// effectiveNativeALPN filters out ALPN entries incompatible with HTTP/1.1-only
+// upgrade transports in sing-box (ws, httpupgrade). Links exported from v2rayN
+// commonly carry alpn=h2 or alpn=h2,http/1.1, which Xray ignores on WebSocket
+// but causes sing-box to negotiate HTTP/2 and fail the upgrade with EOF.
+func effectiveNativeALPN(svc config.Service) []string {
+	if len(svc.ALPN) == 0 {
+		return nil
+	}
+	netName := strings.ToLower(strings.TrimSpace(svc.Network))
+	if netName != "ws" && netName != "httpupgrade" {
+		return svc.ALPN
+	}
+	var filtered []string
+	for _, proto := range svc.ALPN {
+		p := strings.TrimSpace(proto)
+		lower := strings.ToLower(p)
+		if p == "" || lower == "h2" || lower == "h2c" || lower == "h3" || strings.HasPrefix(lower, "h3-") {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered
 }
 
 func buildNativeTransport(svc config.Service) map[string]any {

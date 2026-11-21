@@ -227,6 +227,7 @@ func TestVMessShareURIRoundTripAndNormalization(t *testing.T) {
 		"tls":  "TLS",
 		"sni":  "",
 		"alpn": "h2, http/1.1",
+		"fp":   "chrome",
 	}
 	b, _ := json.Marshal(vmessJSON)
 	svc, err := ParseImport("vmess://"+base64.StdEncoding.EncodeToString(b), 1086)
@@ -241,6 +242,20 @@ func TestVMessShareURIRoundTripAndNormalization(t *testing.T) {
 	}
 	if len(svc.ALPN) != 2 || svc.ALPN[0] != "h2" || svc.ALPN[1] != "http/1.1" {
 		t.Errorf("ALPN = %#v, want [h2 http/1.1]", svc.ALPN)
+	}
+	if svc.Fingerprint != "chrome" {
+		t.Errorf("Fingerprint = %q, want chrome", svc.Fingerprint)
+	}
+	if len(svc.Proxies) != 0 {
+		t.Errorf("expected empty Proxies on VMess import, got %#v", svc.Proxies)
+	}
+	reexported := svc.ShareURI()
+	reimported, err := ParseImport(reexported, 1086)
+	if err != nil {
+		t.Fatalf("re-import ShareURI failed: %v", err)
+	}
+	if len(reimported.ALPN) != 2 || reimported.ALPN[0] != "h2" || reimported.ALPN[1] != "http/1.1" || reimported.Fingerprint != "chrome" {
+		t.Errorf("round-trip ALPN/FP mismatch: alpn=%#v fp=%q", reimported.ALPN, reimported.Fingerprint)
 	}
 
 	// 2. Regression: gRPC ServiceName edited in UI must take precedence over stale Path on export,

@@ -3682,6 +3682,36 @@ func (msgs Messages) AlpnLabel() string {
 	return Catalog.Format(msgs.locale, "alpnLabel", nil)
 }
 
+// AlpnAutoOption says "Default (Auto)"
+// in the language the app shows.
+func AlpnAutoOption() string { return In(i18n.Locale()).AlpnAutoOption() }
+
+// AlpnAutoOption says "Default (Auto)"
+// in the language of msgs.
+func (msgs Messages) AlpnAutoOption() string {
+	return Catalog.Format(msgs.locale, "alpnAutoOption", nil)
+}
+
+// AlpnPlaceholder says "Select or type ALPN (e.g. http/1.1, h2)"
+// in the language the app shows.
+func AlpnPlaceholder() string { return In(i18n.Locale()).AlpnPlaceholder() }
+
+// AlpnPlaceholder says "Select or type ALPN (e.g. http/1.1, h2)"
+// in the language of msgs.
+func (msgs Messages) AlpnPlaceholder() string {
+	return Catalog.Format(msgs.locale, "alpnPlaceholder", nil)
+}
+
+// AlpnDropdownLabel says "ALPN candidates"
+// in the language the app shows.
+func AlpnDropdownLabel() string { return In(i18n.Locale()).AlpnDropdownLabel() }
+
+// AlpnDropdownLabel says "ALPN candidates"
+// in the language of msgs.
+func (msgs Messages) AlpnDropdownLabel() string {
+	return Catalog.Format(msgs.locale, "alpnDropdownLabel", nil)
+}
+
 // FingerprintLabel says "uTLS Fingerprint"
 // in the language the app shows.
 func FingerprintLabel() string { return In(i18n.Locale()).FingerprintLabel() }

@@ -168,6 +168,14 @@ func (s Service) vmessShareURI() string {
 		"tls":  tlsVal,
 		"sni":  strings.TrimSpace(s.SNI),
 	}
+	if tlsVal == "tls" {
+		if len(s.ALPN) > 0 {
+			m["alpn"] = strings.Join(s.ALPN, ",")
+		}
+		if fp := strings.TrimSpace(s.Fingerprint); fp != "" {
+			m["fp"] = fp
+		}
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return ""
@@ -860,6 +868,7 @@ type vmessRaw struct {
 	Tls  string `json:"tls"`
 	Sni  string `json:"sni"`
 	Alpn string `json:"alpn"`
+	Fp   string `json:"fp"`
 }
 
 func parseVMessImport(raw string, nextPort int) (Service, error) {
@@ -889,12 +898,13 @@ func parseVMessImport(raw string, nextPort int) (Service, error) {
 	}
 
 	svc := DefaultService("", nextPort)
+	svc.Proxies = nil
 	svc.Name = name
 	svc.Protocol = ProtoVMess
 	svc.Engine = EngineSingBox
-	svc.Server = data.Add
+	svc.Server = strings.TrimSpace(data.Add)
 	svc.ServerPort = port
-	svc.UUID = data.Id
+	svc.UUID = strings.TrimSpace(data.Id)
 	svc.Method = NormalizeVMessSecurity(data.Scy)
 	svc.Network = strings.ToLower(strings.TrimSpace(data.Net))
 	svc.Path = strings.TrimSpace(data.Path)
@@ -904,6 +914,7 @@ func parseVMessImport(raw string, nextPort int) (Service, error) {
 	svc.Host = strings.TrimSpace(data.Host)
 	svc.Security = strings.ToLower(strings.TrimSpace(data.Tls))
 	svc.SNI = strings.TrimSpace(data.Sni)
+	svc.Fingerprint = strings.TrimSpace(data.Fp)
 	if data.Alpn != "" {
 		svc.ALPN = cleanSlice(strings.Split(data.Alpn, ","))
 	}

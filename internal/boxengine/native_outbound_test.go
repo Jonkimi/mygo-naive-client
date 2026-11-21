@@ -286,4 +286,51 @@ func TestBuildNativeOutbound_VMessVariants(t *testing.T) {
 	if trMap["type"] != "httpupgrade" || trMap["path"] != "/up" || trMap["host"] != "up.example.com" {
 		t.Errorf("unexpected httpupgrade transport: %#v", trMap)
 	}
+
+	// Regression: v2rayN-exported WS/HTTPUpgrade nodes often carry ALPN=["h2"] or ["h2","http/1.1"].
+	// sing-box must not negotiate h2 over HTTP/1.1 upgrade transports (which causes immediate EOF).
+	wsH2Only := config.Service{
+		ID:         "vmess-ws-h2-alpn",
+		Protocol:   config.ProtoVMess,
+		Server:     "ws.example.com",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "tls",
+		ALPN:       []string{"h2"},
+		Network:    "ws",
+		Path:       "/ws",
+	}
+	ob = buildNativeOutbound(wsH2Only)
+	tlsMap = ob["tls"].(map[string]any)
+	if _, hasALPN := tlsMap["alpn"]; hasALPN {
+		t.Errorf("expected h2 ALPN to be omitted for ws so sing-box defaults to http/1.1, got %#v", tlsMap["alpn"])
+	}
+
+	wsMixedALPN := wsH2Only
+	wsMixedALPN.ALPN = []string{"h2", "http/1.1", "h3"}
+	ob = buildNativeOutbound(wsMixedALPN)
+	tlsMap = ob["tls"].(map[string]any)
+	alpn, ok := tlsMap["alpn"].([]string)
+	if !ok || len(alpn) != 1 || alpn[0] != "http/1.1" {
+		t.Errorf("expected ws ALPN to filter out h2/h3 leaving [http/1.1], got %#v", tlsMap["alpn"])
+	}
+
+	upgradeH2Only := wsH2Only
+	upgradeH2Only.Protocol = config.ProtoVLESS
+	upgradeH2Only.Network = "httpupgrade"
+	ob = buildNativeOutbound(upgradeH2Only)
+	tlsMap = ob["tls"].(map[string]any)
+	if _, hasALPN := tlsMap["alpn"]; hasALPN {
+		t.Errorf("expected h2 ALPN to be omitted for httpupgrade, got %#v", tlsMap["alpn"])
+	}
+
+	grpcH2 := wsH2Only
+	grpcH2.Network = "grpc"
+	grpcH2.ServiceName = "GunService"
+	ob = buildNativeOutbound(grpcH2)
+	tlsMap = ob["tls"].(map[string]any)
+	alpn, ok = tlsMap["alpn"].([]string)
+	if !ok || len(alpn) != 1 || alpn[0] != "h2" {
+		t.Errorf("expected grpc to preserve h2 ALPN, got %#v", tlsMap["alpn"])
+	}
 }

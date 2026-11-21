@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -471,5 +472,99 @@ func TestEditor_VMessSecurityNetworkAndProtocolSwitch(t *testing.T) {
 	tt.Frame()
 	if a.editor.method != "" {
 		t.Fatalf("expected SS method to be cleared when switching to VMess, got %q", a.editor.method)
+	}
+}
+
+func TestEditor_ALPNComboboxCandidates(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	cat := a.catalog()
+
+	vmessSvc := config.Service{
+		ID:         "vmess-alpn-ui",
+		Name:       "VMess-ALPN",
+		Protocol:   config.ProtoVMess,
+		Server:     "ws.example.com",
+		ServerPort: 443,
+		UUID:       "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		Security:   "tls",
+		ALPN:       []string{"h2"},
+		Network:    "ws",
+		Path:       "/ws",
+	}
+	a.state.Services = []config.Service{vmessSvc}
+	a.openEditServiceDialog(vmessSvc)
+	tt.Frame()
+	a.editor.scroll.Y = 160
+	tt.Frame()
+
+	// 1. Clicking the dropdown toggle opens preset ALPN candidates even before input focus.
+	if err := tt.Click(cat.AlpnDropdownLabel()); err != nil {
+		t.Fatalf("click ALPN dropdown toggle: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("http/1.1") || !tt.HasText("h2, http/1.1") || !tt.HasText(cat.AlpnAutoOption()) {
+		t.Fatalf("expected ALPN candidates in popup, got texts: %q", tt.Texts())
+	}
+
+	// 2. Picking a candidate updates alpnInput and closes the popup.
+	if err := tt.Click("http/1.1"); err != nil {
+		t.Fatalf("click http/1.1 candidate: %v", err)
+	}
+	tt.Frame()
+	if a.editor.alpnInput != "http/1.1" {
+		t.Fatalf("expected alpnInput='http/1.1', got %q", a.editor.alpnInput)
+	}
+	if tt.HasText("h2, http/1.1") {
+		t.Fatalf("expected ALPN popup to close after selection, still visible: %q", tt.Texts())
+	}
+
+	// 3. Reopening via toggle button and choosing Default (Auto) clears ALPN.
+	if err := tt.Click(cat.AlpnDropdownLabel()); err != nil {
+		t.Fatalf("reopen ALPN dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(cat.AlpnAutoOption()); err != nil {
+		t.Fatalf("click auto option: %v", err)
+	}
+	tt.Frame()
+	if a.editor.alpnInput != "" {
+		t.Fatalf("expected alpnInput cleared by auto option, got %q", a.editor.alpnInput)
+	}
+
+	// 4. Blur, then click the input field itself -> opens candidates; typing filters them and preserves custom text on blur.
+	tt.Key(0, ui.KeyTab)
+	tt.Frame()
+	toggleRect, ok := tt.Find(cat.AlpnDropdownLabel())
+	if !ok {
+		t.Fatalf("could not find ALPN dropdown toggle")
+	}
+	tt.ClickAt(toggleRect.X-40, toggleRect.Y+toggleRect.H/2)
+	tt.Frame()
+	if !tt.HasText("h3") {
+		t.Fatalf("expected clicking input to show all ALPN candidates, got: %q", tt.Texts())
+	}
+	tt.Type("h2")
+	tt.Frame()
+	texts := tt.Texts()
+	if !slices.Contains(texts, "h2") || !slices.Contains(texts, "h2, http/1.1") || !slices.Contains(texts, "h3, h2, http/1.1") {
+		t.Fatalf("expected filtered h2 candidates while typing 'h2', got: %q", texts)
+	}
+	if slices.Contains(texts, "h3") || slices.Contains(texts, "http/1.1") {
+		t.Fatalf("expected non-matching 'h3'/'http/1.1' candidates filtered out, got: %q", texts)
+	}
+	tt.Type(", custom/1")
+	tt.Key(0, ui.KeyEscape)
+	tt.Key(0, ui.KeyTab)
+	tt.Frame()
+	if a.editor.alpnInput != "h2, custom/1" {
+		t.Fatalf("expected custom ALPN input preserved on blur, got %q", a.editor.alpnInput)
+	}
+
+	built, err := a.buildServiceFromEditor()
+	if err != nil {
+		t.Fatalf("buildServiceFromEditor failed: %v", err)
+	}
+	if len(built.ALPN) != 2 || built.ALPN[0] != "h2" || built.ALPN[1] != "custom/1" {
+		t.Fatalf("expected saved ALPN [h2 custom/1], got %#v", built.ALPN)
 	}
 }
