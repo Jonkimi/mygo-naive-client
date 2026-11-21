@@ -648,10 +648,11 @@ func (a *app) syncBinaryPathAndVersion() {
 	if a.mgr != nil {
 		a.mgr.SetBinaryPath(binPath)
 	}
-	detected := updater.DetectLocalVersion(binPath)
+	var detected string
 	if a.state.InstalledNaiveTag != "" && strings.TrimSpace(a.state.CustomNaiveBinaryPath) == "" {
 		a.localVersion = a.state.InstalledNaiveTag
 	} else {
+		detected = updater.DetectLocalVersion(binPath)
 		a.localVersion = detected
 	}
 	if a.latestRelease != nil {
@@ -664,10 +665,11 @@ func (a *app) syncXrayBinaryPathAndVersion() {
 	if a.mgr != nil {
 		a.mgr.SetXrayBinaryPath(binPath)
 	}
-	detected := updater.DetectLocalXrayVersion(binPath)
+	var detected string
 	if a.state.InstalledXrayTag != "" && strings.TrimSpace(a.state.CustomXrayBinaryPath) == "" {
 		a.localXrayVersion = a.state.InstalledXrayTag
 	} else {
+		detected = updater.DetectLocalXrayVersion(binPath)
 		a.localXrayVersion = detected
 	}
 	if a.latestXrayRelease != nil {
@@ -1275,10 +1277,11 @@ func (a *app) triggerCheckUpdate(manual bool) {
 		a.dispatchUI(func() {
 			a.checkingUpdate = false
 			binPath := a.resolveBinaryPath()
-			detected := updater.DetectLocalVersion(binPath)
+			var detected string
 			if a.state.InstalledNaiveTag != "" && strings.TrimSpace(a.state.CustomNaiveBinaryPath) == "" {
 				a.localVersion = a.state.InstalledNaiveTag
 			} else {
+				detected = updater.DetectLocalVersion(binPath)
 				a.localVersion = detected
 			}
 			if err != nil {
@@ -1418,10 +1421,11 @@ func (a *app) triggerCheckXrayUpdate(manual bool) {
 		a.dispatchUI(func() {
 			a.checkingXrayUpdate = false
 			binPath := a.resolveXrayBinaryPath()
-			detected := updater.DetectLocalXrayVersion(binPath)
+			var detected string
 			if a.state.InstalledXrayTag != "" && strings.TrimSpace(a.state.CustomXrayBinaryPath) == "" {
 				a.localXrayVersion = a.state.InstalledXrayTag
 			} else {
+				detected = updater.DetectLocalXrayVersion(binPath)
 				a.localXrayVersion = detected
 			}
 			if err != nil {

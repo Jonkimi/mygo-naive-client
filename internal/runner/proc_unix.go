@@ -56,39 +56,23 @@ func cleanupOrphanProcesses(workDir string) {
 	if workDir == "" {
 		return
 	}
-	out, err := exec.Command("ps", "-ww", "-eo", "pid,command").Output()
-	if err != nil {
-		out, err = exec.Command("ps", "-eo", "pid,command").Output()
-		if err != nil {
-			return
-		}
+	if entries, err := os.ReadDir(workDir); err != nil || len(entries) == 0 {
+		return
 	}
-	myPid := os.Getpid()
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.Contains(line, workDir) {
-			continue
-		}
-		if !strings.Contains(line, "naive") && !strings.Contains(line, "xray") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid <= 1 || pid == myPid {
-			continue
-		}
-		killStalePID(pid)
-	}
+	cleanupOrphansMatching(workDir)
 }
 
 func cleanupOrphansForConfig(cfgPath string) {
 	if cfgPath == "" {
 		return
 	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		return
+	}
+	cleanupOrphansMatching(cfgPath)
+}
+
+func cleanupOrphansMatching(needle string) {
 	out, err := exec.Command("ps", "-ww", "-eo", "pid,command").Output()
 	if err != nil {
 		out, err = exec.Command("ps", "-eo", "pid,command").Output()
@@ -100,7 +84,7 @@ func cleanupOrphansForConfig(cfgPath string) {
 	lines := strings.Split(string(out), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || !strings.Contains(line, cfgPath) {
+		if line == "" || !strings.Contains(line, needle) {
 			continue
 		}
 		if !strings.Contains(line, "naive") && !strings.Contains(line, "xray") {

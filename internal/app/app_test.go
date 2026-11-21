@@ -72,17 +72,23 @@ func (m *mockTunDev) UpdateRouteOptions(options tun.Options) error {
 	return nil
 }
 
-func newTestApp(t *testing.T, initialServices []config.Service) (*app, *ui.Tester, string) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("shell mock script test runs on unix")
+var (
+	sharedMockNaiveOnce sync.Once
+	sharedMockNaivePath string
+	sharedMockNaiveErr  error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if sharedMockNaivePath != "" {
+		_ = os.RemoveAll(filepath.Dir(sharedMockNaivePath))
 	}
+	os.Exit(code)
+}
 
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "bin", "naive")
-	_ = os.MkdirAll(filepath.Dir(binPath), 0o755)
-
-	script := `#!/bin/sh
+func installMockNaiveBinary(t *testing.T, binPath string) {
+	t.Helper()
+	const script = `#!/bin/sh
 if [ "$1" = "--version" ]; then
   echo "naive 143.0.7499.109-2"
   exit 0
@@ -93,9 +99,41 @@ while true; do
   sleep 1
 done
 `
+	sharedMockNaiveOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "naive-client-test-bin-*")
+		if err != nil {
+			sharedMockNaiveErr = err
+			return
+		}
+		p := filepath.Join(dir, "naive")
+		if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+			sharedMockNaiveErr = err
+			return
+		}
+		sharedMockNaivePath = p
+	})
+	// Hard-link to share the template inode across tests so macOS only incurs
+	// the first-exec vnode security scan once per test process.
+	if sharedMockNaiveErr == nil && sharedMockNaivePath != "" {
+		if err := os.Link(sharedMockNaivePath, binPath); err == nil {
+			return
+		}
+	}
 	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write mock naive: %v", err)
 	}
+}
+
+func newTestApp(t *testing.T, initialServices []config.Service) (*app, *ui.Tester, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell mock script test runs on unix")
+	}
+
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "bin", "naive")
+	_ = os.MkdirAll(filepath.Dir(binPath), 0o755)
+	installMockNaiveBinary(t, binPath)
 
 	a := newApp(tmpDir)
 	a.headless = true

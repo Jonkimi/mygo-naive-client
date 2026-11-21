@@ -2488,7 +2488,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 		"rules":                 singRules,
 		"final":                 finalOutbound,
 		"auto_detect_interface": true,
-		"find_process":          true,
+		"find_process":          opts.Blocker != nil && opts.Blocker.Logger() != nil,
 	}
 }
 
