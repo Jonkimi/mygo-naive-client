@@ -138,6 +138,21 @@ func (s Service) vmessShareURI() string {
 	if s.ServerPort <= 0 {
 		portVal = 443
 	}
+	scy := VMessSecurityOrAuto(s.Method)
+	netName := strings.ToLower(strings.TrimSpace(s.Network))
+	if netName == "" {
+		netName = "tcp"
+	}
+	path := strings.TrimSpace(s.Path)
+	if netName == "grpc" {
+		if sn := s.EffectiveGRPCServiceName(); sn != "" {
+			path = sn
+		}
+	}
+	tlsVal := ""
+	if strings.EqualFold(strings.TrimSpace(s.Security), "tls") {
+		tlsVal = "tls"
+	}
 	m := map[string]any{
 		"v":    "2",
 		"ps":   s.Name,
@@ -145,16 +160,13 @@ func (s Service) vmessShareURI() string {
 		"port": portVal,
 		"id":   s.UUID,
 		"aid":  0,
-		"scy":  "auto",
-		"net":  s.Network,
+		"scy":  scy,
+		"net":  netName,
 		"type": "none",
-		"host": s.Host,
-		"path": s.Path,
-		"tls":  s.Security,
-		"sni":  s.SNI,
-	}
-	if s.Network == "" {
-		m["net"] = "tcp"
+		"host": strings.TrimSpace(s.Host),
+		"path": path,
+		"tls":  tlsVal,
+		"sni":  strings.TrimSpace(s.SNI),
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -883,13 +895,17 @@ func parseVMessImport(raw string, nextPort int) (Service, error) {
 	svc.Server = data.Add
 	svc.ServerPort = port
 	svc.UUID = data.Id
-	svc.Network = data.Net
-	svc.Path = data.Path
-	svc.Host = data.Host
-	svc.Security = data.Tls
-	svc.SNI = data.Sni
+	svc.Method = NormalizeVMessSecurity(data.Scy)
+	svc.Network = strings.ToLower(strings.TrimSpace(data.Net))
+	svc.Path = strings.TrimSpace(data.Path)
+	if svc.Network == "grpc" && svc.Path != "" {
+		svc.ServiceName = svc.Path
+	}
+	svc.Host = strings.TrimSpace(data.Host)
+	svc.Security = strings.ToLower(strings.TrimSpace(data.Tls))
+	svc.SNI = strings.TrimSpace(data.Sni)
 	if data.Alpn != "" {
-		svc.ALPN = strings.Split(data.Alpn, ",")
+		svc.ALPN = cleanSlice(strings.Split(data.Alpn, ","))
 	}
 	return svc, nil
 }

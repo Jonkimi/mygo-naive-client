@@ -87,50 +87,10 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 		if svc.Flow != "" {
 			ob["flow"] = svc.Flow
 		}
-		if svc.Security == "tls" || svc.Security == "reality" {
-			tlsMap := map[string]any{
-				"enabled": true,
-			}
-			if svc.SNI != "" {
-				tlsMap["server_name"] = svc.SNI
-			}
-			if len(svc.ALPN) > 0 {
-				tlsMap["alpn"] = svc.ALPN
-			}
-			if svc.Fingerprint != "" {
-				tlsMap["utls"] = map[string]any{
-					"enabled":     true,
-					"fingerprint": svc.Fingerprint,
-				}
-			}
-			if svc.Security == "reality" {
-				realityMap := map[string]any{
-					"enabled": true,
-				}
-				if svc.PublicKey != "" {
-					realityMap["public_key"] = svc.PublicKey
-				}
-				if svc.ShortID != "" {
-					realityMap["short_id"] = svc.ShortID
-				}
-				tlsMap["reality"] = realityMap
-			}
+		if tlsMap := buildNativeTLS(svc, false); tlsMap != nil {
 			ob["tls"] = tlsMap
 		}
-		if svc.Network == "ws" {
-			transport := map[string]any{"type": "ws"}
-			if svc.Path != "" {
-				transport["path"] = svc.Path
-			}
-			if svc.Host != "" {
-				transport["headers"] = map[string]string{"Host": svc.Host}
-			}
-			ob["transport"] = transport
-		} else if svc.Network == "grpc" {
-			transport := map[string]any{"type": "grpc"}
-			if svc.ServiceName != "" {
-				transport["service_name"] = svc.ServiceName
-			}
+		if transport := buildNativeTransport(svc); transport != nil {
 			ob["transport"] = transport
 		}
 		return ob
@@ -142,14 +102,13 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 			"server":      svc.Server,
 			"server_port": svc.ServerPort,
 			"uuid":        svc.UUID,
-			"security":    "auto",
+			"security":    config.VMessSecurityOrAuto(svc.Method),
 		}
-		if svc.Security == "tls" {
-			tlsMap := map[string]any{"enabled": true}
-			if svc.SNI != "" {
-				tlsMap["server_name"] = svc.SNI
-			}
+		if tlsMap := buildNativeTLS(svc, false); tlsMap != nil {
 			ob["tls"] = tlsMap
+		}
+		if transport := buildNativeTransport(svc); transport != nil {
+			ob["transport"] = transport
 		}
 		return ob
 
@@ -160,12 +119,12 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 			"server":      svc.Server,
 			"server_port": svc.ServerPort,
 			"password":    svc.Password,
-			"tls": map[string]any{
-				"enabled": true,
-			},
 		}
-		if svc.SNI != "" {
-			ob["tls"].(map[string]any)["server_name"] = svc.SNI
+		if tlsMap := buildNativeTLS(svc, !strings.EqualFold(strings.TrimSpace(svc.Security), "none")); tlsMap != nil {
+			ob["tls"] = tlsMap
+		}
+		if transport := buildNativeTransport(svc); transport != nil {
+			ob["transport"] = transport
 		}
 		return ob
 
@@ -232,4 +191,120 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 			"tag":  tag,
 		}
 	}
+}
+
+func buildNativeTLS(svc config.Service, forceEnabled bool) map[string]any {
+	sec := strings.ToLower(strings.TrimSpace(svc.Security))
+	if !forceEnabled && sec != "tls" && sec != "reality" {
+		return nil
+	}
+	tlsMap := map[string]any{
+		"enabled": true,
+	}
+	if serverName := svc.EffectiveTLSServerName(); serverName != "" {
+		tlsMap["server_name"] = serverName
+	}
+	if len(svc.ALPN) > 0 {
+		tlsMap["alpn"] = svc.ALPN
+	}
+	if fp := strings.TrimSpace(svc.Fingerprint); fp != "" {
+		tlsMap["utls"] = map[string]any{
+			"enabled":     true,
+			"fingerprint": fp,
+		}
+	}
+	if sec == "reality" {
+		realityMap := map[string]any{
+			"enabled": true,
+		}
+		if svc.PublicKey != "" {
+			realityMap["public_key"] = svc.PublicKey
+		}
+		if svc.ShortID != "" {
+			realityMap["short_id"] = svc.ShortID
+		}
+		tlsMap["reality"] = realityMap
+	}
+	return tlsMap
+}
+
+func buildNativeTransport(svc config.Service) map[string]any {
+	switch strings.ToLower(strings.TrimSpace(svc.Network)) {
+	case "ws":
+		transport := map[string]any{"type": "ws"}
+		path, maxED := splitWSEarlyDataPath(svc.Path)
+		if path != "" {
+			transport["path"] = path
+		}
+		if maxED > 0 {
+			transport["max_early_data"] = maxED
+			transport["early_data_header_name"] = "Sec-WebSocket-Protocol"
+		}
+		if host := strings.TrimSpace(svc.Host); host != "" {
+			transport["headers"] = map[string]string{"Host": host}
+		}
+		return transport
+
+	case "grpc":
+		transport := map[string]any{"type": "grpc"}
+		if sn := svc.EffectiveGRPCServiceName(); sn != "" {
+			transport["service_name"] = sn
+		}
+		return transport
+
+	case "http", "h2":
+		transport := map[string]any{"type": "http"}
+		if p := strings.TrimSpace(svc.Path); p != "" {
+			transport["path"] = p
+		}
+		if hosts := config.SplitHostList(svc.Host); len(hosts) > 0 {
+			transport["host"] = hosts
+		}
+		return transport
+
+	case "httpupgrade":
+		transport := map[string]any{"type": "httpupgrade"}
+		if p := strings.TrimSpace(svc.Path); p != "" {
+			transport["path"] = p
+		}
+		if host := strings.TrimSpace(svc.Host); host != "" {
+			transport["host"] = host
+		}
+		return transport
+
+	default:
+		return nil
+	}
+}
+
+func splitWSEarlyDataPath(rawPath string) (string, uint32) {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" || !strings.Contains(rawPath, "?") {
+		return rawPath, 0
+	}
+	// Collapse repeated leading slashes so url.Parse doesn't treat "//ws?ed=..." as a host.
+	parseTarget := rawPath
+	if strings.HasPrefix(parseTarget, "//") {
+		parseTarget = "/" + strings.TrimLeft(parseTarget, "/")
+	}
+	u, err := url.Parse(parseTarget)
+	if err != nil {
+		return rawPath, 0
+	}
+	q := u.Query()
+	edStr := q.Get("ed")
+	if edStr == "" {
+		return rawPath, 0
+	}
+	ed, err := strconv.ParseUint(edStr, 10, 32)
+	if err != nil || ed == 0 {
+		return rawPath, 0
+	}
+	q.Del("ed")
+	u.RawQuery = q.Encode()
+	clean := u.RequestURI()
+	if clean == "" {
+		clean = "/"
+	}
+	return clean, uint32(ed)
 }

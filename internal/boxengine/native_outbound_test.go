@@ -89,3 +89,201 @@ func TestBuildNativeOutbound(t *testing.T) {
 		t.Errorf("expected direct fallback for naive in pure Go build, got %v", ob["type"])
 	}
 }
+
+func TestBuildNativeOutbound_VMessWebSocketTLS(t *testing.T) {
+	// Regression: VMess previously omitted transport and uTLS/ALPN options in buildNativeOutbound,
+	// causing wss + WebSocket + VMess nodes to send raw VMess over TLS and fail with
+	// "cipher: message authentication failed".
+	svc := config.Service{
+		ID:          "vmess-wss-1",
+		Protocol:    config.ProtoVMess,
+		Engine:      config.EngineSingBox,
+		Server:      "edge.example.com",
+		ServerPort:  443,
+		UUID:        "12345678-1234-1234-1234-123456789abc",
+		Security:    "tls",
+		SNI:         "sni.example.com",
+		ALPN:        []string{"http/1.1"},
+		Fingerprint: "chrome",
+		Network:     "ws",
+		Path:        "/ws?ed=2048",
+		Host:        "cdn.example.com",
+		Method:      "2022-blake3-aes-128-gcm", // invalid for VMess; must fall back to "auto"
+	}
+
+	ob := buildNativeOutbound(svc)
+	if ob["type"] != "vmess" {
+		t.Fatalf("expected type=vmess, got %v", ob["type"])
+	}
+	if ob["security"] != "auto" {
+		t.Errorf("expected security=auto fallback, got %v", ob["security"])
+	}
+
+	tlsMap, ok := ob["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tls map, got %T", ob["tls"])
+	}
+	if tlsMap["enabled"] != true || tlsMap["server_name"] != "sni.example.com" {
+		t.Errorf("unexpected tls map: %#v", tlsMap)
+	}
+	utlsMap, ok := tlsMap["utls"].(map[string]any)
+	if !ok || utlsMap["enabled"] != true || utlsMap["fingerprint"] != "chrome" {
+		t.Errorf("unexpected utls map: %#v", tlsMap["utls"])
+	}
+	alpn, ok := tlsMap["alpn"].([]string)
+	if !ok || len(alpn) != 1 || alpn[0] != "http/1.1" {
+		t.Errorf("unexpected alpn: %#v", tlsMap["alpn"])
+	}
+
+	trMap, ok := ob["transport"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected transport map, got %T", ob["transport"])
+	}
+	if trMap["type"] != "ws" || trMap["path"] != "/ws" {
+		t.Errorf("unexpected ws transport: %#v", trMap)
+	}
+	if trMap["max_early_data"] != uint32(2048) || trMap["early_data_header_name"] != "Sec-WebSocket-Protocol" {
+		t.Errorf("unexpected ws early data options: %#v", trMap)
+	}
+	headers, ok := trMap["headers"].(map[string]string)
+	if !ok || headers["Host"] != "cdn.example.com" {
+		t.Errorf("unexpected ws headers: %#v", trMap["headers"])
+	}
+}
+
+func TestBuildNativeOutbound_VMessVariants(t *testing.T) {
+	// IP or CDN CNAME server + empty SNI + WS Host (with optional port) fallback
+	ipSvc := config.Service{
+		ID:         "vmess-ip-ws",
+		Protocol:   config.ProtoVMess,
+		Server:     "104.16.1.1",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "tls",
+		Network:    "ws",
+		Path:       "/vmess",
+		Host:       "ws.example.com",
+		Method:     "aes-128-gcm",
+	}
+	ob := buildNativeOutbound(ipSvc)
+	if ob["security"] != "aes-128-gcm" {
+		t.Errorf("expected security=aes-128-gcm, got %v", ob["security"])
+	}
+	tlsMap := ob["tls"].(map[string]any)
+	if tlsMap["server_name"] != "ws.example.com" {
+		t.Errorf("expected server_name fallback to Host ws.example.com, got %v", tlsMap["server_name"])
+	}
+
+	cnameSvc := config.Service{
+		ID:         "vmess-cname-ws",
+		Protocol:   config.ProtoVMess,
+		Server:     "cf.cdn-edge.net",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "tls",
+		Network:    "ws",
+		Path:       "/vmess",
+		Host:       "origin.example.com:443",
+	}
+	ob = buildNativeOutbound(cnameSvc)
+	tlsMap = ob["tls"].(map[string]any)
+	if tlsMap["server_name"] != "origin.example.com" {
+		t.Errorf("expected server_name fallback to stripped Host origin.example.com, got %v", tlsMap["server_name"])
+	}
+
+	// Plain gRPC without TLS (also verify legacy Path-only gRPC service_name fallback)
+	grpcSvc := config.Service{
+		ID:          "vmess-grpc",
+		Protocol:    config.ProtoVMess,
+		Server:      "grpc.example.com",
+		ServerPort:  80,
+		UUID:        "12345678-1234-1234-1234-123456789abc",
+		Security:    "none",
+		Network:     "grpc",
+		ServiceName: "GunService",
+	}
+	ob = buildNativeOutbound(grpcSvc)
+	if _, hasTLS := ob["tls"]; hasTLS {
+		t.Errorf("expected no tls when security=none, got %#v", ob["tls"])
+	}
+	trMap, ok := ob["transport"].(map[string]any)
+	if !ok || trMap["type"] != "grpc" || trMap["service_name"] != "GunService" {
+		t.Errorf("unexpected grpc transport: %#v", ob["transport"])
+	}
+
+	legacyGrpcSvc := config.Service{
+		ID:         "vmess-grpc-legacy",
+		Protocol:   config.ProtoVMess,
+		Server:     "grpc.example.com",
+		ServerPort: 80,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "none",
+		Network:    "grpc",
+		Path:       "LegacyGun",
+	}
+	ob = buildNativeOutbound(legacyGrpcSvc)
+	trMap, ok = ob["transport"].(map[string]any)
+	if !ok || trMap["service_name"] != "LegacyGun" {
+		t.Errorf("expected legacy Path fallback for grpc service_name, got %#v", ob["transport"])
+	}
+
+	// Regression: "//ws?ed=2048" must not be misparsed as URL host by url.Parse
+	doubleSlashWS := config.Service{
+		ID:         "vmess-double-slash",
+		Protocol:   config.ProtoVMess,
+		Server:     "ws.example.com",
+		ServerPort: 80,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "none",
+		Network:    "ws",
+		Path:       " //ws?ed=2048 ",
+	}
+	ob = buildNativeOutbound(doubleSlashWS)
+	trMap = ob["transport"].(map[string]any)
+	if trMap["path"] != "/ws" || trMap["max_early_data"] != uint32(2048) {
+		t.Errorf("unexpected transport for //ws?ed=2048: %#v", trMap)
+	}
+
+	// HTTP/2 multi-host & HTTPUpgrade transports + Trojan Security="none" / WS
+	h2Svc := config.Service{
+		ID:         "vmess-h2",
+		Protocol:   config.ProtoVMess,
+		Server:     "104.16.1.2",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "tls",
+		Network:    "h2",
+		Path:       "/h2",
+		Host:       "cdn1.example.com, cdn2.example.com",
+	}
+	ob = buildNativeOutbound(h2Svc)
+	tlsMap = ob["tls"].(map[string]any)
+	if tlsMap["server_name"] != "cdn1.example.com" {
+		t.Errorf("expected h2 server_name fallback to first host, got %v", tlsMap["server_name"])
+	}
+	trMap = ob["transport"].(map[string]any)
+	hosts, ok := trMap["host"].([]string)
+	if !ok || trMap["type"] != "http" || len(hosts) != 2 || hosts[0] != "cdn1.example.com" || hosts[1] != "cdn2.example.com" {
+		t.Errorf("unexpected h2 transport: %#v", trMap)
+	}
+
+	trojanPlain := config.Service{
+		ID:         "trojan-plain",
+		Protocol:   config.ProtoTrojan,
+		Server:     "trojan.example.com",
+		ServerPort: 80,
+		Password:   "pw",
+		Security:   "none",
+		Network:    "httpupgrade",
+		Path:       "/up",
+		Host:       "up.example.com",
+	}
+	ob = buildNativeOutbound(trojanPlain)
+	if _, hasTLS := ob["tls"]; hasTLS {
+		t.Errorf("expected Trojan with Security=none to omit tls, got %#v", ob["tls"])
+	}
+	trMap = ob["transport"].(map[string]any)
+	if trMap["type"] != "httpupgrade" || trMap["path"] != "/up" || trMap["host"] != "up.example.com" {
+		t.Errorf("unexpected httpupgrade transport: %#v", trMap)
+	}
+}

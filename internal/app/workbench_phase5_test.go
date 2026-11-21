@@ -312,3 +312,164 @@ func TestInProcessNodes_PersistListenSummaryAcrossRestart(t *testing.T) {
 		t.Fatalf("expected no 'socks://127.0.0.1:1080' for in-process node after restart/loadState")
 	}
 }
+
+func TestEditor_VMessSecurityNetworkAndProtocolSwitch(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	// 1. Create dialog -> select VMess via UI dropdown (verifies Select binds persistent protoName)
+	a.openCreateServiceDialog()
+	tt.Frame()
+
+	if err := tt.Click("NaiveProxy"); err != nil {
+		t.Fatalf("click protocol dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("VMess"); err != nil {
+		t.Fatalf("select VMess in dropdown: %v", err)
+	}
+	tt.Frame()
+
+	if editorProtocols[a.editor.protoIndex] != config.ProtoVMess {
+		t.Fatalf("expected protoIndex to switch to VMess via UI click, got %v", editorProtocols[a.editor.protoIndex])
+	}
+	if a.editor.vmessSecIndex != 0 || a.editor.fingerprint != "chrome" {
+		t.Fatalf("expected VMess default TLS with chrome fingerprint, got sec=%d fp=%q", a.editor.vmessSecIndex, a.editor.fingerprint)
+	}
+
+	// Verify toggling engine segmented control works directly on persistent state
+	if err := tt.Click(a.catalog().EngineSidecarXray()); err != nil {
+		t.Fatalf("click Xray engine segment: %v", err)
+	}
+	tt.Frame()
+	if a.editor.engineIndex != 1 {
+		t.Fatalf("expected engineIndex=1 after clicking Xray sidecar, got %d", a.editor.engineIndex)
+	}
+	if err := tt.Click(a.catalog().EngineSingBox()); err != nil {
+		t.Fatalf("click SingBox engine segment: %v", err)
+	}
+	tt.Frame()
+	if a.editor.engineIndex != 0 {
+		t.Fatalf("expected engineIndex=0 after clicking Sing-Box, got %d", a.editor.engineIndex)
+	}
+
+	// Scroll down inside the editor form so transport controls are visible in the viewport
+	a.editor.scroll.Y = 180
+	tt.Frame()
+
+	// Switch transport to ws, fill fields, and save via UI button
+	if err := tt.Click("ws"); err != nil {
+		t.Fatalf("click ws segment: %v", err)
+	}
+	tt.Frame()
+	a.editor.name = "VMess-WSS"
+	a.editor.server = "104.16.1.1"
+	a.editor.uuid = "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3"
+	a.editor.path = "/vmess"
+	a.editor.host = "cdn.example.com"
+	tt.Frame()
+
+	if err := tt.Click(a.catalog().EditorSaveCreate()); err != nil {
+		t.Fatalf("click save button: %v", err)
+	}
+	tt.Frame()
+
+	if len(a.state.Services) != 1 {
+		t.Fatalf("expected 1 saved service, got %d (err=%q)", len(a.state.Services), a.editor.errText)
+	}
+	saved := a.state.Services[0]
+	if saved.EffectiveProtocol() != config.ProtoVMess || saved.Security != "tls" || saved.Network != "ws" || saved.Host != "cdn.example.com" {
+		t.Fatalf("unexpected saved VMess service: %+v", saved)
+	}
+
+	// 2. Editing an existing Security="none" VMess node must not populate fingerprint="chrome"
+	plainVMess := config.Service{
+		ID:         "vmess-plain",
+		Name:       "VMess-Plain",
+		Protocol:   config.ProtoVMess,
+		Server:     "plain.example.com",
+		ServerPort: 80,
+		UUID:       "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		Security:   "none",
+		Network:    "grpc",
+		Path:       "LegacySvc",
+	}
+	a.openEditServiceDialog(plainVMess)
+	tt.Frame()
+
+	if a.editor.vmessSecIndex != 1 {
+		t.Fatalf("expected vmessSecIndex=1 for Security=none, got %d", a.editor.vmessSecIndex)
+	}
+	if a.editor.fingerprint != "" {
+		t.Fatalf("expected empty fingerprint for plain VMess, got %q", a.editor.fingerprint)
+	}
+	if a.editor.serviceName != "LegacySvc" {
+		t.Fatalf("expected legacy grpc Path to populate serviceName, got %q", a.editor.serviceName)
+	}
+	// Toggling security from None -> TLS via UI must restore default chrome fingerprint
+	if err := tt.Click("TLS"); err != nil {
+		t.Fatalf("click TLS segment on plain VMess: %v", err)
+	}
+	tt.Frame()
+	if a.editor.vmessSecIndex != 0 || a.editor.fingerprint != "chrome" {
+		t.Fatalf("expected TLS switch to populate chrome fingerprint, got sec=%d fp=%q", a.editor.vmessSecIndex, a.editor.fingerprint)
+	}
+	if err := tt.Click("None"); err != nil {
+		t.Fatalf("click None segment on VMess: %v", err)
+	}
+	tt.Frame()
+	a.editor.serviceName = "UpdatedSvc"
+	builtLegacy, err := a.buildServiceFromEditor()
+	if err != nil {
+		t.Fatalf("buildServiceFromEditor failed: %v", err)
+	}
+	if builtLegacy.Path != "" || builtLegacy.ServiceName != "UpdatedSvc" || builtLegacy.Fingerprint != "" {
+		t.Fatalf("expected gRPC save to clear stale Path/Fingerprint and keep ServiceName, got Path=%q ServiceName=%q Fingerprint=%q", builtLegacy.Path, builtLegacy.ServiceName, builtLegacy.Fingerprint)
+	}
+
+	// 3. Regression: switching from VLESS (xhttp, networkIndex=3) to VMess must reset networkIndex to tcp (0),
+	// not let UI Segmented clamp it to grpc (2).
+	vlessXHTTP := config.Service{
+		ID:       "vless-xhttp",
+		Name:     "VLESS-XHTTP",
+		Protocol: config.ProtoVLESS,
+		Server:   "xhttp.example.com",
+		UUID:     "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		Network:  "xhttp",
+	}
+	a.openEditServiceDialog(vlessXHTTP)
+	tt.Frame()
+	if err := tt.Click("VLESS"); err != nil {
+		t.Fatalf("open protocol dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("VMess"); err != nil {
+		t.Fatalf("select VMess from VLESS xhttp: %v", err)
+	}
+	tt.Frame()
+	if a.editor.networkIndex != 0 {
+		t.Fatalf("expected networkIndex reset to 0 (tcp) when switching VLESS xhttp -> VMess, got %d", a.editor.networkIndex)
+	}
+
+	// 4. Regression: switching from Shadowsocks to VMess must clear SS method (even if shared cipher name)
+	ssNode := config.Service{
+		ID:       "ss-node",
+		Name:     "SS-Node",
+		Protocol: config.ProtoShadowsocks,
+		Server:   "ss.example.com",
+		Password: "secret",
+		Method:   "aes-128-gcm",
+	}
+	a.openEditServiceDialog(ssNode)
+	tt.Frame()
+	if err := tt.Click("Shadowsocks"); err != nil {
+		t.Fatalf("open protocol dropdown on SS: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("VMess"); err != nil {
+		t.Fatalf("select VMess from SS: %v", err)
+	}
+	tt.Frame()
+	if a.editor.method != "" {
+		t.Fatalf("expected SS method to be cleared when switching to VMess, got %q", a.editor.method)
+	}
+}

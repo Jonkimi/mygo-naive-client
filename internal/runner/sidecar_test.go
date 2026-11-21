@@ -73,6 +73,75 @@ func TestToXrayConfigJSON(t *testing.T) {
 	}
 }
 
+func TestToXrayConfigJSON_VMess(t *testing.T) {
+	vmessSvc := config.Service{
+		ID:         "vmess-xray",
+		Name:       "VMess Xray",
+		Protocol:   config.ProtoVMess,
+		Engine:     config.EngineSidecar,
+		Server:     "104.16.1.1",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Method:     "aes-128-gcm",
+		Security:   "tls",
+		Network:    "WS",
+		Path:       "/ws?ed=2048",
+		Host:       "cdn.example.com:443",
+	}
+
+	cfgBytes, err := GenerateXrayConfig(vmessSvc, 12346)
+	if err != nil {
+		t.Fatalf("GenerateXrayConfig VMess failed: %v", err)
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(cfgBytes, &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	ob := m["outbounds"].([]any)[0].(map[string]any)
+	settings := ob["settings"].(map[string]any)
+	user := settings["vnext"].([]any)[0].(map[string]any)["users"].([]any)[0].(map[string]any)
+	if user["security"] != "aes-128-gcm" {
+		t.Errorf("vmess user security = %v, want aes-128-gcm", user["security"])
+	}
+	st := ob["streamSettings"].(map[string]any)
+	if st["network"] != "ws" {
+		t.Errorf("streamSettings network = %v, want ws", st["network"])
+	}
+	tlsSettings := st["tlsSettings"].(map[string]any)
+	if tlsSettings["serverName"] != "cdn.example.com" {
+		t.Errorf("tlsSettings serverName = %v, want cdn.example.com", tlsSettings["serverName"])
+	}
+	wsHeaders := st["wsSettings"].(map[string]any)["headers"].(map[string]any)
+	if wsHeaders["Host"] != "cdn.example.com:443" {
+		t.Errorf("wsSettings Host = %v, want cdn.example.com:443", wsHeaders["Host"])
+	}
+
+	// Legacy gRPC Path fallback
+	grpcSvc := config.Service{
+		ID:         "vmess-xray-grpc",
+		Protocol:   config.ProtoVMess,
+		Engine:     config.EngineSidecar,
+		Server:     "grpc.example.com",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Network:    "grpc",
+		Path:       "LegacySvc",
+		Security:   "none",
+	}
+	cfgBytes2, err := GenerateXrayConfig(grpcSvc, 12347)
+	if err != nil {
+		t.Fatalf("GenerateXrayConfig VMess gRPC failed: %v", err)
+	}
+	var m2 map[string]any
+	_ = json.Unmarshal(cfgBytes2, &m2)
+	ob2 := m2["outbounds"].([]any)[0].(map[string]any)
+	grpcSettings := ob2["streamSettings"].(map[string]any)["grpcSettings"].(map[string]any)
+	if grpcSettings["serviceName"] != "LegacySvc" {
+		t.Errorf("grpcSettings serviceName = %v, want LegacySvc", grpcSettings["serviceName"])
+	}
+}
+
 func TestManagerDynamicPortAllocation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix only")

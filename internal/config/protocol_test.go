@@ -210,6 +210,74 @@ func TestParseVMessImportAndExport(t *testing.T) {
 	}
 }
 
+func TestVMessShareURIRoundTripAndNormalization(t *testing.T) {
+	// 1. Non-auto cipher, uppercase network/tls, spaced ALPN
+	vmessJSON := map[string]any{
+		"v":    "2",
+		"ps":   "VMess-Cipher",
+		"add":  "node.example.com",
+		"port": "443",
+		"id":   "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		"aid":  0,
+		"scy":  "AES-128-GCM",
+		"net":  " WS ",
+		"type": "none",
+		"host": "cdn.example.com",
+		"path": "/ws?ed=2048",
+		"tls":  "TLS",
+		"sni":  "",
+		"alpn": "h2, http/1.1",
+	}
+	b, _ := json.Marshal(vmessJSON)
+	svc, err := ParseImport("vmess://"+base64.StdEncoding.EncodeToString(b), 1086)
+	if err != nil {
+		t.Fatalf("ParseImport failed: %v", err)
+	}
+	if svc.Method != "aes-128-gcm" {
+		t.Errorf("Method = %q, want aes-128-gcm", svc.Method)
+	}
+	if svc.Network != "ws" || svc.Security != "tls" {
+		t.Errorf("Network/Security = %q/%q, want ws/tls", svc.Network, svc.Security)
+	}
+	if len(svc.ALPN) != 2 || svc.ALPN[0] != "h2" || svc.ALPN[1] != "http/1.1" {
+		t.Errorf("ALPN = %#v, want [h2 http/1.1]", svc.ALPN)
+	}
+
+	// 2. Regression: gRPC ServiceName edited in UI must take precedence over stale Path on export,
+	// and Security="none" must export standard empty "tls": "".
+	grpcSvc := Service{
+		Name:        "VMess-gRPC",
+		Protocol:    ProtoVMess,
+		Server:      "grpc.example.com",
+		ServerPort:  443,
+		UUID:        "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		Network:     "grpc",
+		Path:        "stale-service",
+		ServiceName: "updated-service",
+		Security:    "none",
+		Method:      "2022-blake3-aes-128-gcm", // invalid VMess cipher must normalize to auto
+	}
+	exported := grpcSvc.ShareURI()
+	rawB64 := strings.TrimPrefix(exported, "vmess://")
+	decoded, err := base64.StdEncoding.DecodeString(rawB64)
+	if err != nil {
+		t.Fatalf("decode exported vmess URI: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(decoded, &out); err != nil {
+		t.Fatalf("unmarshal exported vmess JSON: %v", err)
+	}
+	if out["path"] != "updated-service" {
+		t.Errorf("exported gRPC path = %v, want updated-service", out["path"])
+	}
+	if out["tls"] != "" {
+		t.Errorf("exported tls for Security=none = %v, want empty string", out["tls"])
+	}
+	if out["scy"] != "auto" {
+		t.Errorf("exported scy for invalid method = %v, want auto", out["scy"])
+	}
+}
+
 func TestDynamicPortAndProtocolValidation(t *testing.T) {
 	// Parse dynamic port
 	ep, err := ParseListenURI("socks://127.0.0.1:0")

@@ -191,6 +191,61 @@ func (s Service) IsTCPOnlyProxy() bool {
 	return proto == ProtoNaive || proto == ProtoHTTP
 }
 
+// NormalizeVMessSecurity returns the normalized VMess cipher name if supported, or "".
+func NormalizeVMessSecurity(method string) string {
+	switch m := strings.ToLower(strings.TrimSpace(method)); m {
+	case "auto", "none", "zero", "aes-128-cfb", "aes-128-gcm", "chacha20-poly1305":
+		return m
+	default:
+		return ""
+	}
+}
+
+// VMessSecurityOrAuto returns a valid VMess cipher name, defaulting to "auto".
+func VMessSecurityOrAuto(method string) string {
+	if m := NormalizeVMessSecurity(method); m != "" {
+		return m
+	}
+	return "auto"
+}
+
+// SplitHostList splits a comma-separated Host header string into trimmed non-empty hostnames.
+func SplitHostList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return cleanSlice(strings.Split(raw, ","))
+}
+
+// EffectiveGRPCServiceName returns ServiceName, falling back to Path for legacy imported gRPC configs.
+func (s Service) EffectiveGRPCServiceName() string {
+	if sn := strings.TrimSpace(s.ServiceName); sn != "" {
+		return sn
+	}
+	return strings.TrimSpace(s.Path)
+}
+
+// EffectiveTLSServerName returns SNI, or falls back to the first HTTP Host (without port) on HTTP-based transports.
+func (s Service) EffectiveTLSServerName() string {
+	if sni := strings.TrimSpace(s.SNI); sni != "" {
+		return sni
+	}
+	switch strings.ToLower(strings.TrimSpace(s.Network)) {
+	case "ws", "httpupgrade", "http", "h2":
+		hosts := SplitHostList(s.Host)
+		if len(hosts) == 0 {
+			return ""
+		}
+		host := hosts[0]
+		if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
+			return h
+		}
+		return host
+	default:
+		return ""
+	}
+}
+
 // OutboundEndpoint returns the proxy dial endpoint for this service.
 // For KindManagedNaive, it returns the primary local listen address (e.g. socks://127.0.0.1:1080).
 // For KindExternalProxy, it parses and returns the remote proxy endpoint from ExternalURI.

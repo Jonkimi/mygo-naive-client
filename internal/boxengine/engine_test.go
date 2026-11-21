@@ -2,10 +2,17 @@ package boxengine
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,11 +30,14 @@ import (
 	"naive-client/internal/warp"
 
 	"github.com/miekg/dns"
+	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
+	sjson "github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
 )
@@ -1875,5 +1885,224 @@ func TestWarpMasqueOutbound_FallbackToWireGuard(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Errorf("expected circuit breaker to bypass MASQUE immediately, took %v", elapsed)
+	}
+}
+
+func generateTestCertPEM(t *testing.T, dnsName string) (certPEM string, keyPEM string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: dnsName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{dnsName},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certOut := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyOut := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+	return string(certOut), string(keyOut)
+}
+
+func reserveFreeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port
+}
+
+func TestEngine_VMessWebSocket_E2E(t *testing.T) {
+	// Start target HTTP server
+	targetLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen target: %v", err)
+	}
+	defer targetLn.Close()
+	targetAddr := targetLn.Addr().String()
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("vmess-ws-ok"))
+		})
+		_ = http.Serve(targetLn, mux)
+	}()
+
+	const testUUID = "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3"
+	wsPort := reserveFreeTCPPort(t)
+	wssPort := reserveFreeTCPPort(t)
+	certPEM, keyPEM := generateTestCertPEM(t, "sni.test.local")
+
+	// Start sing-box VMess + WS (plain) and VMess + WSS (TLS + WS + early data) inbounds
+	srvCfg := map[string]any{
+		"log": map[string]any{"level": "error"},
+		"inbounds": []any{
+			map[string]any{
+				"type":        "vmess",
+				"tag":         "vmess-ws-in",
+				"listen":      "127.0.0.1",
+				"listen_port": wsPort,
+				"users":       []any{map[string]any{"uuid": testUUID, "alterId": 0}},
+				"transport": map[string]any{
+					"type": "ws",
+					"path": "/ws-test",
+				},
+			},
+			map[string]any{
+				"type":        "vmess",
+				"tag":         "vmess-wss-in",
+				"listen":      "127.0.0.1",
+				"listen_port": wssPort,
+				"users":       []any{map[string]any{"uuid": testUUID, "alterId": 0}},
+				"tls": map[string]any{
+					"enabled":     true,
+					"server_name": "sni.test.local",
+					"certificate": []string{certPEM},
+					"key":         []string{keyPEM},
+				},
+				"transport": map[string]any{
+					"type":                   "ws",
+					"path":                   "/ws-test",
+					"max_early_data":         2048,
+					"early_data_header_name": "Sec-WebSocket-Protocol",
+				},
+			},
+		},
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct"},
+		},
+	}
+	srvRaw, _ := json.Marshal(srvCfg)
+	srvCtx := include.Context(context.Background())
+	srvOpts, err := sjson.UnmarshalExtendedContext[option.Options](srvCtx, srvRaw)
+	if err != nil {
+		t.Fatalf("unmarshal server options: %v", err)
+	}
+	srvBox, err := box.New(box.Options{Context: srvCtx, Options: srvOpts})
+	if err != nil {
+		t.Fatalf("create server box: %v", err)
+	}
+	if err := srvBox.Start(); err != nil {
+		t.Fatalf("start server box: %v", err)
+	}
+	defer srvBox.Close()
+
+	// 1. Verify boxengine.Engine routes through VMess + WS outbound end-to-end
+	wsSvc := config.Service{
+		ID:         "vmess-ws-node",
+		Protocol:   config.ProtoVMess,
+		Engine:     config.EngineSingBox,
+		Server:     "127.0.0.1",
+		ServerPort: wsPort,
+		UUID:       testUUID,
+		Security:   "none",
+		Network:    "ws",
+		Path:       "/ws-test",
+		Host:       "cdn.test.local",
+	}
+	wssSvc := config.Service{
+		ID:          "vmess-wss-node",
+		Protocol:    config.ProtoVMess,
+		Engine:      config.EngineSingBox,
+		Server:      "127.0.0.1",
+		ServerPort:  wssPort,
+		UUID:        testUUID,
+		Security:    "tls",
+		SNI:         "sni.test.local",
+		Fingerprint: "chrome",
+		Network:     "ws",
+		Path:        "/ws-test?ed=2048",
+		Host:        "cdn.test.local",
+	}
+
+	eng, err := New(EngineOptions{
+		ListenAddr: "127.0.0.1:0",
+		Services:   []config.Service{wsSvc, wssSvc},
+	})
+	if err != nil {
+		t.Fatalf("New Engine with VMess WS/WSS failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("eng.Start failed: %v", err)
+	}
+	defer eng.Close()
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return eng.DialNode(ctx, wsSvc.ID, network, addr)
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+	resp, err := httpClient.Get("http://" + targetAddr + "/ok")
+	if err != nil {
+		t.Fatalf("HTTP GET via VMess+WS DialNode failed: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "vmess-ws-ok" {
+		t.Fatalf("unexpected body: %q", string(body))
+	}
+
+	// 2. Verify the generated wss + WebSocket + VMess outbound completes TLS + WS + VMess AEAD handshake
+	// when trusting the test server certificate.
+	wssOb := buildNativeOutbound(wssSvc)
+	wssOb["tls"].(map[string]any)["certificate"] = []string{certPEM}
+	cliCfg := map[string]any{
+		"log":       map[string]any{"level": "error"},
+		"outbounds": []any{wssOb},
+	}
+	cliRaw, _ := json.Marshal(cliCfg)
+	cliCtx := include.Context(context.Background())
+	cliOpts, err := sjson.UnmarshalExtendedContext[option.Options](cliCtx, cliRaw)
+	if err != nil {
+		t.Fatalf("unmarshal wss client options: %v", err)
+	}
+	cliBox, err := box.New(box.Options{Context: cliCtx, Options: cliOpts})
+	if err != nil {
+		t.Fatalf("create wss client box: %v", err)
+	}
+	if err := cliBox.Start(); err != nil {
+		t.Fatalf("start wss client box: %v", err)
+	}
+	defer cliBox.Close()
+
+	wssClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				ob, ok := cliBox.Outbound().Outbound("node-" + wssSvc.ID)
+				if !ok {
+					return nil, fmt.Errorf("outbound not found")
+				}
+				return ob.DialContext(ctx, network, M.ParseSocksaddr(addr))
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+	resp2, err := wssClient.Get("http://" + targetAddr + "/ok")
+	if err != nil {
+		t.Fatalf("HTTP GET via VMess+WSS outbound failed: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if string(body2) != "vmess-ws-ok" {
+		t.Fatalf("unexpected wss body: %q", string(body2))
 	}
 }

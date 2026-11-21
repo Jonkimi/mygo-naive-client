@@ -53,6 +53,7 @@ type editorForm struct {
 
 	// Protocol & Execution Engine
 	protoIndex  int
+	protoName   string
 	engineIndex int // 0: Sing-Box, 1: Sidecar (for Naive, 1 is default; for VLESS/VMess/Trojan/Shadowsocks, 0 is default)
 
 	// Sidecar Loopback
@@ -70,6 +71,7 @@ type editorForm struct {
 	uuid          string
 	password      string
 	securityIndex int // 0: tls, 1: reality, 2: none
+	vmessSecIndex int // 0: tls, 1: none
 	sni           string
 	alpnInput     string
 	fingerprint   string
@@ -156,6 +158,11 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		secIdx = 0
 	}
 
+	vmessSecIdx := 0
+	if !isNew && svc.EffectiveProtocol() == config.ProtoVMess && (strings.EqualFold(svc.Security, "none") || strings.TrimSpace(svc.Security) == "") {
+		vmessSecIdx = 1
+	}
+
 	flowIdx := 1
 	if svc.Flow == "xtls-rprx-vision" {
 		flowIdx = 0
@@ -208,8 +215,12 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		congestion = "bbr"
 	}
 	fingerprint := svc.Fingerprint
-	if fingerprint == "" && (proto == config.ProtoVLESS || proto == config.ProtoVMess) {
+	if fingerprint == "" && (proto == config.ProtoVLESS || (proto == config.ProtoVMess && vmessSecIdx == 0)) {
 		fingerprint = "chrome"
+	}
+	serviceName := svc.ServiceName
+	if strings.EqualFold(strings.TrimSpace(svc.Network), "grpc") {
+		serviceName = svc.EffectiveGRPCServiceName()
 	}
 
 	warpModeIdx := 1 // Chained proxy+WARP defaults to WireGuard
@@ -253,6 +264,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		autoStart:          svc.AutoStart,
 		tagsInput:          strings.Join(svc.Tags, ", "),
 		protoIndex:         protoIdx,
+		protoName:          editorProtocolNames[protoIdx],
 		engineIndex:        engineIdx,
 		autoLoopback:       autoLoop,
 		listenInput:        listens,
@@ -262,6 +274,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		uuid:               svc.UUID,
 		password:           svc.Password,
 		securityIndex:      secIdx,
+		vmessSecIndex:      vmessSecIdx,
 		sni:                svc.SNI,
 		alpnInput:          strings.Join(svc.ALPN, ", "),
 		fingerprint:        fingerprint,
@@ -272,7 +285,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 		networkIndex:       netIdx,
 		path:               svc.Path,
 		host:               svc.Host,
-		serviceName:        svc.ServiceName,
+		serviceName:        serviceName,
 		method:             method,
 		congestionCtl:      congestion,
 		zeroRTT:            svc.ZeroRTTHandshake,
@@ -450,6 +463,13 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 	case 2:
 		sec = "none"
 	}
+	if proto == config.ProtoVMess {
+		if a.editor.vmessSecIndex == 1 {
+			sec = "none"
+		} else {
+			sec = "tls"
+		}
+	}
 
 	flow := ""
 	if a.editor.flowIndex == 0 && proto == config.ProtoVLESS {
@@ -463,13 +483,42 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 	case 2:
 		net = "grpc"
 	case 3:
-		net = "xhttp"
+		if proto == config.ProtoVLESS {
+			net = "xhttp"
+		}
+	}
+
+	method := strings.TrimSpace(a.editor.method)
+	if proto == config.ProtoVMess {
+		method = config.NormalizeVMessSecurity(method)
 	}
 
 	var alpn []string
 	for _, part := range strings.Split(a.editor.alpnInput, ",") {
 		if t := strings.TrimSpace(part); t != "" {
 			alpn = append(alpn, t)
+		}
+	}
+
+	sni := strings.TrimSpace(a.editor.sni)
+	fingerprint := strings.TrimSpace(a.editor.fingerprint)
+	path := strings.TrimSpace(a.editor.path)
+	host := strings.TrimSpace(a.editor.host)
+	serviceName := strings.TrimSpace(a.editor.serviceName)
+
+	if proto == config.ProtoVMess && sec == "none" {
+		sni = ""
+		fingerprint = ""
+		alpn = nil
+	}
+	if proto == config.ProtoVLESS || proto == config.ProtoVMess {
+		switch net {
+		case "tcp":
+			path, host, serviceName = "", "", ""
+		case "ws", "xhttp":
+			serviceName = ""
+		case "grpc":
+			path, host = "", ""
 		}
 	}
 
@@ -487,18 +536,18 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		UUID:                 strings.TrimSpace(a.editor.uuid),
 		Password:             strings.TrimSpace(a.editor.password),
 		Security:             sec,
-		SNI:                  strings.TrimSpace(a.editor.sni),
+		SNI:                  sni,
 		ALPN:                 alpn,
-		Fingerprint:          strings.TrimSpace(a.editor.fingerprint),
+		Fingerprint:          fingerprint,
 		PublicKey:            strings.TrimSpace(a.editor.publicKey),
 		ShortID:              strings.TrimSpace(a.editor.shortID),
 		SpiderX:              strings.TrimSpace(a.editor.spiderX),
 		Flow:                 flow,
 		Network:              net,
-		Path:                 strings.TrimSpace(a.editor.path),
-		Host:                 strings.TrimSpace(a.editor.host),
-		ServiceName:          strings.TrimSpace(a.editor.serviceName),
-		Method:               strings.TrimSpace(a.editor.method),
+		Path:                 path,
+		Host:                 host,
+		ServiceName:          serviceName,
+		Method:               method,
 		CongestionController: strings.TrimSpace(a.editor.congestionCtl),
 		ZeroRTTHandshake:     a.editor.zeroRTT,
 		ExtraJSON:            strings.TrimSpace(a.editor.extraJSON),
@@ -628,6 +677,43 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 	})
 }
 
+func (a *app) syncEditorFieldsForProtocolSwitch(oldProto, newProto config.Protocol) {
+	if newProto == config.ProtoNaive {
+		a.editor.engineIndex = 1
+	} else {
+		a.editor.engineIndex = 0
+	}
+	if newProto != config.ProtoVLESS && a.editor.networkIndex >= 3 {
+		a.editor.networkIndex = 0
+	}
+	if oldProto == config.ProtoVLESS && newProto == config.ProtoVMess {
+		if a.editor.securityIndex == 2 {
+			a.editor.vmessSecIndex = 1
+		} else {
+			a.editor.vmessSecIndex = 0
+		}
+	} else if oldProto == config.ProtoVMess && newProto == config.ProtoVLESS {
+		if a.editor.vmessSecIndex == 1 {
+			a.editor.securityIndex = 2
+		} else if a.editor.securityIndex == 2 {
+			a.editor.securityIndex = 0
+		}
+	}
+	switch newProto {
+	case config.ProtoVMess:
+		if oldProto != config.ProtoVMess {
+			a.editor.method = ""
+		}
+	case config.ProtoShadowsocks:
+		if oldProto != config.ProtoShadowsocks || strings.TrimSpace(a.editor.method) == "" {
+			a.editor.method = "2022-blake3-aes-128-gcm"
+		}
+	}
+	if (newProto == config.ProtoVLESS || (newProto == config.ProtoVMess && a.editor.vmessSecIndex == 0)) && strings.TrimSpace(a.editor.fingerprint) == "" {
+		a.editor.fingerprint = "chrome"
+	}
+}
+
 func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 	cat := a.catalog()
 	ui.Column(c).Gap(12).Children(func() {
@@ -638,20 +724,20 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 		// Protocol selection
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 			ui.Text(c, cat.ProtocolLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-			curProto := editorProtocolNames[a.editor.protoIndex]
-			if ui.Select(c.Key("inp-proto-select"), &curProto, editorProtocolNames).Label(cat.ProtocolLabel()).Width(240).Changed() {
+			protoSel := ui.Select(c.Key("inp-proto-select"), &a.editor.protoName, editorProtocolNames).Label(cat.ProtocolLabel()).Width(240)
+			if protoSel.Changed() {
 				for i, name := range editorProtocolNames {
-					if name == curProto {
+					if name == a.editor.protoName {
+						oldProto := editorProtocols[a.editor.protoIndex]
 						a.editor.protoIndex = i
-						// Default engine based on protocol
-						if editorProtocols[i] == config.ProtoNaive {
-							a.editor.engineIndex = 1
-						} else {
-							a.editor.engineIndex = 0
+						if oldProto != editorProtocols[i] {
+							a.syncEditorFieldsForProtocolSwitch(oldProto, editorProtocols[i])
 						}
 						break
 					}
 				}
+			} else if a.editor.protoIndex >= 0 && a.editor.protoIndex < len(editorProtocolNames) {
+				a.editor.protoName = editorProtocolNames[a.editor.protoIndex]
 			}
 		})
 
@@ -673,20 +759,10 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
 					ui.Text(c, cat.CoreXrayDesc()).FontSize(11).TextColor(p.textMuted)
 				})
-				engineIdx := 0
-				if a.editor.engineIndex == 1 {
-					engineIdx = 1
-				}
-				if segmentedControl(c.Key("editor-xray-engine"), p, &engineIdx, []string{
+				segmentedControl(c.Key("editor-xray-engine"), p, &a.editor.engineIndex, []string{
 					cat.EngineSingBox(),
 					cat.EngineSidecarXray(),
-				}) {
-					if engineIdx == 1 {
-						a.editor.engineIndex = 1
-					} else {
-						a.editor.engineIndex = 0
-					}
-				}
+				})
 			})
 		case config.ProtoHysteria2, config.ProtoTUIC:
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
@@ -791,20 +867,37 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 				})
 			})
 			labeledInput(c, p, "inp-vmess-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-vmess-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-				})
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-vmess-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
-				})
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+				ui.Text(c, cat.SecurityLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				if segmentedControl(c.Key("inp-vmess-sec"), p, &a.editor.vmessSecIndex, []string{"TLS", "None"}) {
+					if a.editor.vmessSecIndex == 0 && strings.TrimSpace(a.editor.fingerprint) == "" {
+						a.editor.fingerprint = "chrome"
+					}
+				}
 			})
+			if a.editor.vmessSecIndex == 0 {
+				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vmess-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+					})
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vmess-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
+					})
+				})
+			}
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
 				segmentedControl(c.Key("inp-vmess-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc"})
 			})
 			if a.editor.networkIndex == 1 { // ws
-				labeledInput(c, p, "inp-vmess-path", cat.PathLabel(), &a.editor.path, "/")
+				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vmess-path", cat.PathLabel(), &a.editor.path, "/")
+					})
+					ui.Box(c).Grow(1).Children(func() {
+						labeledInput(c, p, "inp-vmess-host", cat.HostHeaderLabel(), &a.editor.host, "")
+					})
+				})
 			} else if a.editor.networkIndex == 2 { // grpc
 				labeledInput(c, p, "inp-vmess-service", cat.ServiceNameLabel(), &a.editor.serviceName, "")
 			}

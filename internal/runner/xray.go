@@ -105,7 +105,7 @@ func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 							map[string]any{
 								"id":       svc.UUID,
 								"alterId":  0,
-								"security": "auto",
+								"security": config.VMessSecurityOrAuto(svc.Method),
 							},
 						},
 					},
@@ -155,22 +155,22 @@ func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 }
 
 func buildXrayStreamSettings(svc config.Service) map[string]any {
-	network := svc.Network
+	network := strings.ToLower(strings.TrimSpace(svc.Network))
 	if network == "" {
 		network = "tcp"
 	}
 	st := map[string]any{
 		"network": network,
 	}
-	sec := strings.ToLower(svc.Security)
+	sec := strings.ToLower(strings.TrimSpace(svc.Security))
 	if sec != "" {
 		st["security"] = sec
 	}
 	if sec == "reality" {
 		realitySettings := map[string]any{
 			"show":        false,
-			"fingerprint": svc.Fingerprint,
-			"serverName":  svc.SNI,
+			"fingerprint": strings.TrimSpace(svc.Fingerprint),
+			"serverName":  strings.TrimSpace(svc.SNI),
 			"publicKey":   svc.PublicKey,
 			"shortId":     svc.ShortID,
 			"spiderX":     svc.SpiderX,
@@ -181,10 +181,10 @@ func buildXrayStreamSettings(svc config.Service) map[string]any {
 		st["realitySettings"] = realitySettings
 	} else if sec == "tls" {
 		tlsSettings := map[string]any{
-			"serverName": svc.SNI,
+			"serverName": svc.EffectiveTLSServerName(),
 		}
-		if svc.Fingerprint != "" {
-			tlsSettings["fingerprint"] = svc.Fingerprint
+		if fp := strings.TrimSpace(svc.Fingerprint); fp != "" {
+			tlsSettings["fingerprint"] = fp
 		}
 		if len(svc.ALPN) > 0 {
 			tlsSettings["alpn"] = svc.ALPN
@@ -194,17 +194,17 @@ func buildXrayStreamSettings(svc config.Service) map[string]any {
 
 	if network == "ws" {
 		wsSettings := make(map[string]any)
-		if svc.Path != "" {
-			wsSettings["path"] = svc.Path
+		if p := strings.TrimSpace(svc.Path); p != "" {
+			wsSettings["path"] = p
 		}
-		if svc.Host != "" {
-			wsSettings["headers"] = map[string]string{"Host": svc.Host}
+		if h := strings.TrimSpace(svc.Host); h != "" {
+			wsSettings["headers"] = map[string]string{"Host": h}
 		}
 		st["wsSettings"] = wsSettings
 	} else if network == "grpc" {
 		grpcSettings := make(map[string]any)
-		if svc.ServiceName != "" {
-			grpcSettings["serviceName"] = svc.ServiceName
+		if sn := svc.EffectiveGRPCServiceName(); sn != "" {
+			grpcSettings["serviceName"] = sn
 		}
 		st["grpcSettings"] = grpcSettings
 	}
