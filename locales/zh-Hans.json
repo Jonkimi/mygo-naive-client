@@ -94,8 +94,8 @@
   "nodeDrawerSuccessRateDesc": "基于代理实际连接成功与失败次数统计的成功率",
   "nodeDrawerCircuit": "熔断与健康状态",
   "nodeDrawerCircuitDesc": "连续失败达 3 次触发 30 秒熔断保护，追加 10 秒劣质惩罚",
-  "nodeDrawerCircuitNormal": "正常 (未触发熔断)",
-  "nodeDrawerCircuitTripped": "已熔断 (+10000 惩罚分)",
+  "nodeDrawerCircuitNormal": "正常",
+  "nodeDrawerCircuitTripped": "已熔断 (+10000ms)",
   "nodeDrawerFinalScore": "自适应调度评分",
   "nodeDrawerFinalScoreDesc": "综合公式：EWMA / 成功率² + 熔断惩罚。分数越低越优先路由。",
   "nodeDrawerLocalListen": "本地监听入站",
@@ -297,19 +297,19 @@
   "probeURLLabel": "HTTP 204 延迟测速目标地址",
   "downloadURLLabel": "下载测速目标地址",
   "saveSettings": "保存设置",
-  "editNodeTitle": "编辑本地服务",
-  "newNodeTitle": "新建本地服务",
-  "editorTabBasic": "基础配置",
-  "editorTabAdvanced": "高级参数",
-  "editorTabPreview": "配置预览",
+  "editNodeTitle": "编辑节点",
+  "newNodeTitle": "新建节点",
+  "editorTabBasic": "基础",
+  "editorTabAdvanced": "高级",
+  "editorTabPreview": "预览",
   "editorAdvancedCoreCustomDesc": "附加至出站配置的自定义 JSON 片段，可自定义 transport、TLS 或核心高级参数。",
-  "editorAutoStartDesc": "随客户端启动时自动运行该服务",
+  "editorAutoStartDesc": "随客户端启动时自动运行",
   "editorSaveEdit": "保存修改",
-  "editorSaveCreate": "创建服务",
+  "editorSaveCreate": "创建节点",
   "nodeKindLabel": "节点类型",
   "nodeKindManaged": "NaiveProxy (内置托管)",
   "nodeKindExternal": "外部代理 (SOCKS5/HTTP)",
-  "nodeNameLabel": "服务名称 (Alias)",
+  "nodeNameLabel": "节点名称",
   "externalURILabel": "外部代理地址",
   "externalURIHint": "socks5://1.2.3.4:1080 或 http://user:pass@host:8080",
   "listenPortLabel": "本地监听地址 (listen)",
@@ -317,8 +317,8 @@
   "proxyURILabel": "远端代理地址 (proxy)",
   "proxyURIHint": "https://user:pass@example.com:443 或 quic://user:pass@example.com",
   "editorProxyHintFull": "支持 https://、quic://，支持用逗号串联前置代理链",
-  "tagsLabel": "服务器标签 (Tags，逗号分隔)",
-  "tagsHint": "例如: hk, fast, ai",
+  "tagsLabel": "标签 (逗号分隔)",
+  "tagsHint": "hk, fast, ai",
   "editorConcurrencyLabel": "并发连接数 (insecure-concurrency)",
   "editorNoPQLabel": "禁用后量子密钥交换 (no-post-quantum)",
   "editorTunnelTimeoutLabel": "隧道超时秒数 (tunnel-timeout)",
@@ -351,10 +351,10 @@
   "localServicesLabel": "本地服务 ({total})",
   "protocolLabel": "协议类型",
   "engineLabel": "执行引擎",
-  "engineSingBox": "内嵌 Sing-Box (原生)",
-  "engineSidecarNaive": "官方 NaiveProxy Sidecar (Chromium 指纹)",
-  "engineSidecarXray": "官方 Xray-core Sidecar (兼容扩展)",
-  "engineSingBoxOnly": "内嵌 Sing-Box 原生引擎 (免子进程)",
+  "engineSingBox": "Sing-Box",
+  "engineSidecarNaive": "NaiveProxy Sidecar",
+  "engineSidecarXray": "Xray Sidecar",
+  "engineSingBoxOnly": "Sing-Box 原生",
   "autoLoopbackPortLabel": "自动分配本地回环端口 (Auto Loopback)",
   "autoLoopbackPortDesc": "由系统动态分配空闲本地端口，无需手动配置",
   "serverLabel": "服务器地址",
@@ -812,5 +812,91 @@
   "ruleDrawerDispatchTitle": "调度与隔离策略",
   "ruleDrawerCandidatesTitle": "实际解析候选节点",
   "ruleDirectWarpTitle": "通过 Cloudflare WARP 匿名直连 (Direct ➔ WARP)",
-  "ruleDirectWarpDesc": "开启后将通过内置 Cloudflare WARP 节点出站以隐藏家庭宽带真实 IP，局域网私有地址依然自动保护直连。"
+  "ruleDirectWarpDesc": "开启后将通过内置 Cloudflare WARP 节点出站以隐藏家庭宽带真实 IP，局域网私有地址依然自动保护直连。",
+  "nodesRunningSummary": "{running} / {total} 运行中",
+  "@nodesRunningSummary": {
+    "placeholders": {
+      "running": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "actionBatchTestShort": "测速",
+  "batchTestTooltip": "对运行中节点批量测速",
+  "actionImportShort": "导入",
+  "batchActionsLabel": "批量管理",
+  "filterOnlyRunning": "仅运行中",
+  "emptyFilteredNodes": "没有匹配的节点",
+  "resetFilters": "重置筛选条件",
+  "actionDetailsTelemetry": "详情与遥测",
+  "actionDeleteNode": "删除节点",
+  "actionStartNode": "启用节点",
+  "actionStopNode": "停用节点",
+  "moreActionsForNode": "更多操作: {name}",
+  "@moreActionsForNode": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "latencyTestingShort": "测速中…",
+  "latencyTooltipBoth": "真实业务 EWMA: {ewma} ms · 主动探针 RTT: {probe} ms",
+  "@latencyTooltipBoth": {
+    "placeholders": {
+      "ewma": { "type": "int" },
+      "probe": { "type": "int" }
+    }
+  },
+  "latencyTooltipEWMA": "真实业务 EWMA: {ms} ms",
+  "@latencyTooltipEWMA": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "latencyTooltipProbe": "主动探针 RTT: {ms} ms",
+  "@latencyTooltipProbe": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "clonedNodeName": "{name} 副本",
+  "@clonedNodeName": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastNodeCloned": "已克隆节点: {name}",
+  "@toastNodeCloned": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "nodeDrawerLogsShort": "日志",
+  "nodeDrawerMetricsHelpButton": "遥测指标说明",
+  "nodeDrawerTelemetryHelp": "遥测指标说明",
+  "nodeDrawerPIDEmbedded": "内嵌协程",
+  "nodeDrawerAutoStart": "随客户端自启动",
+  "nodeDrawerEnabled": "开启",
+  "nodeDrawerDisabled": "关闭",
+  "nodeDrawerConcurrency": "并发连接数",
+  "nodeDrawerWarpChain": "WARP 链式出口",
+  "nodeDrawerCircuitLabel": "熔断",
+  "nodeDrawerBandwidthLabel": "下载带宽",
+  "nodeDrawerExpandPreview": "展开预览",
+  "nodeDrawerCollapsePreview": "收起",
+  "nodeDrawerScorePts": "{score} 分",
+  "editorBackToDetails": "返回详情",
+  "editorGroupConnection": "远端连接与传输",
+  "editorGroupWarpTransport": "WARP 传输配置",
+  "editorGroupAdvanced": "高级参数与自定义扩展",
+  "editorEngineWarpDesc": "内嵌原生直连出站",
+  "editorEngineSwitchDesc": "内置零子进程 / Xray 兼容",
+  "editorEngineFixedDesc": "内嵌 Sing-Box 原生引擎",
+  "editorEngineExternalDesc": "外部已有代理节点",
+  "autoLoopbackPortShortDesc": "关闭后可手动固定本地 SOCKS5/HTTP 端口",
+  "warpCustomPrivKeyLabel": "WARP 自定义私钥 (可选)",
+  "warpCustomPrivKeyHint": "留空使用全局注册凭证",
+  "warpCustomIPv4Label": "WARP 虚拟 IPv4 (可选覆盖)",
+  "warpCustomIPv6Label": "WARP 虚拟 IPv6 (可选覆盖)",
+  "logDrawerCopyTooltip": "复制当前可见日志（也支持鼠标划选后 Cmd+C 或右键复制）",
+  "logJumpToLatest": "回到底部",
+  "logDrawerSelectionHint": "支持鼠标划选 · Cmd+C"
 }

@@ -988,11 +988,11 @@ func (msgs Messages) NodeDrawerCircuitNormal() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuitNormal", nil)
 }
 
-// NodeDrawerCircuitTripped says "Tripped (+10000ms Penalty)"
+// NodeDrawerCircuitTripped says "Tripped (+10000ms)"
 // in the language the app shows.
 func NodeDrawerCircuitTripped() string { return In(i18n.Locale()).NodeDrawerCircuitTripped() }
 
-// NodeDrawerCircuitTripped says "Tripped (+10000ms Penalty)"
+// NodeDrawerCircuitTripped says "Tripped (+10000ms)"
 // in the language of msgs.
 func (msgs Messages) NodeDrawerCircuitTripped() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuitTripped", nil)
@@ -3010,21 +3010,21 @@ func (msgs Messages) SaveSettings() string {
 	return Catalog.Format(msgs.locale, "saveSettings", nil)
 }
 
-// EditNodeTitle says "Edit Service"
+// EditNodeTitle says "Edit Node"
 // in the language the app shows.
 func EditNodeTitle() string { return In(i18n.Locale()).EditNodeTitle() }
 
-// EditNodeTitle says "Edit Service"
+// EditNodeTitle says "Edit Node"
 // in the language of msgs.
 func (msgs Messages) EditNodeTitle() string {
 	return Catalog.Format(msgs.locale, "editNodeTitle", nil)
 }
 
-// NewNodeTitle says "New Service"
+// NewNodeTitle says "New Node"
 // in the language the app shows.
 func NewNodeTitle() string { return In(i18n.Locale()).NewNodeTitle() }
 
-// NewNodeTitle says "New Service"
+// NewNodeTitle says "New Node"
 // in the language of msgs.
 func (msgs Messages) NewNodeTitle() string {
 	return Catalog.Format(msgs.locale, "newNodeTitle", nil)
@@ -3070,11 +3070,11 @@ func (msgs Messages) EditorAdvancedCoreCustomDesc() string {
 	return Catalog.Format(msgs.locale, "editorAdvancedCoreCustomDesc", nil)
 }
 
-// EditorAutoStartDesc says "Automatically launch this service when client starts"
+// EditorAutoStartDesc says "Auto-start with client"
 // in the language the app shows.
 func EditorAutoStartDesc() string { return In(i18n.Locale()).EditorAutoStartDesc() }
 
-// EditorAutoStartDesc says "Automatically launch this service when client starts"
+// EditorAutoStartDesc says "Auto-start with client"
 // in the language of msgs.
 func (msgs Messages) EditorAutoStartDesc() string {
 	return Catalog.Format(msgs.locale, "editorAutoStartDesc", nil)
@@ -3090,11 +3090,11 @@ func (msgs Messages) EditorSaveEdit() string {
 	return Catalog.Format(msgs.locale, "editorSaveEdit", nil)
 }
 
-// EditorSaveCreate says "Create Service"
+// EditorSaveCreate says "Create Node"
 // in the language the app shows.
 func EditorSaveCreate() string { return In(i18n.Locale()).EditorSaveCreate() }
 
-// EditorSaveCreate says "Create Service"
+// EditorSaveCreate says "Create Node"
 // in the language of msgs.
 func (msgs Messages) EditorSaveCreate() string {
 	return Catalog.Format(msgs.locale, "editorSaveCreate", nil)
@@ -3130,11 +3130,11 @@ func (msgs Messages) NodeKindExternal() string {
 	return Catalog.Format(msgs.locale, "nodeKindExternal", nil)
 }
 
-// NodeNameLabel says "Service Name (Alias)"
+// NodeNameLabel says "Node Name"
 // in the language the app shows.
 func NodeNameLabel() string { return In(i18n.Locale()).NodeNameLabel() }
 
-// NodeNameLabel says "Service Name (Alias)"
+// NodeNameLabel says "Node Name"
 // in the language of msgs.
 func (msgs Messages) NodeNameLabel() string {
 	return Catalog.Format(msgs.locale, "nodeNameLabel", nil)
@@ -3210,21 +3210,21 @@ func (msgs Messages) EditorProxyHintFull() string {
 	return Catalog.Format(msgs.locale, "editorProxyHintFull", nil)
 }
 
-// TagsLabel says "Server Tags (comma separated)"
+// TagsLabel says "Tags (comma separated)"
 // in the language the app shows.
 func TagsLabel() string { return In(i18n.Locale()).TagsLabel() }
 
-// TagsLabel says "Server Tags (comma separated)"
+// TagsLabel says "Tags (comma separated)"
 // in the language of msgs.
 func (msgs Messages) TagsLabel() string {
 	return Catalog.Format(msgs.locale, "tagsLabel", nil)
 }
 
-// TagsHint says "e.g. hk, fast, ai"
+// TagsHint says "hk, fast, ai"
 // in the language the app shows.
 func TagsHint() string { return In(i18n.Locale()).TagsHint() }
 
-// TagsHint says "e.g. hk, fast, ai"
+// TagsHint says "hk, fast, ai"
 // in the language of msgs.
 func (msgs Messages) TagsHint() string {
 	return Catalog.Format(msgs.locale, "tagsHint", nil)
@@ -3552,41 +3552,41 @@ func (msgs Messages) EngineLabel() string {
 	return Catalog.Format(msgs.locale, "engineLabel", nil)
 }
 
-// EngineSingBox says "Embedded Sing-Box (In-Process)"
+// EngineSingBox says "Sing-Box"
 // in the language the app shows.
 func EngineSingBox() string { return In(i18n.Locale()).EngineSingBox() }
 
-// EngineSingBox says "Embedded Sing-Box (In-Process)"
+// EngineSingBox says "Sing-Box"
 // in the language of msgs.
 func (msgs Messages) EngineSingBox() string {
 	return Catalog.Format(msgs.locale, "engineSingBox", nil)
 }
 
-// EngineSidecarNaive says "Official NaiveProxy Sidecar (Chromium Fingerprint)"
+// EngineSidecarNaive says "NaiveProxy Sidecar"
 // in the language the app shows.
 func EngineSidecarNaive() string { return In(i18n.Locale()).EngineSidecarNaive() }
 
-// EngineSidecarNaive says "Official NaiveProxy Sidecar (Chromium Fingerprint)"
+// EngineSidecarNaive says "NaiveProxy Sidecar"
 // in the language of msgs.
 func (msgs Messages) EngineSidecarNaive() string {
 	return Catalog.Format(msgs.locale, "engineSidecarNaive", nil)
 }
 
-// EngineSidecarXray says "Official Xray-core Sidecar (Compatibility)"
+// EngineSidecarXray says "Xray Sidecar"
 // in the language the app shows.
 func EngineSidecarXray() string { return In(i18n.Locale()).EngineSidecarXray() }
 
-// EngineSidecarXray says "Official Xray-core Sidecar (Compatibility)"
+// EngineSidecarXray says "Xray Sidecar"
 // in the language of msgs.
 func (msgs Messages) EngineSidecarXray() string {
 	return Catalog.Format(msgs.locale, "engineSidecarXray", nil)
 }
 
-// EngineSingBoxOnly says "Embedded Sing-Box (Subprocess-free)"
+// EngineSingBoxOnly says "Sing-Box Native"
 // in the language the app shows.
 func EngineSingBoxOnly() string { return In(i18n.Locale()).EngineSingBoxOnly() }
 
-// EngineSingBoxOnly says "Embedded Sing-Box (Subprocess-free)"
+// EngineSingBoxOnly says "Sing-Box Native"
 // in the language of msgs.
 func (msgs Messages) EngineSingBoxOnly() string {
 	return Catalog.Format(msgs.locale, "engineSingBoxOnly", nil)
@@ -6766,4 +6766,498 @@ func RuleDirectWarpDesc() string { return In(i18n.Locale()).RuleDirectWarpDesc()
 // in the language of msgs.
 func (msgs Messages) RuleDirectWarpDesc() string {
 	return Catalog.Format(msgs.locale, "ruleDirectWarpDesc", nil)
+}
+
+// NodesRunningSummary says "{running} / {total} running"
+// in the language the app shows.
+func NodesRunningSummary(running int, total int) string {
+	return In(i18n.Locale()).NodesRunningSummary(running, total)
+}
+
+// NodesRunningSummary says "{running} / {total} running"
+// in the language of msgs.
+func (msgs Messages) NodesRunningSummary(running int, total int) string {
+	return Catalog.Format(msgs.locale, "nodesRunningSummary", map[string]any{"running": running, "total": total})
+}
+
+// ActionBatchTestShort says "Test"
+// in the language the app shows.
+func ActionBatchTestShort() string { return In(i18n.Locale()).ActionBatchTestShort() }
+
+// ActionBatchTestShort says "Test"
+// in the language of msgs.
+func (msgs Messages) ActionBatchTestShort() string {
+	return Catalog.Format(msgs.locale, "actionBatchTestShort", nil)
+}
+
+// BatchTestTooltip says "Test latency and speed for running nodes"
+// in the language the app shows.
+func BatchTestTooltip() string { return In(i18n.Locale()).BatchTestTooltip() }
+
+// BatchTestTooltip says "Test latency and speed for running nodes"
+// in the language of msgs.
+func (msgs Messages) BatchTestTooltip() string {
+	return Catalog.Format(msgs.locale, "batchTestTooltip", nil)
+}
+
+// ActionImportShort says "Import"
+// in the language the app shows.
+func ActionImportShort() string { return In(i18n.Locale()).ActionImportShort() }
+
+// ActionImportShort says "Import"
+// in the language of msgs.
+func (msgs Messages) ActionImportShort() string {
+	return Catalog.Format(msgs.locale, "actionImportShort", nil)
+}
+
+// BatchActionsLabel says "Batch Actions"
+// in the language the app shows.
+func BatchActionsLabel() string { return In(i18n.Locale()).BatchActionsLabel() }
+
+// BatchActionsLabel says "Batch Actions"
+// in the language of msgs.
+func (msgs Messages) BatchActionsLabel() string {
+	return Catalog.Format(msgs.locale, "batchActionsLabel", nil)
+}
+
+// FilterOnlyRunning says "Running only"
+// in the language the app shows.
+func FilterOnlyRunning() string { return In(i18n.Locale()).FilterOnlyRunning() }
+
+// FilterOnlyRunning says "Running only"
+// in the language of msgs.
+func (msgs Messages) FilterOnlyRunning() string {
+	return Catalog.Format(msgs.locale, "filterOnlyRunning", nil)
+}
+
+// EmptyFilteredNodes says "No matching nodes"
+// in the language the app shows.
+func EmptyFilteredNodes() string { return In(i18n.Locale()).EmptyFilteredNodes() }
+
+// EmptyFilteredNodes says "No matching nodes"
+// in the language of msgs.
+func (msgs Messages) EmptyFilteredNodes() string {
+	return Catalog.Format(msgs.locale, "emptyFilteredNodes", nil)
+}
+
+// ResetFilters says "Reset filters"
+// in the language the app shows.
+func ResetFilters() string { return In(i18n.Locale()).ResetFilters() }
+
+// ResetFilters says "Reset filters"
+// in the language of msgs.
+func (msgs Messages) ResetFilters() string {
+	return Catalog.Format(msgs.locale, "resetFilters", nil)
+}
+
+// ActionDetailsTelemetry says "Details & Telemetry"
+// in the language the app shows.
+func ActionDetailsTelemetry() string { return In(i18n.Locale()).ActionDetailsTelemetry() }
+
+// ActionDetailsTelemetry says "Details & Telemetry"
+// in the language of msgs.
+func (msgs Messages) ActionDetailsTelemetry() string {
+	return Catalog.Format(msgs.locale, "actionDetailsTelemetry", nil)
+}
+
+// ActionDeleteNode says "Delete Node"
+// in the language the app shows.
+func ActionDeleteNode() string { return In(i18n.Locale()).ActionDeleteNode() }
+
+// ActionDeleteNode says "Delete Node"
+// in the language of msgs.
+func (msgs Messages) ActionDeleteNode() string {
+	return Catalog.Format(msgs.locale, "actionDeleteNode", nil)
+}
+
+// ActionStartNode says "Start node"
+// in the language the app shows.
+func ActionStartNode() string { return In(i18n.Locale()).ActionStartNode() }
+
+// ActionStartNode says "Start node"
+// in the language of msgs.
+func (msgs Messages) ActionStartNode() string {
+	return Catalog.Format(msgs.locale, "actionStartNode", nil)
+}
+
+// ActionStopNode says "Stop node"
+// in the language the app shows.
+func ActionStopNode() string { return In(i18n.Locale()).ActionStopNode() }
+
+// ActionStopNode says "Stop node"
+// in the language of msgs.
+func (msgs Messages) ActionStopNode() string {
+	return Catalog.Format(msgs.locale, "actionStopNode", nil)
+}
+
+// MoreActionsForNode says "More actions: {name}"
+// in the language the app shows.
+func MoreActionsForNode(name string) string { return In(i18n.Locale()).MoreActionsForNode(name) }
+
+// MoreActionsForNode says "More actions: {name}"
+// in the language of msgs.
+func (msgs Messages) MoreActionsForNode(name string) string {
+	return Catalog.Format(msgs.locale, "moreActionsForNode", map[string]any{"name": name})
+}
+
+// LatencyTestingShort says "Pinging…"
+// in the language the app shows.
+func LatencyTestingShort() string { return In(i18n.Locale()).LatencyTestingShort() }
+
+// LatencyTestingShort says "Pinging…"
+// in the language of msgs.
+func (msgs Messages) LatencyTestingShort() string {
+	return Catalog.Format(msgs.locale, "latencyTestingShort", nil)
+}
+
+// LatencyTooltipBoth says "Real traffic EWMA: {ewma} ms · Probe RTT: {probe} ms"
+// in the language the app shows.
+func LatencyTooltipBoth(ewma int, probe int) string {
+	return In(i18n.Locale()).LatencyTooltipBoth(ewma, probe)
+}
+
+// LatencyTooltipBoth says "Real traffic EWMA: {ewma} ms · Probe RTT: {probe} ms"
+// in the language of msgs.
+func (msgs Messages) LatencyTooltipBoth(ewma int, probe int) string {
+	return Catalog.Format(msgs.locale, "latencyTooltipBoth", map[string]any{"ewma": ewma, "probe": probe})
+}
+
+// LatencyTooltipEWMA says "Real traffic EWMA: {ms} ms"
+// in the language the app shows.
+func LatencyTooltipEWMA(ms int) string { return In(i18n.Locale()).LatencyTooltipEWMA(ms) }
+
+// LatencyTooltipEWMA says "Real traffic EWMA: {ms} ms"
+// in the language of msgs.
+func (msgs Messages) LatencyTooltipEWMA(ms int) string {
+	return Catalog.Format(msgs.locale, "latencyTooltipEWMA", map[string]any{"ms": ms})
+}
+
+// LatencyTooltipProbe says "Probe RTT: {ms} ms"
+// in the language the app shows.
+func LatencyTooltipProbe(ms int) string { return In(i18n.Locale()).LatencyTooltipProbe(ms) }
+
+// LatencyTooltipProbe says "Probe RTT: {ms} ms"
+// in the language of msgs.
+func (msgs Messages) LatencyTooltipProbe(ms int) string {
+	return Catalog.Format(msgs.locale, "latencyTooltipProbe", map[string]any{"ms": ms})
+}
+
+// ClonedNodeName says "{name} Copy"
+// in the language the app shows.
+func ClonedNodeName(name string) string { return In(i18n.Locale()).ClonedNodeName(name) }
+
+// ClonedNodeName says "{name} Copy"
+// in the language of msgs.
+func (msgs Messages) ClonedNodeName(name string) string {
+	return Catalog.Format(msgs.locale, "clonedNodeName", map[string]any{"name": name})
+}
+
+// ToastNodeCloned says "Cloned node: {name}"
+// in the language the app shows.
+func ToastNodeCloned(name string) string { return In(i18n.Locale()).ToastNodeCloned(name) }
+
+// ToastNodeCloned says "Cloned node: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastNodeCloned(name string) string {
+	return Catalog.Format(msgs.locale, "toastNodeCloned", map[string]any{"name": name})
+}
+
+// NodeDrawerLogsShort says "Logs"
+// in the language the app shows.
+func NodeDrawerLogsShort() string { return In(i18n.Locale()).NodeDrawerLogsShort() }
+
+// NodeDrawerLogsShort says "Logs"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerLogsShort() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerLogsShort", nil)
+}
+
+// NodeDrawerMetricsHelpButton says "Telemetry metric definitions"
+// in the language the app shows.
+func NodeDrawerMetricsHelpButton() string { return In(i18n.Locale()).NodeDrawerMetricsHelpButton() }
+
+// NodeDrawerMetricsHelpButton says "Telemetry metric definitions"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerMetricsHelpButton() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerMetricsHelpButton", nil)
+}
+
+// NodeDrawerTelemetryHelp says "Telemetry Definitions"
+// in the language the app shows.
+func NodeDrawerTelemetryHelp() string { return In(i18n.Locale()).NodeDrawerTelemetryHelp() }
+
+// NodeDrawerTelemetryHelp says "Telemetry Definitions"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerTelemetryHelp() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerTelemetryHelp", nil)
+}
+
+// NodeDrawerPIDEmbedded says "In-process core"
+// in the language the app shows.
+func NodeDrawerPIDEmbedded() string { return In(i18n.Locale()).NodeDrawerPIDEmbedded() }
+
+// NodeDrawerPIDEmbedded says "In-process core"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerPIDEmbedded() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerPIDEmbedded", nil)
+}
+
+// NodeDrawerAutoStart says "Auto-start"
+// in the language the app shows.
+func NodeDrawerAutoStart() string { return In(i18n.Locale()).NodeDrawerAutoStart() }
+
+// NodeDrawerAutoStart says "Auto-start"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerAutoStart() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerAutoStart", nil)
+}
+
+// NodeDrawerEnabled says "On"
+// in the language the app shows.
+func NodeDrawerEnabled() string { return In(i18n.Locale()).NodeDrawerEnabled() }
+
+// NodeDrawerEnabled says "On"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerEnabled() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerEnabled", nil)
+}
+
+// NodeDrawerDisabled says "Off"
+// in the language the app shows.
+func NodeDrawerDisabled() string { return In(i18n.Locale()).NodeDrawerDisabled() }
+
+// NodeDrawerDisabled says "Off"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerDisabled() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerDisabled", nil)
+}
+
+// NodeDrawerConcurrency says "Concurrency"
+// in the language the app shows.
+func NodeDrawerConcurrency() string { return In(i18n.Locale()).NodeDrawerConcurrency() }
+
+// NodeDrawerConcurrency says "Concurrency"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerConcurrency() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerConcurrency", nil)
+}
+
+// NodeDrawerWarpChain says "WARP Chain"
+// in the language the app shows.
+func NodeDrawerWarpChain() string { return In(i18n.Locale()).NodeDrawerWarpChain() }
+
+// NodeDrawerWarpChain says "WARP Chain"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerWarpChain() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerWarpChain", nil)
+}
+
+// NodeDrawerCircuitLabel says "Circuit"
+// in the language the app shows.
+func NodeDrawerCircuitLabel() string { return In(i18n.Locale()).NodeDrawerCircuitLabel() }
+
+// NodeDrawerCircuitLabel says "Circuit"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuitLabel() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuitLabel", nil)
+}
+
+// NodeDrawerBandwidthLabel says "Bandwidth"
+// in the language the app shows.
+func NodeDrawerBandwidthLabel() string { return In(i18n.Locale()).NodeDrawerBandwidthLabel() }
+
+// NodeDrawerBandwidthLabel says "Bandwidth"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerBandwidthLabel() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerBandwidthLabel", nil)
+}
+
+// NodeDrawerExpandPreview says "Expand preview"
+// in the language the app shows.
+func NodeDrawerExpandPreview() string { return In(i18n.Locale()).NodeDrawerExpandPreview() }
+
+// NodeDrawerExpandPreview says "Expand preview"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerExpandPreview() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerExpandPreview", nil)
+}
+
+// NodeDrawerCollapsePreview says "Collapse"
+// in the language the app shows.
+func NodeDrawerCollapsePreview() string { return In(i18n.Locale()).NodeDrawerCollapsePreview() }
+
+// NodeDrawerCollapsePreview says "Collapse"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCollapsePreview() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCollapsePreview", nil)
+}
+
+// NodeDrawerScorePts says "{score} pts"
+// in the language the app shows.
+func NodeDrawerScorePts(score string) string { return In(i18n.Locale()).NodeDrawerScorePts(score) }
+
+// NodeDrawerScorePts says "{score} pts"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerScorePts(score string) string {
+	return Catalog.Format(msgs.locale, "nodeDrawerScorePts", map[string]any{"score": score})
+}
+
+// EditorBackToDetails says "Back to Details"
+// in the language the app shows.
+func EditorBackToDetails() string { return In(i18n.Locale()).EditorBackToDetails() }
+
+// EditorBackToDetails says "Back to Details"
+// in the language of msgs.
+func (msgs Messages) EditorBackToDetails() string {
+	return Catalog.Format(msgs.locale, "editorBackToDetails", nil)
+}
+
+// EditorGroupConnection says "Connection & Transport"
+// in the language the app shows.
+func EditorGroupConnection() string { return In(i18n.Locale()).EditorGroupConnection() }
+
+// EditorGroupConnection says "Connection & Transport"
+// in the language of msgs.
+func (msgs Messages) EditorGroupConnection() string {
+	return Catalog.Format(msgs.locale, "editorGroupConnection", nil)
+}
+
+// EditorGroupWarpTransport says "WARP Transport"
+// in the language the app shows.
+func EditorGroupWarpTransport() string { return In(i18n.Locale()).EditorGroupWarpTransport() }
+
+// EditorGroupWarpTransport says "WARP Transport"
+// in the language of msgs.
+func (msgs Messages) EditorGroupWarpTransport() string {
+	return Catalog.Format(msgs.locale, "editorGroupWarpTransport", nil)
+}
+
+// EditorGroupAdvanced says "Advanced Options & Extensions"
+// in the language the app shows.
+func EditorGroupAdvanced() string { return In(i18n.Locale()).EditorGroupAdvanced() }
+
+// EditorGroupAdvanced says "Advanced Options & Extensions"
+// in the language of msgs.
+func (msgs Messages) EditorGroupAdvanced() string {
+	return Catalog.Format(msgs.locale, "editorGroupAdvanced", nil)
+}
+
+// EditorEngineWarpDesc says "Built-in native direct outbound"
+// in the language the app shows.
+func EditorEngineWarpDesc() string { return In(i18n.Locale()).EditorEngineWarpDesc() }
+
+// EditorEngineWarpDesc says "Built-in native direct outbound"
+// in the language of msgs.
+func (msgs Messages) EditorEngineWarpDesc() string {
+	return Catalog.Format(msgs.locale, "editorEngineWarpDesc", nil)
+}
+
+// EditorEngineSwitchDesc says "Embedded Sing-Box / Xray compatible"
+// in the language the app shows.
+func EditorEngineSwitchDesc() string { return In(i18n.Locale()).EditorEngineSwitchDesc() }
+
+// EditorEngineSwitchDesc says "Embedded Sing-Box / Xray compatible"
+// in the language of msgs.
+func (msgs Messages) EditorEngineSwitchDesc() string {
+	return Catalog.Format(msgs.locale, "editorEngineSwitchDesc", nil)
+}
+
+// EditorEngineFixedDesc says "Embedded Sing-Box native engine"
+// in the language the app shows.
+func EditorEngineFixedDesc() string { return In(i18n.Locale()).EditorEngineFixedDesc() }
+
+// EditorEngineFixedDesc says "Embedded Sing-Box native engine"
+// in the language of msgs.
+func (msgs Messages) EditorEngineFixedDesc() string {
+	return Catalog.Format(msgs.locale, "editorEngineFixedDesc", nil)
+}
+
+// EditorEngineExternalDesc says "External upstream proxy"
+// in the language the app shows.
+func EditorEngineExternalDesc() string { return In(i18n.Locale()).EditorEngineExternalDesc() }
+
+// EditorEngineExternalDesc says "External upstream proxy"
+// in the language of msgs.
+func (msgs Messages) EditorEngineExternalDesc() string {
+	return Catalog.Format(msgs.locale, "editorEngineExternalDesc", nil)
+}
+
+// AutoLoopbackPortShortDesc says "Turn off to set a fixed local SOCKS5/HTTP port"
+// in the language the app shows.
+func AutoLoopbackPortShortDesc() string { return In(i18n.Locale()).AutoLoopbackPortShortDesc() }
+
+// AutoLoopbackPortShortDesc says "Turn off to set a fixed local SOCKS5/HTTP port"
+// in the language of msgs.
+func (msgs Messages) AutoLoopbackPortShortDesc() string {
+	return Catalog.Format(msgs.locale, "autoLoopbackPortShortDesc", nil)
+}
+
+// WarpCustomPrivKeyLabel says "WARP Private Key (optional)"
+// in the language the app shows.
+func WarpCustomPrivKeyLabel() string { return In(i18n.Locale()).WarpCustomPrivKeyLabel() }
+
+// WarpCustomPrivKeyLabel says "WARP Private Key (optional)"
+// in the language of msgs.
+func (msgs Messages) WarpCustomPrivKeyLabel() string {
+	return Catalog.Format(msgs.locale, "warpCustomPrivKeyLabel", nil)
+}
+
+// WarpCustomPrivKeyHint says "Leave blank to use global registration credential"
+// in the language the app shows.
+func WarpCustomPrivKeyHint() string { return In(i18n.Locale()).WarpCustomPrivKeyHint() }
+
+// WarpCustomPrivKeyHint says "Leave blank to use global registration credential"
+// in the language of msgs.
+func (msgs Messages) WarpCustomPrivKeyHint() string {
+	return Catalog.Format(msgs.locale, "warpCustomPrivKeyHint", nil)
+}
+
+// WarpCustomIPv4Label says "WARP Virtual IPv4 (optional)"
+// in the language the app shows.
+func WarpCustomIPv4Label() string { return In(i18n.Locale()).WarpCustomIPv4Label() }
+
+// WarpCustomIPv4Label says "WARP Virtual IPv4 (optional)"
+// in the language of msgs.
+func (msgs Messages) WarpCustomIPv4Label() string {
+	return Catalog.Format(msgs.locale, "warpCustomIPv4Label", nil)
+}
+
+// WarpCustomIPv6Label says "WARP Virtual IPv6 (optional)"
+// in the language the app shows.
+func WarpCustomIPv6Label() string { return In(i18n.Locale()).WarpCustomIPv6Label() }
+
+// WarpCustomIPv6Label says "WARP Virtual IPv6 (optional)"
+// in the language of msgs.
+func (msgs Messages) WarpCustomIPv6Label() string {
+	return Catalog.Format(msgs.locale, "warpCustomIPv6Label", nil)
+}
+
+// LogDrawerCopyTooltip says "Copy all visible logs (or drag mouse to select & Cmd+C)"
+// in the language the app shows.
+func LogDrawerCopyTooltip() string { return In(i18n.Locale()).LogDrawerCopyTooltip() }
+
+// LogDrawerCopyTooltip says "Copy all visible logs (or drag mouse to select & Cmd+C)"
+// in the language of msgs.
+func (msgs Messages) LogDrawerCopyTooltip() string {
+	return Catalog.Format(msgs.locale, "logDrawerCopyTooltip", nil)
+}
+
+// LogJumpToLatest says "Latest"
+// in the language the app shows.
+func LogJumpToLatest() string { return In(i18n.Locale()).LogJumpToLatest() }
+
+// LogJumpToLatest says "Latest"
+// in the language of msgs.
+func (msgs Messages) LogJumpToLatest() string {
+	return Catalog.Format(msgs.locale, "logJumpToLatest", nil)
+}
+
+// LogDrawerSelectionHint says "Drag to select · Cmd+C"
+// in the language the app shows.
+func LogDrawerSelectionHint() string { return In(i18n.Locale()).LogDrawerSelectionHint() }
+
+// LogDrawerSelectionHint says "Drag to select · Cmd+C"
+// in the language of msgs.
+func (msgs Messages) LogDrawerSelectionHint() string {
+	return Catalog.Format(msgs.locale, "logDrawerSelectionHint", nil)
 }

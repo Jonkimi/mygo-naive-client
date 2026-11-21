@@ -194,23 +194,36 @@ func TestServiceCard_ProtocolAndEngineCapsule(t *testing.T) {
 	a.activeTab = TabNodes
 	tt.Frame()
 
-	// Check protocol and engine capsule pills
-	vlessPill := "VLESS · SING-BOX"
-	if _, ok := tt.Find(vlessPill); !ok {
-		t.Fatalf("expected service card to show capsule %q", vlessPill)
+	// Check clean metadata line without noisy pill soup or redundant loopback/in-process text
+	if _, ok := tt.Find("VLESS · Sing-Box"); !ok {
+		t.Fatalf("expected service card to show compact meta %q, got texts: %v", "VLESS · Sing-Box", tt.Texts())
+	}
+	if _, ok := tt.Find("Naive · Sidecar"); !ok {
+		t.Fatalf("expected service card to show compact meta %q, got texts: %v", "Naive · Sidecar", tt.Texts())
+	}
+	if _, ok := tt.Find("sing-box (in-process)"); ok {
+		t.Fatalf("did not expect redundant 'sing-box (in-process)' on redesigned list card")
+	}
+	if _, ok := tt.Find("Auto Loopback (:0)"); ok {
+		t.Fatalf("did not expect stopped 'Auto Loopback (:0)' on redesigned list card")
 	}
 
-	naivePill := "NAIVE · SIDECAR"
-	if _, ok := tt.Find(naivePill); !ok {
-		t.Fatalf("expected service card to show capsule %q", naivePill)
+	// Clicking the card opens the Node Details Drawer where full engine badge & local listen details live
+	if err := tt.Click("US-Vision"); err != nil {
+		t.Fatalf("click US-Vision card: %v", err)
 	}
-
-	// Check listen summaries
-	if _, ok := tt.Find("sing-box (in-process)"); !ok {
-		t.Fatalf("expected service card to show 'sing-box (in-process)' for singbox engine")
+	tt.Frame()
+	if !tt.HasText("VLESS · SING-BOX") || !tt.HasText(a.catalog().NodeDrawerLocalListenInProcess()) {
+		t.Fatalf("expected node drawer to show VLESS · SING-BOX and in-process listen detail")
 	}
-	if _, ok := tt.Find("Auto Loopback (:0)"); !ok {
-		t.Fatalf("expected service card to show 'Auto Loopback (:0)' for unstarted auto loopback sidecar")
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if err := tt.Click("SG-Naive"); err != nil {
+		t.Fatalf("click SG-Naive card: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("NAIVE · SIDECAR") || !tt.HasText("Auto Loopback (:0)") {
+		t.Fatalf("expected node drawer to show NAIVE · SIDECAR and Auto Loopback (:0)")
 	}
 }
 
@@ -292,9 +305,9 @@ func TestInProcessNodes_PersistListenSummaryAcrossRestart(t *testing.T) {
 	a.setCnDirectWarpEnabled(true)
 	tt.Frame()
 
-	// 1. Initially, should show "sing-box (in-process)"
-	if _, ok := tt.Find("sing-box (in-process)"); !ok {
-		t.Fatalf("expected 'sing-box (in-process)' on initial render")
+	// 1. Initially, should show compact "VLESS · Sing-Box" and NOT "socks://127.0.0.1:1080"
+	if _, ok := tt.Find("VLESS · Sing-Box"); !ok {
+		t.Fatalf("expected 'VLESS · Sing-Box' on initial render, got texts: %v", tt.Texts())
 	}
 	if _, ok := tt.Find("socks://127.0.0.1:1080"); ok {
 		t.Fatalf("did not expect 'socks://127.0.0.1:1080' on initial render")
@@ -305,12 +318,17 @@ func TestInProcessNodes_PersistListenSummaryAcrossRestart(t *testing.T) {
 	a.loadState()
 	tt.Frame()
 
-	// 3. Verify that after loadState, in-process node STILL shows "sing-box (in-process)" and NOT "socks://127.0.0.1:1080"
-	if _, ok := tt.Find("sing-box (in-process)"); !ok {
-		t.Fatalf("expected 'sing-box (in-process)' after restart/loadState")
+	// 3. Verify that after loadState, in-process node retains empty listens and shows in-process summary in drawer
+	if _, ok := tt.Find("VLESS · Sing-Box"); !ok {
+		t.Fatalf("expected 'VLESS · Sing-Box' after restart/loadState")
 	}
 	if _, ok := tt.Find("socks://127.0.0.1:1080"); ok {
 		t.Fatalf("expected no 'socks://127.0.0.1:1080' for in-process node after restart/loadState")
+	}
+	a.activeNodeDrawerID = inprocessNode.ID
+	tt.Frame()
+	if !tt.HasText(a.catalog().NodeDrawerLocalListenInProcess()) {
+		t.Fatalf("expected %q in drawer after restart/loadState", a.catalog().NodeDrawerLocalListenInProcess())
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
 	"naive-client/internal/warp"
+	"naive-client/locales"
 )
 
 func (a *app) view(c *ui.Context) {
@@ -20,6 +21,11 @@ func (a *app) view(c *ui.Context) {
 	a.applyThemeToContext(c)
 	p := paletteFor(c.Theme())
 
+	if a.activeTab != TabNodes {
+		a.openNodeMenuID = ""
+		a.openBatchMenu = false
+	}
+
 	c.OnShortcut(0, ui.KeyEscape, func() {
 		if a.activeLogDrawerID != "" {
 			a.activeLogDrawerID = ""
@@ -29,6 +35,7 @@ func (a *app) view(c *ui.Context) {
 		}
 		if a.activeNodeDrawerID != "" {
 			a.activeNodeDrawerID = ""
+			a.nodeDrawerHelpOpen = false
 		}
 	})
 	c.OnShortcut(ui.Cmd, ui.Key1, func() { a.activeTab = TabNodes })
@@ -44,7 +51,7 @@ func (a *app) view(c *ui.Context) {
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.renderSidebar(c, p)
 
-		ui.Column(c.Key("main")).Grow(1).Background(p.surface).Children(func() {
+		ui.Column(c.Key("main")).Grow(1).MinWidth(0).Background(p.surface).Children(func() {
 			switch a.activeTab {
 			case TabNodes:
 				a.renderToolbar(c, p)
@@ -70,7 +77,7 @@ func (a *app) view(c *ui.Context) {
 	a.renderRuleDrawer(c, p)
 	a.renderNodeDrawer(c, p)
 
-	a.renderEditorDialog(c, p)
+	a.renderEditorDrawer(c, p)
 	a.renderImportDialog(c, p)
 	a.renderDeleteDialog(c, p)
 	a.renderRuleEditorDialog(c, p)
@@ -109,65 +116,94 @@ func (a *app) applyThemeToContext(c *ui.Context) {
 func (a *app) renderToolbar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	runningCount := a.activeRunningCount()
+	totalCount := len(a.state.Services)
 
-	ui.Row(c).
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		Padding(14, 20, 12, 20).
+	ui.Row(c.Key("nodes-header")).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
+		Padding(14, 18, 14, 18).
 		Background(p.surface).
+		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
 		Children(func() {
-			// Left: Section title & live running badge
-			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-				ui.Text(c, cat.LocalServicesLabel(len(a.state.Services))).
-					FontSize(15).FontWeight(700).TextColor(p.text)
-				if runningCount > 0 {
-					statusBadge(c, cat.RunningCountBadge(runningCount), p.green, p.greenBg)
-				} else {
-					tagPill(c, cat.AllStoppedBadge(), p.textMuted, p.elevated)
+			// Left: Page title & quiet tabular running summary
+			ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
+				ui.Text(c, cat.NavNodes()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+				if totalCount > 0 {
+					ui.Text(c, cat.NodesRunningSummary(runningCount, totalCount)).
+						FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
 				}
 			})
 
-			// Right: Unified toolbar actions (batch controls + create/import)
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				if len(a.state.Services) > 0 {
-					if len(a.state.Services) > 1 {
-						allRunning := runningCount == len(a.state.Services)
-						startAllBtn := actionChip(c.Key("btn-start-all"), p, iconPlay, cat.ActionStartAll(), allRunning)
-						if allRunning {
-							startAllBtn.Tooltip(cat.AllRunningTip())
-						}
-						if startAllBtn.Clicked() {
-							a.startAllServices()
-						}
+			// Right: Search + quiet secondary actions + optional batch overflow + single primary CTA
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+				if totalCount > 0 {
+					ui.SearchField(c.Key("input-nodes-search"), &a.searchQuery).
+						Placeholder(cat.SearchPlaceholder()).
+						Label(cat.SearchPlaceholder()).
+						Width(164).Height(32).Radius(8).FontSize(12).
+						Background(p.card)
 
-						allStopped := runningCount == 0
-						stopAllBtn := actionChip(c.Key("btn-stop-all"), p, iconStop, cat.ActionStopAll(), allStopped)
-						if allStopped {
-							stopAllBtn.Tooltip(cat.AllStoppedTip())
-						}
-						if stopAllBtn.Clicked() {
-							a.stopAllServices()
-						}
-					}
-					batchLabel := cat.ActionBatchTest()
+					batchLabel := cat.ActionBatchTestShort()
 					if a.batchTesting && a.batchStage != "" {
 						batchLabel = a.batchStage
 					}
-					batchDisabled := runningCount == 0 && !a.batchTesting
-					batchBtn := actionChip(c.Key("btn-batch-test"), p, iconBolt, batchLabel, batchDisabled)
-					if batchDisabled {
-						batchBtn.Tooltip(cat.TestRequiresRunning())
+					batchDimmed := runningCount == 0 && !a.batchTesting
+					batchTip := cat.BatchTestTooltip()
+					if batchDimmed {
+						batchTip = cat.TestRequiresRunning()
 					}
-					if batchBtn.Clicked() {
+					batchProbeBtn := quietToolbarButton(c.Key("btn-batch-test"), p, iconBolt, batchLabel, batchDimmed).
+						Tooltip(batchTip)
+					if batchProbeBtn.Clicked() {
+						a.openNodeMenuID = ""
+						a.openBatchMenu = false
 						a.triggerBatchTest()
 					}
-
-					ui.Box(c).Size(1, 16).Background(p.borderSubtle)
 				}
 
-				if actionChip(c.Key("btn-import-service"), p, iconPaste, cat.ImportClipboard(), false).Clicked() {
+				importBtn := quietToolbarButton(c.Key("btn-import-service"), p, nil, cat.ActionImportShort(), false).
+					Tooltip(cat.ImportFromClipboard())
+				if importBtn.Clicked() {
+					a.openNodeMenuID = ""
+					a.openBatchMenu = false
 					a.openImportDialog()
 				}
-				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewService(), p.accent, false).Clicked() {
+
+				if totalCount > 1 {
+					batchMoreBtn := quietToolbarIconButton(c.Key("btn-batch-actions"), p, iconMore, cat.BatchActionsLabel(), a.openBatchMenu).
+						Tooltip(cat.BatchActionsLabel())
+					if batchMoreBtn.Clicked() {
+						a.openNodeMenuID = ""
+						a.openBatchMenu = !a.openBatchMenu
+					}
+					ui.PopoverBase(c, batchMoreBtn, &a.openBatchMenu, func(panel ui.Element) {
+						styleMenuPopoverPanel(panel, batchMoreBtn, p, 156)
+						panel.Children(func() {
+							allRunning := runningCount == totalCount
+							startAllItem := popoverMenuItem(c.Key("menu-start-all"), p, cat.ActionStartAll(), p.text, allRunning, false)
+							if allRunning {
+								startAllItem.Tooltip(cat.AllRunningTip())
+							}
+							if startAllItem.Clicked() {
+								a.openBatchMenu = false
+								a.startAllServices()
+							}
+
+							allStopped := runningCount == 0
+							stopAllItem := popoverMenuItem(c.Key("menu-stop-all"), p, cat.ActionStopAll(), p.text, allStopped, false)
+							if allStopped {
+								stopAllItem.Tooltip(cat.AllStoppedTip())
+							}
+							if stopAllItem.Clicked() {
+								a.openBatchMenu = false
+								a.stopAllServices()
+							}
+						})
+					})
+				}
+
+				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewNode(), p.accent, false).Clicked() {
+					a.openNodeMenuID = ""
+					a.openBatchMenu = false
 					a.openCreateServiceDialog()
 				}
 			})
@@ -175,95 +211,119 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 }
 
 func (a *app) filteredServices() []config.Service {
-	if a.activeTagFilter == "" {
+	q := strings.ToLower(strings.TrimSpace(a.searchQuery))
+	if a.activeTagFilter == "" && !a.onlyRunningFilter && q == "" {
 		return a.state.Services
 	}
 	var filtered []config.Service
 	for _, svc := range a.state.Services {
-		for _, t := range svc.Tags {
-			if strings.EqualFold(strings.TrimSpace(t), a.activeTagFilter) {
-				filtered = append(filtered, svc)
-				break
-			}
+		if a.activeTagFilter != "" && !serviceHasTag(svc, a.activeTagFilter) {
+			continue
 		}
+		if a.onlyRunningFilter && !a.isServiceActive(svc.ID) {
+			continue
+		}
+		if q != "" && !serviceMatchesQuery(svc, q) {
+			continue
+		}
+		filtered = append(filtered, svc)
 	}
 	return filtered
 }
 
+func serviceHasTag(svc config.Service, target string) bool {
+	for _, t := range svc.Tags {
+		if strings.EqualFold(strings.TrimSpace(t), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func serviceMatchesQuery(svc config.Service, lowerQuery string) bool {
+	if strings.Contains(strings.ToLower(svc.Name), lowerQuery) ||
+		strings.Contains(strings.ToLower(svc.CompactRemoteEndpoint()), lowerQuery) ||
+		strings.Contains(strings.ToLower(svc.Server), lowerQuery) ||
+		strings.Contains(strings.ToLower(nodeCompactMeta(svc)), lowerQuery) ||
+		strings.Contains(strings.ToLower(string(svc.EffectiveProtocol())), lowerQuery) ||
+		strings.Contains(strings.ToLower(svc.PrimaryListen()), lowerQuery) {
+		return true
+	}
+	for _, t := range svc.Tags {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(t)), lowerQuery) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *app) renderTagFilterBar(c *ui.Context, p palette) {
-	tags := a.allKnownServiceTags()
-	if len(tags) == 0 {
+	if len(a.state.Services) == 0 {
 		return
 	}
+	tags := a.allKnownServiceTags()
 	cat := a.catalog()
 
 	ui.Row(c.Key("tag-filter-bar")).
-		AlignItems(ui.Center).Gap(6).Wrap().
-		Padding(0, 20, 10, 20).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
+		Padding(8, 18, 8, 18).
+		Background(p.surface).
+		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
 		Children(func() {
-			// "全部" (All) chip
-			allActive := a.activeTagFilter == ""
-			allBg := p.card
-			allFg := p.textMuted
-			allBorder := p.borderSubtle
-			if allActive {
-				allBg = p.accentBg
-				allFg = p.accentText
-				allBorder = p.accent.Alpha(0.3)
-			}
-			allBtn := ui.ButtonBase(c.Key("filter-tag-all")).
-				PaddingX(10).PaddingY(4).Radius(999).
-				Background(allBg).Border(1, allBorder)
-			allBtn.Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
-					ui.Text(c, cat.TagFilterAll()).FontSize(11).FontWeight(600).TextColor(allFg)
-					ui.Text(c, fmt.Sprint(len(a.state.Services))).FontSize(10).TextColor(allFg.Alpha(0.7))
-				})
-			})
-			if allBtn.Clicked() {
-				a.activeTagFilter = ""
-			}
-
-			// Individual tag chips
-			for _, t := range tags {
-				tag := t
-				count := 0
-				for _, s := range a.state.Services {
-					for _, st := range s.Tags {
-						if strings.EqualFold(strings.TrimSpace(st), tag) {
+			// Left: Tag filter chips
+			ui.Row(c).AlignItems(ui.Center).Gap(4).Wrap().Grow(1).MinWidth(0).Children(func() {
+				if filterTagChip(c.Key("filter-tag-all"), p, cat.TagFilterAll(), len(a.state.Services), a.activeTagFilter == "").Clicked() {
+					a.activeTagFilter = ""
+				}
+				for _, t := range tags {
+					tag := t
+					count := 0
+					for _, s := range a.state.Services {
+						if serviceHasTag(s, tag) {
 							count++
-							break
+						}
+					}
+					isActive := strings.EqualFold(a.activeTagFilter, tag)
+					if filterTagChip(c.Key("filter-tag-"+strings.ToLower(tag)), p, "#"+tag, count, isActive).Clicked() {
+						if isActive {
+							a.activeTagFilter = ""
+						} else {
+							a.activeTagFilter = tag
 						}
 					}
 				}
+			})
 
-				isActive := strings.EqualFold(a.activeTagFilter, tag)
-				chipBg := p.card
-				chipFg := p.textMuted
-				chipBorder := p.borderSubtle
-				if isActive {
-					chipBg = p.accentBg
-					chipFg = p.accentText
-					chipBorder = p.accent.Alpha(0.3)
-				}
-				tagBtn := ui.ButtonBase(c.Key("filter-tag-"+strings.ToLower(tag))).
-					PaddingX(10).PaddingY(4).Radius(999).
-					Background(chipBg).Border(1, chipBorder)
-				tagBtn.Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
-						ui.Text(c, "#"+tag).FontSize(11).FontWeight(600).TextColor(chipFg)
-						ui.Text(c, fmt.Sprint(count)).FontSize(10).TextColor(chipFg.Alpha(0.7))
-					})
-				})
-				if tagBtn.Clicked() {
-					if isActive {
-						a.activeTagFilter = ""
-					} else {
-						a.activeTagFilter = tag
-					}
-				}
-			}
+			// Right: Running-only filter toggle
+			ui.Row(c).AlignItems(ui.Center).Shrink(0).Children(func() {
+				ui.Checkbox(c.Key("filter-only-running"), &a.onlyRunningFilter, cat.FilterOnlyRunning()).
+					FontSize(12).TextColor(p.textMuted)
+			})
 		})
+}
+
+func filterTagChip(c *ui.Context, p palette, label string, count int, active bool) ui.Element {
+	bg := ui.Transparent
+	fg := p.textMuted
+	weight := 500
+	if active {
+		bg = p.accentBg
+		fg = p.accentText
+		weight = 600
+	}
+	btn := ui.ButtonBase(c).
+		PaddingX(10).PaddingY(4).Radius(6).
+		Background(bg)
+	if !active && btn.Hovered() {
+		btn.Background(p.elevated)
+		fg = p.text
+	}
+	return btn.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(5).Children(func() {
+			ui.Text(c, label).FontSize(12).FontWeight(weight).TextColor(fg).NoWrap()
+			ui.Text(c, fmt.Sprint(count)).FontSize(11).FontFeatures("tnum").TextColor(fg.Alpha(0.7)).NoWrap()
+		})
+	})
 }
 
 func (a *app) renderServiceList(c *ui.Context, p palette) {
@@ -271,24 +331,38 @@ func (a *app) renderServiceList(c *ui.Context, p palette) {
 	cat := a.catalog()
 
 	ui.Scroll(c.Key("service-scroll")).
-		Fill().
-		Padding(0, 20, 20, 20).
-		Gap(12).
+		Grow(1).Fill().MinHeight(0).
+		Padding(14, 18, 18, 18).
+		Gap(8).
 		Children(func() {
 			if len(a.state.Services) == 0 {
 				a.renderEmptyState(c, p)
 				return
 			}
 			if len(services) == 0 {
+				emptyMsg := cat.EmptyFilteredNodes()
+				if a.activeTagFilter != "" && strings.TrimSpace(a.searchQuery) == "" && !a.onlyRunningFilter {
+					emptyMsg = cat.EmptyNodesWithTag(a.activeTagFilter)
+				}
 				ui.Column(c.Key("filter-empty-state")).
 					AlignItems(ui.Center).Justify(ui.Center).
-					Padding(32).Gap(12).
+					Padding(36).Gap(10).
 					Radius(12).Background(p.card).Border(1, p.borderSubtle).
 					Children(func() {
-						ui.Text(c, cat.EmptyNodesWithTag(a.activeTagFilter)).
-							FontSize(13).FontWeight(600).TextColor(p.textMuted)
-						if subtleActionChip(c.Key("btn-clear-tag-filter"), p, nil, cat.ViewAllNodes(), false).Clicked() {
+						ui.Text(c, emptyMsg).FontSize(13).FontWeight(600).TextColor(p.textMuted)
+						resetBtn := ui.ButtonBase(c.Key("btn-clear-tag-filter")).
+							PaddingX(10).PaddingY(4).Radius(6).
+							Background(ui.Transparent)
+						if resetBtn.Hovered() {
+							resetBtn.Background(p.accentBg)
+						}
+						resetBtn.Children(func() {
+							ui.Text(c, cat.ResetFilters()).FontSize(12).FontWeight(500).TextColor(p.accentText)
+						})
+						if resetBtn.Clicked() {
 							a.activeTagFilter = ""
+							a.searchQuery = ""
+							a.onlyRunningFilter = false
 						}
 					})
 				return
@@ -305,7 +379,7 @@ func (a *app) renderEmptyState(c *ui.Context, p palette) {
 	ui.Column(c).
 		AlignItems(ui.Center).Justify(ui.Center).
 		PaddingX(32).PaddingY(48).Gap(12).
-		Radius(12).Background(p.card).Border(1, p.border).
+		Radius(12).Background(p.card).Border(1, p.borderSubtle).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
 				Size(48, 48).Radius(999).Background(p.accentBg).TextColor(p.accent).
@@ -318,7 +392,7 @@ func (a *app) renderEmptyState(c *ui.Context, p palette) {
 				if primaryPillButton(c.Key("empty-new-btn"), p, iconPlus, cat.AddNode(), p.accent, false).Clicked() {
 					a.openCreateServiceDialog()
 				}
-				if actionChip(c.Key("empty-import-btn"), p, iconPaste, cat.ImportFromClipboard(), false).Clicked() {
+				if quietToolbarButton(c.Key("empty-import-btn"), p, iconPaste, cat.ImportFromClipboard(), false).Clicked() {
 					a.openImportDialog()
 				}
 			})
@@ -329,339 +403,581 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 	cat := a.catalog()
 	rt := a.mgr.StatusOf(svc.ID)
 	unhealthy := a.isNodeUnhealthy(svc, rt)
+	isRunning := rt.State == runner.StateRunning || rt.State == runner.StateStarting
 
-	ui.Column(c).
-		Padding(16, 16, 12, 16).Gap(12).
+	card := ui.Column(c).
+		Padding(12, 16, 12, 16).Gap(10).
 		Radius(12).Background(p.card).
-		Border(1, a.cardBorderColor(p, rt.State, unhealthy)).
-		Children(func() {
-			// Upper section: Left (Title + Badges + Route summary) | Right (Primary Start/Stop button)
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(16).Children(func() {
-				ui.Column(c).Grow(1).Gap(7).Children(func() {
-					// Line 1: Runtime status + Service Name + Tags & Telemetry badges
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						a.renderRuntimeStatusBadge(c, p, rt.State, unhealthy)
-						ui.Text(c, svc.Name).FontSize(15).FontWeight(700).TextColor(p.text)
+		Border(1, p.borderSubtle)
+	if card.Hovered() || a.openNodeMenuID == svc.ID {
+		card.Background(p.cardHover).Border(1, p.border)
+	}
 
-						// Protocol and Engine capsule
-						if svc.EffectiveProtocol() == config.ProtoWARP {
-							tagPill(c, a.warpTransportPillLabel(svc), p.accentText, p.accentBg)
-							if svc.IsBuiltinWarp() {
-								tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
-							}
-						} else {
-							tagPill(c, nodeProtocolEngineLabel(svc), p.accentText, p.accentBg)
+	card.Children(func() {
+		// Upper row: Left (Status dot + Name + Neutral Tags + Clean Metadata) | Right (Telemetry + Actions + Switch)
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(16).Children(func() {
+			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
+				// Line 1: 7px Status dot + Node Name + 0~2 Neutral Pills
+				ui.Row(c).AlignItems(ui.Center).Gap(8).MinWidth(0).Children(func() {
+					renderServiceStatusDot(c, p, rt, unhealthy)
 
-							if svc.EnableWARP {
-								tagPill(c, "➔ "+a.warpTransportPillLabel(svc), p.green, p.greenBg)
-							}
-						}
+					titleColor := p.textMuted
+					if isRunning || rt.LastError != "" || rt.State == runner.StateError {
+						titleColor = p.text
+					}
+					ui.Text(c, svc.Name).FontSize(14).FontWeight(600).TextColor(titleColor).
+						SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 
-						for _, tag := range svc.Tags {
-							if tag != "" {
-								tagPill(c, "#"+tag, p.accentText, p.accentBg)
-							}
-						}
-
-						if svc.AutoStart {
-							tagPill(c, cat.TagAutoStart(), p.accentText, p.accentBg)
-						}
-						if svc.InsecureConcurrency > 1 {
-							tagPill(c, cat.ConcurrencyPill(svc.InsecureConcurrency), p.textMuted, p.elevated)
-						}
-						if svc.NoPostQuantum {
-							tagPill(c, "No-PQ", p.textMuted, p.elevated)
-						}
-						if rt.Restarts > 0 {
-							tagPill(c, cat.RestartsPill(rt.Restarts), p.amber, p.amberBg)
-						}
-						if rt.Probing {
-							tagPill(c, cat.LatencyTesting(), p.amber, p.amberBg)
-						} else if rt.ProbeError != "" {
-							pillText := cat.LatencyFailed()
-							if isWarpUnreachable(rt.ProbeError) {
-								pillText = cat.WarpServerUnreachablePill()
-							}
-							ui.Box(c.Key("pill-probe-err-" + svc.ID)).Tooltip(rt.ProbeError).Children(func() {
-								tagPill(c, pillText, p.red, p.redBg)
-							})
-						} else if rt.Latency > 0 {
-							tagPill(c, fmt.Sprintf("%d ms", max(1, rt.Latency.Milliseconds())), p.green, p.greenBg)
-						}
-						if a.tracker != nil && rt.State == runner.StateRunning {
-							sc := a.tracker.GetScore(svc.ID)
-							if sc.EWMA > 0 {
-								tagPill(c, cat.LatencyPill(int(max(1, sc.EWMA.Milliseconds()))), p.accentText, p.accentBg)
-							}
-						}
-						if rt.SpeedTesting {
-							if rt.DownloadSpeed > 0 {
-								tagPill(c, cat.DownloadTesting()+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber, p.amberBg)
-							} else {
-								tagPill(c, cat.DownloadTesting(), p.amber, p.amberBg)
-							}
-						} else if rt.SpeedError != "" {
-							pillText := cat.DownloadFailed()
-							if isWarpUnreachable(rt.SpeedError) {
-								pillText = cat.WarpServerUnreachablePill()
-							}
-							ui.Box(c.Key("pill-speed-err-" + svc.ID)).Tooltip(rt.SpeedError).Children(func() {
-								tagPill(c, pillText, p.red, p.redBg)
-							})
-						} else if rt.DownloadSpeed > 0 {
-							tagPill(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.green, p.greenBg)
-						}
-					})
-
-					// Line 2: Clean Local -> Remote endpoint route summary
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						listenSummary := "sing-box (in-process)"
-						if svc.EffectiveEngine() == config.EngineSidecar {
-							listens := strings.Join(svc.Listens, ", ")
-							if listens == "" || svc.PrimaryListen() == "socks://127.0.0.1:0" {
-								if rt.State == runner.StateRunning && rt.PID > 0 {
-									listens = svc.PrimaryListen()
-								} else {
-									listens = "Auto Loopback (:0)"
-								}
-							}
-							listenSummary = listens
-						}
-						ui.Text(c, listenSummary).FontSize(12).FontWeight(600).TextColor(p.textMuted)
-
-						compactRemote := svc.CompactRemoteEndpoint()
-						if compactRemote != "" {
-							ui.Text(c, "→").FontSize(12).TextColor(p.textDim)
-							ui.Row(c).AlignItems(ui.Center).Tooltip(svc.RedactedProxy()).Children(func() {
-								ui.Text(c, compactRemote).FontSize(12).FontWeight(500).TextColor(p.text)
-							})
-						}
-					})
+					renderServiceNeutralPills(c, p, svc, cat)
 				})
 
-				// Primary Start/Stop toggle button
-				isRunning := rt.State == runner.StateRunning || rt.State == runner.StateStarting
-				toggleLabel := cat.ActionStart()
-				toggleIcon := iconPlay
-				toggleColor := p.accent
+				// Line 2: Clean Metadata (Protocol · Engine · compact endpoint)
+				ui.Row(c).AlignItems(ui.Center).Gap(5).Padding(0, 0, 0, 15).MinWidth(0).Children(func() {
+					ui.Text(c, nodeCompactMeta(svc)).FontSize(12).FontWeight(500).TextColor(p.textMuted).NoWrap().Shrink(0)
+					if compactRemote := svc.CompactRemoteEndpoint(); compactRemote != "" {
+						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap().Shrink(0)
+						ui.Text(c, compactRemote).Font("monospace").FontSize(11).TextColor(p.textDim).
+							SingleLine().Ellipsis("…").Shrink(1).MinWidth(0).
+							Tooltip(svc.RedactedProxy())
+					}
+				})
+			})
+
+			// Right: Fixed-width tabular telemetry + quiet icon actions + overflow + switch
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Shrink(0).Children(func() {
+				a.renderServiceTelemetryColumn(c, p, svc, rt, isRunning)
+
+				canTest := rt.State == runner.StateRunning
+				ui.Row(c).AlignItems(ui.Center).Gap(2).Shrink(0).Children(func() {
+					probeTip := cat.ActionLatency()
+					if rt.Probing {
+						probeTip = cat.LatencyTesting()
+					} else if !canTest {
+						probeTip = cat.TestRequiresRunning()
+					}
+					probeBtn := quietRowIconButton(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency(), !canTest || rt.Probing, false).
+						Tooltip(probeTip)
+					if probeBtn.Clicked() && !rt.Probing {
+						a.openNodeMenuID = ""
+						a.openBatchMenu = false
+						a.triggerServiceProbe(svc)
+					}
+
+					editBtn := quietRowIconButton(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false, false).
+						Tooltip(cat.ActionEdit())
+					if editBtn.Clicked() {
+						a.openNodeMenuID = ""
+						a.openBatchMenu = false
+						a.openEditServiceDialog(svc)
+					}
+
+					menuOpen := a.openNodeMenuID == svc.ID
+					moreBtn := quietRowIconButton(c.Key("more-btn"), p, iconMore, cat.MoreActionsForNode(svc.Name), false, menuOpen).
+						Tooltip(cat.ActionMore())
+					if moreBtn.Clicked() {
+						a.openBatchMenu = false
+						if a.openNodeMenuID == svc.ID {
+							a.openNodeMenuID = ""
+						} else {
+							a.openNodeMenuID = svc.ID
+						}
+					}
+
+					menuOpen = a.openNodeMenuID == svc.ID
+					ui.PopoverBase(c, moreBtn, &menuOpen, func(panel ui.Element) {
+						a.renderNodeOverflowMenu(c, panel, moreBtn, p, svc, rt, canTest)
+					})
+					if !menuOpen && a.openNodeMenuID == svc.ID {
+						a.openNodeMenuID = ""
+					}
+				})
+
+				ui.Box(c).Size(1, 16).Background(p.borderSubtle).Shrink(0)
+
+				toggleKey := "toggle-node-" + svc.ID
+				toggleTip := cat.ActionStartNode()
 				if isRunning {
-					toggleLabel = cat.ActionStop()
-					toggleIcon = iconStop
-					toggleColor = p.red
+					toggleTip = cat.ActionStopNode()
 				}
-				if primaryPillButton(c.Key("toggle"), p, toggleIcon, toggleLabel, toggleColor, false).Clicked() {
+				swVal := isRunning
+				if ui.Switch(c.Key(toggleKey), &swVal).Label(toggleKey).Tooltip(toggleTip).Changed() {
+					a.openNodeMenuID = ""
+					a.openBatchMenu = false
 					a.toggleService(svc)
 				}
 			})
-
-			// Error Banner if process failed or crashed
-			if rt.LastError != "" {
-				isMissingCore, isXray := isMissingCoreError(rt.LastError)
-				if !isMissingCore {
-					if svc.EffectiveProtocol() == config.ProtoNaive && (a.localVersion == "" || !a.mgr.BinaryExists()) {
-						isMissingCore = true
-						isXray = false
-					} else if svc.EffectiveProtocol() != config.ProtoNaive && (a.localXrayVersion == "" || !a.mgr.XrayBinaryExists()) {
-						isMissingCore = true
-						isXray = true
-					}
-				}
-
-				displayErr := rt.LastError
-				if isMissingCore {
-					if isXray {
-						displayErr = cat.CoreMissingXrayError()
-					} else {
-						displayErr = cat.CoreMissingNaiveError()
-					}
-				} else if !strings.HasPrefix(rt.LastError, cat.ErrorPrefix()) && !strings.HasPrefix(rt.LastError, "Error:") && !strings.HasPrefix(rt.LastError, "错误:") {
-					displayErr = cat.ErrorPrefix() + rt.LastError
-				}
-
-				ui.Row(c.Key("error-banner-" + svc.ID)).
-					AlignItems(ui.Center).Justify(ui.SpaceBetween).
-					Padding(8, 10, 8, 10).Radius(7).
-					Background(p.redBg).Border(1, p.red.Alpha(0.2)).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
-							ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.red)
-							ui.Text(c, displayErr).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
-						})
-
-						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							if isMissingCore {
-								isUpdating := a.updatingCore
-								if isXray {
-									isUpdating = a.updatingXrayCore
-								}
-								btnLabel := cat.ActionInstallCoreShort()
-								if isUpdating {
-									btnLabel = cat.CoreDownloading()
-								}
-								btnInstall := ui.ButtonBase(c.Key("btn-install-core-" + svc.ID)).
-									Label("btn-install-core-" + svc.ID).
-									Padding(3, 8, 3, 8).Radius(5).
-									Background(p.accent).
-									Tooltip(cat.EngineStatusPillHint()).
-									Children(func() {
-										ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-											ui.Icon(c, iconDownload).Size(11, 11).TextColor(ui.RGB(255, 255, 255))
-											ui.Text(c, btnLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(255, 255, 255))
-										})
-									})
-								if !isUpdating && btnInstall.Clicked() {
-									if isXray {
-										a.triggerSeamlessXrayUpdate()
-									} else {
-										a.triggerSeamlessUpdate()
-									}
-								}
-
-								btnSettings := ui.ButtonBase(c.Key("btn-goto-settings-" + svc.ID)).
-									Label("btn-goto-settings-" + svc.ID).
-									Padding(3, 8, 3, 8).Radius(5).
-									Background(p.card).Border(1, p.borderSubtle).
-									Tooltip(cat.ActionGoToSettings()).
-									Children(func() {
-										ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-											ui.Icon(c, iconSettings).Size(11, 11).TextColor(p.text)
-											ui.Text(c, cat.ActionGoToSettings()).FontSize(11).TextColor(p.text)
-										})
-									})
-								if btnSettings.Clicked() {
-									a.activeTab = TabSettings
-								}
-							}
-
-							btnCopy := ui.ButtonBase(c.Key("btn-copy-error-" + svc.ID)).
-								Label("btn-copy-error-" + svc.ID).
-								Padding(3, 8, 3, 8).Radius(5).
-								Background(p.card).Border(1, p.borderSubtle).
-								Tooltip(cat.ActionCopyError()).
-								Children(func() {
-									ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-										ui.Icon(c, iconCopy).Size(11, 11).TextColor(p.textDim)
-										ui.Text(c, cat.BtnCopy()).FontSize(11).TextColor(p.textDim)
-									})
-								})
-							if btnCopy.Clicked() {
-								copyText := rt.LastError
-								if isMissingCore && displayErr != "" {
-									copyText = displayErr
-								}
-								a.writeClipboard(copyText, cat.ToastErrorCopied())
-							}
-						})
-					})
-			}
-
-			// Unhealthy Diagnostic Banner if service is running but probes/health failed
-			if rt.LastError == "" && unhealthy {
-				hint, isWarp, _ := a.diagnoseNodeUnhealthy(svc, rt)
-				ui.Row(c.Key("unhealthy-banner-" + svc.ID)).
-					AlignItems(ui.Center).Justify(ui.SpaceBetween).
-					Padding(8, 10, 8, 10).Radius(7).
-					Background(p.amberBg).Border(1, p.amber.Alpha(0.25)).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
-							ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amber)
-							ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(12).FontWeight(700).TextColor(p.amber)
-							ui.Text(c, hint).FontSize(12).FontWeight(500).TextColor(p.amber).Grow(1)
-						})
-
-						if isWarp {
-							btnCF := ui.ButtonBase(c.Key("btn-goto-cloudflare-" + svc.ID)).
-								Label("btn-goto-cloudflare-" + svc.ID).
-								Padding(3, 8, 3, 8).Radius(5).
-								Background(p.card).Border(1, p.borderSubtle).
-								Tooltip(cat.ActionGoToCloudflare()).
-								Children(func() {
-									ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-										ui.Icon(c, iconSettings).Size(11, 11).TextColor(p.text)
-										ui.Text(c, cat.ActionGoToCloudflare()).FontSize(11).TextColor(p.text)
-									})
-								})
-							if btnCF.Clicked() {
-								a.activeTab = TabCloudflare
-							}
-						}
-					})
-			}
-
-			// Lower section: Card Action Footer (Left: Diagnostics & Share | Right: Edit & Delete)
-			canTest := rt.State == runner.StateRunning
-			ui.Row(c).
-				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(10, 0, 0, 0).
-				BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
-				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						probeBtn := actionChip(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency(), !canTest || rt.Probing)
-						if !canTest {
-							probeBtn.Tooltip(cat.TestRequiresRunning())
-						}
-						if probeBtn.Clicked() {
-							a.triggerServiceProbe(svc)
-						}
-
-						speedBtn := actionChip(c.Key("speed-btn"), p, iconDownload, cat.ActionDownload(), !canTest || rt.SpeedTesting)
-						if !canTest {
-							speedBtn.Tooltip(cat.TestRequiresRunning())
-						}
-						if speedBtn.Clicked() {
-							a.triggerServiceDownloadTest(svc)
-						}
-
-						if actionChip(c.Key("drawer-logs"), p, iconList, cat.ActionLogs(), false).Clicked() {
-							if a.activeLogDrawerID == svc.ID {
-								a.activeLogDrawerID = ""
-							} else {
-								a.activeNodeDrawerID = ""
-								a.activeLogDrawerID = svc.ID
-							}
-						}
-
-						ui.Box(c).Size(1, 14).Background(p.borderSubtle)
-
-						if svc.EffectiveEngine() == config.EngineSidecar {
-							localLink := svc.V2rayNSocksURI()
-							if subtleActionChip(c.Key("copy-local"), p, iconCopy, cat.ActionCopyV2rayN(), false).Tooltip(localLink).Clicked() {
-								a.copyV2rayNLink(svc)
-							}
-						}
-						shareTip := svc.ShareURI()
-						if shareTip == "" {
-							shareTip = cat.NoRemoteConfigured()
-						}
-						if subtleActionChip(c.Key("copy-naive"), p, iconCopy, cat.ActionCopyNaive(), false).Tooltip(shareTip).Clicked() {
-							a.copyShareLink(svc)
-						}
-					})
-
-					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-						if subtleActionChip(c.Key("detail-btn"), p, iconInfo, cat.ActionDetails(), false).Clicked() {
-							if a.activeNodeDrawerID == svc.ID {
-								a.activeNodeDrawerID = ""
-							} else {
-								a.activeLogDrawerID = ""
-								a.activeNodeDrawerID = svc.ID
-							}
-						}
-						if subtleActionChip(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false).Clicked() {
-							a.openEditServiceDialog(svc)
-						}
-						if svc.IsBuiltinWarp() {
-							ui.Box(c.Key("delete-btn-wrap")).Tooltip(cat.BuiltinWarpDeleteTooltip()).Children(func() {
-								dangerActionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), true)
-							})
-						} else {
-							if dangerActionChip(c.Key("delete-btn"), p, iconTrash, cat.ActionDelete(), false).Clicked() {
-								a.openDeleteServiceDialog(svc)
-							}
-						}
-					})
-				})
 		})
+
+		// Contextual inline diagnostic strip (only when error or unhealthy)
+		if rt.LastError != "" {
+			a.renderServiceErrorStrip(c, p, svc, rt)
+		} else if unhealthy {
+			a.renderServiceUnhealthyStrip(c, p, svc, rt)
+		}
+	})
+
+	if card.Clicked() {
+		a.openNodeMenuID = ""
+		a.openBatchMenu = false
+		a.activeLogDrawerID = ""
+		a.activeNodeDrawerID = svc.ID
+	}
+}
+
+func renderServiceStatusDot(c *ui.Context, p palette, rt runner.Status, unhealthy bool) {
+	dot := ui.Box(c).Size(7, 7).Radius(999).Shrink(0)
+	switch {
+	case rt.LastError != "" || rt.State == runner.StateError:
+		dot.Background(p.red)
+	case unhealthy && rt.State == runner.StateRunning:
+		dot.Background(p.amber)
+	case rt.State == runner.StateStarting:
+		dot.Background(p.amber)
+	case rt.State == runner.StateRunning:
+		dot.Background(p.green)
+	default:
+		dot.Border(1.5, p.textDim)
+	}
+}
+
+func renderServiceNeutralPills(c *ui.Context, p palette, svc config.Service, cat locales.Messages) {
+	var pills []string
+	if svc.IsBuiltinWarp() {
+		pills = append(pills, cat.BuiltinTag())
+	}
+	var tags []string
+	for _, t := range svc.Tags {
+		if trimmed := strings.TrimSpace(t); trimmed != "" {
+			tags = append(tags, trimmed)
+		}
+	}
+	limit := min(2, len(tags))
+	for i := 0; i < limit; i++ {
+		pills = append(pills, "#"+tags[i])
+	}
+	if len(tags) > 2 {
+		pills = append(pills, fmt.Sprintf("+%d", len(tags)-2))
+	}
+	if len(pills) == 0 {
+		return
+	}
+	ui.Row(c).AlignItems(ui.Center).Gap(4).Shrink(0).Children(func() {
+		for _, label := range pills {
+			ui.Row(c).AlignItems(ui.Center).Shrink(0).
+				PaddingX(6).PaddingY(2).Radius(4).Background(p.elevated).
+				Children(func() {
+					ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(p.textMuted).NoWrap()
+				})
+		}
+	})
+}
+
+func (a *app) renderServiceTelemetryColumn(c *ui.Context, p palette, svc config.Service, rt runner.Status, isRunning bool) {
+	cat := a.catalog()
+	latText, latColor, latTip := a.serviceLatencyDisplay(p, svc, rt, isRunning, cat)
+
+	ui.Column(c).Width(84).AlignItems(ui.End).Gap(2).Shrink(0).Children(func() {
+		latLabel := ui.Text(c, latText).FontSize(13).FontWeight(600).FontFeatures("tnum").TextAlign(ui.End).TextColor(latColor).NoWrap()
+		if latText == "—" {
+			latLabel.FontSize(12).FontWeight(500)
+		}
+		if latTip != "" {
+			latLabel.Tooltip(latTip)
+		}
+
+		if isRunning {
+			if rt.SpeedTesting {
+				txt := cat.DownloadTesting()
+				if rt.DownloadSpeed > 0 {
+					txt = "↓ " + runner.FormatSpeed(rt.DownloadSpeed)
+				}
+				ui.Text(c, txt).FontSize(11).FontFeatures("tnum").TextAlign(ui.End).TextColor(p.amber).NoWrap()
+			} else if rt.SpeedError != "" {
+				txt := cat.DownloadFailed()
+				if isWarpUnreachable(rt.SpeedError) {
+					txt = cat.WarpServerUnreachablePill()
+				}
+				ui.Text(c, txt).FontSize(11).TextAlign(ui.End).TextColor(p.red).NoWrap().Tooltip(rt.SpeedError)
+			} else if rt.DownloadSpeed > 0 {
+				ui.Text(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed)).FontSize(11).FontFeatures("tnum").TextAlign(ui.End).TextColor(p.textDim).NoWrap()
+			}
+		}
+	})
+}
+
+func (a *app) serviceLatencyDisplay(p palette, svc config.Service, rt runner.Status, isRunning bool, cat locales.Messages) (string, ui.Color, string) {
+	if !isRunning {
+		return "—", p.textDim, ""
+	}
+	if rt.Probing {
+		return cat.LatencyTestingShort(), p.amber, cat.LatencyTesting()
+	}
+	if rt.ProbeError != "" {
+		txt := cat.LatencyFailed()
+		if isWarpUnreachable(rt.ProbeError) {
+			txt = cat.WarpServerUnreachablePill()
+		}
+		return txt, p.red, rt.ProbeError
+	}
+
+	var ewmaMs, probeMs int
+	if a.tracker != nil && rt.State == runner.StateRunning {
+		if sc := a.tracker.GetScore(svc.ID); sc.EWMA > 0 {
+			ewmaMs = int(max(1, sc.EWMA.Milliseconds()))
+		}
+	}
+	if rt.Latency > 0 {
+		probeMs = int(max(1, rt.Latency.Milliseconds()))
+	}
+
+	ms := ewmaMs
+	if ms <= 0 {
+		ms = probeMs
+	}
+	if ms <= 0 {
+		return "—", p.textDim, ""
+	}
+
+	fg := latencyThresholdColor(p, ms)
+
+	tip := ""
+	switch {
+	case ewmaMs > 0 && probeMs > 0:
+		tip = cat.LatencyTooltipBoth(ewmaMs, probeMs)
+	case ewmaMs > 0:
+		tip = cat.LatencyTooltipEWMA(ewmaMs)
+	case probeMs > 0:
+		tip = cat.LatencyTooltipProbe(probeMs)
+	}
+	return fmt.Sprintf("%d ms", ms), fg, tip
+}
+
+func latencyThresholdColor(p palette, ms int) ui.Color {
+	if ms >= 250 {
+		return p.red
+	}
+	if ms >= 120 {
+		return p.amber
+	}
+	return p.green
+}
+
+func (a *app) renderNodeOverflowMenu(c *ui.Context, panel, anchor ui.Element, p palette, svc config.Service, rt runner.Status, canTest bool) {
+	cat := a.catalog()
+	styleMenuPopoverPanel(panel, anchor, p, 176)
+
+	panel.Children(func() {
+		if popoverMenuItem(c.Key("menu-details"), p, cat.ActionDetailsTelemetry(), p.text, false, false).Clicked() {
+			a.openNodeMenuID = ""
+			a.activeLogDrawerID = ""
+			a.activeNodeDrawerID = svc.ID
+		}
+
+		if popoverMenuItem(c.Key("menu-logs"), p, cat.NodeDrawerLogs(), p.text, false, false).Clicked() {
+			a.openNodeMenuID = ""
+			a.activeNodeDrawerID = ""
+			a.activeLogDrawerID = svc.ID
+		}
+
+		speedDimmed := !canTest || rt.SpeedTesting
+		speedItem := popoverMenuItem(c.Key("menu-speed"), p, cat.ActionDownload(), p.text, speedDimmed, false)
+		if !canTest {
+			speedItem.Tooltip(cat.TestRequiresRunning())
+		}
+		if speedItem.Clicked() {
+			a.openNodeMenuID = ""
+			if !rt.SpeedTesting {
+				a.triggerServiceDownloadTest(svc)
+			}
+		}
+
+		ui.Box(c).Height(1).Margin(4, 6, 4, 6).Background(p.borderSubtle)
+
+		shareTip := svc.ShareURI()
+		if shareTip == "" {
+			shareTip = cat.NoRemoteConfigured()
+		}
+		if popoverMenuItem(c.Key("menu-copy-share"), p, cat.ActionCopyNaive(), p.text, false, false).Tooltip(shareTip).Clicked() {
+			a.openNodeMenuID = ""
+			a.copyShareLink(svc)
+		}
+
+		if svc.EffectiveEngine() == config.EngineSidecar {
+			localLink := svc.V2rayNSocksURI()
+			if popoverMenuItem(c.Key("menu-copy-local"), p, cat.ActionCopyV2rayN(), p.text, false, false).Tooltip(localLink).Clicked() {
+				a.openNodeMenuID = ""
+				a.copyV2rayNLink(svc)
+			}
+		}
+
+		if popoverMenuItem(c.Key("menu-clone"), p, cat.ActionClone(), p.text, false, false).Clicked() {
+			a.openNodeMenuID = ""
+			a.cloneServiceNode(svc)
+		}
+
+		ui.Box(c).Height(1).Margin(4, 6, 4, 6).Background(p.borderSubtle)
+
+		if svc.IsBuiltinWarp() {
+			popoverMenuItem(c.Key("menu-delete"), p, cat.ActionDeleteNode(), p.red, true, true).
+				Tooltip(cat.BuiltinWarpDeleteTooltip())
+		} else {
+			if popoverMenuItem(c.Key("menu-delete"), p, cat.ActionDeleteNode(), p.red, false, true).Clicked() {
+				a.openNodeMenuID = ""
+				a.openDeleteServiceDialog(svc)
+			}
+		}
+	})
+}
+
+func (a *app) renderServiceErrorStrip(c *ui.Context, p palette, svc config.Service, rt runner.Status) {
+	cat := a.catalog()
+	isMissingCore, isXray := isMissingCoreError(rt.LastError)
+	if !isMissingCore {
+		if svc.EffectiveProtocol() == config.ProtoNaive && (a.localVersion == "" || !a.mgr.BinaryExists()) {
+			isMissingCore = true
+			isXray = false
+		} else if svc.EffectiveProtocol() != config.ProtoNaive && (a.localXrayVersion == "" || !a.mgr.XrayBinaryExists()) {
+			isMissingCore = true
+			isXray = true
+		}
+	}
+
+	displayErr := rt.LastError
+	if isMissingCore {
+		if isXray {
+			displayErr = cat.CoreMissingXrayError()
+		} else {
+			displayErr = cat.CoreMissingNaiveError()
+		}
+	} else if !strings.HasPrefix(rt.LastError, cat.ErrorPrefix()) && !strings.HasPrefix(rt.LastError, "Error:") && !strings.HasPrefix(rt.LastError, "错误:") {
+		displayErr = cat.ErrorPrefix() + rt.LastError
+	}
+
+	strip := ui.Row(c.Key("error-banner-" + svc.ID)).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).
+		Padding(8, 0, 0, 0).
+		BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle)
+
+	strip.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+			ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.red).Shrink(0)
+			ui.Text(c, displayErr).FontSize(11).FontWeight(500).TextColor(p.red).
+				Grow(1).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(displayErr)
+		})
+
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+			if isMissingCore {
+				isUpdating := a.updatingCore
+				if isXray {
+					isUpdating = a.updatingXrayCore
+				}
+				btnLabel := cat.ActionInstallCoreShort()
+				if isUpdating {
+					btnLabel = cat.CoreDownloading()
+				}
+				btnInstall := ui.ButtonBase(c.Key("btn-install-core-" + svc.ID)).
+					Label("btn-install-core-" + svc.ID).
+					Padding(4, 8, 4, 8).Radius(6).
+					Background(p.accent).
+					Tooltip(cat.EngineStatusPillHint()).
+					Children(func() {
+						ui.Text(c, btnLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(255, 255, 255)).NoWrap()
+					})
+				if !isUpdating && btnInstall.Clicked() {
+					if isXray {
+						a.triggerSeamlessXrayUpdate()
+					} else {
+						a.triggerSeamlessUpdate()
+					}
+				}
+
+				btnSettings := compactStripButton(c.Key("btn-goto-settings-"+svc.ID), p, "btn-goto-settings-"+svc.ID, cat.ActionGoToSettings(), p.text).
+					Tooltip(cat.ActionGoToSettings())
+				if btnSettings.Clicked() {
+					a.activeTab = TabSettings
+				}
+			}
+
+			if compactStripButton(c.Key("btn-error-logs-"+svc.ID), p, "", cat.ActionLogs(), p.text).Clicked() {
+				a.openNodeMenuID = ""
+				a.activeNodeDrawerID = ""
+				a.activeLogDrawerID = svc.ID
+			}
+
+			btnCopy := ui.ButtonBase(c.Key("btn-copy-error-" + svc.ID)).
+				Label("btn-copy-error-" + svc.ID).
+				Size(24, 24).Radius(6).
+				Background(ui.Transparent).
+				Tooltip(cat.ActionCopyError())
+			if btnCopy.Hovered() {
+				btnCopy.Background(p.elevated)
+			}
+			btnCopy.Children(func() {
+				ui.Icon(c, iconCopy).Size(13, 13).TextColor(p.textMuted)
+			})
+			if btnCopy.Clicked() {
+				copyText := rt.LastError
+				if isMissingCore && displayErr != "" {
+					copyText = displayErr
+				}
+				a.writeClipboard(copyText, cat.ToastErrorCopied())
+			}
+		})
+	})
+	_ = strip.Clicked()
+}
+
+func (a *app) renderServiceUnhealthyStrip(c *ui.Context, p palette, svc config.Service, rt runner.Status) {
+	cat := a.catalog()
+	hint, isWarp, _ := a.diagnoseNodeUnhealthy(svc, rt)
+
+	strip := ui.Row(c.Key("unhealthy-banner-" + svc.ID)).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).
+		Padding(8, 0, 0, 0).
+		BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle)
+
+	strip.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+			ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.amber).Shrink(0)
+			ui.Text(c, cat.StatusUnhealthy()).FontSize(11).FontWeight(700).TextColor(p.amber).NoWrap().Shrink(0)
+			ui.Text(c, "·").FontSize(11).TextColor(p.amber.Alpha(0.6)).NoWrap().Shrink(0)
+			ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(11).FontWeight(600).TextColor(p.amber).NoWrap().Shrink(0)
+			ui.Text(c, hint).FontSize(11).TextColor(p.textMuted).
+				Grow(1).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(hint)
+		})
+
+		ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+			if compactStripButton(c.Key("btn-unhealthy-logs-"+svc.ID), p, "", cat.ActionLogs(), p.textMuted).Clicked() {
+				a.openNodeMenuID = ""
+				a.activeNodeDrawerID = ""
+				a.activeLogDrawerID = svc.ID
+			}
+
+			if isWarp {
+				btnCF := compactStripButton(c.Key("btn-goto-cloudflare-"+svc.ID), p, "btn-goto-cloudflare-"+svc.ID, cat.ActionGoToCloudflare(), p.text).
+					Tooltip(cat.ActionGoToCloudflare())
+				if btnCF.Clicked() {
+					a.activeTab = TabCloudflare
+				}
+			}
+		})
+	})
+	_ = strip.Clicked()
+}
+
+func quietToolbarButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, dimmed bool) ui.Element {
+	fg := p.text
+	if dimmed {
+		fg = p.textDim
+	}
+	btn := ui.ButtonBase(c).
+		Height(32).PaddingX(10).Radius(8).
+		Background(p.card).Border(1, p.border)
+	if !dimmed && btn.Hovered() {
+		btn.Background(p.cardHover)
+	}
+	return btn.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
+			if iconSVG != nil {
+				iconCol := p.textMuted
+				if dimmed {
+					iconCol = p.textDim
+				}
+				ui.Icon(c, iconSVG).Size(13, 13).TextColor(iconCol)
+			}
+			ui.Text(c, label).FontSize(12).FontWeight(500).NoWrap()
+		})
+	})
+}
+
+func quietToolbarIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, active bool) ui.Element {
+	bg := p.card
+	fg := p.textMuted
+	if active {
+		bg = p.cardHover
+		fg = p.text
+	}
+	btn := ui.ButtonBase(c).
+		Label(label).
+		Size(32, 32).Radius(8).
+		Background(bg).Border(1, p.border)
+	if btn.Hovered() {
+		btn.Background(p.cardHover)
+		fg = p.text
+	}
+	return btn.Children(func() {
+		ui.Icon(c, iconSVG).Size(15, 15).TextColor(fg)
+	})
+}
+
+func quietRowIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, dimmed, active bool) ui.Element {
+	fg := p.textMuted
+	bg := ui.Transparent
+	if active {
+		fg = p.text
+		bg = p.elevated
+	} else if dimmed {
+		fg = p.textDim.Alpha(0.45)
+	}
+	btn := ui.ButtonBase(c).
+		Label(label).
+		Size(28, 28).Radius(6).
+		Background(bg)
+	if !dimmed && btn.Hovered() {
+		fg = p.text
+		btn.Background(p.elevated)
+	}
+	return btn.Children(func() {
+		ui.Icon(c, iconSVG).Size(14, 14).TextColor(fg)
+	})
+}
+
+func compactStripButton(c *ui.Context, p palette, a11yLabel, text string, fg ui.Color) ui.Element {
+	btn := ui.ButtonBase(c).
+		Padding(4, 8, 4, 8).Radius(6).
+		Background(p.elevated)
+	if a11yLabel != "" {
+		btn.Label(a11yLabel)
+	}
+	if btn.Hovered() {
+		btn.Background(p.cardHover)
+	}
+	return btn.Children(func() {
+		ui.Text(c, text).FontSize(11).FontWeight(500).TextColor(fg).NoWrap()
+	})
+}
+
+func styleMenuPopoverPanel(panel, anchor ui.Element, p palette, width float32) {
+	panel.Column().
+		AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorTopEnd).
+		Margin(4, 0, 0, 0).
+		Width(width).Padding(4).Radius(10).
+		Background(p.card).Border(1, p.border).
+		Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+}
+
+func popoverMenuItem(c *ui.Context, p palette, label string, fg ui.Color, dimmed, danger bool) ui.Element {
+	textCol := fg
+	if dimmed {
+		textCol = p.textDim.Alpha(0.5)
+	}
+	btn := ui.ButtonBase(c).
+		FillWidth().Height(30).PaddingX(10).Radius(6).
+		Justify(ui.Start).AlignItems(ui.Center).
+		Background(ui.Transparent)
+	if danger && dimmed {
+		btn.Disabled(true)
+	}
+	if !dimmed && btn.Hovered() {
+		if danger {
+			btn.Background(p.redBg)
+		} else {
+			btn.Background(p.elevated)
+		}
+	}
+	return btn.Children(func() {
+		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(textCol).NoWrap()
+	})
 }
 
 func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State, isUnhealthy ...bool) {
@@ -682,18 +998,45 @@ func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State
 	}
 }
 
-func (a *app) cardBorderColor(p palette, st runner.State, isUnhealthy bool) ui.Color {
-	if isUnhealthy {
-		return p.amber.Alpha(0.55)
-	}
-	switch st {
-	case runner.StateRunning:
-		return p.green.Alpha(0.45)
-	case runner.StateError:
-		return p.red.Alpha(0.55)
+func nodeProtocolDisplayName(p config.Protocol) string {
+	switch p {
+	case config.ProtoNaive:
+		return "Naive"
+	case config.ProtoVLESS:
+		return "VLESS"
+	case config.ProtoVMess:
+		return "VMess"
+	case config.ProtoTrojan:
+		return "Trojan"
+	case config.ProtoShadowsocks:
+		return "Shadowsocks"
+	case config.ProtoHysteria2:
+		return "Hysteria2"
+	case config.ProtoTUIC:
+		return "TUIC"
+	case config.ProtoSOCKS5:
+		return "SOCKS5"
+	case config.ProtoHTTP:
+		return "HTTP"
+	case config.ProtoWARP:
+		return "WARP"
 	default:
-		return p.border
+		return strings.ToUpper(string(p))
 	}
+}
+
+func nodeCompactMeta(svc config.Service) string {
+	engine := "Sing-Box"
+	if svc.EffectiveEngine() == config.EngineSidecar {
+		engine = "Sidecar"
+	}
+	meta := nodeProtocolDisplayName(svc.EffectiveProtocol()) + " · " + engine
+	if svc.EffectiveEngine() == config.EngineSidecar {
+		if ep, err := config.ParseListenURI(svc.PrimaryListen()); err == nil && ep.Port > 0 {
+			meta += fmt.Sprintf(" (:%d)", ep.Port)
+		}
+	}
+	return meta
 }
 
 func nodeProtocolEngineLabel(svc config.Service) string {

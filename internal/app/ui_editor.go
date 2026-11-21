@@ -1,14 +1,12 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 
-	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
 	"naive-client/internal/warp"
@@ -41,15 +39,16 @@ var editorProtocolNames = []string{
 }
 
 type editorForm struct {
-	open      bool
-	isNew     bool
-	tab       int
-	scroll    ui.ScrollState
-	errText   string
-	svcID     string
-	name      string
-	autoStart bool
-	tagsInput string
+	open           bool
+	isNew          bool
+	returnToDrawer bool
+	tab            int
+	scroll         ui.ScrollState
+	errText        string
+	svcID          string
+	name           string
+	autoStart      bool
+	tagsInput      string
 
 	// Protocol & Execution Engine
 	protoIndex  int
@@ -113,18 +112,45 @@ type editorForm struct {
 	extraJSON     string
 }
 
+func (a *app) clearActiveOverlaysForEditor() {
+	a.openNodeMenuID = ""
+	a.openBatchMenu = false
+	a.activeLogDrawerID = ""
+	a.activeRuleDrawerID = ""
+	a.activeNodeDrawerID = ""
+	a.nodeDrawerHelpOpen = false
+}
+
 func (a *app) openCreateServiceDialog() {
+	a.clearActiveOverlaysForEditor()
 	port := a.nextAvailableListenPort()
 	svc := config.DefaultService(a.generateServiceID(), port)
 	svc.Name = a.catalog().DefaultNodeName(len(a.state.Services) + 1)
-	a.populateEditorForm(svc, true)
+	a.populateEditorForm(svc, true, false)
 }
 
 func (a *app) openEditServiceDialog(svc config.Service) {
-	a.populateEditorForm(svc, false)
+	a.clearActiveOverlaysForEditor()
+	a.populateEditorForm(svc, false, false)
 }
 
-func (a *app) populateEditorForm(svc config.Service, isNew bool) {
+func (a *app) openEditServiceFromDrawer(svc config.Service) {
+	a.clearActiveOverlaysForEditor()
+	a.populateEditorForm(svc, false, true)
+}
+
+func (a *app) dismissEditorDrawer(returnToDetails bool) {
+	targetID := a.editor.svcID
+	goBack := returnToDetails && a.editor.returnToDrawer && !a.editor.isNew && targetID != ""
+	a.editor.open = false
+	a.editor.errText = ""
+	a.editor.returnToDrawer = false
+	if goBack {
+		a.activeNodeDrawerID = targetID
+	}
+}
+
+func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool) {
 	proto := svc.EffectiveProtocol()
 	protoIdx := 0
 	for i, p := range editorProtocols {
@@ -259,6 +285,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew bool) {
 	a.editor = editorForm{
 		open:               true,
 		isNew:              isNew,
+		returnToDrawer:     returnToDrawer,
 		tab:                0,
 		svcID:              svc.ID,
 		name:               svc.Name,
@@ -591,34 +618,85 @@ func splitLinesNonEmpty(raw string) []string {
 	return out
 }
 
-func (a *app) renderEditorDialog(c *ui.Context, p palette) {
-	ui.DialogBase(c.Key("service-editor-dialog"), &a.editor.open, func(backdrop, panel ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
-		panel.Column().
-			Width(580).Height(560).
-			Padding(20).Gap(14).
-			Radius(14).Background(p.card).Border(1, p.border).
-			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
-			Children(func() {
-				// Header
-				cat := a.catalog()
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-					title := cat.EditNodeTitle()
-					if a.editor.isNew {
-						title = cat.NewNodeTitle()
-					}
-					ui.Text(c, title).FontSize(16).FontWeight(700).TextColor(p.text)
-					segmentedControl(c.Key("editor-tabs"), p, &a.editor.tab, []string{
-						cat.EditorTabBasic(),
-						cat.EditorTabAdvanced(),
-						cat.EditorTabPreview(),
+func (a *app) renderEditorDrawer(c *ui.Context, p palette) {
+	cat := a.catalog()
+	ui.Overlay(c, func() {
+		if !a.editor.open {
+			return
+		}
+
+		// Backdrop (fades in and out, click to dismiss)
+		backdrop := ui.Box(c.Key("editor-drawer-backdrop")).
+			Absolute().Top(0).Left(0).Right(0).Bottom(0).
+			Background(ui.RGBA(0, 0, 0, 0.35)).
+			Transition(ui.ElementTransition{
+				Enter: &ui.Motion{Opacity: 0},
+				Exit:  &ui.Motion{Opacity: 0},
+			})
+		if backdrop.Clicked() {
+			a.dismissEditorDrawer(false)
+		}
+
+		// Slide-over drawer panel anchored to right edge (460px unified width)
+		panel := ui.Column(c.Key("editor-drawer-panel")).
+			Absolute().Top(0).Right(0).Bottom(0).Width(460).
+			Modal().
+			Transition(ui.ElementTransition{
+				Enter: &ui.Motion{X: 460},
+				Exit:  &ui.Motion{X: 460},
+			}).
+			Background(p.drawerBg).
+			BorderWidth(0, 0, 0, 1).BorderColor(p.border).
+			Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4))
+
+		if panel.OverlayShortcut(0, ui.KeyEscape) {
+			a.dismissEditorDrawer(false)
+		}
+
+		panel.Children(func() {
+			// Header
+			ui.Row(c).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+				Padding(14, 20, 14, 20).
+				BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
+						if a.editor.returnToDrawer && !a.editor.isNew {
+							backBtn := quietRowIconButton(c.Key("editor-back-header"), p, iconArrowLeft, cat.EditorBackToDetails(), false, false).
+								Tooltip(cat.EditorBackToDetails())
+							if backBtn.Clicked() {
+								a.dismissEditorDrawer(true)
+							}
+						}
+						title := cat.EditNodeTitle()
+						if a.editor.isNew {
+							title = cat.NewNodeTitle()
+						}
+						ui.Text(c, title).FontSize(15).FontWeight(700).TextColor(p.text).
+							SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
+					})
+
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+						segmentedControl(c.Key("editor-tabs"), p, &a.editor.tab, []string{
+							cat.EditorTabBasic(),
+							cat.EditorTabAdvanced(),
+							cat.EditorTabPreview(),
+						})
+						closeBtn := quietRowIconButton(c.Key("editor-close"), p, iconClose, cat.NodeDrawerClose(), false, false).
+							Tooltip(cat.NodeDrawerClose())
+						if closeBtn.Clicked() {
+							a.dismissEditorDrawer(false)
+						}
 					})
 				})
 
-				if a.editor.errText != "" {
+			if a.editor.errText != "" {
+				ui.Box(c).Padding(12, 20, 0, 20).Children(func() {
 					ui.Row(c.Key("editor-error-row")).
-						AlignItems(ui.Center).Justify(ui.SpaceBetween).
-						PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
+						AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+						PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).
+						Border(1, p.red.Alpha(0.24)).
+						Children(func() {
 							ui.Text(c, a.editor.errText).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
 							btnCopy := ui.ButtonBase(c.Key("btn-copy-editor-error")).
 								Label("btn-copy-editor-error").
@@ -632,49 +710,56 @@ func (a *app) renderEditorDialog(c *ui.Context, p palette) {
 								a.writeClipboard(a.editor.errText, cat.ToastErrorCopied())
 							}
 						})
-				}
+				})
+			}
 
-				ui.Scroll(c.Key("editor-scroll")).
-					TrackScroll(&a.editor.scroll).
-					Grow(1).
-					Padding(0, 4, 0, 0).
-					Gap(12).
-					Children(func() {
-						switch a.editor.tab {
-						case 0:
-							a.renderEditorBasicTab(c, p)
-						case 1:
-							a.renderEditorAdvancedTab(c, p)
-						case 2:
-							a.renderEditorPreviewTab(c, p)
+			// Scrollable drawer body
+			ui.Scroll(c.Key("editor-scroll")).
+				TrackScroll(&a.editor.scroll).
+				Grow(1).Fill().
+				Background(p.surface).
+				Padding(16, 20, 20, 20).
+				Gap(12).
+				Children(func() {
+					switch a.editor.tab {
+					case 0:
+						a.renderEditorBasicTab(c, p)
+					case 1:
+						a.renderEditorAdvancedTab(c, p)
+					case 2:
+						a.renderEditorPreviewTab(c, p)
+					}
+				})
+
+			// Sticky footer
+			ui.Row(c).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+				Padding(12, 20, 14, 20).
+				Background(p.drawerBg).
+				BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
+				Children(func() {
+					if a.editor.returnToDrawer && !a.editor.isNew {
+						if subtleActionChip(c.Key("editor-back-to-details"), p, iconArrowLeft, cat.EditorBackToDetails(), false).Clicked() {
+							a.dismissEditorDrawer(true)
+						}
+					} else {
+						ui.Box(c)
+					}
+
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
+						if ui.Button(c.Key("editor-cancel"), cat.Cancel()).Clicked() {
+							a.dismissEditorDrawer(false)
+						}
+						saveLabel := cat.EditorSaveEdit()
+						if a.editor.isNew {
+							saveLabel = cat.EditorSaveCreate()
+						}
+						if ui.PrimaryButton(c.Key("editor-save"), saveLabel).Clicked() {
+							a.saveEditorService()
 						}
 					})
-
-				// Footer
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).
-					Padding(10, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Switch(c.Key("editor-autostart"), &a.editor.autoStart).
-								Label(cat.EditorAutoStartDesc())
-							ui.Text(c, cat.EditorAutoStartDesc()).FontSize(12).TextColor(p.text)
-						})
-
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							if ui.Button(c.Key("editor-cancel"), cat.Cancel()).Clicked() {
-								a.editor.open = false
-								a.editor.errText = ""
-							}
-							saveLabel := cat.EditorSaveEdit()
-							if a.editor.isNew {
-								saveLabel = cat.EditorSaveCreate()
-							}
-							if ui.PrimaryButton(c.Key("editor-save"), saveLabel).Clicked() {
-								a.saveEditorService()
-							}
-						})
-					})
-			})
+				})
+		})
 	})
 }
 
@@ -733,17 +818,53 @@ func (a *app) renderALPNField(c *ui.Context, p palette, key string) {
 	)
 }
 
-func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
-	cat := a.catalog()
-	ui.Column(c).Gap(12).Children(func() {
-		// Common info: Name & Tags
-		labeledInput(c, p, "inp-name", cat.NodeNameLabel(), &a.editor.name, "HK-01")
-		labeledInput(c, p, "inp-tags", cat.TagsLabel(), &a.editor.tagsInput, cat.TagsHint())
+func editorSectionCard(c *ui.Context, p palette, children func()) {
+	ui.Column(c).Gap(10).Padding(14).Radius(10).
+		Background(p.card).Border(1, p.borderSubtle).
+		Children(children)
+}
 
-		// Protocol selection
-		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-			ui.Text(c, cat.ProtocolLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-			protoSel := ui.Select(c.Key("inp-proto-select"), &a.editor.protoName, editorProtocolNames).Label(cat.ProtocolLabel()).Width(240)
+func (a *app) renderEditorServerPortRow(c *ui.Context, p palette, keyPrefix, portPlaceholder string) {
+	cat := a.catalog()
+	ui.Grid(c.Key("editor-srv-port-"+keyPrefix)).ColumnTracks(ui.Fr(3), ui.Fr(1)).Gap(10).Children(func() {
+		labeledInput(c, p, "inp-"+keyPrefix+"-server", cat.ServerLabel(), &a.editor.server, "example.com")
+		labeledInput(c, p, "inp-"+keyPrefix+"-port", cat.ServerPortLabel(), &a.editor.serverPort, portPlaceholder)
+	})
+}
+
+func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
+	proto := editorProtocols[a.editor.protoIndex]
+	ui.Column(c).Gap(12).Children(func() {
+		a.renderEditorIdentityCard(c, p)
+		a.renderEditorProtocolEngineCard(c, p, proto)
+		a.renderEditorConnectionCard(c, p, proto)
+		if proto != config.ProtoWARP {
+			a.renderEditorChainedWarpCard(c, p, proto)
+		}
+	})
+}
+
+func (a *app) renderEditorIdentityCard(c *ui.Context, p palette) {
+	cat := a.catalog()
+	editorSectionCard(c, p, func() {
+		ui.Grid(c.Key("editor-identity-grid")).Columns(2).Gap(10).Children(func() {
+			labeledInput(c, p, "inp-name", cat.NodeNameLabel(), &a.editor.name, "HK-01")
+			labeledInput(c, p, "inp-tags", cat.TagsLabel(), &a.editor.tagsInput, cat.TagsHint())
+		})
+		ui.Box(c).FillWidth().Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
+			switchRow(c, p, "editor-autostart", cat.EditorAutoStartDesc(), &a.editor.autoStart)
+		})
+	})
+}
+
+func (a *app) renderEditorProtocolEngineCard(c *ui.Context, p palette, proto config.Protocol) {
+	cat := a.catalog()
+	editorSectionCard(c, p, func() {
+		// Protocol Type
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+			ui.Text(c, cat.ProtocolLabel()).FontSize(12).FontWeight(600).TextColor(p.text).NoWrap()
+			protoSel := ui.Select(c.Key("inp-proto-select"), &a.editor.protoName, editorProtocolNames).
+				Label(cat.ProtocolLabel()).Width(220)
 			if protoSel.Changed() {
 				for i, name := range editorProtocolNames {
 					if name == a.editor.protoName {
@@ -760,292 +881,246 @@ func (a *app) renderEditorBasicTab(c *ui.Context, p palette) {
 			}
 		})
 
-		proto := editorProtocols[a.editor.protoIndex]
-
-		// Execution engine selection
-		switch proto {
-		case config.ProtoNaive:
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Column(c).Gap(2).Children(func() {
-					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-					ui.Text(c, cat.CoreNaiveDesc()).FontSize(11).TextColor(p.textMuted)
-				})
-				tagPill(c, cat.EngineSidecarNaive(), p.accentText, p.accentBg)
+		// Execution Engine
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+			desc := cat.EditorEngineSwitchDesc()
+			switch proto {
+			case config.ProtoNaive:
+				desc = cat.CoreNaiveDesc()
+			case config.ProtoHysteria2, config.ProtoTUIC:
+				desc = cat.EditorEngineFixedDesc()
+			case config.ProtoSOCKS5, config.ProtoHTTP:
+				desc = cat.EditorEngineExternalDesc()
+			case config.ProtoWARP:
+				desc = cat.EditorEngineWarpDesc()
+			}
+			ui.Column(c).Gap(2).MinWidth(0).Shrink(1).Children(func() {
+				ui.Text(c, cat.EngineLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
+				ui.Text(c, desc).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
 			})
-		case config.ProtoVLESS, config.ProtoVMess, config.ProtoTrojan, config.ProtoShadowsocks:
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Column(c).Gap(2).Children(func() {
-					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-					ui.Text(c, cat.CoreXrayDesc()).FontSize(11).TextColor(p.textMuted)
-				})
+
+			switch proto {
+			case config.ProtoNaive:
+				tagPill(c, cat.EngineSidecarNaive(), p.textMuted, p.elevated)
+			case config.ProtoVLESS, config.ProtoVMess, config.ProtoTrojan, config.ProtoShadowsocks:
 				segmentedControl(c.Key("editor-xray-engine"), p, &a.editor.engineIndex, []string{
 					cat.EngineSingBox(),
 					cat.EngineSidecarXray(),
 				})
-			})
-		case config.ProtoHysteria2, config.ProtoTUIC:
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				tagPill(c, cat.EngineSingBoxOnly(), p.accentText, p.accentBg)
-			})
-		case config.ProtoSOCKS5, config.ProtoHTTP:
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+			case config.ProtoHysteria2, config.ProtoTUIC, config.ProtoWARP:
+				tagPill(c, cat.EngineSingBoxOnly(), p.textMuted, p.elevated)
+			case config.ProtoSOCKS5, config.ProtoHTTP:
 				tagPill(c, cat.NodeKindExternal(), p.textMuted, p.elevated)
-			})
-		}
+			}
+		})
 
-		// Loopback settings for Sidecar mode
-		if a.editor.engineIndex == 1 && (proto == config.ProtoNaive || proto == config.ProtoVLESS || proto == config.ProtoVMess || proto == config.ProtoTrojan || proto == config.ProtoShadowsocks) {
-			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+		// Sidecar Loopback Configuration
+		hasSidecar := proto == config.ProtoNaive || proto == config.ProtoVLESS || proto == config.ProtoVMess || proto == config.ProtoTrojan || proto == config.ProtoShadowsocks
+		if a.editor.engineIndex == 1 && hasSidecar {
+			ui.Column(c).Gap(6).Padding(10, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
 				switchRow(c, p, "inp-auto-loopback", cat.AutoLoopbackPortLabel(), &a.editor.autoLoopback)
-				ui.Text(c, cat.AutoLoopbackPortDesc()).FontSize(11).TextColor(p.textDim)
+				ui.Text(c, cat.AutoLoopbackPortShortDesc()).FontSize(11).TextColor(p.textDim)
 				if !a.editor.autoLoopback {
 					labeledInput(c, p, "inp-listen", cat.ListenPortLabel(), &a.editor.listenInput, "socks://127.0.0.1:1080")
 				}
 			})
 		}
+	})
+}
 
-		// Protocol-specific fields
+func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.Protocol) {
+	cat := a.catalog()
+	cardTitle := cat.EditorGroupConnection()
+	if proto == config.ProtoWARP {
+		cardTitle = cat.EditorGroupWarpTransport()
+	}
+
+	editorSectionCard(c, p, func() {
+		ui.Text(c, cardTitle).FontSize(11).FontWeight(700).TextColor(p.textDim)
+
 		switch proto {
 		case config.ProtoNaive:
 			ui.Column(c).Gap(4).Children(func() {
 				labeledInput(c, p, "inp-proxy", cat.ProxyURILabel(), &a.editor.proxyInput, cat.ProxyURIHint())
-				ui.Text(c, cat.EditorProxyHintFull()).FontSize(11).TextColor(p.textMuted)
+				ui.Text(c, cat.EditorProxyHintFull()).FontSize(11).TextColor(p.textDim)
 			})
 			labeledInput(c, p, "inp-concurrency-basic", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
 			switchRow(c, p, "inp-nopq-basic", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
 
 		case config.ProtoVLESS:
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-vless-server", cat.ServerLabel(), &a.editor.server, "example.com")
-				})
-				ui.Box(c).Width(100).Children(func() {
-					labeledInput(c, p, "inp-vless-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
-				})
-			})
+			a.renderEditorServerPortRow(c, p, "vless", "443")
 			labeledInput(c, p, "inp-vless-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.SecurityLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				segmentedControl(c.Key("inp-vless-sec"), p, &a.editor.securityIndex, []string{"TLS", "REALITY", "None"})
-			})
+			ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.SecurityLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					segmentedControl(c.Key("inp-vless-sec"), p, &a.editor.securityIndex, []string{"TLS", "REALITY", "None"})
+				})
 
-			if a.editor.securityIndex == 1 { // REALITY
-				labeledInput(c, p, "inp-vless-pbk", cat.PublicKeyLabel(), &a.editor.publicKey, "publicKey...")
-				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-					ui.Box(c).Grow(1).Children(func() {
+				if a.editor.securityIndex == 1 {
+					labeledInput(c, p, "inp-vless-pbk", cat.PublicKeyLabel(), &a.editor.publicKey, "publicKey...")
+					ui.Grid(c.Key("editor-vless-reality-grid")).Columns(2).Gap(10).Children(func() {
 						labeledInput(c, p, "inp-vless-sid", cat.ShortIDLabel(), &a.editor.shortID, "shortId")
-					})
-					ui.Box(c).Grow(1).Children(func() {
 						labeledInput(c, p, "inp-vless-spx", cat.SpiderXLabel(), &a.editor.spiderX, "/")
 					})
+				}
+
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.FlowLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					segmentedControl(c.Key("inp-vless-flow"), p, &a.editor.flowIndex, []string{"xtls-rprx-vision", "None"})
 				})
-			}
 
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.FlowLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				segmentedControl(c.Key("inp-vless-flow"), p, &a.editor.flowIndex, []string{"xtls-rprx-vision", "None"})
-			})
-
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-vless-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-				})
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-vless-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
-				})
-			})
-			if a.editor.securityIndex == 0 { // TLS
-				a.renderALPNField(c, p, "inp-vless-alpn")
-			}
-
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				segmentedControl(c.Key("inp-vless-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc", "xhttp"})
-			})
-
-			if a.editor.networkIndex == 1 || a.editor.networkIndex == 3 { // ws, xhttp
-				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-					ui.Box(c).Grow(1).Children(func() {
-						labeledInput(c, p, "inp-vless-path", cat.PathLabel(), &a.editor.path, "/")
+				if a.editor.securityIndex != 2 {
+					ui.Grid(c.Key("editor-vless-tls-grid")).Columns(2).Gap(10).Children(func() {
+						labeledInput(c, p, "inp-vless-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+						labeledInput(c, p, "inp-vless-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
 					})
-					ui.Box(c).Grow(1).Children(func() {
+				}
+				if a.editor.securityIndex == 0 {
+					a.renderALPNField(c, p, "inp-vless-alpn")
+				}
+
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.NetworkLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					segmentedControl(c.Key("inp-vless-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc", "xhttp"})
+				})
+
+				if a.editor.networkIndex == 1 || a.editor.networkIndex == 3 {
+					ui.Grid(c.Key("editor-vless-ws-grid")).Columns(2).Gap(10).Children(func() {
+						labeledInput(c, p, "inp-vless-path", cat.PathLabel(), &a.editor.path, "/")
 						labeledInput(c, p, "inp-vless-host", cat.HostHeaderLabel(), &a.editor.host, "")
 					})
-				})
-			} else if a.editor.networkIndex == 2 { // grpc
-				labeledInput(c, p, "inp-vless-service", cat.ServiceNameLabel(), &a.editor.serviceName, "GunService")
-			}
-
-		case config.ProtoVMess:
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-vmess-server", cat.ServerLabel(), &a.editor.server, "example.com")
-				})
-				ui.Box(c).Width(100).Children(func() {
-					labeledInput(c, p, "inp-vmess-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
-				})
-			})
-			labeledInput(c, p, "inp-vmess-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.SecurityLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				if segmentedControl(c.Key("inp-vmess-sec"), p, &a.editor.vmessSecIndex, []string{"TLS", "None"}) {
-					if a.editor.vmessSecIndex == 0 && strings.TrimSpace(a.editor.fingerprint) == "" {
-						a.editor.fingerprint = "chrome"
-					}
+				} else if a.editor.networkIndex == 2 {
+					labeledInput(c, p, "inp-vless-service", cat.ServiceNameLabel(), &a.editor.serviceName, "GunService")
 				}
 			})
-			if a.editor.vmessSecIndex == 0 {
-				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-					ui.Box(c).Grow(1).Children(func() {
+
+		case config.ProtoVMess:
+			a.renderEditorServerPortRow(c, p, "vmess", "443")
+			labeledInput(c, p, "inp-vmess-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+			ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.SecurityLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					if segmentedControl(c.Key("inp-vmess-sec"), p, &a.editor.vmessSecIndex, []string{"TLS", "None"}) {
+						if a.editor.vmessSecIndex == 0 && strings.TrimSpace(a.editor.fingerprint) == "" {
+							a.editor.fingerprint = "chrome"
+						}
+					}
+				})
+				if a.editor.vmessSecIndex == 0 {
+					ui.Grid(c.Key("editor-vmess-tls-grid")).Columns(2).Gap(10).Children(func() {
 						labeledInput(c, p, "inp-vmess-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-					})
-					ui.Box(c).Grow(1).Children(func() {
 						labeledInput(c, p, "inp-vmess-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
 					})
+					a.renderALPNField(c, p, "inp-vmess-alpn")
+				}
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.NetworkLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					segmentedControl(c.Key("inp-vmess-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc"})
 				})
-				a.renderALPNField(c, p, "inp-vmess-alpn")
-			}
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Text(c, cat.NetworkLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				segmentedControl(c.Key("inp-vmess-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc"})
-			})
-			if a.editor.networkIndex == 1 { // ws
-				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-					ui.Box(c).Grow(1).Children(func() {
+				if a.editor.networkIndex == 1 {
+					ui.Grid(c.Key("editor-vmess-ws-grid")).Columns(2).Gap(10).Children(func() {
 						labeledInput(c, p, "inp-vmess-path", cat.PathLabel(), &a.editor.path, "/")
-					})
-					ui.Box(c).Grow(1).Children(func() {
 						labeledInput(c, p, "inp-vmess-host", cat.HostHeaderLabel(), &a.editor.host, "")
 					})
-				})
-			} else if a.editor.networkIndex == 2 { // grpc
-				labeledInput(c, p, "inp-vmess-service", cat.ServiceNameLabel(), &a.editor.serviceName, "")
-			}
+				} else if a.editor.networkIndex == 2 {
+					labeledInput(c, p, "inp-vmess-service", cat.ServiceNameLabel(), &a.editor.serviceName, "")
+				}
+			})
 
 		case config.ProtoTrojan:
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-trojan-server", cat.ServerLabel(), &a.editor.server, "example.com")
-				})
-				ui.Box(c).Width(100).Children(func() {
-					labeledInput(c, p, "inp-trojan-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
-				})
+			a.renderEditorServerPortRow(c, p, "trojan", "443")
+			ui.Grid(c.Key("editor-trojan-grid")).Columns(2).Gap(10).Children(func() {
+				labeledInput(c, p, "inp-trojan-password", cat.PasswordLabel(), &a.editor.password, "password")
+				labeledInput(c, p, "inp-trojan-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
 			})
-			labeledInput(c, p, "inp-trojan-password", cat.PasswordLabel(), &a.editor.password, "password")
-			labeledInput(c, p, "inp-trojan-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
 			a.renderALPNField(c, p, "inp-trojan-alpn")
 
 		case config.ProtoShadowsocks:
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-ss-server", cat.ServerLabel(), &a.editor.server, "example.com")
-				})
-				ui.Box(c).Width(100).Children(func() {
-					labeledInput(c, p, "inp-ss-port", cat.ServerPortLabel(), &a.editor.serverPort, "8388")
-				})
+			a.renderEditorServerPortRow(c, p, "ss", "8388")
+			ui.Grid(c.Key("editor-ss-grid")).Columns(2).Gap(10).Children(func() {
+				labeledInput(c, p, "inp-ss-password", cat.PasswordLabel(), &a.editor.password, "password")
+				labeledInput(c, p, "inp-ss-method", cat.SsMethodLabel(), &a.editor.method, "2022-blake3-aes-128-gcm")
 			})
-			labeledInput(c, p, "inp-ss-password", cat.PasswordLabel(), &a.editor.password, "password")
-			labeledInput(c, p, "inp-ss-method", cat.SsMethodLabel(), &a.editor.method, "2022-blake3-aes-128-gcm")
 
 		case config.ProtoHysteria2:
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-hy2-server", cat.ServerLabel(), &a.editor.server, "example.com")
-				})
-				ui.Box(c).Width(100).Children(func() {
-					labeledInput(c, p, "inp-hy2-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
-				})
-			})
+			a.renderEditorServerPortRow(c, p, "hy2", "443")
 			labeledInput(c, p, "inp-hy2-password", cat.PasswordLabel(), &a.editor.password, "password")
-			labeledInput(c, p, "inp-hy2-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-			labeledInput(c, p, "inp-hy2-cc", cat.CongestionCtlLabel(), &a.editor.congestionCtl, "bbr")
+			ui.Grid(c.Key("editor-hy2-grid")).Columns(2).Gap(10).Children(func() {
+				labeledInput(c, p, "inp-hy2-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+				labeledInput(c, p, "inp-hy2-cc", cat.CongestionCtlLabel(), &a.editor.congestionCtl, "bbr")
+			})
 
 		case config.ProtoTUIC:
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-tuic-server", cat.ServerLabel(), &a.editor.server, "example.com")
-				})
-				ui.Box(c).Width(100).Children(func() {
-					labeledInput(c, p, "inp-tuic-port", cat.ServerPortLabel(), &a.editor.serverPort, "443")
-				})
-			})
+			a.renderEditorServerPortRow(c, p, "tuic", "443")
 			labeledInput(c, p, "inp-tuic-uuid", cat.UuidLabel(), &a.editor.uuid, "uuid")
-			labeledInput(c, p, "inp-tuic-password", cat.PasswordLabel(), &a.editor.password, "password")
-			labeledInput(c, p, "inp-tuic-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+			ui.Grid(c.Key("editor-tuic-grid")).Columns(2).Gap(10).Children(func() {
+				labeledInput(c, p, "inp-tuic-password", cat.PasswordLabel(), &a.editor.password, "password")
+				labeledInput(c, p, "inp-tuic-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
+			})
 			switchRow(c, p, "inp-tuic-zerortt", cat.ZeroRTTLabel(), &a.editor.zeroRTT)
 
 		case config.ProtoSOCKS5, config.ProtoHTTP:
 			labeledInput(c, p, "inp-external-uri", cat.ExternalURILabel(), &a.editor.externalURI, cat.ExternalURIHint())
 
 		case config.ProtoWARP:
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Column(c).Gap(2).Children(func() {
-					ui.Text(c, cat.EngineLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-					ui.Text(c, "Cloudflare WARP 直连出站").FontSize(11).TextColor(p.textMuted)
-				})
-				tagPill(c, "Sing-Box 原生", p.green, p.greenBg)
-			})
-
 			ui.Column(c).Gap(6).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-					ui.Text(c, cat.CloudflareWarpTransport()).FontSize(13).FontWeight(500).TextColor(p.text)
-					transportLabels := []string{"MASQUE", "WireGuard"}
-					segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, transportLabels)
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.CloudflareWarpTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
+					segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, []string{"MASQUE", "WireGuard"})
 				})
 				a.renderWarpTransportGuide(c, p, "editor-warp-direct", a.editor.warpModeIndex, true)
 			})
-
 			if a.editor.warpModeIndex == 0 {
-				ui.Column(c).Gap(4).Padding(8, 10, 8, 10).Radius(6).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+				ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
 					switchRow(c, p, "inp-warp-direct-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
-					ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+					ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
 				})
 			}
-
 			labeledInput(c, p, "inp-warp-direct-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpCleanEndpointPlaceholder())
 		}
+	})
+}
 
-		if proto != config.ProtoWARP {
-			ui.Column(c).Gap(8).Padding(12).Radius(8).Background(p.card).Border(1, p.borderSubtle).Children(func() {
-				if switchRow(c, p, "inp-enable-warp-toggle", cat.NodeEditorEnableWarp(), &a.editor.enableWARP) {
-					if a.editor.enableWARP {
-						if proto == config.ProtoNaive || proto == config.ProtoHTTP || a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
-							a.editor.warpModeIndex = 0
-						} else {
-							a.editor.warpModeIndex = 1
-						}
+func (a *app) renderEditorChainedWarpCard(c *ui.Context, p palette, proto config.Protocol) {
+	cat := a.catalog()
+	editorSectionCard(c, p, func() {
+		if switchRow(c, p, "inp-enable-warp-toggle", cat.NodeEditorEnableWarp(), &a.editor.enableWARP) {
+			if a.editor.enableWARP {
+				if proto == config.ProtoNaive || proto == config.ProtoHTTP || a.state.Cloudflare.EffectiveChainedMode() == warp.ModeMASQUE {
+					a.editor.warpModeIndex = 0
+				} else {
+					a.editor.warpModeIndex = 1
+				}
+			}
+		}
+		ui.Text(c, cat.NodeEditorEnableWarpDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
+
+		if a.editor.enableWARP {
+			ui.Column(c).Gap(8).Padding(10, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
+				if proto == config.ProtoNaive || proto == config.ProtoHTTP {
+					ui.Row(c).Gap(6).Padding(8, 10, 8, 10).Radius(6).Background(p.accentBg).Children(func() {
+						ui.Text(c, cat.NodeEditorWarpNaiveNotice()).FontSize(11).TextColor(p.accentText).LineHeight(1.35)
+					})
+				} else {
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+							ui.Text(c, cat.CloudflareWarpChainedTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
+							segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, []string{"MASQUE", "WireGuard"})
+						})
+						a.renderWarpTransportGuide(c, p, "editor-warp-chained", a.editor.warpModeIndex, true)
+					})
+
+					if a.editor.warpModeIndex == 0 {
+						ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+							switchRow(c, p, "inp-warp-chained-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
+							ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
+						})
 					}
 				}
-				ui.Text(c, cat.NodeEditorEnableWarpDesc()).FontSize(11).TextColor(p.textMuted)
 
-				if a.editor.enableWARP {
-					if proto == config.ProtoNaive || proto == config.ProtoHTTP {
-						ui.Row(c).Gap(6).Padding(6, 8, 6, 8).Radius(6).Background(p.accentBg).Children(func() {
-							ui.Text(c, cat.NodeEditorWarpNaiveNotice()).FontSize(11).TextColor(p.accent)
-						})
-					} else {
-						ui.Column(c).Gap(6).Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-								ui.Text(c, cat.CloudflareWarpChainedTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
-								transportLabels := []string{"MASQUE", "WireGuard"}
-								segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, transportLabels)
-							})
-							a.renderWarpTransportGuide(c, p, "editor-warp-chained", a.editor.warpModeIndex, true)
-						})
-
-						if a.editor.warpModeIndex == 0 {
-							ui.Column(c).Gap(4).Padding(8, 10, 8, 10).Radius(6).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
-								switchRow(c, p, "inp-warp-chained-prefer-h2", cat.CloudflareWarpPreferH2(), &a.editor.warpMasquePreferH2)
-								ui.Text(c, cat.CloudflareWarpPreferH2Desc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-							})
-						}
-					}
-
-					labeledInput(c, p, "inp-warp-chained-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpChainedEndpointPlaceholder())
-				}
+				labeledInput(c, p, "inp-warp-chained-endpoint", cat.CloudflareWarpCleanEndpoint(), &a.editor.warpEndpoint, cat.CloudflareWarpChainedEndpointPlaceholder())
 			})
 		}
 	})
@@ -1057,60 +1132,53 @@ func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
 
 	ui.Column(c).Gap(12).Children(func() {
 		if proto == config.ProtoWARP || a.editor.enableWARP {
-			labeledInput(c, p, "inp-warp-privkey-adv", "WARP PrivateKey (可选自定义私钥)", &a.editor.warpPrivateKey, "留空使用全局注册凭证")
-			labeledInput(c, p, "inp-warp-ipv4-adv", "WARP 虚拟 IPv4 (可选覆盖)", &a.editor.warpIPv4, "172.16.0.2/32")
-			labeledInput(c, p, "inp-warp-ipv6-adv", "WARP 虚拟 IPv6 (可选覆盖)", &a.editor.warpIPv6, "2606:4700:110:8a36::2/128")
+			editorSectionCard(c, p, func() {
+				ui.Text(c, cat.EditorGroupWarpTransport()).FontSize(11).FontWeight(700).TextColor(p.textDim)
+				labeledInput(c, p, "inp-warp-privkey-adv", cat.WarpCustomPrivKeyLabel(), &a.editor.warpPrivateKey, cat.WarpCustomPrivKeyHint())
+				ui.Grid(c.Key("editor-warp-ips-grid")).Columns(2).Gap(10).Children(func() {
+					labeledInput(c, p, "inp-warp-ipv4-adv", cat.WarpCustomIPv4Label(), &a.editor.warpIPv4, "172.16.0.2/32")
+					labeledInput(c, p, "inp-warp-ipv6-adv", cat.WarpCustomIPv6Label(), &a.editor.warpIPv6, "2606:4700:110:8a36::2/128")
+				})
+			})
 		}
 
-		if proto == config.ProtoNaive {
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
+		editorSectionCard(c, p, func() {
+			ui.Text(c, cat.EditorGroupAdvanced()).FontSize(11).FontWeight(700).TextColor(p.textDim)
+
+			if proto == config.ProtoNaive {
+				ui.Grid(c.Key("editor-naive-timeouts-grid")).Columns(2).Gap(10).Children(func() {
 					labeledInput(c, p, "inp-tunnel-timeout", cat.EditorTunnelTimeoutLabel(), &a.editor.tunnelTimeout, "")
-				})
-				ui.Box(c).Grow(1).Children(func() {
 					labeledInput(c, p, "inp-idle-timeout", cat.EditorIdleTimeoutLabel(), &a.editor.idleTimeout, "")
 				})
-			})
-
-			labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel(), &a.editor.extraHeaders, "Header1: Value1")
-
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
+				labeledInput(c, p, "inp-extra-headers", cat.EditorExtraHeadersLabel(), &a.editor.extraHeaders, "Header1: Value1")
+				ui.Grid(c.Key("editor-naive-rules-grid")).Columns(2).Gap(10).Children(func() {
 					labeledInput(c, p, "inp-host-rules", cat.EditorHostRulesLabel(), &a.editor.hostRules, "MAP example.com 1.2.3.4")
-				})
-				ui.Box(c).Grow(1).Children(func() {
 					labeledInput(c, p, "inp-resolver-range", cat.EditorResolverRangeLabel(), &a.editor.resolverRange, "100.64.0.0/10")
 				})
-			})
-
-			switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
-			labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
-
-			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel(), &a.editor.logNetLog, "")
-				})
-				ui.Box(c).Grow(1).Children(func() {
-					labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel(), &a.editor.sslKeyLogFile, "")
-				})
-			})
-
-			labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"padding": true}`)
-		} else {
-			// Multi-protocol advanced options
-			labeledInput(c, p, "inp-concurrency-adv", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
-			switchRow(c, p, "inp-nopq-adv", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
-
-			if a.editor.engineIndex == 1 { // Sidecar
 				switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
 				labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
-			}
+				ui.Grid(c.Key("editor-naive-logs-grid")).Columns(2).Gap(10).Children(func() {
+					labeledInput(c, p, "inp-net-log", cat.EditorNetLogLabel(), &a.editor.logNetLog, "")
+					labeledInput(c, p, "inp-ssl-key-log", cat.EditorSSLKeyLogLabel(), &a.editor.sslKeyLogFile, "")
+				})
+				labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"padding": true}`)
+			} else {
+				labeledInput(c, p, "inp-concurrency-adv", cat.EditorConcurrencyLabel(), &a.editor.concurrencyStr, "1")
+				switchRow(c, p, "inp-nopq-adv", cat.EditorNoPQLabel(), &a.editor.noPostQuantum)
 
-			ui.Column(c).Gap(4).Children(func() {
-				labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"mux": {"enabled": true}}`)
-				ui.Text(c, cat.EditorAdvancedCoreCustomDesc()).FontSize(11).TextColor(p.textMuted)
-			})
-		}
+				if a.editor.engineIndex == 1 {
+					ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
+						switchRow(c, p, "inp-enable-log", cat.EditorEnableLogLabel(), &a.editor.enableLog)
+						labeledInput(c, p, "inp-log-file", cat.EditorLogFileLabel(), &a.editor.logFile, cat.EditorLogFileHint())
+					})
+				}
+
+				ui.Column(c).Gap(4).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
+					labeledInput(c, p, "inp-extra-json", cat.EditorExtraJSONLabel(), &a.editor.extraJSON, `{"mux": {"enabled": true}}`)
+					ui.Text(c, cat.EditorAdvancedCoreCustomDesc()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
+				})
+			}
+		})
 	})
 }
 
@@ -1118,77 +1186,56 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 	cat := a.catalog()
 	svc, err := a.buildServiceFromEditor()
 	if err != nil {
-		ui.Row(c).PaddingX(12).PaddingY(10).Radius(8).Background(p.redBg).Children(func() {
+		ui.Row(c).PaddingX(12).PaddingY(10).Radius(8).Background(p.redBg).Border(1, p.red.Alpha(0.24)).Children(func() {
 			ui.Text(c, cat.ConfigValidationFailed(err.Error())).FontSize(12).TextColor(p.red)
 		})
 		return
 	}
 
-	ui.Column(c).Gap(10).Children(func() {
-		// 1. Local link preview - only for Sidecar nodes (内置节点没有本地链接)
+	ui.Column(c).Gap(12).Children(func() {
 		if svc.EffectiveEngine() == config.EngineSidecar {
 			v2rayURI := svc.V2rayNSocksURI()
-			ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+			editorSectionCard(c, p, func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.PreviewLocalLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-local"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+					if subtleActionChip(c.Key("preview-copy-local"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
 						a.writeClipboard(v2rayURI, cat.CopiedLocalLink())
 					}
 				})
-				ui.Text(c, v2rayURI).FontSize(12).FontWeight(500).TextColor(p.accent)
+				ui.Box(c).Padding(8).Radius(6).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+					ui.Text(c, v2rayURI).Font("monospace").FontSize(11).FontWeight(500).TextColor(p.accent).LineHeight(1.35)
+				})
 			})
 		}
 
-		// 2. Share / Config link preview for all protocols
 		shareURI := svc.ShareURI()
 		if shareURI != "" {
-			ui.Column(c).Gap(4).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+			editorSectionCard(c, p, func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-share"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+					if subtleActionChip(c.Key("preview-copy-share"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
 						a.writeClipboard(shareURI, cat.CopiedNaiveShareLink())
 					}
 				})
-				ui.Text(c, shareURI).FontSize(12).TextColor(p.text)
+				ui.Box(c).Padding(8).Radius(6).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+					ui.Text(c, shareURI).Font("monospace").FontSize(11).TextColor(p.text).LineHeight(1.35)
+				})
 			})
 		}
 
-		// 3. Core Engine JSON Configuration
-		if svc.EffectiveEngine() == config.EngineSidecar && svc.EffectiveProtocol() == config.ProtoNaive {
-			rawJSON, _ := svc.ToConfigJSON()
-			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.PreviewNaiveJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
-						a.writeClipboard(string(rawJSON), cat.CopiedConfigJSON())
-					}
-				})
-				ui.Text(c, string(rawJSON)).FontSize(11).TextColor(p.text)
+		jsonTitle, _ := nodeCoreJSONMeta(cat, svc)
+		rawJSON, copiedToast := buildNodeCoreConfigJSON(cat, svc)
+		editorSectionCard(c, p, func() {
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+				ui.Text(c, jsonTitle).FontSize(11).FontWeight(600).TextColor(p.textMuted).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+				if subtleActionChip(c.Key("preview-copy-core-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+					a.writeClipboard(rawJSON, copiedToast)
+				}
 			})
-		} else if svc.EffectiveEngine() == config.EngineSidecar {
-			cfgBytes, _ := runner.GenerateXrayConfig(svc, 1080)
-			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.PreviewXrayJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-xray-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
-						a.writeClipboard(string(cfgBytes), cat.CopiedXrayJSON())
-					}
-				})
-				ui.Text(c, string(cfgBytes)).FontSize(11).TextColor(p.text)
+			ui.Box(c).Padding(8).Radius(6).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
+				ui.Text(c, rawJSON).Font("monospace").FontSize(11).TextColor(p.text).LineHeight(1.35)
 			})
-		} else {
-			obMap := boxengine.BuildNativeOutbound(svc)
-			obJSON, _ := json.MarshalIndent(obMap, "", "  ")
-			ui.Column(c).Gap(6).Padding(10).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.PreviewSingBoxJSON()).FontSize(11).FontWeight(600).TextColor(p.textMuted)
-					if actionChip(c.Key("preview-copy-sb-json"), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
-						a.writeClipboard(string(obJSON), cat.CopiedSingBoxJSON())
-					}
-				})
-				ui.Text(c, string(obJSON)).FontSize(11).TextColor(p.text)
-			})
-		}
+		})
 	})
 }
 
@@ -1219,8 +1266,16 @@ func (a *app) saveEditorService() {
 	}
 	a.saveState()
 	a.rebuildTrayMenu()
+	returnID := ""
+	if a.editor.returnToDrawer && !a.editor.isNew {
+		returnID = svc.ID
+	}
 	a.editor.open = false
 	a.editor.errText = ""
+	a.editor.returnToDrawer = false
+	if returnID != "" {
+		a.activeNodeDrawerID = returnID
+	}
 }
 
 // Import Dialog
@@ -1393,6 +1448,15 @@ func (a *app) confirmDeleteService() {
 	}
 	a.state.Services = filtered
 	delete(a.expandedLogs, id)
+	if a.openNodeMenuID == id {
+		a.openNodeMenuID = ""
+	}
+	if a.activeNodeDrawerID == id {
+		a.activeNodeDrawerID = ""
+	}
+	if a.activeLogDrawerID == id {
+		a.activeLogDrawerID = ""
+	}
 	a.saveState()
 	a.rebuildTrayMenu()
 	a.toast(a.catalog().ToastServiceDeleted(name))

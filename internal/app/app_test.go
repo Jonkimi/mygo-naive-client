@@ -205,8 +205,12 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 		t.Fatalf("expected detected local version v143.0.7499.109-2, got %q", a.localVersion)
 	}
 
-	// Click "全部启动" to start both services concurrently
-	if err := tt.Click("全部启动"); err != nil {
+	// Open batch menu and click "全部启动" to start both services concurrently
+	if err := tt.Click(a.catalog().BatchActionsLabel()); err != nil {
+		t.Fatalf("open batch menu: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ActionStartAll()); err != nil {
 		t.Fatalf("click 全部启动: %v", err)
 	}
 	tt.Frame()
@@ -221,12 +225,16 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 	}
 	tt.Frame()
 
-	if _, ok := tt.Find("2 个运行中"); !ok {
-		t.Fatalf("expected toolbar badge '2 个运行中' after starting both services")
+	if _, ok := tt.Find(a.catalog().NodesRunningSummary(2, 2)); !ok {
+		t.Fatalf("expected header summary %q after starting both services, got texts: %v", a.catalog().NodesRunningSummary(2, 2), tt.Texts())
 	}
 
-	// Click "复制本地链接" on the first card and verify clipboard format socks://address:port#alias
-	if err := tt.Click("复制本地链接"); err != nil {
+	// Open overflow menu for HK-Primary and click "复制本地链接" to verify socks://address:port#alias
+	if err := tt.Click(a.catalog().MoreActionsForNode("HK-Primary")); err != nil {
+		t.Fatalf("open HK-Primary menu: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ActionCopyV2rayN()); err != nil {
 		t.Fatalf("click 复制本地链接: %v", err)
 	}
 	tt.Frame()
@@ -239,8 +247,12 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 		t.Fatalf("expected toast '已复制本地链接' after copy, got texts: %q", tt.Texts())
 	}
 
-	// Click "复制配置链接" on the first card and verify clipboard format and toast
-	if err := tt.Click("复制配置链接"); err != nil {
+	// Open overflow menu for HK-Primary and click "复制配置链接"
+	if err := tt.Click(a.catalog().MoreActionsForNode("HK-Primary")); err != nil {
+		t.Fatalf("open HK-Primary menu: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ActionCopyNaive()); err != nil {
 		t.Fatalf("click 复制配置链接: %v", err)
 	}
 	tt.Frame()
@@ -253,8 +265,12 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 		t.Fatalf("expected toast '已复制配置链接' after copy, got texts: %q", tt.Texts())
 	}
 
-	// Click "全部停止" and verify both transition back to stopped
-	if err := tt.Click("全部停止"); err != nil {
+	// Open batch menu and click "全部停止" and verify both transition back to stopped
+	if err := tt.Click(a.catalog().BatchActionsLabel()); err != nil {
+		t.Fatalf("open batch menu: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ActionStopAll()); err != nil {
 		t.Fatalf("click 全部停止: %v", err)
 	}
 	tt.Frame()
@@ -262,13 +278,13 @@ func TestMainPanel_MultiServiceStartStopAndExportV2rayN(t *testing.T) {
 	if a.isServiceActive("svc-1") || a.isServiceActive("svc-2") {
 		t.Fatalf("expected all services stopped after clicking 全部停止")
 	}
-	if _, ok := tt.Find("全部已停止"); !ok {
-		t.Fatalf("expected toolbar badge '全部已停止'")
+	if _, ok := tt.Find(a.catalog().NodesRunningSummary(0, 2)); !ok {
+		t.Fatalf("expected header summary %q, got texts: %v", a.catalog().NodesRunningSummary(0, 2), tt.Texts())
 	}
 }
 
 func TestServiceCard_CopyTooltips(t *testing.T) {
-	// 1. Service with configured proxy shows local link and naive share link tooltips
+	// 1. Service with configured proxy shows local link and naive share link tooltips inside overflow menu
 	svcs := []config.Service{
 		{
 			ID:      "svc-proxy",
@@ -277,12 +293,17 @@ func TestServiceCard_CopyTooltips(t *testing.T) {
 			Proxies: []string{"https://user:pass@proxy.example.com:443"},
 		},
 	}
-	_, tt, _ := newTestApp(t, svcs)
+	a, tt, _ := newTestApp(t, svcs)
+
+	if err := tt.Click(a.catalog().MoreActionsForNode("US-Proxy")); err != nil {
+		t.Fatalf("open overflow menu: %v", err)
+	}
+	tt.Frame()
 
 	// Hover over "复制本地链接"
-	r, ok := tt.Find("复制本地链接")
+	r, ok := tt.Find(a.catalog().ActionCopyV2rayN())
 	if !ok {
-		t.Fatalf("could not find '复制本地链接' button")
+		t.Fatalf("could not find '复制本地链接' menu item")
 	}
 	tt.Move(r.X+r.W/2, r.Y+r.H/2)
 	tt.Advance(time.Second)
@@ -295,9 +316,9 @@ func TestServiceCard_CopyTooltips(t *testing.T) {
 	tt.Move(0, 0)
 	tt.Advance(time.Second)
 
-	r, ok = tt.Find("复制配置链接")
+	r, ok = tt.Find(a.catalog().ActionCopyNaive())
 	if !ok {
-		t.Fatalf("could not find '复制配置链接' button")
+		t.Fatalf("could not find '复制配置链接' menu item")
 	}
 	tt.Move(r.X+r.W/2, r.Y+r.H/2)
 	tt.Advance(time.Second)
@@ -314,15 +335,19 @@ func TestServiceCard_CopyTooltips(t *testing.T) {
 			Listens: []string{"socks://127.0.0.1:1089"},
 		},
 	}
-	_, tt2, _ := newTestApp(t, noProxySvcs)
-	r2, ok := tt2.Find("复制配置链接")
+	a2, tt2, _ := newTestApp(t, noProxySvcs)
+	if err := tt2.Click(a2.catalog().MoreActionsForNode("Direct-Only")); err != nil {
+		t.Fatalf("open overflow menu on unconfigured service: %v", err)
+	}
+	tt2.Frame()
+	r2, ok := tt2.Find(a2.catalog().ActionCopyNaive())
 	if !ok {
-		t.Fatalf("could not find '复制配置链接' button on unconfigured service")
+		t.Fatalf("could not find '复制配置链接' menu item on unconfigured service")
 	}
 	tt2.Move(r2.X+r2.W/2, r2.Y+r2.H/2)
 	tt2.Advance(time.Second)
-	if !tt2.HasText("未配置可导出的远端节点") {
-		t.Fatalf("expected tooltip '未配置可导出的远端节点', got texts: %q", tt2.Texts())
+	if !tt2.HasText(a2.catalog().NoRemoteConfigured()) {
+		t.Fatalf("expected tooltip %q, got texts: %q", a2.catalog().NoRemoteConfigured(), tt2.Texts())
 	}
 }
 
@@ -331,8 +356,8 @@ func TestImportDialog_FromNaiveShareLink(t *testing.T) {
 
 	a.clipboardMem = "https://alice:pass@hk.example.com#HK-Direct\nnaive+https://user1:pass1@1.2.3.4:443?security=tls&sni=sni.example.com&insecure-concurrency=3#US-West"
 
-	if err := tt.Click("剪贴板导入"); err != nil {
-		t.Fatalf("click 剪贴板导入: %v", err)
+	if err := tt.Click(a.catalog().ActionImportShort()); err != nil {
+		t.Fatalf("click 导入: %v", err)
 	}
 	tt.Frame()
 
@@ -358,9 +383,12 @@ func TestImportDialog_FromNaiveShareLink(t *testing.T) {
 		t.Fatalf("expected imported service card 'US-West' rendered on main panel")
 	}
 
-	// While service is stopped, clicking "延迟测速" or "下载测速" should be disabled (no probe/speed test started)
-	_ = tt.Click("延迟测速")
-	_ = tt.Click("下载测速")
+	// While service is stopped, clicking "延迟测速" or "下载测速" should not start probe/speed test
+	_ = tt.Click(a.catalog().ActionLatency())
+	if err := tt.Click(a.catalog().MoreActionsForNode("US-West")); err == nil {
+		tt.Frame()
+		_ = tt.Click(a.catalog().ActionDownload())
+	}
 	tt.Frame()
 	st := a.mgr.StatusOf(imported.ID)
 	if st.Probing || st.SpeedTesting {
@@ -604,9 +632,9 @@ func TestSettingsPage_WorkbenchNavigationAndI18n(t *testing.T) {
 		t.Fatalf("expected activeTab = TabNodes, got %v", a.activeTab)
 	}
 
-	// In English, toolbar button must show English "New Service"
-	if _, ok := tt.Find("New Service"); !ok {
-		t.Fatalf("expected English 'New Service' on nodes toolbar after switching language")
+	// In English, toolbar button must show English "New Node"
+	if _, ok := tt.Find(a.catalog().NewNode()); !ok {
+		t.Fatalf("expected English %q on nodes toolbar after switching language", a.catalog().NewNode())
 	}
 }
 
@@ -1024,15 +1052,19 @@ func TestMainPanel_BatchSpeedTest(t *testing.T) {
 
 	a, tt, _ := newTestApp(t, svcs)
 
-	// 1. Initially both services stopped: clicking 一键测速 should not trigger testing
-	if err := tt.Click("一键测速"); err == nil {
+	// 1. Initially both services stopped: clicking batch test should not trigger testing
+	if err := tt.Click(a.catalog().ActionBatchTestShort()); err == nil {
 		if a.batchTesting {
 			t.Fatal("expected batchTesting to not start when no services are running")
 		}
 	}
 
-	// 2. Start all services
-	if err := tt.Click("全部启动"); err != nil {
+	// 2. Start all services via batch menu
+	if err := tt.Click(a.catalog().BatchActionsLabel()); err != nil {
+		t.Fatalf("open batch menu: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().ActionStartAll()); err != nil {
 		t.Fatalf("click 全部启动: %v", err)
 	}
 	tt.Frame()
@@ -1047,8 +1079,8 @@ func TestMainPanel_BatchSpeedTest(t *testing.T) {
 	}
 	tt.Frame()
 
-	if _, ok := tt.Find("2 个运行中"); !ok {
-		t.Fatalf("expected toolbar badge '2 个运行中'")
+	if _, ok := tt.Find(a.catalog().NodesRunningSummary(2, 2)); !ok {
+		t.Fatalf("expected header summary %q", a.catalog().NodesRunningSummary(2, 2))
 	}
 
 	// 3. Now listen on p1 to hold proxy connections and test cancellation
@@ -1076,9 +1108,9 @@ func TestMainPanel_BatchSpeedTest(t *testing.T) {
 		}
 	}()
 
-	// Click "一键测速" while running, then cancel it
-	if err := tt.Click("一键测速"); err != nil {
-		t.Fatalf("click 一键测速: %v", err)
+	// Click batch test while running, then cancel it
+	if err := tt.Click(a.catalog().ActionBatchTestShort()); err != nil {
+		t.Fatalf("click batch test: %v", err)
 	}
 	tt.Frame()
 
@@ -1304,9 +1336,13 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 	}
 	tt.Frame()
 
-	// 3. Open Log Drawer
-	if err := tt.Click("日志"); err != nil {
-		t.Fatalf("click 日志 failed: %v", err)
+	// 3. Open Log Drawer via node overflow menu
+	if err := tt.Click(a.catalog().MoreActionsForNode("HK-01")); err != nil {
+		t.Fatalf("open node overflow menu failed: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().NodeDrawerLogs()); err != nil {
+		t.Fatalf("click 查看日志 failed: %v", err)
 	}
 	tt.Frame()
 	if a.activeLogDrawerID != "svc-1" {
@@ -3197,7 +3233,7 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 	}
 }
 
-// Tests that the node card opens the details drawer on "详情" click, showing PID inside the drawer rather than on the list card.
+// Tests that the node card opens the details drawer on card click, showing PID inside the drawer rather than on the list card.
 func TestNodeDetailsDrawer_OpenCloseAndPIDDisplay(t *testing.T) {
 	p := freeLocalPort(t)
 	svcs := []config.Service{
@@ -3234,9 +3270,9 @@ func TestNodeDetailsDrawer_OpenCloseAndPIDDisplay(t *testing.T) {
 		t.Fatalf("PID %q should not be displayed on the node list page", pidStr)
 	}
 
-	// Click "详情" button to open the Node Details Drawer
-	if err := tt.Click(a.catalog().ActionDetails()); err != nil {
-		t.Fatalf("click 详情 failed: %v", err)
+	// Click the node card body to open the Node Details Drawer
+	if err := tt.Click("HK-01"); err != nil {
+		t.Fatalf("click node card failed: %v", err)
 	}
 	tt.Frame()
 
@@ -3287,29 +3323,34 @@ func TestInProcessNode_NoLocalLinkAndConfigPreviewInDrawer(t *testing.T) {
 	}
 	a, tt, _ := newTestApp(t, svcs)
 
-	// 1. On node card:
-	// For in-process node, "复制本地链接" should NOT be present.
-	// Only sidecar node has "复制本地链接".
-	localLinkCount := 0
-	for _, text := range tt.Texts() {
-		if text == a.catalog().ActionCopyV2rayN() {
-			localLinkCount++
-		}
+	// 1. In overflow menu:
+	// For in-process node, "复制配置链接" is shown and "复制本地链接" is NOT shown.
+	if err := tt.Click(a.catalog().MoreActionsForNode("US-VLESS-InProcess")); err != nil {
+		t.Fatalf("open in-process overflow menu: %v", err)
 	}
-	if localLinkCount != 1 {
-		t.Fatalf("expected exactly 1 '复制本地链接' for sidecar node, got %d", localLinkCount)
+	tt.Frame()
+	if _, ok := tt.Find(a.catalog().ActionCopyNaive()); !ok {
+		t.Fatalf("expected '复制配置链接' in in-process overflow menu")
 	}
+	if _, ok := tt.Find(a.catalog().ActionCopyV2rayN()); ok {
+		t.Fatalf("did not expect '复制本地链接' in in-process overflow menu")
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
 
-	// Both should have "复制配置链接"
-	shareLinkCount := 0
-	for _, text := range tt.Texts() {
-		if text == a.catalog().ActionCopyNaive() {
-			shareLinkCount++
-		}
+	// For sidecar node, both "复制本地链接" and "复制配置链接" are shown.
+	if err := tt.Click(a.catalog().MoreActionsForNode("HK-Naive-Sidecar")); err != nil {
+		t.Fatalf("open sidecar overflow menu: %v", err)
 	}
-	if shareLinkCount != 2 {
-		t.Fatalf("expected 2 '复制配置链接', got %d", shareLinkCount)
+	tt.Frame()
+	if _, ok := tt.Find(a.catalog().ActionCopyV2rayN()); !ok {
+		t.Fatalf("expected '复制本地链接' in sidecar overflow menu")
 	}
+	if _, ok := tt.Find(a.catalog().ActionCopyNaive()); !ok {
+		t.Fatalf("expected '复制配置链接' in sidecar overflow menu")
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
 
 	// 2. Open details drawer for in-process node
 	a.activeNodeDrawerID = "svc-inprocess"
@@ -3335,9 +3376,8 @@ func TestInProcessNode_NoLocalLinkAndConfigPreviewInDrawer(t *testing.T) {
 			inprocessDrawerLocalCount++
 		}
 	}
-	// Only the card behind for sidecar has 1, the drawer for inprocess has 0
-	if inprocessDrawerLocalCount != 1 {
-		t.Fatalf("expected 1 '复制本地链接' (card only, none in in-process drawer), got %d", inprocessDrawerLocalCount)
+	if inprocessDrawerLocalCount != 0 {
+		t.Fatalf("expected 0 '复制本地链接' in in-process drawer, got %d", inprocessDrawerLocalCount)
 	}
 
 	// 3. Open details drawer for sidecar node

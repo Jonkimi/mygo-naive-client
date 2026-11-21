@@ -95,7 +95,7 @@
   "nodeDrawerCircuit": "Circuit Breaker Status",
   "nodeDrawerCircuitDesc": "Trips after 3 consecutive failures, imposing a 10s score penalty for 30s",
   "nodeDrawerCircuitNormal": "Healthy",
-  "nodeDrawerCircuitTripped": "Tripped (+10000ms Penalty)",
+  "nodeDrawerCircuitTripped": "Tripped (+10000ms)",
   "nodeDrawerFinalScore": "Adaptive Quality Score",
   "nodeDrawerFinalScoreDesc": "Calculated as EWMA / SuccessRate² + Penalty. Lower score gets higher routing priority.",
   "nodeDrawerLocalListen": "Local Inbound",
@@ -297,19 +297,19 @@
   "probeURLLabel": "HTTP 204 Ping Test Target URL",
   "downloadURLLabel": "Download Speed Test Target URL",
   "saveSettings": "Save Preferences",
-  "editNodeTitle": "Edit Service",
-  "newNodeTitle": "New Service",
+  "editNodeTitle": "Edit Node",
+  "newNodeTitle": "New Node",
   "editorTabBasic": "Basic",
   "editorTabAdvanced": "Advanced",
   "editorTabPreview": "Preview",
   "editorAdvancedCoreCustomDesc": "Additional JSON properties merged into outbound configuration for custom transport, TLS, or routing behavior.",
-  "editorAutoStartDesc": "Automatically launch this service when client starts",
+  "editorAutoStartDesc": "Auto-start with client",
   "editorSaveEdit": "Save Changes",
-  "editorSaveCreate": "Create Service",
+  "editorSaveCreate": "Create Node",
   "nodeKindLabel": "Node Type",
   "nodeKindManaged": "NaiveProxy (Managed)",
   "nodeKindExternal": "External Proxy (SOCKS5/HTTP)",
-  "nodeNameLabel": "Service Name (Alias)",
+  "nodeNameLabel": "Node Name",
   "externalURILabel": "External Proxy Address",
   "externalURIHint": "socks5://1.2.3.4:1080 or http://user:pass@host:8080",
   "listenPortLabel": "Local Listen Address (listen)",
@@ -317,8 +317,8 @@
   "proxyURILabel": "Remote Proxy Address (proxy)",
   "proxyURIHint": "https://user:pass@example.com:443 or quic://user:pass@example.com",
   "editorProxyHintFull": "Supports https://, quic://, and proxy chaining via comma",
-  "tagsLabel": "Server Tags (comma separated)",
-  "tagsHint": "e.g. hk, fast, ai",
+  "tagsLabel": "Tags (comma separated)",
+  "tagsHint": "hk, fast, ai",
   "editorConcurrencyLabel": "Concurrency (insecure-concurrency)",
   "editorNoPQLabel": "Disable Post-Quantum Key Exchange (no-post-quantum)",
   "editorTunnelTimeoutLabel": "Tunnel Timeout Seconds (tunnel-timeout)",
@@ -367,10 +367,10 @@
   },
   "protocolLabel": "Protocol",
   "engineLabel": "Execution Engine",
-  "engineSingBox": "Embedded Sing-Box (In-Process)",
-  "engineSidecarNaive": "Official NaiveProxy Sidecar (Chromium Fingerprint)",
-  "engineSidecarXray": "Official Xray-core Sidecar (Compatibility)",
-  "engineSingBoxOnly": "Embedded Sing-Box (Subprocess-free)",
+  "engineSingBox": "Sing-Box",
+  "engineSidecarNaive": "NaiveProxy Sidecar",
+  "engineSidecarXray": "Xray Sidecar",
+  "engineSingBoxOnly": "Sing-Box Native",
   "autoLoopbackPortLabel": "Auto Allocate Local Loopback Port",
   "autoLoopbackPortDesc": "Dynamically allocate free local port by system",
   "serverLabel": "Server Address",
@@ -828,5 +828,96 @@
   "ruleDrawerDispatchTitle": "Dispatch & Isolation",
   "ruleDrawerCandidatesTitle": "Resolved Candidate Nodes",
   "ruleDirectWarpTitle": "Route via Cloudflare WARP (Direct ➔ WARP)",
-  "ruleDirectWarpDesc": "Routes matched direct traffic through the built-in Cloudflare WARP node to hide your real ISP IP while keeping local LAN subnets direct."
+  "ruleDirectWarpDesc": "Routes matched direct traffic through the built-in Cloudflare WARP node to hide your real ISP IP while keeping local LAN subnets direct.",
+  "nodesRunningSummary": "{running} / {total} running",
+  "@nodesRunningSummary": {
+    "placeholders": {
+      "running": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "actionBatchTestShort": "Test",
+  "batchTestTooltip": "Test latency and speed for running nodes",
+  "actionImportShort": "Import",
+  "batchActionsLabel": "Batch Actions",
+  "filterOnlyRunning": "Running only",
+  "emptyFilteredNodes": "No matching nodes",
+  "resetFilters": "Reset filters",
+  "actionDetailsTelemetry": "Details & Telemetry",
+  "actionDeleteNode": "Delete Node",
+  "actionStartNode": "Start node",
+  "actionStopNode": "Stop node",
+  "moreActionsForNode": "More actions: {name}",
+  "@moreActionsForNode": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "latencyTestingShort": "Pinging…",
+  "latencyTooltipBoth": "Real traffic EWMA: {ewma} ms · Probe RTT: {probe} ms",
+  "@latencyTooltipBoth": {
+    "placeholders": {
+      "ewma": { "type": "int" },
+      "probe": { "type": "int" }
+    }
+  },
+  "latencyTooltipEWMA": "Real traffic EWMA: {ms} ms",
+  "@latencyTooltipEWMA": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "latencyTooltipProbe": "Probe RTT: {ms} ms",
+  "@latencyTooltipProbe": {
+    "placeholders": {
+      "ms": { "type": "int" }
+    }
+  },
+  "clonedNodeName": "{name} Copy",
+  "@clonedNodeName": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastNodeCloned": "Cloned node: {name}",
+  "@toastNodeCloned": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "nodeDrawerLogsShort": "Logs",
+  "nodeDrawerMetricsHelpButton": "Telemetry metric definitions",
+  "nodeDrawerTelemetryHelp": "Telemetry Definitions",
+  "nodeDrawerPIDEmbedded": "In-process core",
+  "nodeDrawerAutoStart": "Auto-start",
+  "nodeDrawerEnabled": "On",
+  "nodeDrawerDisabled": "Off",
+  "nodeDrawerConcurrency": "Concurrency",
+  "nodeDrawerWarpChain": "WARP Chain",
+  "nodeDrawerCircuitLabel": "Circuit",
+  "nodeDrawerBandwidthLabel": "Bandwidth",
+  "nodeDrawerExpandPreview": "Expand preview",
+  "nodeDrawerCollapsePreview": "Collapse",
+  "nodeDrawerScorePts": "{score} pts",
+  "@nodeDrawerScorePts": {
+    "placeholders": {
+      "score": { "type": "String" }
+    }
+  },
+  "editorBackToDetails": "Back to Details",
+  "editorGroupConnection": "Connection & Transport",
+  "editorGroupWarpTransport": "WARP Transport",
+  "editorGroupAdvanced": "Advanced Options & Extensions",
+  "editorEngineWarpDesc": "Built-in native direct outbound",
+  "editorEngineSwitchDesc": "Embedded Sing-Box / Xray compatible",
+  "editorEngineFixedDesc": "Embedded Sing-Box native engine",
+  "editorEngineExternalDesc": "External upstream proxy",
+  "autoLoopbackPortShortDesc": "Turn off to set a fixed local SOCKS5/HTTP port",
+  "warpCustomPrivKeyLabel": "WARP Private Key (optional)",
+  "warpCustomPrivKeyHint": "Leave blank to use global registration credential",
+  "warpCustomIPv4Label": "WARP Virtual IPv4 (optional)",
+  "warpCustomIPv6Label": "WARP Virtual IPv6 (optional)",
+  "logDrawerCopyTooltip": "Copy all visible logs (or drag mouse to select & Cmd+C)",
+  "logJumpToLatest": "Latest",
+  "logDrawerSelectionHint": "Drag to select · Cmd+C"
 }

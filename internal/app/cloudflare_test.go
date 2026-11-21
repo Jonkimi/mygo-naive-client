@@ -1341,11 +1341,18 @@ func TestNaiveWarp_EditorSavesMasqueH2AndNormalizesCardBadge(t *testing.T) {
 	if reloaded.WARPConfig.MasquePreferH2 == nil || !*reloaded.WARPConfig.MasquePreferH2 {
 		t.Fatalf("expected loadState to normalize Naive+WARP MasquePreferH2=true, got %+v", reloaded.WARPConfig)
 	}
+	if !tt.HasText("→ WARP") {
+		t.Fatalf("expected compact endpoint on node card to show '→ WARP'")
+	}
+	if err := tt.Click(reloaded.Name); err != nil {
+		t.Fatalf("open node drawer: %v", err)
+	}
+	tt.Frame()
 	if !tt.HasText("➔ WARP · MASQUE H2") {
-		t.Fatalf("expected node card to show '➔ WARP · MASQUE H2'")
+		t.Fatalf("expected node drawer to show '➔ WARP · MASQUE H2'")
 	}
 	if tt.HasText("WARP · WG") {
-		t.Fatalf("node card must not show 'WARP · WG' for Naive sidecar node")
+		t.Fatalf("node drawer must not show 'WARP · WG' for Naive sidecar node")
 	}
 }
 

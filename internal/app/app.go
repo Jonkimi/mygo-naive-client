@@ -178,12 +178,26 @@ type app struct {
 	lastTelemetryUI        time.Time
 	telemetryPending       bool
 
-	activeTab          TabID
-	activeLogDrawerID  string
-	activeRuleDrawerID string
+	activeTab              TabID
+	activeLogDrawerID      string
+	logDrawerLastID        string
+	logDrawerSearch        string
+	logDrawerLevel         string
+	logDrawerPaused        bool
+	logDrawerFrozenEntries []runner.LogEntry
+	logDrawerScroll        ui.ScrollState
+	logDrawerFollow        bool
+	logDrawerLastMaxSeq    uint64
+	activeRuleDrawerID     string
 	activeNodeDrawerID string
+	nodeDrawerLastID   string
+	nodeDrawerHelpOpen bool
+	nodeDrawerJSONOpen bool
 	activeTagFilter    string
 	searchQuery        string
+	onlyRunningFilter  bool
+	openNodeMenuID     string
+	openBatchMenu      bool
 
 	showRoutingDnsDetail  bool
 	showRoutingPoolDetail bool
@@ -528,7 +542,7 @@ func (a *app) initSubsystems() {
 	a.mgr.OnLog = func(id string) {
 		if a.win != nil {
 			a.win.Update(func() {
-				if a.activeLogDrawerID == id || a.expandedLogs[id] || (a.activeTab == TabLogs && a.logsSubTab == 1 && !a.logsPaused && (a.logsSelectedNodeID == id || a.logsSelectedNodeID == "")) {
+				if (a.activeLogDrawerID == id && !a.logDrawerPaused) || a.expandedLogs[id] || (a.activeTab == TabLogs && a.logsSubTab == 1 && !a.logsPaused && (a.logsSelectedNodeID == id || a.logsSelectedNodeID == "")) {
 					a.win.Invalidate()
 				}
 			})
@@ -1757,6 +1771,65 @@ func cloneService(s config.Service) config.Service {
 		cp.WARPConfig = &wc
 	}
 	return cp
+}
+
+func (a *app) cloneServiceNode(svc config.Service) {
+	cat := a.catalog()
+	cp := cloneService(svc)
+	cp.ID = a.generateServiceID()
+
+	existingNames := make(map[string]bool, len(a.state.Services))
+	usedPorts := make(map[int]bool)
+	for _, s := range a.state.Services {
+		existingNames[s.Name] = true
+		for _, l := range s.Listens {
+			if ep, err := config.ParseListenURI(l); err == nil && ep.Port > 0 {
+				usedPorts[ep.Port] = true
+			}
+		}
+	}
+
+	baseName := cat.ClonedNodeName(svc.Name)
+	name := baseName
+	for n := 2; existingNames[name]; n++ {
+		name = fmt.Sprintf("%s %d", baseName, n)
+	}
+	cp.Name = name
+
+	if cp.EffectiveEngine() == config.EngineSidecar {
+		for i, l := range cp.Listens {
+			ep, err := config.ParseListenURI(l)
+			if err != nil || ep.Port <= 0 {
+				continue
+			}
+			newPort := 1080
+			for port := 1080; port < 20000; port++ {
+				if !usedPorts[port] {
+					newPort = port
+					usedPorts[port] = true
+					break
+				}
+			}
+			host := ep.Addr
+			if host == "" {
+				host = "127.0.0.1"
+			}
+			auth := ""
+			if ep.User != "" {
+				if ep.Pass != "" {
+					auth = ep.User + ":" + ep.Pass + "@"
+				} else {
+					auth = ep.User + "@"
+				}
+			}
+			cp.Listens[i] = fmt.Sprintf("%s://%s%s", ep.Proto, auth, net.JoinHostPort(host, strconv.Itoa(newPort)))
+		}
+	}
+
+	a.state.Services = append(a.state.Services, cp)
+	a.saveState()
+	a.rebuildTrayMenu()
+	a.toast(cat.ToastNodeCloned(cp.Name))
 }
 
 func cloneServices(svcs []config.Service) []config.Service {

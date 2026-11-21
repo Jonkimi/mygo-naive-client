@@ -14,8 +14,8 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 
 	a.ensureSelectedLogNode()
 
-	rawLines := a.currentLogLines()
-	filteredLines := filterLogLines(rawLines, a.logsLevelFilter, a.effectiveSourceFilter(), a.logsSearchQuery)
+	rawEntries := a.currentLogEntries()
+	filteredEntries := filterLogEntries(rawEntries, a.logsLevelFilter, a.effectiveSourceFilter(), a.logsSearchQuery)
 
 	ui.Column(c.Key("logs-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// 1. Page Header with Title, Live Status Pill, and Action Buttons
@@ -32,7 +32,7 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 						} else {
 							statusBadge(c, cat.LogsStatusLive(), p.green, p.greenBg)
 						}
-						tagPill(c, cat.LogsLineCount(len(filteredLines), len(rawLines)), p.textMuted, p.card)
+						tagPill(c, cat.LogsLineCount(len(filteredEntries), len(rawEntries)), p.textMuted, p.card)
 					})
 					ui.Text(c, cat.LogsPageDesc()).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
 				})
@@ -51,12 +51,12 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 					}
 
 					// Copy button
-					if actionChip(c.Key("btn-logs-copy"), p, iconCopy, cat.LogCopy(), len(filteredLines) == 0).Clicked() {
-						a.writeClipboard(strings.Join(filteredLines, "\n"), cat.CopiedServiceLogs())
+					if actionChip(c.Key("btn-logs-copy"), p, iconCopy, cat.LogCopy(), len(filteredEntries) == 0).Clicked() {
+						a.writeClipboard(joinLogEntries(filteredEntries), cat.CopiedServiceLogs())
 					}
 
 					// Clear button
-					if actionChip(c.Key("btn-logs-clear"), p, iconTrash, cat.LogClear(), len(rawLines) == 0).Clicked() {
+					if actionChip(c.Key("btn-logs-clear"), p, iconTrash, cat.LogClear(), len(rawEntries) == 0).Clicked() {
 						a.clearCurrentLogs()
 					}
 				})
@@ -68,7 +68,7 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 			Padding(14, 18, 18, 18).Gap(10).
 			Children(func() {
 				// 2a. Primary Sub-Tab Bar: Gateway & System vs Node Processes
-				a.renderLogsSubTabBar(c, p, len(filteredLines), len(rawLines))
+				a.renderLogsSubTabBar(c, p, len(filteredEntries), len(rawEntries))
 
 				// 2b. Context Bar: Source filter (for Gateway & System) OR Node selector pills (for Node Processes)
 				if a.logsSubTab == 0 {
@@ -80,36 +80,40 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 				// 2c. Filter Bar: Keyword search + Log Level filter pills
 				a.renderLogsFilterToolbar(c, p)
 
-				// 2d. Terminal Log Stream Viewport
-				ui.Scroll(c.Key("logs-scroll")).
+				// 2d. Terminal Log Stream Viewport (mouse-selectable across lines)
+				scroll := ui.Scroll(c.Key("logs-scroll")).
 					Grow(1).Fill().MinHeight(0).
 					Padding(12).Radius(8).
 					Background(p.codeBg).
 					Border(1, p.borderSubtle).
-					Children(func() {
-						if a.logsSubTab == 1 && len(a.state.Services) == 0 {
-							ui.Text(c, cat.LogsNoNodes()).FontSize(12).TextColor(p.textDim)
-							return
-						}
-						if len(rawLines) == 0 {
-							ui.Text(c, cat.LogsEmpty()).FontSize(12).TextColor(p.textDim)
-							return
-						}
-						if len(filteredLines) == 0 {
-							ui.Text(c, cat.LogsNoMatch()).FontSize(12).TextColor(p.textDim)
-							return
-						}
+					Gap(3)
+				if len(filteredEntries) > 0 {
+					scroll.Selectable()
+				}
+				scroll.Children(func() {
+					if a.logsSubTab == 1 && len(a.state.Services) == 0 {
+						ui.Text(c, cat.LogsNoNodes()).FontSize(12).TextColor(p.textDim)
+						return
+					}
+					if len(rawEntries) == 0 {
+						ui.Text(c, cat.LogsEmpty()).FontSize(12).TextColor(p.textDim)
+						return
+					}
+					if len(filteredEntries) == 0 {
+						ui.Text(c, cat.LogsNoMatch()).FontSize(12).TextColor(p.textDim)
+						return
+					}
 
-						ui.Column(c.Key("logs-lines-col")).Fill().Gap(3).Children(func() {
-							for i, line := range filteredLines {
-								fg := logLineColor(line, p)
-								ui.Text(c.Key(fmt.Sprintf("log-line-%d", i)), line).
-									FontSize(11).
-									LineHeight(1.45).
-									TextColor(fg)
-							}
-						})
-					})
+					for _, entry := range filteredEntries {
+						fg := logLineColor(entry.Text, p)
+						ui.Text(c.Key(fmt.Sprintf("log-entry-%d", entry.Seq)), entry.Text).
+							Font("monospace").
+							FontSize(11).
+							LineHeight(1.45).
+							TextColor(fg).
+							Shrink(0)
+					}
+				})
 			})
 	})
 }
@@ -422,6 +426,54 @@ func (a *app) currentLogBuffer() *runner.LogBuffer {
 		return nil
 	}
 	return a.mgr.LogsOf(a.logsSelectedNodeID)
+}
+
+func (a *app) currentLogEntries() []runner.LogEntry {
+	if a.logsPaused && a.logsFrozenLines != nil {
+		out := make([]runner.LogEntry, len(a.logsFrozenLines))
+		for i, line := range a.logsFrozenLines {
+			out[i] = runner.LogEntry{Seq: uint64(i + 1), Text: line}
+		}
+		return out
+	}
+	buf := a.currentLogBuffer()
+	if buf == nil {
+		return nil
+	}
+	return buf.Entries()
+}
+
+func filterLogEntries(entries []runner.LogEntry, levelFilter, sourceFilter, query string) []runner.LogEntry {
+	levelFilter = strings.ToLower(strings.TrimSpace(levelFilter))
+	sourceFilter = strings.ToLower(strings.TrimSpace(sourceFilter))
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+
+	if levelFilter == "" && sourceFilter == "" && queryLower == "" {
+		return entries
+	}
+
+	out := make([]runner.LogEntry, 0, len(entries))
+	for _, entry := range entries {
+		if sourceFilter != "" && detectLogLineSource(entry.Text) != sourceFilter {
+			continue
+		}
+		if levelFilter != "" && detectLogLineLevel(entry.Text) != levelFilter {
+			continue
+		}
+		if queryLower != "" && !strings.Contains(strings.ToLower(entry.Text), queryLower) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func joinLogEntries(entries []runner.LogEntry) string {
+	lines := make([]string, len(entries))
+	for i, e := range entries {
+		lines[i] = e.Text
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a *app) currentLogLines() []string {
