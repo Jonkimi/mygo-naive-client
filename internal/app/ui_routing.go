@@ -970,7 +970,7 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 						}
 						ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
 					})
-					if segmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
+					if compactSegmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
 						if polIdx == 1 {
 							a.ruleEditor.dispatchPolicy = routing.DispatchOrder
 						} else {
@@ -1927,7 +1927,7 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 						ui.Column(c).Gap(5).Children(func() {
 							ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
 							actions := []string{cat.RoutingProxy(), cat.RoutingDirect(), cat.RoutingBlock()}
-							segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
+							compactSegmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
 							switch a.ruleEditor.actionIndex {
 							case 0: // Proxy
 								ui.Text(c, cat.RuleActionProxyHint()).FontSize(11).TextColor(p.textDim)

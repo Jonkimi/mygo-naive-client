@@ -182,7 +182,7 @@ func (a *app) renderSettingsGeneralTab(c *ui.Context, p palette) {
 				ui.Text(c, cat.LanguageLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
 				ui.Text(c, cat.LanguageDesc()).FontSize(11).TextColor(p.textMuted)
 			})
-			if segmentedControl(c.Key("page-set-language"), p, &curLangIdx, a.langLabels()) {
+			if compactSegmentedControl(c.Key("page-set-language"), p, &curLangIdx, a.langLabels()) {
 				a.state.Language = langCodes[curLangIdx]
 				a.saveState()
 				a.applyLanguagePolicy()
@@ -196,7 +196,7 @@ func (a *app) renderSettingsGeneralTab(c *ui.Context, p palette) {
 				ui.Text(c, cat.ThemeLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
 				ui.Text(c, cat.AppearanceDesc()).FontSize(11).TextColor(p.textMuted)
 			})
-			if segmentedControl(c.Key("page-set-appearance"), p, &curAppIdx, a.appearanceLabels()) {
+			if compactSegmentedControl(c.Key("page-set-appearance"), p, &curAppIdx, a.appearanceLabels()) {
 				a.state.Appearance = appearanceCodes[curAppIdx]
 				a.saveState()
 			}
@@ -207,7 +207,7 @@ func (a *app) renderSettingsGeneralTab(c *ui.Context, p palette) {
 
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {
 				ui.Text(c, cat.AppIconLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
-				if segmentedControl(c.Key("page-set-app-icon"), p, &curIconIdx, a.appIconLabels()) {
+				if compactSegmentedControl(c.Key("page-set-app-icon"), p, &curIconIdx, a.appIconLabels()) {
 					a.state.AppIcon = appIconCodes[curIconIdx]
 					a.saveState()
 					a.applyAppIconPolicy()

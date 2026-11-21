@@ -230,47 +230,34 @@ func (a *app) renderLogsFilterToolbar(c *ui.Context, p palette) {
 			// Right: Level Filter Segmented Track
 			levels := []struct {
 				key      string
+				a11y     string
 				label    string
 				activeFg ui.Color
 			}{
-				{"", cat.LogsLevelAll(), p.text},
-				{"info", cat.LogsLevelInfo(), p.accentText},
-				{"warn", cat.LogsLevelWarn(), p.amber},
-				{"error", cat.LogsLevelError(), p.red},
-				{"debug", cat.LogsLevelDebug(), p.textMuted},
+				{"", "btn-logs-filter-all", cat.LogsLevelAll(), p.text},
+				{"info", "btn-logs-filter-info", cat.LogsLevelInfo(), p.accentText},
+				{"warn", "btn-logs-filter-warn", cat.LogsLevelWarn(), p.amber},
+				{"error", "btn-logs-filter-error", cat.LogsLevelError(), p.red},
+				{"debug", "btn-logs-filter-debug", cat.LogsLevelDebug(), p.textMuted},
 			}
 
-			ui.Row(c.Key("logs-level-filter-pills")).
-				AlignItems(ui.Center).Gap(2).Shrink(0).
-				Padding(2).Radius(7).Background(p.elevated).
-				Children(func() {
-					for _, item := range levels {
-						lvl := item.key
-						active := a.logsLevelFilter == lvl
-						bg := ui.Transparent
-						fg := p.textMuted
-						weight := 400
-						if active {
-							bg = p.card
-							fg = item.activeFg
-							weight = 600
-						}
-						btnKey := "btn-logs-filter-" + lvl
-						if lvl == "" {
-							btnKey = "btn-logs-filter-all"
-						}
-						btn := ui.ButtonBase(c.Key(btnKey)).
-							Label(btnKey).
-							Padding(4, 9, 4, 9).Radius(5).
-							Background(bg).
-							Children(func() {
-								ui.Text(c, item.label).FontSize(11).FontWeight(weight).TextColor(fg).NoWrap()
-							})
-						if btn.Clicked() {
-							a.logsLevelFilter = lvl
-						}
-					}
-				})
+			lvlIdx := 0
+			lvlOpts := make([]segmentedOption, len(levels))
+			for i, item := range levels {
+				if a.logsLevelFilter == item.key {
+					lvlIdx = i
+				}
+				lvlOpts[i] = segmentedOption{
+					Label:       item.label,
+					A11yLabel:   item.a11y,
+					ActiveColor: item.activeFg,
+				}
+			}
+			ui.Row(c).Shrink(0).Children(func() {
+				if compactSegmentedOptions(c.Key("logs-level-filter-pills"), p, &lvlIdx, lvlOpts) {
+					a.logsLevelFilter = levels[lvlIdx].key
+				}
+			})
 		})
 }
 
@@ -285,37 +272,19 @@ func (a *app) renderGatewaySourceTrack(c *ui.Context, p palette) {
 		{"system", cat.LogsSourceSystem()},
 	}
 
-	ui.Row(c.Key("logs-source-bar")).
-		AlignItems(ui.Center).Gap(2).Shrink(0).
-		Padding(2).Radius(7).Background(p.elevated).
-		Children(func() {
-			for _, item := range sources {
-				src := item.key
-				active := a.logsSourceFilter == src
-				bg := ui.Transparent
-				fg := p.textMuted
-				weight := 400
-				if active {
-					bg = p.card
-					fg = p.text
-					weight = 600
-				}
-				btnKey := "btn-logs-src-" + src
-				if src == "" {
-					btnKey = "btn-logs-src-all"
-				}
-				btn := ui.ButtonBase(c.Key(btnKey)).
-					Label(item.label).
-					Padding(4, 9, 4, 9).Radius(5).
-					Background(bg).
-					Children(func() {
-						ui.Text(c, item.label).FontSize(11).FontWeight(weight).TextColor(fg).NoWrap()
-					})
-				if btn.Clicked() {
-					a.logsSourceFilter = src
-				}
-			}
-		})
+	srcIdx := 0
+	srcOpts := make([]segmentedOption, len(sources))
+	for i, item := range sources {
+		if a.logsSourceFilter == item.key {
+			srcIdx = i
+		}
+		srcOpts[i] = segmentedOption{Label: item.label}
+	}
+	ui.Row(c).Shrink(0).Children(func() {
+		if compactSegmentedOptions(c.Key("logs-source-bar"), p, &srcIdx, srcOpts) {
+			a.logsSourceFilter = sources[srcIdx].key
+		}
+	})
 }
 
 func (a *app) nodeLogStatusDotColor(svcID string, p palette) ui.Color {

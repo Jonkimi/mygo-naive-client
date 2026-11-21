@@ -216,8 +216,111 @@ func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, 
 	})
 }
 
-func segmentedControl(c *ui.Context, _ palette, selected *int, labels []string) bool {
-	return ui.Segmented(c, selected, labels...).Changed()
+type segmentedOption struct {
+	Label       string
+	A11yLabel   string
+	ActiveColor ui.Color
+}
+
+func segmentedOptionsFromStrings(labels []string) []segmentedOption {
+	opts := make([]segmentedOption, len(labels))
+	for i, lbl := range labels {
+		opts[i] = segmentedOption{Label: lbl}
+	}
+	return opts
+}
+
+func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmentedOption, compact bool) bool {
+	if selected == nil || len(opts) == 0 {
+		return false
+	}
+
+	parts := ui.SegmentedBase(c, selected, len(opts))
+	track := parts.Track
+
+	trackPad, trackRadius := float32(3), float32(8)
+	segPadV, segPadH, segRadius := float32(4), float32(12), float32(6)
+	fontSize := float32(12)
+	shBlur, shAlpha := float32(2), float32(0.08)
+	if compact {
+		trackPad, trackRadius = 2, 6
+		segPadV, segPadH, segRadius = 3, 9, 5
+		fontSize = 11
+		shBlur, shAlpha = 1, 0.06
+	}
+
+	track.AlignItems(ui.Stretch).Padding(trackPad).Gap(2).Radius(trackRadius)
+	if p.dark {
+		track.Background(p.codeBg).Border(1, p.borderSubtle)
+	} else {
+		track.Background(p.elevated)
+	}
+
+	cur := *selected
+	track.Children(func() {
+		for i, opt := range opts {
+			opt := opt
+			active := cur == i
+			a11y := opt.A11yLabel
+			if a11y == "" {
+				a11y = opt.Label
+			}
+			seg := parts.Segment(i).
+				Label(a11y).
+				Padding(segPadV, segPadH, segPadV, segPadH).
+				Radius(segRadius)
+
+			fg := p.textMuted
+			weight := 400
+			if active {
+				weight = 600
+				if opt.ActiveColor.A > 0 {
+					fg = opt.ActiveColor
+				} else {
+					fg = p.text
+				}
+				if p.dark {
+					seg.Background(p.elevated).Border(1, p.border).
+						Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.28))
+				} else {
+					seg.Background(p.card).
+						Shadow(0, 1, shBlur, 0, ui.RGBA(0, 0, 0, shAlpha))
+				}
+			} else {
+				if p.dark {
+					seg.Border(1, ui.Transparent)
+				}
+				if seg.Hovered() {
+					fg = p.text
+					if p.dark {
+						seg.Background(p.card)
+					} else {
+						seg.Background(ui.RGBA(255, 255, 255, 0.55))
+					}
+				}
+			}
+
+			seg.Children(func() {
+				ui.Text(c, opt.Label).FontSize(fontSize).FontWeight(weight).TextColor(fg).SingleLine()
+			})
+		}
+	})
+	return track.Changed()
+}
+
+// segmentedControl renders an L1 palette-driven segmented control for page headers and drawer top tabs.
+func segmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
+	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), false)
+}
+
+// compactSegmentedControl renders an L2 compact palette-driven segmented control for in-page form enums and filters.
+func compactSegmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
+	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), true)
+}
+
+// compactSegmentedOptions renders an L2 compact palette-driven segmented control supporting custom a11y labels and active colors.
+func compactSegmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
+	return renderSegmentedTrack(c, p, selected, opts, true)
 }
 
 func labeledInput(c *ui.Context, p palette, key, label string, value *string, placeholder string) ui.Element {

@@ -897,7 +897,7 @@ func (a *app) renderEditorProtocolEngineCard(c *ui.Context, p palette, proto con
 			case config.ProtoNaive:
 				tagPill(c, cat.EngineSidecarNaive(), p.textMuted, p.elevated)
 			case config.ProtoVLESS, config.ProtoVMess, config.ProtoTrojan, config.ProtoShadowsocks:
-				segmentedControl(c.Key("editor-xray-engine"), p, &a.editor.engineIndex, []string{
+				compactSegmentedControl(c.Key("editor-xray-engine"), p, &a.editor.engineIndex, []string{
 					cat.EngineSingBox(),
 					cat.EngineSidecarXray(),
 				})
@@ -948,7 +948,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 			ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 					ui.Text(c, cat.SecurityLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					segmentedControl(c.Key("inp-vless-sec"), p, &a.editor.securityIndex, []string{"TLS", "REALITY", "None"})
+					compactSegmentedControl(c.Key("inp-vless-sec"), p, &a.editor.securityIndex, []string{"TLS", "REALITY", "None"})
 				})
 
 				if a.editor.securityIndex == 1 {
@@ -961,7 +961,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 					ui.Text(c, cat.FlowLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					segmentedControl(c.Key("inp-vless-flow"), p, &a.editor.flowIndex, []string{"xtls-rprx-vision", "None"})
+					compactSegmentedControl(c.Key("inp-vless-flow"), p, &a.editor.flowIndex, []string{"xtls-rprx-vision", "None"})
 				})
 
 				if a.editor.securityIndex != 2 {
@@ -976,7 +976,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 					ui.Text(c, cat.NetworkLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					segmentedControl(c.Key("inp-vless-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc", "xhttp"})
+					compactSegmentedControl(c.Key("inp-vless-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc", "xhttp"})
 				})
 
 				if a.editor.networkIndex == 1 || a.editor.networkIndex == 3 {
@@ -996,7 +996,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 			ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 					ui.Text(c, cat.SecurityLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					if segmentedControl(c.Key("inp-vmess-sec"), p, &a.editor.vmessSecIndex, []string{"TLS", "None"}) {
+					if compactSegmentedControl(c.Key("inp-vmess-sec"), p, &a.editor.vmessSecIndex, []string{"TLS", "None"}) {
 						if a.editor.vmessSecIndex == 0 && strings.TrimSpace(a.editor.fingerprint) == "" {
 							a.editor.fingerprint = "chrome"
 						}
@@ -1011,7 +1011,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 				}
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 					ui.Text(c, cat.NetworkLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
-					segmentedControl(c.Key("inp-vmess-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc"})
+					compactSegmentedControl(c.Key("inp-vmess-net"), p, &a.editor.networkIndex, []string{"tcp", "ws", "grpc"})
 				})
 				if a.editor.networkIndex == 1 {
 					ui.Grid(c.Key("editor-vmess-ws-grid")).Columns(2).Gap(10).Children(func() {
@@ -1062,7 +1062,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 					ui.Text(c, cat.CloudflareWarpTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
-					segmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, []string{"MASQUE", "WireGuard"})
+					compactSegmentedControl(c.Key("inp-warp-direct-transport"), p, &a.editor.warpModeIndex, []string{"MASQUE", "WireGuard"})
 				})
 				a.renderWarpTransportGuide(c, p, "editor-warp-direct", a.editor.warpModeIndex, true)
 			})
@@ -1101,7 +1101,7 @@ func (a *app) renderEditorChainedWarpCard(c *ui.Context, p palette, proto config
 					ui.Column(c).Gap(6).Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
 							ui.Text(c, cat.CloudflareWarpChainedTransport()).FontSize(12).FontWeight(500).TextColor(p.text)
-							segmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, []string{"MASQUE", "WireGuard"})
+							compactSegmentedControl(c.Key("inp-warp-chained-transport"), p, &a.editor.warpModeIndex, []string{"MASQUE", "WireGuard"})
 						})
 						a.renderWarpTransportGuide(c, p, "editor-warp-chained", a.editor.warpModeIndex, true)
 					})

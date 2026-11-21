@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"math"
 	"net/netip"
 	"testing"
 	"time"
@@ -233,5 +234,101 @@ func TestP3Redesign_IdleFrameBudgetAndWidthsAndLocales(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestUnifiedSegmentedHierarchyAndInteraction(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	tt.SetSize(900, 660)
+
+	// 1. Settings page: L1 header tab is taller than L2 form option, and L2 clicks mutate state
+	a.activeTab = TabSettings
+	a.settingsSubTab = 0
+	tt.Frame()
+
+	cat := a.catalog()
+	l1SetRect, ok1 := tt.Find(cat.SettingsTabGeneral())
+	l2LangRect, ok2 := tt.Find(cat.LanguageSystem())
+	if !ok1 || !ok2 {
+		t.Fatalf("expected Settings L1/L2 segments visible, ok1=%v ok2=%v", ok1, ok2)
+	}
+	if l1SetRect.H <= l2LangRect.H {
+		t.Fatalf("expected L1 header segment taller than L2 form segment on Settings, L1.H=%.1f L2.H=%.1f", l1SetRect.H, l2LangRect.H)
+	}
+
+	if err := tt.Click(cat.LanguageEn()); err != nil {
+		t.Fatalf("click LanguageEn: %v", err)
+	}
+	tt.Frame()
+	if a.state.Language != locales.LangEn {
+		t.Fatalf("expected Language = en after L2 click, got %q", a.state.Language)
+	}
+	if err := tt.Click(a.catalog().AppearanceDark()); err != nil {
+		t.Fatalf("click AppearanceDark: %v", err)
+	}
+	tt.Frame()
+	if a.state.Appearance != appearanceDark {
+		t.Fatalf("expected Appearance = dark after L2 click, got %q", a.state.Appearance)
+	}
+	a.state.Language = locales.LangZhHans
+	a.state.Appearance = appearanceSystem
+	a.applyLanguagePolicy()
+	tt.Frame()
+
+	// 2. Cloudflare page: L1 header tab taller than L2 transport tile, and Tunnel L2 matches L2 height
+	cat = a.catalog()
+	a.activeTab = TabCloudflare
+	a.cloudflareSubTab = 0
+	tt.Frame()
+
+	l1CfRect, okCf1 := tt.Find(cat.CloudflareSubtabWarp())
+	l2WarpRect, okCf2 := tt.Find(cat.CloudflareWarpTransportMasque())
+	if !okCf1 || !okCf2 {
+		t.Fatalf("expected Cloudflare L1/L2 segments visible, ok1=%v ok2=%v", okCf1, okCf2)
+	}
+	if l1CfRect.H <= l2WarpRect.H {
+		t.Fatalf("expected Cloudflare L1 header segment taller than L2 transport segment, L1.H=%.1f L2.H=%.1f", l1CfRect.H, l2WarpRect.H)
+	}
+
+	a.cloudflareSubTab = 1
+	tt.Frame()
+	l2TunRect, okTun := tt.Find("QUIC")
+	if !okTun {
+		t.Fatalf("expected Tunnel L2 protocol segment 'QUIC'")
+	}
+	if diff := math.Abs(float64(l2WarpRect.H - l2TunRect.H)); diff > 1 {
+		t.Fatalf("expected consistent L2 segment height across WARP and Tunnel tiles, diff=%.2f (warp=%.1f tunnel=%.1f)", diff, l2WarpRect.H, l2TunRect.H)
+	}
+
+	// 3. Logs & Insights L2 filter controls update filter state and keep zero idle FramePending
+	a.activeTab = TabLogs
+	a.logsSubTab = 0
+	tt.Frame()
+	if err := tt.Click("btn-logs-filter-error"); err != nil {
+		t.Fatalf("click btn-logs-filter-error: %v", err)
+	}
+	tt.Frame()
+	if a.logsLevelFilter != "error" {
+		t.Fatalf("expected logsLevelFilter = 'error', got %q", a.logsLevelFilter)
+	}
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatalf("expected zero idle frames on Logs after L2 filter click")
+	}
+
+	a.activeTab = TabInsights
+	tt.Frame()
+	if err := tt.Click("btn-filter-blocked"); err != nil {
+		t.Fatalf("click btn-filter-blocked: %v", err)
+	}
+	tt.Frame()
+	if a.insightsFilter != "blocked" {
+		t.Fatalf("expected insightsFilter = 'blocked', got %q", a.insightsFilter)
+	}
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatalf("expected zero idle frames on Insights after L2 filter click")
 	}
 }

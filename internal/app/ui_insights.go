@@ -390,35 +390,23 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 						Width(176).Height(28).Radius(6).FontSize(11).
 						Background(p.surface)
 
-					// Segmented-track Filter Tabs
-					ui.Row(c).AlignItems(ui.Center).Gap(2).Padding(2).Radius(6).Background(p.elevated).Children(func() {
-						filterBtn := func(key, label string, active bool, activeFg ui.Color) ui.Element {
-							bg := ui.Transparent
-							fg := p.textMuted
-							weight := 400
-							if active {
-								bg = p.card
-								fg = activeFg
-								weight = 600
-							}
-							return ui.ButtonBase(c.Key(key)).
-								Label(key).
-								Padding(3, 9, 3, 9).Radius(5).
-								Background(bg).
-								Children(func() {
-									ui.Text(c, label).FontSize(11).FontWeight(weight).TextColor(fg).NoWrap()
-								})
+					// Segmented-track Filter Tabs (L2)
+					filterKeys := []string{"", "blocked", "allowed"}
+					filterIdx := 0
+					for i, k := range filterKeys {
+						if a.insightsFilter == k {
+							filterIdx = i
+							break
 						}
-						if filterBtn("btn-filter-all", cat.InsightsFilterAll(), a.insightsFilter == "", p.text).Clicked() {
-							a.insightsFilter = ""
-						}
-						if filterBtn("btn-filter-blocked", cat.InsightsFilterBlocked(), a.insightsFilter == "blocked", p.red).Clicked() {
-							a.insightsFilter = "blocked"
-						}
-						if filterBtn("btn-filter-allowed", cat.InsightsFilterAllowed(), a.insightsFilter == "allowed", p.green).Clicked() {
-							a.insightsFilter = "allowed"
-						}
-					})
+					}
+					filterOpts := []segmentedOption{
+						{Label: cat.InsightsFilterAll(), A11yLabel: "btn-filter-all", ActiveColor: p.text},
+						{Label: cat.InsightsFilterBlocked(), A11yLabel: "btn-filter-blocked", ActiveColor: p.red},
+						{Label: cat.InsightsFilterAllowed(), A11yLabel: "btn-filter-allowed", ActiveColor: p.green},
+					}
+					if compactSegmentedOptions(c.Key("insights-log-filter-ctrl"), p, &filterIdx, filterOpts) {
+						a.insightsFilter = filterKeys[filterIdx]
+					}
 				})
 			})
 

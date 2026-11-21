@@ -214,37 +214,23 @@ func (a *app) renderWarpTransportTile(
 	opts [2]warpTransportSegOption,
 	onSelect func(mode warp.Mode),
 ) {
+	activeIdx := 0
+	if currentMode == opts[1].modeKey {
+		activeIdx = 1
+	}
+	segOpts := []segmentedOption{
+		{Label: opts[0].label, A11yLabel: opts[0].a11y},
+		{Label: opts[1].label, A11yLabel: opts[1].a11y},
+	}
 	ui.Column(c.Key(tileKey)).
 		Grow(1).MinWidth(220).MaxWidthPercent(100).Gap(6).
 		Padding(10, 12, 10, 12).Radius(8).Background(p.surface).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
 				ui.Text(c, title).FontSize(12).FontWeight(500).TextColor(p.text).SingleLine().Ellipsis("…")
-				ui.Row(c).AlignItems(ui.Center).Gap(2).Padding(2).Radius(6).Background(p.elevated).Shrink(0).Children(func() {
-					for _, opt := range opts {
-						opt := opt
-						active := currentMode == opt.modeKey
-						bg := ui.Transparent
-						fg := p.textMuted
-						weight := 400
-						if active {
-							bg = p.card
-							fg = p.text
-							weight = 600
-						}
-						btn := ui.ButtonBase(c.Key(tileKey+"-"+string(opt.modeKey))).
-							Label(opt.a11y).
-							Padding(3, 8, 3, 8).Radius(5).
-							Background(bg)
-						if !active && btn.Hovered() {
-							btn.Background(p.cardHover)
-						}
-						btn.Children(func() {
-							ui.Text(c, opt.label).FontSize(11).FontWeight(weight).TextColor(fg).NoWrap()
-						})
-						if btn.Clicked() && !active {
-							onSelect(opt.modeKey)
-						}
+				ui.Row(c).Shrink(0).Children(func() {
+					if compactSegmentedOptions(c.Key(tileKey+"-seg"), p, &activeIdx, segOpts) {
+						onSelect(opts[activeIdx].modeKey)
 					}
 				})
 			})
@@ -915,7 +901,7 @@ func (a *app) renderCloudflareTunnelView(c *ui.Context, p palette) {
 							protoIdx = 0
 						}
 						protoLabels := []string{"Auto", "QUIC", "HTTP/2"}
-						if segmentedControl(c.Key("cf-tunnel-proto-segmented"), p, &protoIdx, protoLabels) {
+						if compactSegmentedControl(c.Key("cf-tunnel-proto-segmented"), p, &protoIdx, protoLabels) {
 							switch protoIdx {
 							case 0:
 								tunCfg.Protocol = "auto"
