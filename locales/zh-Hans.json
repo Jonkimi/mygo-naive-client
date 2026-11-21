@@ -773,6 +773,13 @@
   "builtinWarpNodeName": "Cloudflare WARP",
   "builtinWarpDeleteTooltip": "内置直连节点由分流规则自动管理，无法手动删除",
   "cloudflareDirectWarpTakeover": "直连流量走 WARP 出口 (Direct ➔ WARP)",
+  "cloudflareDirectWarpDisabledToast": "「直连流量走 WARP 出口」功能已关闭，节点已隐藏",
+  "cloudflareDirectWarpStoppedStillUsedToast": "WARP 节点已停止，仍有 {count} 条路由规则使用 WARP",
+  "@cloudflareDirectWarpStoppedStillUsedToast": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
   "cloudflareDirectWarpTakeoverDesc": "自动接管所有国内直连与默认直连流量，走内置 WARP 节点隐藏本机宽带真实 IP，并自动保护局域网（LAN）私有地址直连",
   "cloudflareWarpProbeURL": "WARP 测速地址 (Probe URL)",
   "cloudflareWarpProbeURLPlaceholder": "默认 http://connect.rom.miui.com/generate_204",

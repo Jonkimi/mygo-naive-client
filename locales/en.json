@@ -789,6 +789,13 @@
   "builtinWarpNodeName": "Cloudflare WARP",
   "builtinWarpDeleteTooltip": "Built-in direct node is managed automatically by routing rules and cannot be deleted",
   "cloudflareDirectWarpTakeover": "Route Direct Traffic to WARP (Direct ➔ WARP)",
+  "cloudflareDirectWarpDisabledToast": "Direct ➔ WARP is off and the WARP node is hidden",
+  "cloudflareDirectWarpStoppedStillUsedToast": "WARP node stopped; {count} other routing rules still use WARP",
+  "@cloudflareDirectWarpStoppedStillUsedToast": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
   "cloudflareDirectWarpTakeoverDesc": "Automatically route direct domestic traffic through the built-in WARP node while preserving local LAN subnet connectivity",
   "cloudflareWarpProbeURL": "WARP Probe URL",
   "cloudflareWarpProbeURLPlaceholder": "Default http://connect.rom.miui.com/generate_204",

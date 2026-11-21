@@ -919,6 +919,19 @@ func (a *app) isServiceActive(id string) bool {
 func (a *app) toggleService(svc config.Service) {
 	if a.isServiceActive(svc.ID) {
 		_ = a.mgr.Stop(svc.ID)
+		if svc.IsBuiltinWarp() {
+			// Rules other than the Direct ➔ WARP preset may still depend on the node.
+			// Then only stop it and leave the user's rules alone; otherwise turn the
+			// feature off, which makes saveState drop the node.
+			if n := a.otherWarpRuleCount(); n > 0 {
+				a.toast(a.catalog().CloudflareDirectWarpStoppedStillUsedToast(n))
+			} else {
+				a.setCnDirectWarpEnabled(false)
+				a.toast(a.catalog().CloudflareDirectWarpDisabledToast())
+			}
+			a.rebuildTrayMenu()
+			return
+		}
 		a.toast("已停止服务: " + svc.Name)
 		a.rebuildTrayMenu()
 		return
@@ -3739,6 +3752,21 @@ func (a *app) syncRouter() {
 		}
 	}
 	a.gatewayLifecycleMu.Unlock()
+}
+
+// otherWarpRuleCount counts the routing rules (including the final fallback)
+// that target the built-in WARP node, excluding the Direct ➔ WARP preset.
+func (a *app) otherWarpRuleCount() int {
+	n := 0
+	if a.state.RoutingFinal.TargetsNode(config.BuiltinWarpServiceID) {
+		n++
+	}
+	for _, r := range a.state.RoutingRules {
+		if r.ID != "preset-cn-direct" && r.Enabled && r.Action.TargetsNode(config.BuiltinWarpServiceID) {
+			n++
+		}
+	}
+	return n
 }
 
 func (a *app) isBuiltinWarpNeeded() bool {

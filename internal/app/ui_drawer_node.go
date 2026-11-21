@@ -133,10 +133,11 @@ func (a *app) renderNodeDrawerHeader(c *ui.Context, p palette, svc config.Servic
 					a.activeLogDrawerID = targetID
 				}
 
-				editBtn := subtleActionChip(c.Key("btn-drawer-edit-node"), p, iconEdit, cat.ActionEdit(), false).
+				editLocked := svc.IsBuiltinWarp() && isRunning
+				editBtn := subtleActionChip(c.Key("btn-drawer-edit-node"), p, iconEdit, cat.ActionEdit(), editLocked).
 					Label(cat.NodeDrawerEdit()).
 					Tooltip(cat.NodeDrawerEdit())
-				if editBtn.Clicked() {
+				if editBtn.Clicked() && !editLocked {
 					a.openEditServiceFromDrawer(svc)
 				}
 

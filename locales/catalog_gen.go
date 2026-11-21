@@ -6462,6 +6462,30 @@ func (msgs Messages) CloudflareDirectWarpTakeover() string {
 	return Catalog.Format(msgs.locale, "cloudflareDirectWarpTakeover", nil)
 }
 
+// CloudflareDirectWarpDisabledToast says "Direct ➔ WARP is off and the WARP node is hidden"
+// in the language the app shows.
+func CloudflareDirectWarpDisabledToast() string {
+	return In(i18n.Locale()).CloudflareDirectWarpDisabledToast()
+}
+
+// CloudflareDirectWarpDisabledToast says "Direct ➔ WARP is off and the WARP node is hidden"
+// in the language of msgs.
+func (msgs Messages) CloudflareDirectWarpDisabledToast() string {
+	return Catalog.Format(msgs.locale, "cloudflareDirectWarpDisabledToast", nil)
+}
+
+// CloudflareDirectWarpStoppedStillUsedToast says "WARP node stopped; {count} other routing rules still use WARP"
+// in the language the app shows.
+func CloudflareDirectWarpStoppedStillUsedToast(count int) string {
+	return In(i18n.Locale()).CloudflareDirectWarpStoppedStillUsedToast(count)
+}
+
+// CloudflareDirectWarpStoppedStillUsedToast says "WARP node stopped; {count} other routing rules still use WARP"
+// in the language of msgs.
+func (msgs Messages) CloudflareDirectWarpStoppedStillUsedToast(count int) string {
+	return Catalog.Format(msgs.locale, "cloudflareDirectWarpStoppedStillUsedToast", map[string]any{"count": count})
+}
+
 // CloudflareDirectWarpTakeoverDesc says "Automatically route direct domestic traffic through the built-in WARP node while preserving local LAN subnet connecti…"
 // in the language the app shows.
 func CloudflareDirectWarpTakeoverDesc() string {

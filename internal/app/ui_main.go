@@ -484,9 +484,10 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 						a.triggerServiceProbe(svc)
 					}
 
-					editBtn := quietRowIconButton(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), false, false).
+					editLocked := svc.IsBuiltinWarp() && isRunning
+					editBtn := quietRowIconButton(c.Key("edit-btn"), p, iconEdit, cat.ActionEdit(), editLocked, false).
 						Tooltip(cat.ActionEdit())
-					if editBtn.Clicked() {
+					if editBtn.Clicked() && !editLocked {
 						a.openNodeMenuID = ""
 						a.openBatchMenu = false
 						a.openEditServiceDialog(svc)
