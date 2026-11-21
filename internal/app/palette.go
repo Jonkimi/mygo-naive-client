@@ -374,3 +374,132 @@ func switchRow(c *ui.Context, p palette, key, label string, value *bool) bool {
 	return changed
 }
 
+func statusDot(c *ui.Context, col ui.Color) {
+	ui.Box(c).Size(7, 7).Radius(999).Background(col).Shrink(0)
+}
+
+func hollowStatusDot(c *ui.Context, borderCol ui.Color) {
+	ui.Box(c).Size(7, 7).Radius(999).Border(1.5, borderCol).Shrink(0)
+}
+
+func editorSectionCard(c *ui.Context, p palette, children func()) {
+	ui.Column(c).Gap(10).Padding(14).Radius(10).
+		Background(p.card).Border(1, p.borderSubtle).
+		Children(children)
+}
+
+func quietToolbarButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, dimmed bool) ui.Element {
+	fg := p.text
+	if dimmed {
+		fg = p.textDim
+	}
+	btn := ui.ButtonBase(c).
+		Height(32).PaddingX(10).Radius(8).
+		Background(p.card).Border(1, p.border)
+	if !dimmed && btn.Hovered() {
+		btn.Background(p.cardHover)
+	}
+	return btn.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
+			if iconSVG != nil {
+				iconCol := p.textMuted
+				if dimmed {
+					iconCol = p.textDim
+				}
+				ui.Icon(c, iconSVG).Size(13, 13).TextColor(iconCol)
+			}
+			ui.Text(c, label).FontSize(12).FontWeight(500).NoWrap()
+		})
+	})
+}
+
+func quietToolbarIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, active bool) ui.Element {
+	bg := p.card
+	fg := p.textMuted
+	if active {
+		bg = p.cardHover
+		fg = p.text
+	}
+	btn := ui.ButtonBase(c).
+		Label(label).
+		Size(32, 32).Radius(8).
+		Background(bg).Border(1, p.border)
+	if btn.Hovered() {
+		btn.Background(p.cardHover)
+		fg = p.text
+	}
+	return btn.Children(func() {
+		ui.Icon(c, iconSVG).Size(15, 15).TextColor(fg)
+	})
+}
+
+func quietRowIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, dimmed, active bool) ui.Element {
+	fg := p.textMuted
+	bg := ui.Transparent
+	if active {
+		fg = p.text
+		bg = p.elevated
+	} else if dimmed {
+		fg = p.textDim.Alpha(0.45)
+	}
+	btn := ui.ButtonBase(c).
+		Label(label).
+		Size(28, 28).Radius(6).
+		Background(bg)
+	if !dimmed && btn.Hovered() {
+		fg = p.text
+		btn.Background(p.elevated)
+	}
+	return btn.Children(func() {
+		ui.Icon(c, iconSVG).Size(14, 14).TextColor(fg)
+	})
+}
+
+func compactStripButton(c *ui.Context, p palette, a11yLabel, text string, fg ui.Color) ui.Element {
+	btn := ui.ButtonBase(c).
+		Padding(4, 8, 4, 8).Radius(6).
+		Background(p.elevated)
+	if a11yLabel != "" {
+		btn.Label(a11yLabel)
+	}
+	if btn.Hovered() {
+		btn.Background(p.cardHover)
+	}
+	return btn.Children(func() {
+		ui.Text(c, text).FontSize(11).FontWeight(500).TextColor(fg).NoWrap()
+	})
+}
+
+func styleMenuPopoverPanel(panel, anchor ui.Element, p palette, width float32) {
+	panel.Column().
+		AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorTopEnd).
+		Margin(4, 0, 0, 0).
+		Width(width).Padding(4).Radius(10).
+		Background(p.card).Border(1, p.border).
+		Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+}
+
+func popoverMenuItem(c *ui.Context, p palette, label string, fg ui.Color, dimmed, danger bool) ui.Element {
+	textCol := fg
+	if dimmed {
+		textCol = p.textDim.Alpha(0.5)
+	}
+	btn := ui.ButtonBase(c).
+		FillWidth().Height(30).PaddingX(10).Radius(6).
+		Justify(ui.Start).AlignItems(ui.Center).
+		Background(ui.Transparent)
+	if danger && dimmed {
+		btn.Disabled(true)
+	}
+	if !dimmed && btn.Hovered() {
+		if danger {
+			btn.Background(p.redBg)
+		} else {
+			btn.Background(p.elevated)
+		}
+	}
+	return btn.Children(func() {
+		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(textCol).NoWrap()
+	})
+}
+

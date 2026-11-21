@@ -53,43 +53,54 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 	cat := a.catalog()
 
 	ui.Column(c.Key("cloudflare-page")).Grow(1).Fill().MinHeight(0).Children(func() {
-		// 1. Header row (context-aware badge, zero duplication with cards)
+		// 1. Fixed Header row (single quiet status dot + summary, no duplicate pills)
 		ui.Row(c.Key("cloudflare-header")).
 			Padding(14, 18, 14, 18).
-			AlignItems(ui.Center).
+			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
+			Background(p.surface).
 			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
 			Children(func() {
-				ui.Column(c).Gap(2).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Text(c, cat.CloudflarePageTitle()).FontSize(17).FontWeight(700).TextColor(p.text)
+				ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
+					ui.Text(c, cat.CloudflarePageTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
 
+					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
 						if a.cloudflareSubTab == 0 {
 							acc := a.getCloudflareAccount()
-							if acc.AccountType == "unlimited" {
-								statusBadge(c, "WARP+", p.accent, p.accentBg)
-							} else if acc.IsRegistered() {
-								statusBadge(c, cat.CloudflareWarpAccountRegistered(), p.green, p.greenBg)
-							} else {
-								statusBadge(c, cat.CloudflareWarpAccountNotRegistered(), p.textDim, p.elevated)
+							var statusParts []string
+							switch {
+							case acc.AccountType == "unlimited":
+								statusDot(c, p.green)
+								statusParts = append(statusParts, "WARP+")
+							case acc.IsRegistered():
+								statusDot(c, p.green)
+								statusParts = append(statusParts, cat.CloudflareStatusReady())
+							default:
+								hollowStatusDot(c, p.textDim.Alpha(0.5))
+								statusParts = append(statusParts, cat.CloudflareWarpAccountNotRegistered())
 							}
 							if a.isCnDirectWarpEnabled() {
-								tagPill(c, "Direct ➔ WARP", p.green, p.greenBg)
+								statusParts = append(statusParts, cat.CloudflareStatusDirectTakeover())
 							}
+							ui.Text(c, strings.Join(statusParts, " · ")).
+								FontSize(12).TextColor(p.textMuted).SingleLine().Ellipsis("…")
 						} else {
 							tunCfg := a.state.Cloudflare.Tunnel
-							if !tunCfg.Enabled {
-								statusBadge(c, cat.TailnetModeOff(), p.textDim, p.elevated)
-							} else if a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "" {
-								statusBadge(c, cat.CloudflareTunnelConnected(), p.green, p.greenBg)
-							} else {
-								statusBadge(c, cat.CloudflareTunnelDisconnected(), p.amber, p.amberBg)
+							var tunText string
+							switch {
+							case !tunCfg.Enabled:
+								hollowStatusDot(c, p.textDim.Alpha(0.5))
+								tunText = cat.TailnetModeOff()
+							case a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "":
+								statusDot(c, p.green)
+								tunText = cat.CloudflareTunnelConnected()
+							default:
+								statusDot(c, p.amber)
+								tunText = cat.CloudflareTunnelDisconnected()
 							}
+							ui.Text(c, tunText).FontSize(12).TextColor(p.textMuted).SingleLine().Ellipsis("…")
 						}
 					})
-					ui.Text(c, cat.CloudflarePageDesc()).FontSize(11).TextColor(p.textDim)
 				})
-
-				ui.Box(c).Grow(1)
 
 				subtabLabels := []string{cat.CloudflareSubtabWarp(), cat.CloudflareSubtabTunnel()}
 				segmentedControl(c.Key("cloudflare-subtab-ctrl"), p, &a.cloudflareSubTab, subtabLabels)
@@ -98,8 +109,8 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 		// 2. Body scrollable view
 		ui.Scroll(c.Key("cloudflare-page-scroll")).
 			TrackScroll(&a.cloudflareScroll).
-			Grow(1).Fill().
-			Padding(18, 20, 24, 20).Gap(14).
+			Grow(1).Fill().MinHeight(0).
+			Padding(16, 18, 24, 18).Gap(14).
 			Children(func() {
 				if a.cloudflareSubTab == 0 {
 					a.renderCloudflareWarpView(c, p)
@@ -149,13 +160,14 @@ func (a *app) renderCloudflareMetricCol(c *ui.Context, p palette, label, value s
 	if display == "" {
 		display = "-"
 	}
-	ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-		ui.Text(c, label).FontSize(11).TextColor(p.textDim)
-		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-			ui.Text(c, display).FontSize(12).FontWeight(600).TextColor(p.text).NoWrap().Ellipsis("…")
+	ui.Column(c).MinWidth(0).Gap(3).Children(func() {
+		ui.Text(c, label).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
+		ui.Row(c).AlignItems(ui.Center).Gap(4).MinWidth(0).Children(func() {
+			ui.Text(c, display).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").
+				TextColor(p.text).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 			if copyable && display != "-" {
-				copyBtn := subtleActionChip(c.Key("btn-copy-warp-device-id"), p, iconCopy, "", false).
-					Tooltip(cat.BtnCopy())
+				copyBtn := quietRowIconButton(c.Key("btn-copy-warp-device-id"), p, iconCopy, cat.BtnCopy(), false, false).
+					Size(22, 22).Tooltip(cat.BtnCopy())
 				if copyBtn.Clicked() {
 					a.writeClipboard(display, cat.CloudflareWarpToastCopiedDeviceID())
 				}
@@ -174,13 +186,13 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 		Background(p.card).Border(1, p.borderSubtle).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					ui.Icon(c, iconNavCloudflare).Size(16, 16).TextColor(p.accent)
-					ui.Text(c, cat.CloudflareWarpAccountTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
+				ui.Row(c).AlignItems(ui.Center).Gap(8).MinWidth(0).Shrink(1).Children(func() {
+					ui.Icon(c, iconNavCloudflare).Size(15, 15).TextColor(p.accent).Shrink(0)
+					ui.Text(c, cat.CloudflareWarpAccountTitle()).FontSize(14).FontWeight(600).TextColor(p.text).SingleLine().Ellipsis("…")
 					if acc.AccountType == "unlimited" {
-						tagPill(c, cat.CloudflareWarpUnlimitedBadge(), p.accent, p.accentBg)
+						drawerInlineAccentChip(c, p, cat.CloudflareWarpUnlimitedBadge())
 					} else if acc.IsRegistered() {
-						tagPill(c, cat.CloudflareWarpFreeTierBadge(), p.textMuted, p.surface)
+						drawerInlineNeutralChip(c, p, cat.CloudflareWarpFreeTierBadge())
 					}
 				})
 
@@ -222,8 +234,8 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 				if ipv6 == "" {
 					ipv6 = acc.MASQUEIPv6
 				}
-				ui.Row(c.Key("warp-metrics-grid")).
-					Gap(24).Padding(10, 12, 10, 12).Radius(8).Background(p.surface).
+				ui.Grid(c.Key("warp-metrics-grid")).
+					Columns(3).Gap(16).Padding(10, 12, 10, 12).Radius(8).Background(p.surface).
 					Children(func() {
 						a.renderCloudflareMetricCol(c, p, cat.CloudflareWarpMetricDevice(), deviceID, true)
 						a.renderCloudflareMetricCol(c, p, "IPv4", ipv4, false)
@@ -266,16 +278,18 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 			// Section title + Master Direct -> WARP switch (single source of truth on preset-cn-direct)
 			cnWarp := a.isCnDirectWarpEnabled()
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-				ui.Column(c).Grow(1).Gap(3).Children(func() {
+				ui.Column(c).Grow(1).Gap(3).MinWidth(0).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Text(c, cat.CloudflareDirectWarpTakeover()).FontSize(14).FontWeight(600).TextColor(p.text)
 						if cnWarp {
-							tagPill(c, cat.RoutingWarp(), p.green, p.greenBg)
+							statusDot(c, p.green)
 						} else {
-							tagPill(c, cat.RoutingDirect(), p.textDim, p.surface)
+							hollowStatusDot(c, p.textDim.Alpha(0.5))
 						}
+						ui.Text(c, cat.CloudflareDirectWarpTakeover()).FontSize(14).FontWeight(600).TextColor(p.text)
 					})
-					ui.Text(c, cat.CloudflareDirectWarpTakeoverDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+					ui.Box(c).Padding(0, 0, 0, 15).Children(func() {
+						ui.Text(c, cat.CloudflareDirectWarpTakeoverDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+					})
 				})
 
 				if ui.Switch(c.Key("toggle-direct-warp-takeover"), &cnWarp).Label("toggle-direct-warp-takeover").Changed() {
@@ -327,9 +341,9 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Text(c, cat.CloudflareWarpCleanEndpoint()).FontSize(12).FontWeight(600).TextColor(p.text)
 					if hasCustomEndpoint {
-						tagPill(c, cat.CloudflareWarpEndpointModeManual(), p.accentText, p.accentBg)
+						ui.Text(c, cat.CloudflareWarpEndpointModeManual()).FontSize(11).FontWeight(500).TextColor(p.accentText)
 					} else {
-						tagPill(c, cat.CloudflareWarpEndpointModeAuto(), p.textMuted, p.surface)
+						ui.Text(c, cat.CloudflareWarpEndpointModeAuto()).FontSize(11).TextColor(p.textMuted)
 					}
 				})
 
@@ -360,28 +374,52 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 				ui.Text(c, cat.CloudflareWarpCleanEndpointDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
 
 				if len(a.warpScanResults) > 0 {
-					ui.Column(c.Key("warp-scan-results")).Gap(6).Padding(10).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Children(func() {
+					ui.Column(c.Key("warp-scan-results")).Gap(6).Children(func() {
 						ui.Text(c, cat.CloudflareWarpScanResultsTitle()).FontSize(11).FontWeight(600).TextColor(p.textDim)
-						ui.Row(c).Wrap().Gap(6).Children(func() {
+						ui.Column(c).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Clip().Children(func() {
 							for idx, res := range a.warpScanResults {
 								selected := strings.TrimSpace(a.warpCleanEndpointInput) == res.Endpoint
-								bg := p.card
-								border := p.border
-								fg := p.text
-								if selected {
-									bg = p.accentBg
-									border = p.accent.Alpha(0.5)
-									fg = p.accent
-								}
 								lossPct := int(res.LossRate*100 + 0.5)
 								label := fmt.Sprintf("%s (%dms · %d%% loss · %s)", res.Endpoint, res.RTT.Milliseconds(), lossPct, res.Protocol)
-								pillBtn := ui.ButtonBase(c.Key(fmt.Sprintf("btn-warp-candidate-%d", idx))).
-									Padding(4, 9, 4, 9).Radius(6).
-									Background(bg).Border(1, border).
-									Children(func() {
-										ui.Text(c, label).FontSize(11).TextColor(fg)
+								rowBtn := ui.ButtonBase(c.Key(fmt.Sprintf("btn-warp-candidate-%d", idx))).
+									Label(label).
+									FillWidth().Padding(8, 12, 8, 12).
+									Background(ui.Transparent)
+								if idx > 0 {
+									rowBtn.BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle)
+								}
+								if selected {
+									rowBtn.Background(p.accentBg.Alpha(0.55))
+								} else if rowBtn.Hovered() {
+									rowBtn.Background(p.cardHover)
+								}
+								rttMs := int(res.RTT.Milliseconds())
+								rttCol := latencyThresholdColor(p, rttMs)
+								rowBtn.Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+										ui.Row(c).AlignItems(ui.Center).Gap(8).MinWidth(0).Shrink(1).Children(func() {
+											if selected {
+												statusDot(c, p.accent)
+											} else {
+												hollowStatusDot(c, p.textDim.Alpha(0.6))
+											}
+											epText := ui.Text(c, res.Endpoint).Font("monospace").FontSize(11).FontWeight(500).
+												SingleLine().Ellipsis("…")
+											if selected {
+												epText.TextColor(p.accentText)
+											} else {
+												epText.TextColor(p.text)
+											}
+										})
+										ui.Row(c).AlignItems(ui.Center).Gap(12).Shrink(0).Children(func() {
+											ui.Text(c, strings.ToUpper(res.Protocol)).FontSize(11).TextColor(p.textDim).NoWrap()
+											ui.Text(c, fmt.Sprintf("%d%% loss", lossPct)).FontSize(11).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
+											ui.Text(c, fmt.Sprintf("%dms", rttMs)).FontSize(11).FontWeight(600).FontFeatures("tnum").
+												TextColor(rttCol).Width(46).TextAlign(ui.End).NoWrap()
+										})
 									})
-								if pillBtn.Clicked() {
+								})
+								if rowBtn.Clicked() {
 									a.applyWarpCleanEndpoint(res.Endpoint)
 								}
 							}
@@ -434,8 +472,11 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					ui.Text(c, cat.CloudflareWarpAttachedNodes()).FontSize(12).FontWeight(600).TextColor(p.text)
-					tagPill(c, fmt.Sprintf("%d", len(attached)), p.textMuted, p.surface)
+					ui.Text(c, fmt.Sprintf("%d", len(attached))).FontSize(11).FontFeatures("tnum").TextColor(p.textDim)
 				})
+				if len(attached) > 0 {
+					ui.Text(c, cat.CloudflareAttachedNodesHint()).FontSize(11).TextColor(p.textDim)
+				}
 			})
 
 			if len(attached) == 0 {
@@ -450,61 +491,57 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 						rt := a.mgr.StatusOf(svc.ID)
 						unhealthy := a.isNodeUnhealthy(svc, rt)
 
-						dotColor := p.textDim.Alpha(0.4)
-						if rt.State == runner.StateRunning {
-							if unhealthy {
-								dotColor = p.amber
-							} else {
-								dotColor = p.green
-							}
-						} else if rt.State == runner.StateError {
-							dotColor = p.red
+						metaParts := []string{}
+						if isDirect {
+							metaParts = append(metaParts, cat.CloudflareWarpDirectBadge(), a.warpTransportPillLabel(svc))
+						} else {
+							metaParts = append(metaParts, nodeProtocolEngineLabel(svc)+" ➔ "+a.warpTransportPillLabel(svc))
 						}
+						if ep := svc.CompactRemoteEndpoint(); ep != "" {
+							metaParts = append(metaParts, ep)
+						}
+						metaLine := strings.Join(metaParts, " · ")
 
 						rowBtn := ui.ButtonBase(c.Key("warp-attached-node-"+svc.ID)).
 							Label(svc.Name).
-							Padding(8, 10, 8, 10).Radius(8).
+							FillWidth().Padding(10, 12, 10, 12).Radius(8).
 							Background(p.surface).Border(1, p.borderSubtle)
 						if rowBtn.Hovered() {
-							rowBtn.Background(p.cardHover)
+							rowBtn.Background(p.cardHover).Border(1, p.border)
 						}
 						rowBtn.Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
-								ui.Row(c).AlignItems(ui.Center).Gap(8).Wrap().Grow(1).MinWidth(0).Children(func() {
-									ui.Box(c).Size(7, 7).Radius(999).Background(dotColor)
-									ui.Text(c, svc.Name).FontSize(12).FontWeight(600).TextColor(p.text)
-									if isDirect {
-										tagPill(c, cat.CloudflareWarpDirectBadge(), p.accent, p.accentBg)
-										tagPill(c, a.warpTransportPillLabel(svc), p.accentText, p.accentBg)
+							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
+								ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
+									ui.Row(c).AlignItems(ui.Center).Gap(8).MinWidth(0).Children(func() {
+										renderServiceStatusDot(c, p, rt, unhealthy)
+										nameColor := p.textMuted
+										if rt.State == runner.StateRunning || rt.State == runner.StateStarting || rt.State == runner.StateError {
+											nameColor = p.text
+										}
+										ui.Text(c, svc.Name).FontSize(12).FontWeight(600).TextColor(nameColor).
+											SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 										if svc.IsBuiltinWarp() {
-											tagPill(c, cat.BuiltinTag(), p.green, p.greenBg)
+											drawerInlineNeutralChip(c, p, cat.BuiltinTag())
 										}
-									} else {
-										tagPill(c, nodeProtocolEngineLabel(svc), p.accentText, p.accentBg)
-										tagPill(c, "➔ "+a.warpTransportPillLabel(svc), p.green, p.greenBg)
-									}
-									if rt.State == runner.StateRunning {
-										if unhealthy {
-											tagPill(c, cat.StatusUnhealthy(), p.amber, p.amberBg)
-										} else {
-											tagPill(c, cat.StatusRunning(), p.green, p.greenBg)
-										}
-									} else if rt.State == runner.StateError {
-										tagPill(c, cat.StatusError(), p.red, p.redBg)
-									} else {
-										tagPill(c, cat.StatusStopped(), p.textDim, p.card)
-									}
+									})
+									ui.Box(c).Padding(0, 0, 0, 15).Children(func() {
+										ui.Text(c, metaLine).FontSize(11).TextColor(p.textMuted).
+											SingleLine().Ellipsis("…")
+									})
 								})
 
-								ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Gap(10).Shrink(0).Children(func() {
+									if rt.State == runner.StateRunning && unhealthy {
+										ui.Text(c, cat.StatusUnhealthy()).FontSize(11).FontWeight(600).TextColor(p.amber).NoWrap()
+									} else if rt.State == runner.StateError {
+										ui.Text(c, cat.StatusError()).FontSize(11).FontWeight(600).TextColor(p.red).NoWrap()
+									}
 									if rt.State == runner.StateRunning && rt.Latency > 0 {
-										tagPill(c, fmt.Sprintf("%dms", max(1, rt.Latency.Milliseconds())), p.textMuted, p.card)
+										ms := max(1, int(rt.Latency.Milliseconds()))
+										ui.Text(c, fmt.Sprintf("%dms", ms)).FontSize(12).FontWeight(600).FontFeatures("tnum").
+											TextColor(latencyThresholdColor(p, ms)).NoWrap()
 									}
-									ep := svc.CompactRemoteEndpoint()
-									if ep != "" {
-										ui.Text(c, ep).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
-									}
-									ui.Icon(c, iconInfo).Size(13, 13).TextColor(p.textDim)
+									ui.Text(c, "›").FontSize(14).TextColor(p.textDim).NoWrap()
 								})
 							})
 						})
@@ -578,13 +615,21 @@ func (a *app) renderCloudflareTunnelView(c *ui.Context, p palette) {
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					switch {
+					case !tunCfg.Enabled:
+						hollowStatusDot(c, p.textDim.Alpha(0.5))
+					case a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "":
+						statusDot(c, p.green)
+					default:
+						statusDot(c, p.amber)
+					}
 					ui.Text(c, cat.CloudflareTunnelTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 					if !tunCfg.Enabled {
-						statusBadge(c, cat.TailnetModeOff(), p.textDim, p.surface)
+						ui.Text(c, cat.TailnetModeOff()).FontSize(11).TextColor(p.textDim)
 					} else if a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "" {
-						statusBadge(c, cat.CloudflareTunnelConnected(), p.green, p.greenBg)
+						ui.Text(c, cat.CloudflareTunnelConnected()).FontSize(11).FontWeight(500).TextColor(p.green)
 					} else {
-						statusBadge(c, cat.CloudflareTunnelStatusWaiting(), p.amber, p.amberBg)
+						ui.Text(c, cat.CloudflareTunnelStatusWaiting()).FontSize(11).FontWeight(500).TextColor(p.amber)
 					}
 				})
 

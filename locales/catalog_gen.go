@@ -7261,3 +7261,187 @@ func LogDrawerSelectionHint() string { return In(i18n.Locale()).LogDrawerSelecti
 func (msgs Messages) LogDrawerSelectionHint() string {
 	return Catalog.Format(msgs.locale, "logDrawerSelectionHint", nil)
 }
+
+// RoutingEnabledSummary says "{enabled} / {total} enabled"
+// in the language the app shows.
+func RoutingEnabledSummary(enabled int, total int) string {
+	return In(i18n.Locale()).RoutingEnabledSummary(enabled, total)
+}
+
+// RoutingEnabledSummary says "{enabled} / {total} enabled"
+// in the language of msgs.
+func (msgs Messages) RoutingEnabledSummary(enabled int, total int) string {
+	return Catalog.Format(msgs.locale, "routingEnabledSummary", map[string]any{"enabled": enabled, "total": total})
+}
+
+// RoutingSearchPlaceholder says "Search rules or domains..."
+// in the language the app shows.
+func RoutingSearchPlaceholder() string { return In(i18n.Locale()).RoutingSearchPlaceholder() }
+
+// RoutingSearchPlaceholder says "Search rules or domains..."
+// in the language of msgs.
+func (msgs Messages) RoutingSearchPlaceholder() string {
+	return Catalog.Format(msgs.locale, "routingSearchPlaceholder", nil)
+}
+
+// RoutingStrategyHelpBtn says "Scheduling"
+// in the language the app shows.
+func RoutingStrategyHelpBtn() string { return In(i18n.Locale()).RoutingStrategyHelpBtn() }
+
+// RoutingStrategyHelpBtn says "Scheduling"
+// in the language of msgs.
+func (msgs Messages) RoutingStrategyHelpBtn() string {
+	return Catalog.Format(msgs.locale, "routingStrategyHelpBtn", nil)
+}
+
+// RoutingStrategyHelpTooltip says "Matching order, DNS alignment & Smart pool scheduling"
+// in the language the app shows.
+func RoutingStrategyHelpTooltip() string { return In(i18n.Locale()).RoutingStrategyHelpTooltip() }
+
+// RoutingStrategyHelpTooltip says "Matching order, DNS alignment & Smart pool scheduling"
+// in the language of msgs.
+func (msgs Messages) RoutingStrategyHelpTooltip() string {
+	return Catalog.Format(msgs.locale, "routingStrategyHelpTooltip", nil)
+}
+
+// RoutingMatchOrderTitle says "Top-Down Evaluation Order"
+// in the language the app shows.
+func RoutingMatchOrderTitle() string { return In(i18n.Locale()).RoutingMatchOrderTitle() }
+
+// RoutingMatchOrderTitle says "Top-Down Evaluation Order"
+// in the language of msgs.
+func (msgs Messages) RoutingMatchOrderTitle() string {
+	return Catalog.Format(msgs.locale, "routingMatchOrderTitle", nil)
+}
+
+// RoutingMatchOrderDesc says "Custom rules are evaluated first in order, followed by preset rule groups, and finally the undeletable Final fallback…"
+// in the language the app shows.
+func RoutingMatchOrderDesc() string { return In(i18n.Locale()).RoutingMatchOrderDesc() }
+
+// RoutingMatchOrderDesc says "Custom rules are evaluated first in order, followed by preset rule groups, and finally the undeletable Final fallback…"
+// in the language of msgs.
+func (msgs Messages) RoutingMatchOrderDesc() string {
+	return Catalog.Format(msgs.locale, "routingMatchOrderDesc", nil)
+}
+
+// RoutingMoreActions says "More routing actions"
+// in the language the app shows.
+func RoutingMoreActions() string { return In(i18n.Locale()).RoutingMoreActions() }
+
+// RoutingMoreActions says "More routing actions"
+// in the language of msgs.
+func (msgs Messages) RoutingMoreActions() string {
+	return Catalog.Format(msgs.locale, "routingMoreActions", nil)
+}
+
+// RoutingCustomPriorityHint says "Top priority"
+// in the language the app shows.
+func RoutingCustomPriorityHint() string { return In(i18n.Locale()).RoutingCustomPriorityHint() }
+
+// RoutingCustomPriorityHint says "Top priority"
+// in the language of msgs.
+func (msgs Messages) RoutingCustomPriorityHint() string {
+	return Catalog.Format(msgs.locale, "routingCustomPriorityHint", nil)
+}
+
+// RoutingPresetsFallbackHint says "Incl. Final fallback"
+// in the language the app shows.
+func RoutingPresetsFallbackHint() string { return In(i18n.Locale()).RoutingPresetsFallbackHint() }
+
+// RoutingPresetsFallbackHint says "Incl. Final fallback"
+// in the language of msgs.
+func (msgs Messages) RoutingPresetsFallbackHint() string {
+	return Catalog.Format(msgs.locale, "routingPresetsFallbackHint", nil)
+}
+
+// RoutingEmptySearch says "No routing rules match your search"
+// in the language the app shows.
+func RoutingEmptySearch() string { return In(i18n.Locale()).RoutingEmptySearch() }
+
+// RoutingEmptySearch says "No routing rules match your search"
+// in the language of msgs.
+func (msgs Messages) RoutingEmptySearch() string {
+	return Catalog.Format(msgs.locale, "routingEmptySearch", nil)
+}
+
+// RuleDrawerDomainFullTitle says "Full Domains"
+// in the language the app shows.
+func RuleDrawerDomainFullTitle() string { return In(i18n.Locale()).RuleDrawerDomainFullTitle() }
+
+// RuleDrawerDomainFullTitle says "Full Domains"
+// in the language of msgs.
+func (msgs Messages) RuleDrawerDomainFullTitle() string {
+	return Catalog.Format(msgs.locale, "ruleDrawerDomainFullTitle", nil)
+}
+
+// RuleFullDomainsLabel says "Full Domains (exact match)"
+// in the language the app shows.
+func RuleFullDomainsLabel() string { return In(i18n.Locale()).RuleFullDomainsLabel() }
+
+// RuleFullDomainsLabel says "Full Domains (exact match)"
+// in the language of msgs.
+func (msgs Messages) RuleFullDomainsLabel() string {
+	return Catalog.Format(msgs.locale, "ruleFullDomainsLabel", nil)
+}
+
+// RuleFullDomainsHint says "One full domain per line, e.g. api.example.com"
+// in the language the app shows.
+func RuleFullDomainsHint() string { return In(i18n.Locale()).RuleFullDomainsHint() }
+
+// RuleFullDomainsHint says "One full domain per line, e.g. api.example.com"
+// in the language of msgs.
+func (msgs Messages) RuleFullDomainsHint() string {
+	return Catalog.Format(msgs.locale, "ruleFullDomainsHint", nil)
+}
+
+// RuleEditorSectionOutbound says "Outbound Action & Scheduling"
+// in the language the app shows.
+func RuleEditorSectionOutbound() string { return In(i18n.Locale()).RuleEditorSectionOutbound() }
+
+// RuleEditorSectionOutbound says "Outbound Action & Scheduling"
+// in the language of msgs.
+func (msgs Messages) RuleEditorSectionOutbound() string {
+	return Catalog.Format(msgs.locale, "ruleEditorSectionOutbound", nil)
+}
+
+// RuleEditorSectionCriteria says "Matching Criteria"
+// in the language the app shows.
+func RuleEditorSectionCriteria() string { return In(i18n.Locale()).RuleEditorSectionCriteria() }
+
+// RuleEditorSectionCriteria says "Matching Criteria"
+// in the language of msgs.
+func (msgs Messages) RuleEditorSectionCriteria() string {
+	return Catalog.Format(msgs.locale, "ruleEditorSectionCriteria", nil)
+}
+
+// CloudflareStatusReady says "WARP Ready"
+// in the language the app shows.
+func CloudflareStatusReady() string { return In(i18n.Locale()).CloudflareStatusReady() }
+
+// CloudflareStatusReady says "WARP Ready"
+// in the language of msgs.
+func (msgs Messages) CloudflareStatusReady() string {
+	return Catalog.Format(msgs.locale, "cloudflareStatusReady", nil)
+}
+
+// CloudflareStatusDirectTakeover says "Direct ➔ WARP"
+// in the language the app shows.
+func CloudflareStatusDirectTakeover() string {
+	return In(i18n.Locale()).CloudflareStatusDirectTakeover()
+}
+
+// CloudflareStatusDirectTakeover says "Direct ➔ WARP"
+// in the language of msgs.
+func (msgs Messages) CloudflareStatusDirectTakeover() string {
+	return Catalog.Format(msgs.locale, "cloudflareStatusDirectTakeover", nil)
+}
+
+// CloudflareAttachedNodesHint says "Click a node to open details"
+// in the language the app shows.
+func CloudflareAttachedNodesHint() string { return In(i18n.Locale()).CloudflareAttachedNodesHint() }
+
+// CloudflareAttachedNodesHint says "Click a node to open details"
+// in the language of msgs.
+func (msgs Messages) CloudflareAttachedNodesHint() string {
+	return Catalog.Format(msgs.locale, "cloudflareAttachedNodesHint", nil)
+}

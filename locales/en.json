@@ -919,5 +919,29 @@
   "warpCustomIPv6Label": "WARP Virtual IPv6 (optional)",
   "logDrawerCopyTooltip": "Copy all visible logs (or drag mouse to select & Cmd+C)",
   "logJumpToLatest": "Latest",
-  "logDrawerSelectionHint": "Drag to select · Cmd+C"
+  "logDrawerSelectionHint": "Drag to select · Cmd+C",
+  "routingEnabledSummary": "{enabled} / {total} enabled",
+  "@routingEnabledSummary": {
+    "placeholders": {
+      "enabled": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "routingSearchPlaceholder": "Search rules or domains...",
+  "routingStrategyHelpBtn": "Scheduling",
+  "routingStrategyHelpTooltip": "Matching order, DNS alignment & Smart pool scheduling",
+  "routingMatchOrderTitle": "Top-Down Evaluation Order",
+  "routingMatchOrderDesc": "Custom rules are evaluated first in order, followed by preset rule groups, and finally the undeletable Final fallback rule.",
+  "routingMoreActions": "More routing actions",
+  "routingCustomPriorityHint": "Top priority",
+  "routingPresetsFallbackHint": "Incl. Final fallback",
+  "routingEmptySearch": "No routing rules match your search",
+  "ruleDrawerDomainFullTitle": "Full Domains",
+  "ruleFullDomainsLabel": "Full Domains (exact match)",
+  "ruleFullDomainsHint": "One full domain per line, e.g. api.example.com",
+  "ruleEditorSectionOutbound": "Outbound Action & Scheduling",
+  "ruleEditorSectionCriteria": "Matching Criteria",
+  "cloudflareStatusReady": "WARP Ready",
+  "cloudflareStatusDirectTakeover": "Direct ➔ WARP",
+  "cloudflareAttachedNodesHint": "Click a node to open details"
 }

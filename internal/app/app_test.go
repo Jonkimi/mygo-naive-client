@@ -3423,49 +3423,40 @@ func TestPeriodicAutoProbeSettingsAndSilentProbe(t *testing.T) {
 	}
 }
 
-// Tests that DNS strategy and Smart Proxy Pool strategy are rendered side-by-side with one-line descriptions and popover details.
+// Tests that the Routing header strategy help button opens a consolidated popover containing
+// evaluation order, DNS alignment, and Smart Proxy Pool details, and dismisses cleanly on Escape.
 func TestRouting_DnsAndSmartPoolCardsWithPopover(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 	a.state.Language = locales.LangZhHans
 	a.activeTab = TabRouting
 	tt.Frame()
 
-	// 1. Both titles and one-line summaries are rendered
-	if !tt.HasText(a.catalog().RoutingDnsAlignmentTitle()) {
-		t.Fatalf("expected DNS title %q", a.catalog().RoutingDnsAlignmentTitle())
-	}
-	if !tt.HasText(a.catalog().RoutingSmartPoolTitle()) {
-		t.Fatalf("expected Smart Pool title %q", a.catalog().RoutingSmartPoolTitle())
-	}
-	if !tt.HasText(a.catalog().RoutingDnsAlignmentDesc()) {
-		t.Fatalf("expected DNS summary %q", a.catalog().RoutingDnsAlignmentDesc())
-	}
-	if !tt.HasText(a.catalog().RoutingSmartPoolDesc()) {
-		t.Fatalf("expected Smart Pool summary %q", a.catalog().RoutingSmartPoolDesc())
+	// 1. Strategy banners are no longer permanently pinned on the Routing body
+	if tt.HasText(a.catalog().RoutingDnsAlignmentTitle()) || tt.HasText(a.catalog().RoutingSmartPoolTitle()) {
+		t.Fatalf("expected DNS/SmartPool strategy banners to move into header popover")
 	}
 
-	// 2. Click DNS info button -> popover shows detailed direct, proxy port, tun info
-	if err := tt.Click("DNS " + a.catalog().ActionDetails()); err != nil {
-		t.Fatalf("click dns info button: %v", err)
+	// 2. Click header Scheduling help button -> popover shows evaluation order, DNS alignment, and Smart Pool details
+	if err := tt.Click(a.catalog().RoutingStrategyHelpBtn()); err != nil {
+		t.Fatalf("click routing strategy help button: %v", err)
 	}
 	tt.Frame()
-	if !a.showRoutingDnsDetail {
-		t.Fatalf("expected showRoutingDnsDetail to be true after click")
+	if !a.showRoutingStrategyHelp {
+		t.Fatalf("expected showRoutingStrategyHelp to be true after click")
 	}
-	if !tt.HasText(a.catalog().RoutingDnsDescDirect()) {
-		t.Fatalf("expected DNS detail %q in popover", a.catalog().RoutingDnsDescDirect())
+	if !tt.HasText(a.catalog().RoutingMatchOrderTitle()) ||
+		!tt.HasText(a.catalog().RoutingDnsAlignmentTitle()) ||
+		!tt.HasText(a.catalog().RoutingDnsDescDirect()) ||
+		!tt.HasText(a.catalog().RoutingSmartPoolTitle()) ||
+		!tt.HasText(a.catalog().RoutingSmartPoolDetailEWMA()) {
+		t.Fatalf("expected consolidated strategy details in popover, got texts: %v", tt.Texts())
 	}
 
-	// 3. Click Smart Pool info button -> popover shows detailed EWMA, circuit, affinity info
-	if err := tt.Click("Pool " + a.catalog().ActionDetails()); err != nil {
-		t.Fatalf("click pool info button: %v", err)
-	}
+	// 3. Pressing Escape dismisses the strategy help popover
+	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
-	if !a.showRoutingPoolDetail {
-		t.Fatalf("expected showRoutingPoolDetail to be true after click")
-	}
-	if !tt.HasText(a.catalog().RoutingSmartPoolDetailEWMA()) {
-		t.Fatalf("expected Smart Pool detail %q in popover", a.catalog().RoutingSmartPoolDetailEWMA())
+	if a.showRoutingStrategyHelp {
+		t.Fatalf("expected showRoutingStrategyHelp to close on Escape")
 	}
 }
 

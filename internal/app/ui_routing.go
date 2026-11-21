@@ -253,6 +253,32 @@ func topActionIndexForRouteAction(act routing.RouteAction) int {
 	}
 }
 
+func (a *app) openEditRuleFromDrawer(rule routing.Rule) {
+	a.activeRuleDrawerID = ""
+	a.openEditRuleDialog(rule)
+	a.ruleEditor.returnToDrawer = true
+}
+
+func (a *app) openEditFinalRuleFromDrawer() {
+	a.activeRuleDrawerID = ""
+	a.openEditFinalRuleDialog()
+	a.ruleEditor.returnToDrawer = true
+}
+
+func (a *app) dismissRuleEditorDrawer(reopenDetails bool) {
+	wasReturn := a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew
+	targetID := a.ruleEditor.ruleID
+	if a.ruleEditor.isFinal {
+		targetID = "final"
+	}
+	a.ruleEditor.open = false
+	a.ruleEditor.errText = ""
+	a.ruleEditor.returnToDrawer = false
+	if reopenDetails && wasReturn && targetID != "" {
+		a.activeRuleDrawerID = targetID
+	}
+}
+
 func (a *app) openCreateRuleDialog() {
 	a.ruleEditor = ruleEditorForm{
 		open:           true,
@@ -666,7 +692,7 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 	cat := a.catalog()
 	isOrder := a.ruleEditor.dispatchPolicy == routing.DispatchOrder
 
-	ui.Column(c.Key("rule-proxy-target-picker")).Gap(10).Children(func() {
+	ui.Column(c.Key("rule-proxy-target-picker")).Gap(6).Children(func() {
 		// Header row: Label + Mode Pill + Clear button
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -694,7 +720,7 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 
 		// Unified Chip Box + Quick-Pick Palette
 		ui.Column(c.Key("rule-target-picker-box")).
-			Gap(8).Padding(10).Radius(8).
+			Gap(6).Padding(8).Radius(8).
 			Background(p.surface).Border(1, p.borderSubtle).
 			Children(func() {
 				// Selected Chips + Inline Query Input
@@ -928,7 +954,7 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 
 		// Dispatch Policy & Isolation Bar (Dispatch mode always visible under Proxy; Isolation shown when specific targets are selected)
 		ui.Column(c.Key("rule-policy-bar")).
-			Gap(8).Padding(10).Radius(8).
+			Gap(6).Padding(8).Radius(8).
 			Background(p.surface).Border(1, p.borderSubtle).
 			Children(func() {
 				polIdx := 0
@@ -998,8 +1024,13 @@ func (a *app) saveRuleEditor() {
 	if a.ruleEditor.isFinal {
 		a.state.RoutingFinal = act
 		a.saveState()
+		returnToDetails := a.ruleEditor.returnToDrawer
 		a.ruleEditor.open = false
 		a.ruleEditor.errText = ""
+		a.ruleEditor.returnToDrawer = false
+		if returnToDetails {
+			a.activeRuleDrawerID = "final"
+		}
 		a.toast("兜底出站策略已更新")
 		if a.win != nil {
 			a.win.Invalidate()
@@ -1070,12 +1101,217 @@ func (a *app) saveRuleEditor() {
 	}
 
 	a.saveState()
+	returnToDetails := a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew
+	savedID := a.ruleEditor.ruleID
 	a.ruleEditor.open = false
 	a.ruleEditor.errText = ""
+	a.ruleEditor.returnToDrawer = false
+	if returnToDetails && savedID != "" {
+		a.activeRuleDrawerID = savedID
+	}
 	a.toast("分流规则已更新")
 	if a.win != nil {
 		a.win.Invalidate()
 	}
+}
+
+func (a *app) ruleMatchesSearch(rule routing.Rule, lowerQuery string) bool {
+	if lowerQuery == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(a.localizedRuleName(rule)), lowerQuery) ||
+		strings.Contains(strings.ToLower(a.localizedRuleDescription(rule)), lowerQuery) ||
+		strings.Contains(strings.ToLower(rule.ID), lowerQuery) {
+		return true
+	}
+	for _, list := range [][]string{
+		rule.DomainSuffix,
+		rule.DomainFull,
+		rule.IPCidr,
+		rule.DomainKeyword,
+		rule.GeoSite,
+		rule.GeoIP,
+	} {
+		for _, item := range list {
+			if strings.Contains(strings.ToLower(item), lowerQuery) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *app) finalRuleMatchesSearch(lowerQuery string) bool {
+	if lowerQuery == "" {
+		return true
+	}
+	cat := a.catalog()
+	return strings.Contains(strings.ToLower(cat.RoutingFinalFallback()), lowerQuery) ||
+		strings.Contains(strings.ToLower(cat.RoutingFinalDesc()), lowerQuery) ||
+		strings.Contains("final", lowerQuery)
+}
+
+func (a *app) preferredNodeNameForRule(act routing.RouteAction, targetHost string, precomputedRunning ...map[string]bool) string {
+	if a.tracker == nil || a.mgr == nil || !act.IsProxyAction() {
+		return ""
+	}
+	res := a.resolveActionTargets(act, precomputedRunning...)
+	if len(res.CandidateIDs) == 0 {
+		return ""
+	}
+	if targetHost == "" {
+		targetHost = "example.com"
+	}
+	bestID, sc, ok := a.tracker.PeekBest(res.CandidateIDs, targetHost)
+	if !ok {
+		return ""
+	}
+	if s, found := a.serviceOrBuiltinWarp(bestID); found {
+		if sc.EWMA > 0 {
+			return fmt.Sprintf("%s (%dms)", s.Name, max(1, sc.EWMA.Milliseconds()))
+		}
+		return s.Name
+	}
+	return ""
+}
+
+func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule, isFinal, hasGeo bool, runningIDs map[string]bool) {
+	cat := a.catalog()
+	act := rule.Action
+	hasGeoCriteria := len(rule.GeoSite) > 0 || len(rule.GeoIP) > 0
+	hasOtherCriteria := len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0 || len(rule.DomainFull) > 0
+
+	var routeText string
+	var routeColor ui.Color
+	dnsText := ""
+
+	switch act.Type {
+	case routing.ActionBlock:
+		routeText = "➔ " + cat.RoutingBlock()
+		routeColor = p.red
+	case routing.ActionDirect:
+		routeText = "➔ " + cat.RoutingDirect()
+		routeColor = p.textMuted
+		dnsText = cat.DnsDomesticBadge()
+	default:
+		targets := act.NormalizedTargets()
+		res := a.resolveActionTargets(act, runningIDs)
+		targetHost := ""
+		if len(rule.DomainSuffix) > 0 {
+			targetHost = rule.DomainSuffix[0]
+		}
+		pref := a.preferredNodeNameForRule(act, targetHost, runningIDs)
+
+		if len(targets) == 0 {
+			activeCount := res.OnlineCount
+			if activeCount == 0 && !a.isBuiltinWarpNeeded() {
+				activeCount = a.activeRunningCount()
+			}
+			routeText = fmt.Sprintf("➔ %s (%d 在线)", cat.RoutingProxyPool(), activeCount)
+			if pref != "" {
+				routeText += " · " + pref
+			}
+			if activeCount > 0 {
+				routeColor = p.text
+			} else {
+				routeColor = p.amber
+			}
+		} else {
+			allTags := true
+			var tagLabels []string
+			for _, t := range targets {
+				if t.Kind != routing.TargetTag {
+					allTags = false
+					break
+				}
+				tagLabels = append(tagLabels, "#"+t.Value)
+			}
+			isOrder := act.EffectiveDispatchPolicy() == routing.DispatchOrder && len(targets) > 1
+			if !isFinal && isSingleWarpTarget(act) && isRuleDomesticDNS(rule) {
+				routeText = "➔ " + cat.RoutingWarp()
+				if res.OnlineCount > 0 {
+					routeColor = p.green
+				} else {
+					routeColor = p.amber
+				}
+			} else if allTags && !isOrder {
+				tagDisplay := strings.Join(tagLabels, ", ")
+				routeText = fmt.Sprintf("➔ %s (%d 在线)", tagDisplay, res.OnlineCount)
+				if act.FallbackToPool {
+					routeText += " · " + cat.RuleTargetFallbackBadge()
+				}
+				if pref != "" {
+					routeText += " · " + pref
+				}
+				if res.OnlineCount > 0 {
+					routeColor = p.text
+				} else {
+					routeColor = p.amber
+				}
+			} else {
+				var parts []string
+				for _, t := range targets {
+					if t.Kind == routing.TargetNode {
+						if svc, ok := a.serviceOrBuiltinWarp(t.Value); ok {
+							part := svc.Name
+							if svc.EnableWARP {
+								part += " +WARP"
+							}
+							parts = append(parts, part)
+						} else {
+							parts = append(parts, t.Value+" ("+cat.RuleTargetMissingNode()+")")
+						}
+					} else {
+						parts = append(parts, "#"+t.Value)
+					}
+				}
+				sep := ", "
+				if isOrder {
+					sep = " → "
+				}
+				routeText = fmt.Sprintf("➔ %s (%d 在线)", strings.Join(parts, sep), res.OnlineCount)
+				if act.FallbackToPool {
+					routeText += " · " + cat.RuleTargetFallbackBadge()
+				}
+				if pref != "" {
+					routeText += " · " + pref
+				}
+				if len(res.MissingNodeIDs) > 0 || res.OnlineCount == 0 {
+					routeColor = p.amber
+				} else {
+					routeColor = p.text
+				}
+			}
+		}
+
+		if !isFinal && isRuleDomesticDNS(rule) {
+			dnsText = cat.DnsDomesticBadge()
+		} else {
+			dnsText = cat.DnsRemoteBadge()
+		}
+	}
+
+	ui.Row(c).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+		Padding(8, 0, 0, 15).
+		BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
+		Children(func() {
+			ui.Text(c, routeText).FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(routeColor).
+				SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+				if !isFinal && rule.Enabled && hasGeoCriteria && !hasGeo {
+					warnLabel := cat.RulePartialGeoPending()
+					if !hasOtherCriteria {
+						warnLabel = cat.RulePendingGeoData()
+					}
+					ui.Text(c, warnLabel).FontSize(10).FontWeight(600).TextColor(p.amber).NoWrap()
+				}
+				if dnsText != "" {
+					ui.Text(c, dnsText).FontSize(11).TextColor(p.textDim).NoWrap()
+				}
+			})
+		})
 }
 
 func (a *app) renderActionBadges(c *ui.Context, p palette, rule routing.Rule, isFinal bool, runningIDs map[string]bool) {
@@ -1171,94 +1407,103 @@ func (a *app) renderActionBadges(c *ui.Context, p palette, rule routing.Rule, is
 func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routing.Rule, hasGeo bool, runningIDs map[string]bool) {
 	cat := a.catalog()
 	hasGeoCriteria := len(rule.GeoSite) > 0 || len(rule.GeoIP) > 0
-	hasOtherCriteria := len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0
+	hasOtherCriteria := len(rule.DomainSuffix) > 0 || len(rule.IPCidr) > 0 || len(rule.DomainKeyword) > 0 || len(rule.DomainFull) > 0
 
 	cardBorder := p.borderSubtle
 	cardBg := p.card
 	if rule.Enabled && hasGeoCriteria && !hasGeo && !hasOtherCriteria {
-		cardBorder = p.amber.Alpha(0.3)
+		cardBorder = p.amber.Alpha(0.35)
 	}
 
-	ui.Column(c.Key(fmt.Sprintf("rule-card-%s", rule.ID))).
+	card := ui.Column(c.Key(fmt.Sprintf("rule-card-%s", rule.ID))).
 		Grow(1).
-		Padding(14).Radius(8).Gap(8).
+		Padding(14).Radius(10).Gap(6).
 		Background(cardBg).
-		Border(1, cardBorder).
-		Children(func() {
-			// Line 1: Rule Name on left, Actions (Icon-only) + Switch on right
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					nameBtn := ui.Box(c.Key("btn-name-rule-" + rule.ID)).Children(func() {
-						ui.Text(c, a.localizedRuleName(rule)).FontSize(13).FontWeight(600).TextColor(p.text)
-					})
-					if nameBtn.Clicked() {
-						a.activeRuleDrawerID = rule.ID
-					}
-				})
+		Border(1, cardBorder)
+	if card.Hovered() {
+		card.Background(p.cardHover).Border(1, p.border)
+	}
 
-				ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-					if subtleActionChip(c.Key("btn-detail-rule-"+rule.ID), p, iconList, "", false).
-						Label(cat.RuleDrawerTitle()).
-						Tooltip(cat.RuleDrawerTitle()).
-						Clicked() {
-						a.activeRuleDrawerID = rule.ID
-					}
-					if subtleActionChip(c.Key("btn-edit-rule-"+rule.ID), p, iconEdit, "", false).
-						Label(cat.ActionEdit()).
-						Tooltip(cat.ActionEdit()).
-						Clicked() {
-						a.openEditRuleDialog(rule)
-					}
-					if !strings.HasPrefix(rule.ID, "preset-") {
-						if dangerActionChip(c.Key("btn-delete-rule-"+rule.ID), p, iconTrash, "", false).
-							Label(cat.ActionDelete()).
-							Tooltip(cat.ActionDelete()).
-							Clicked() {
-							a.deleteRule(rule.ID)
-						}
-					}
+	card.Children(func() {
+		// Line 1: Status dot + Rule Name on left, Quiet icon actions + Switch on right
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+				switch {
+				case !rule.Enabled:
+					hollowStatusDot(c, p.textDim.Alpha(0.5))
+				case hasGeoCriteria && !hasGeo && !hasOtherCriteria:
+					statusDot(c, p.amber)
+				default:
+					statusDot(c, p.green)
+				}
 
-					enabled := rule.Enabled
-					toggleKey := fmt.Sprintf("toggle-rule-%s", rule.ID)
-					if ui.Switch(c.Key(toggleKey), &enabled).Label(toggleKey).Changed() {
-						if isCategoryAdsBlockRule(rule) {
-							a.setBlockerBlockAds(enabled)
-							if enabled {
-								a.toast("已启用内置广告拦截")
-							} else {
-								a.toast("已关闭内置广告拦截")
-							}
-						} else {
-							a.state.RoutingRules[ruleIndex].Enabled = enabled
-							a.saveState()
-						}
-					}
+				titleCol := p.text
+				if !rule.Enabled {
+					titleCol = p.textMuted
+				}
+				nameBtn := ui.Box(c.Key("btn-name-rule-" + rule.ID)).MinWidth(0).Shrink(1).Children(func() {
+					ui.Text(c, a.localizedRuleName(rule)).FontSize(13).FontWeight(600).TextColor(titleCol).
+						SingleLine().Ellipsis("…")
 				})
+				if nameBtn.Clicked() {
+					a.activeRuleDrawerID = rule.ID
+				}
 			})
 
-			// Line 2: Description
-			if desc := a.localizedRuleDescription(rule); desc != "" {
-				ui.Text(c, desc).FontSize(11).TextColor(p.textMuted)
-			}
-
-			// Line 3: Outbound Action Badge + Criteria Tags
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-				a.renderActionBadges(c, p, rule, false, runningIDs)
-
-				// If GeoData is missing and rule has Geo criteria, show status badge
-				if rule.Enabled && hasGeoCriteria && !hasGeo {
-					if !hasOtherCriteria {
-						statusBadge(c, cat.RulePendingGeoData(), p.amber, p.amberBg)
-					} else {
-						tagPill(c, cat.RulePartialGeoPending(), p.amber, p.amberBg)
+			ui.Row(c).AlignItems(ui.Center).Gap(2).Shrink(0).Children(func() {
+				if quietRowIconButton(c.Key("btn-detail-rule-"+rule.ID), p, iconList, cat.RuleDrawerTitle(), false, false).
+					Tooltip(cat.RuleDrawerTitle()).
+					Clicked() {
+					a.activeRuleDrawerID = rule.ID
+				}
+				if quietRowIconButton(c.Key("btn-edit-rule-"+rule.ID), p, iconEdit, cat.ActionEdit(), false, false).
+					Tooltip(cat.ActionEdit()).
+					Clicked() {
+					a.openEditRuleDialog(rule)
+				}
+				if !strings.HasPrefix(rule.ID, "preset-") {
+					if dangerActionChip(c.Key("btn-delete-rule-"+rule.ID), p, iconTrash, "", false).
+						Label(cat.ActionDelete()).
+						Tooltip(cat.ActionDelete()).
+						Clicked() {
+						a.deleteRule(rule.ID)
 					}
 				}
 
-				if pref := a.preferredNodeForRule(rule, runningIDs); pref != "" {
-					tagPill(c, pref, p.accentText, p.accentBg)
+				ui.Box(c).Size(1, 14).Background(p.borderSubtle).Margin(0, 4, 0, 4).Shrink(0)
+
+				enabled := rule.Enabled
+				toggleKey := fmt.Sprintf("toggle-rule-%s", rule.ID)
+				if ui.Switch(c.Key(toggleKey), &enabled).Label(toggleKey).Changed() {
+					if isCategoryAdsBlockRule(rule) {
+						a.setBlockerBlockAds(enabled)
+						if enabled {
+							a.toast("已启用内置广告拦截")
+						} else {
+							a.toast("已关闭内置广告拦截")
+						}
+					} else {
+						a.state.RoutingRules[ruleIndex].Enabled = enabled
+						a.saveState()
+					}
 				}
 			})
 		})
+
+		// Line 2: Description
+		if desc := a.localizedRuleDescription(rule); desc != "" {
+			ui.Box(c).Padding(0, 0, 0, 15).Children(func() {
+				ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).SingleLine().Ellipsis("…")
+			})
+		}
+
+		// Line 3: Single-line outbound route summary + right-aligned DNS/Geo status
+		a.renderRuleRouteSummary(c, p, rule, false, hasGeo, runningIDs)
+	})
+
+	if card.Clicked() {
+		a.activeRuleDrawerID = rule.ID
+	}
 }
 
 func (a *app) renderRoutingPage(c *ui.Context, p palette) {
@@ -1269,286 +1514,418 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 		runningIDs = a.mgr.RunningServiceIDs()
 	}
 
-	ui.Scroll(c.Key("routing-page-scroll")).
-		Grow(1).Fill().MinHeight(0).
-		Padding(20, 24, 30, 24).Gap(16).
-		Children(func() {
-			// Page Title & Header Actions
-			ui.Column(c).Gap(6).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.RoutingTitle()).FontSize(18).FontWeight(700).TextColor(p.text)
+	enabledCount := 1 // Final fallback is always active
+	for _, r := range a.state.RoutingRules {
+		if r.Enabled {
+			enabledCount++
+		}
+	}
+	totalCount := len(a.state.RoutingRules) + 1
 
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if !hasGeo {
+	ui.Column(c.Key("routing-page")).Grow(1).Fill().MinHeight(0).Children(func() {
+		// Fixed Page Header (Nodes pattern)
+		ui.Row(c.Key("routing-header")).
+			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
+			Padding(14, 18, 14, 18).
+			Background(p.surface).
+			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
+			Children(func() {
+				// Left: Title + tabular summary + GeoData dot
+				ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
+					ui.Text(c, cat.RoutingTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+
+					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
+						ui.Text(c, cat.RoutingEnabledSummary(enabledCount, totalCount)).
+							FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
+						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap()
+						if hasGeo {
+							statusDot(c, p.green)
+							geoLabel := cat.GeodataStatusReady()
+							if a.localGeodataVersion != "" {
+								geoLabel = fmt.Sprintf("%s (%s)", cat.GeodataStatusReady(), a.localGeodataVersion)
+							}
+							ui.Text(c, geoLabel).FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).SingleLine().Ellipsis("…")
+						} else {
+							statusDot(c, p.amber)
+							ui.Text(c, cat.GeodataStatusMissing()).FontSize(12).TextColor(p.amber).SingleLine().Ellipsis("…")
+						}
+					})
+				})
+
+				// Right: Search + Strategy Help Popover + More Menu + New Rule CTA
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+					ui.SearchField(c.Key("input-routing-search"), &a.routingSearch).
+						Placeholder(cat.RoutingSearchPlaceholder()).
+						Label(cat.RoutingSearchPlaceholder()).
+						Width(156).Height(32).Radius(8).FontSize(12).
+						Background(p.card)
+
+					helpBtn := quietToolbarButton(c.Key("btn-routing-strategy-help"), p, iconInfo, cat.RoutingStrategyHelpBtn(), false).
+						Tooltip(cat.RoutingStrategyHelpTooltip())
+					if helpBtn.Clicked() {
+						a.openRoutingMoreMenu = false
+						a.showRoutingStrategyHelp = !a.showRoutingStrategyHelp
+					}
+					ui.PopoverBase(c, helpBtn, &a.showRoutingStrategyHelp, func(panel ui.Element) {
+						panel.Column().
+							AttachTo(helpBtn, ui.AnchorBottomEnd, ui.AnchorTopEnd).
+							Margin(4, 0, 0, 0).
+							Width(380).Padding(14).Radius(10).Gap(10).
+							Background(p.card).Border(1, p.border).
+							Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18)).
+							Children(func() {
+								ui.Column(c).Gap(4).Children(func() {
+									ui.Text(c, cat.RoutingMatchOrderTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+									ui.Text(c, cat.RoutingMatchOrderDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+								})
+								ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
+								ui.Column(c).Gap(4).Children(func() {
+									ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+									ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+									ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
+									ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
+									ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
+								})
+								ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
+								ui.Column(c).Gap(4).Children(func() {
+									ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
+									ui.Text(c, cat.RoutingSmartPoolDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
+									ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
+									ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
+									ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
+								})
+							})
+					})
+
+					moreBtn := quietToolbarIconButton(c.Key("btn-routing-more"), p, iconMore, cat.RoutingMoreActions(), a.openRoutingMoreMenu).
+						Tooltip(cat.RoutingMoreActions())
+					if moreBtn.Clicked() {
+						a.showRoutingStrategyHelp = false
+						a.openRoutingMoreMenu = !a.openRoutingMoreMenu
+					}
+					ui.PopoverBase(c, moreBtn, &a.openRoutingMoreMenu, func(panel ui.Element) {
+						styleMenuPopoverPanel(panel, moreBtn, p, 176)
+						panel.Children(func() {
+							geoLabel := cat.UpdateGeoData()
+							if a.updatingGeoData {
+								geoLabel = cat.Updating()
+							}
+							if popoverMenuItem(c.Key("btn-update-geodata"), p, geoLabel, p.text, a.updatingGeoData, false).Clicked() {
+								a.openRoutingMoreMenu = false
+								a.triggerUpdateGeoData()
+							}
+							if popoverMenuItem(c.Key("btn-reset-presets"), p, cat.ResetPresets(), p.text, false, false).Clicked() {
+								a.openRoutingMoreMenu = false
+								a.resetRoutingPresets()
+							}
+						})
+					})
+
+					if primaryPillButton(c.Key("btn-new-rule"), p, iconPlus, cat.NewRule(), p.accent, false).Clicked() {
+						a.openRoutingMoreMenu = false
+						a.showRoutingStrategyHelp = false
+						a.openCreateRuleDialog()
+					}
+				})
+			})
+
+		ui.Scroll(c.Key("routing-page-scroll")).
+			Grow(1).Fill().MinHeight(0).
+			Padding(16, 18, 24, 18).Gap(14).
+			Children(func() {
+				// Missing GeoData Callout Banner (only shown when GeoData is absent)
+				if !hasGeo {
+					ui.Row(c.Key("banner-geodata-missing")).
+						AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).
+						Padding(10, 14, 10, 14).Radius(8).
+						Background(p.amberBg).Border(1, p.amber.Alpha(0.3)).
+						Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).MinWidth(0).Children(func() {
+								ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amber).Shrink(0)
+								ui.Text(c, cat.RoutingGeodataBanner()).FontSize(12).FontWeight(500).TextColor(p.amber).
+									SingleLine().Ellipsis("…")
+							})
 							btnText := cat.UpdateGeoData()
 							if a.updatingGeoData {
 								btnText = cat.Updating()
 							}
-							if primaryPillButton(c.Key("btn-update-geodata"), p, iconDownload, btnText, p.amber, a.updatingGeoData).Clicked() {
+							if primaryPillButton(c.Key("btn-banner-download-geodata"), p, iconDownload, btnText, p.amber, a.updatingGeoData).Shrink(0).Clicked() {
 								a.triggerUpdateGeoData()
 							}
-						} else {
-							if actionChip(c.Key("btn-update-geodata"), p, iconDownload, cat.UpdateGeoData(), a.updatingGeoData).Clicked() {
-								a.triggerUpdateGeoData()
-							}
-						}
-						if actionChip(c.Key("btn-reset-presets"), p, iconRefresh, cat.ResetPresets(), false).Clicked() {
-							a.resetRoutingPresets()
-						}
-						if primaryPillButton(c.Key("btn-new-rule"), p, iconPlus, cat.NewRule(), p.accent, false).Clicked() {
-							a.openCreateRuleDialog()
-						}
-					})
-				})
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, cat.RoutingSubtitle()).FontSize(12).TextColor(p.textMuted)
-				})
-			})
-
-			// Row: DNS Resolution Strategy & Smart Proxy Pool (Side-by-Side in 2 columns)
-			ui.Grid(c.Key("routing-strategy-banners")).Columns(2).Gap(12).Children(func() {
-				// Card 1: DNS Resolution Strategy
-				ui.Column(c.Key("banner-routing-dns-alignment")).
-					Padding(12, 14, 12, 14).Radius(8).
-					Background(p.surface).Border(1, p.borderSubtle).
-					Gap(6).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-								ui.Icon(c, iconNavRouting).Size(15, 15).TextColor(p.accent)
-								ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-							})
-							dnsInfoBtn := subtleActionChip(c.Key("btn-routing-dns-info"), p, iconInfo, "", false).
-								Label("DNS " + cat.ActionDetails()).
-								Tooltip(cat.ActionDetails())
-							if dnsInfoBtn.Clicked() {
-								a.showRoutingDnsDetail = !a.showRoutingDnsDetail
-							}
-							ui.Popover(c, dnsInfoBtn, &a.showRoutingDnsDetail, func() {
-								ui.Column(c).Width(340).Padding(6, 4).Gap(8).Children(func() {
-									ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-										ui.Icon(c, iconInfo).Size(14, 14).TextColor(p.accent)
-										ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-									})
-									ui.Column(c).Gap(6).Children(func() {
-										ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-										ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-										ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-									})
-								})
-							})
 						})
-						ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-					})
-
-				// Card 2: Smart Adaptive Routing
-				ui.Column(c.Key("banner-routing-smart-pool")).
-					Padding(12, 14, 12, 14).Radius(8).
-					Background(p.surface).Border(1, p.borderSubtle).
-					Gap(6).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-							ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-								ui.Icon(c, iconBolt).Size(15, 15).TextColor(p.accent)
-								ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-							})
-							poolInfoBtn := subtleActionChip(c.Key("btn-routing-pool-info"), p, iconInfo, "", false).
-								Label("Pool " + cat.ActionDetails()).
-								Tooltip(cat.ActionDetails())
-							if poolInfoBtn.Clicked() {
-								a.showRoutingPoolDetail = !a.showRoutingPoolDetail
-							}
-							ui.Popover(c, poolInfoBtn, &a.showRoutingPoolDetail, func() {
-								ui.Column(c).Width(360).Padding(6, 4).Gap(8).Children(func() {
-									ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-										ui.Icon(c, iconBolt).Size(14, 14).TextColor(p.accent)
-										ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-									})
-									ui.Column(c).Gap(6).Children(func() {
-										ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-										ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-										ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-									})
-								})
-							})
-						})
-						ui.Text(c, cat.RoutingSmartPoolDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-					})
-			})
-
-			// Missing GeoData Callout Banner
-			if !hasGeo {
-				ui.Row(c.Key("banner-geodata-missing")).
-					AlignItems(ui.Center).Justify(ui.SpaceBetween).
-					Padding(10, 14, 10, 14).Radius(8).
-					Background(p.amberBg).Border(1, p.amber.Alpha(0.3)).
-					Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-							ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amber)
-							ui.Text(c, cat.RoutingGeodataBanner()).FontSize(12).FontWeight(500).TextColor(p.amber)
-						})
-						btnText := cat.UpdateGeoData()
-						if a.updatingGeoData {
-							btnText = cat.Updating()
-						}
-						if primaryPillButton(c.Key("btn-banner-download-geodata"), p, iconDownload, btnText, p.amber, a.updatingGeoData).Clicked() {
-							a.triggerUpdateGeoData()
-						}
-					})
-			}
-
-			// Separate Custom Rules and Preset Rules
-			var customRules []routing.Rule
-			var customIndices []int
-			var presetRules []routing.Rule
-			var presetIndices []int
-
-			for idx, rule := range a.state.RoutingRules {
-				if strings.HasPrefix(rule.ID, "preset-") {
-					presetRules = append(presetRules, rule)
-					presetIndices = append(presetIndices, idx)
-				} else {
-					customRules = append(customRules, rule)
-					customIndices = append(customIndices, idx)
 				}
-			}
 
-			// Section 1: Custom Rules (Top Priority)
-			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				ui.Text(c, cat.RoutingCustomSection()).FontSize(14).FontWeight(600).TextColor(p.text)
-				tagPill(c, fmt.Sprintf("%d", len(customRules)), p.accentText, p.accentBg)
-			})
+				lowerQuery := strings.ToLower(strings.TrimSpace(a.routingSearch))
+				var customRules []routing.Rule
+				var customIndices []int
+				var presetRules []routing.Rule
+				var presetIndices []int
 
-			if len(customRules) > 0 {
-				ui.Grid(c.Key("custom-rules-grid")).Columns(2).Gap(12).Children(func() {
-					for i := range customRules {
-						a.renderRuleCard(c, p, customIndices[i], customRules[i], hasGeo, runningIDs)
+				for idx, rule := range a.state.RoutingRules {
+					if !a.ruleMatchesSearch(rule, lowerQuery) {
+						continue
 					}
-				})
-			} else {
-				ui.Column(c.Key("custom-rules-empty")).
-					Padding(14).Radius(8).
-					Background(p.card).Border(1, p.borderSubtle).
-					Children(func() {
-						ui.Text(c, cat.RoutingCustomEmpty()).FontSize(12).TextColor(p.textMuted)
-					})
-			}
-
-			// Section 2: Preset Rule Groups (5 Presets + Final Fallback = 6 cards)
-			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-				ui.Text(c, cat.RoutingPresetsSection()).FontSize(14).FontWeight(600).TextColor(p.text)
-				tagPill(c, fmt.Sprintf("%d", len(presetRules)+1), p.accentText, p.accentBg)
-			})
-
-			ui.Grid(c.Key("preset-rules-grid")).Columns(2).Gap(12).Children(func() {
-				for i := range presetRules {
-					a.renderRuleCard(c, p, presetIndices[i], presetRules[i], hasGeo, runningIDs)
+					if strings.HasPrefix(rule.ID, "preset-") {
+						presetRules = append(presetRules, rule)
+						presetIndices = append(presetIndices, idx)
+					} else {
+						customRules = append(customRules, rule)
+						customIndices = append(customIndices, idx)
+					}
 				}
-				a.renderFinalFallbackCard(c, p, runningIDs)
+				finalMatches := a.finalRuleMatchesSearch(lowerQuery)
+
+				if lowerQuery != "" && len(customRules) == 0 && len(presetRules) == 0 && !finalMatches {
+					ui.Column(c.Key("routing-search-empty")).
+						AlignItems(ui.Center).Justify(ui.Center).
+						Padding(28, 20, 28, 20).Radius(10).Gap(10).
+						Background(p.card).Border(1, p.borderSubtle).
+						Children(func() {
+							ui.Text(c, cat.RoutingEmptySearch()).FontSize(13).TextColor(p.textMuted)
+							if compactStripButton(c.Key("btn-routing-reset-search"), p, cat.ResetFilters(), cat.ResetFilters(), p.accentText).Clicked() {
+								a.routingSearch = ""
+							}
+						})
+					return
+				}
+
+				// Section 1: Custom Rules (Top Priority)
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Text(c, cat.RoutingCustomSection()).FontSize(13).FontWeight(700).TextColor(p.text)
+					ui.Text(c, fmt.Sprintf("%d", len(customRules))).FontSize(11).FontFeatures("tnum").TextColor(p.textDim)
+					ui.Text(c, "·").FontSize(11).TextColor(p.textDim)
+					ui.Text(c, cat.RoutingCustomPriorityHint()).FontSize(11).TextColor(p.textDim)
+				})
+
+				if len(customRules) > 0 {
+					ui.Grid(c.Key("custom-rules-grid")).Columns(2).Gap(12).Children(func() {
+						for i := range customRules {
+							a.renderRuleCard(c, p, customIndices[i], customRules[i], hasGeo, runningIDs)
+						}
+					})
+				} else if lowerQuery == "" {
+					ui.Column(c.Key("custom-rules-empty")).
+						Padding(14).Radius(10).
+						Background(p.card).Border(1, p.borderSubtle).
+						Children(func() {
+							ui.Text(c, cat.RoutingCustomEmpty()).FontSize(12).TextColor(p.textMuted)
+						})
+				}
+
+				// Section 2: Preset Rule Groups (Presets + Final Fallback)
+				presetTotal := len(presetRules)
+				if finalMatches {
+					presetTotal++
+				}
+				if presetTotal > 0 {
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+						ui.Text(c, cat.RoutingPresetsSection()).FontSize(13).FontWeight(700).TextColor(p.text)
+						ui.Text(c, fmt.Sprintf("%d", presetTotal)).FontSize(11).FontFeatures("tnum").TextColor(p.textDim)
+						ui.Text(c, "·").FontSize(11).TextColor(p.textDim)
+						ui.Text(c, cat.RoutingPresetsFallbackHint()).FontSize(11).TextColor(p.textDim)
+					})
+
+					ui.Grid(c.Key("preset-rules-grid")).Columns(2).Gap(12).Children(func() {
+						for i := range presetRules {
+							a.renderRuleCard(c, p, presetIndices[i], presetRules[i], hasGeo, runningIDs)
+						}
+						if finalMatches {
+							a.renderFinalFallbackCard(c, p, hasGeo, runningIDs)
+						}
+					})
+				}
 			})
-		})
+	})
 }
 
-func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, runningIDs map[string]bool) {
+func (a *app) renderFinalFallbackCard(c *ui.Context, p palette, hasGeo bool, runningIDs map[string]bool) {
 	cat := a.catalog()
 
 	// Final Fallback Rule Card (Undeletable, Always Active)
-	ui.Column(c.Key("rule-card-final-fallback")).
+	card := ui.Column(c.Key("rule-card-final-fallback")).
 		Grow(1).
-		Padding(14).Radius(8).Gap(8).
+		Padding(14).Radius(10).Gap(6).
 		Background(p.card).
-		Border(1, p.borderSubtle).
-		Children(func() {
-			// Line 1: Name + FINAL pill + Always Active pill on left, Edit on right
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					ui.Text(c, cat.RoutingFinalFallback()).FontSize(13).FontWeight(600).TextColor(p.text)
-					tagPill(c, "FINAL", p.textDim, p.elevated)
-					tagPill(c, cat.RoutingFinalAlwaysActive(), p.accentText, p.accentBg)
-				})
+		Border(1, p.borderSubtle)
+	if card.Hovered() {
+		card.Background(p.cardHover).Border(1, p.border)
+	}
 
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					if subtleActionChip(c.Key("btn-detail-final-rule"), p, iconList, "", false).
-						Label(cat.RuleDrawerTitle()).
-						Tooltip(cat.RuleDrawerTitle()).
-						Clicked() {
-						a.activeRuleDrawerID = "final"
-					}
-					if subtleActionChip(c.Key("btn-edit-final-rule"), p, iconEdit, "", false).
-						Label(cat.ActionEdit()).
-						Tooltip(cat.ActionEdit()).
-						Clicked() {
-						a.openEditFinalRuleDialog()
-					}
-				})
+	card.Children(func() {
+		// Line 1: Status dot + Name + FINAL chip on left, Actions + Always Active text on right
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+				statusDot(c, p.green)
+				ui.Text(c, cat.RoutingFinalFallback()).FontSize(13).FontWeight(600).TextColor(p.text).
+					SingleLine().Ellipsis("…")
+				drawerInlineNeutralChip(c, p, "FINAL")
 			})
 
-			// Line 2: Description
-			ui.Text(c, cat.RoutingFinalDesc()).FontSize(11).TextColor(p.textMuted)
-
-			// Line 3: Outbound Action Badge
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
-				finalRule := routing.Rule{ID: "final", Action: a.state.RoutingFinal}
-				a.renderActionBadges(c, p, finalRule, true, runningIDs)
-
-				if pref := a.preferredNodeForAction(a.state.RoutingFinal, "", runningIDs); pref != "" {
-					tagPill(c, pref, p.accentText, p.accentBg)
+			ui.Row(c).AlignItems(ui.Center).Gap(2).Shrink(0).Children(func() {
+				if quietRowIconButton(c.Key("btn-detail-final-rule"), p, iconList, cat.RuleDrawerTitle(), false, false).
+					Tooltip(cat.RuleDrawerTitle()).
+					Clicked() {
+					a.activeRuleDrawerID = "final"
 				}
+				if quietRowIconButton(c.Key("btn-edit-final-rule"), p, iconEdit, cat.ActionEdit(), false, false).
+					Tooltip(cat.ActionEdit()).
+					Clicked() {
+					a.openEditFinalRuleDialog()
+				}
+				ui.Box(c).Size(1, 14).Background(p.borderSubtle).Margin(0, 4, 0, 4).Shrink(0)
+				ui.Text(c, cat.RoutingFinalAlwaysActive()).FontSize(10).FontWeight(500).TextColor(p.textDim).NoWrap()
 			})
 		})
+
+		// Line 2: Description
+		ui.Box(c).Padding(0, 0, 0, 15).Children(func() {
+			ui.Text(c, cat.RoutingFinalDesc()).FontSize(11).TextColor(p.textMuted).SingleLine().Ellipsis("…")
+		})
+
+		// Line 3: Single-line Outbound Route Summary
+		finalRule := routing.Rule{ID: "final", Action: a.state.RoutingFinal}
+		a.renderRuleRouteSummary(c, p, finalRule, true, hasGeo, runningIDs)
+	})
+
+	if card.Clicked() {
+		a.activeRuleDrawerID = "final"
+	}
 }
 
-func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
+func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 	cat := a.catalog()
 	var runningIDs map[string]bool
 	if a.mgr != nil {
 		runningIDs = a.mgr.RunningServiceIDs()
 	}
 
-	ui.DialogBase(c.Key("rule-editor-dialog"), &a.ruleEditor.open, func(backdrop, panel ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
-		panel.Column().
-			Width(560).MaxHeight(660).
-			Padding(20).Gap(14).
-			Radius(14).Background(p.card).Border(1, p.border).
-			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
-			Children(func() {
-				// Dialog Title
-				title := cat.EditRule()
-				if a.ruleEditor.isFinal {
-					title = cat.EditFinalRule()
-				} else if a.ruleEditor.isNew {
-					title = cat.NewRule()
-				}
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-					ui.Text(c, title).FontSize(16).FontWeight(700).TextColor(p.text)
-					if subtleActionChip(c.Key("btn-close-rule-editor"), p, iconClose, "", false).Clicked() {
-						a.ruleEditor.open = false
-					}
+	ui.Overlay(c, func() {
+		if !a.ruleEditor.open {
+			return
+		}
+
+		// Backdrop (fades in and out, click to dismiss)
+		backdrop := ui.Box(c.Key("rule-editor-backdrop")).
+			Absolute().Top(0).Left(0).Right(0).Bottom(0).
+			Background(ui.RGBA(0, 0, 0, 0.35)).
+			Transition(ui.ElementTransition{
+				Enter: &ui.Motion{Opacity: 0},
+				Exit:  &ui.Motion{Opacity: 0},
+			})
+		if backdrop.Clicked() {
+			a.dismissRuleEditorDrawer(false)
+		}
+
+		// Slide-over drawer panel anchored to right edge (460px unified width)
+		panel := ui.Column(c.Key("rule-editor-panel")).
+			Absolute().Top(0).Right(0).Bottom(0).Width(460).MaxWidthPercent(100).
+			Modal().
+			Transition(ui.ElementTransition{
+				Enter: &ui.Motion{X: 460},
+				Exit:  &ui.Motion{X: 460},
+			}).
+			Background(p.drawerBg).
+			BorderWidth(0, 0, 0, 1).BorderColor(p.border).
+			Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4))
+
+		if panel.OverlayShortcut(0, ui.KeyEscape) {
+			a.dismissRuleEditorDrawer(false)
+		}
+
+		panel.Children(func() {
+			// Header
+			ui.Row(c).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+				Padding(14, 20, 14, 20).
+				BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
+				Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
+						if a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew {
+							if quietRowIconButton(c.Key("rule-editor-back-header"), p, iconArrowLeft, cat.EditorBackToDetails(), false, false).
+								Tooltip(cat.EditorBackToDetails()).
+								Clicked() {
+								a.dismissRuleEditorDrawer(true)
+							}
+						}
+						title := cat.EditRule()
+						if a.ruleEditor.isFinal {
+							title = cat.EditFinalRule()
+						} else if a.ruleEditor.isNew {
+							title = cat.NewRule()
+						}
+						ui.Text(c, title).FontSize(15).FontWeight(700).TextColor(p.text).
+							SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
+					})
+
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+						if !a.ruleEditor.isFinal {
+							segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
+								cat.RuleTabGeoData(),
+								cat.RuleTabCriteria(),
+							})
+						}
+						if quietRowIconButton(c.Key("btn-close-rule-editor"), p, iconClose, cat.RuleDrawerClose(), false, false).
+							Label("btn-close-rule-editor").
+							Tooltip(cat.RuleDrawerClose()).
+							Clicked() {
+							a.dismissRuleEditorDrawer(false)
+						}
+					})
 				})
 
-				ui.Scroll(c.Key("rule-editor-scroll")).
-					TrackScroll(&a.ruleEditor.scroll).
-					Grow(1).MinHeight(0).
-					Gap(12).
-					Children(func() {
+			// Error display
+			if a.ruleEditor.errText != "" {
+				ui.Box(c).Padding(12, 20, 0, 20).Children(func() {
+					ui.Row(c.Key("rule-editor-error-row")).
+						AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+						PaddingX(12).PaddingY(8).Radius(8).
+						Background(p.redBg).Border(1, p.red.Alpha(0.24)).
+						Children(func() {
+							ui.Text(c, a.ruleEditor.errText).FontSize(12).FontWeight(500).TextColor(p.red).Grow(1)
+							btnCopy := ui.ButtonBase(c.Key("btn-copy-rule-error")).
+								Label("btn-copy-rule-error").
+								Padding(2, 6, 2, 6).Radius(4).
+								Background(p.card).Border(1, p.borderSubtle).
+								Tooltip(cat.ActionCopyError()).
+								Children(func() {
+									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
+								})
+							if btnCopy.Clicked() {
+								a.writeClipboard(a.ruleEditor.errText, cat.ToastErrorCopied())
+							}
+						})
+				})
+			}
+
+			// Scrollable drawer body
+			ruleEditorCompactCard := func(children func()) {
+				ui.Column(c).Gap(8).Padding(10, 12, 10, 12).Radius(10).
+					Background(p.card).Border(1, p.borderSubtle).
+					Children(children)
+			}
+			ui.Scroll(c.Key("rule-editor-scroll")).
+				TrackScroll(&a.ruleEditor.scroll).
+				Grow(1).Fill().
+				Background(p.surface).
+				Padding(12, 16, 16, 16).
+				Gap(10).
+				Children(func() {
+					// Card 1: Rule Identity
+					ruleEditorCompactCard(func() {
 						if !a.ruleEditor.isFinal {
-							// Row 1: Rule Name & Optional Description (pinned identity header)
-							ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-								ui.Column(c).Grow(1).Children(func() {
-									labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
-								})
-								ui.Column(c).Grow(1).Children(func() {
-									labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
-								})
+							ui.Grid(c.Key("rule-editor-identity-grid")).Columns(2).Gap(10).Children(func() {
+								labeledInput(c, p, "rule-set-name", cat.RuleNameLabel(), &a.ruleEditor.name, "规则名称")
+								labeledInput(c, p, "rule-set-desc", cat.RuleDescLabel(), &a.ruleEditor.desc, "可选说明")
 							})
 						} else {
-							ui.Text(c, cat.RoutingFinalDesc()).FontSize(11).TextColor(p.textMuted)
+							ui.Text(c, cat.RoutingFinalDesc()).FontSize(12).TextColor(p.textMuted).LineHeight(1.4)
 						}
+					})
 
-						// 3-Way Top-Level Action Selector
-						ui.Column(c).Gap(6).Children(func() {
-							ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					// Card 2: Outbound Action & Scheduling
+					ruleEditorCompactCard(func() {
+						ui.Column(c).Gap(5).Children(func() {
+							ui.Text(c, cat.RuleActionLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
 							actions := []string{cat.RoutingProxy(), cat.RoutingDirect(), cat.RoutingBlock()}
 							segmentedControl(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actions)
 							switch a.ruleEditor.actionIndex {
@@ -1590,75 +1967,48 @@ func (a *app) renderRuleEditorDialog(c *ui.Context, p palette) {
 									}
 								})
 						}
-
-						if !a.ruleEditor.isFinal {
-							// Criteria Tabs (GeoData vs Domains & IPs)
-							segmentedControl(c.Key("rule-criteria-tabs"), p, &a.ruleEditor.tab, []string{
-								cat.RuleTabGeoData(),
-								cat.RuleTabCriteria(),
-							})
-
-							if a.ruleEditor.tab == 0 {
-								// GeoSite tags chip-input
-								a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags(), true)
-
-								// GeoIP tags chip-input
-								a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags(), true)
-							} else {
-								// Domain suffixes
-								labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
-
-								// Full domains
-								labeledTextArea(c, p, "rule-set-full-domains", "完整域名 (精确匹配)", &a.ruleEditor.fullDomainsInput, "每行一个完整域名，例如：api.example.com", 2, 3)
-
-								// IP-CIDRs
-								labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
-
-								// Keywords
-								labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
-							}
-						}
 					})
 
-				// Error display
-				if a.ruleEditor.errText != "" {
-					ui.Row(c.Key("rule-editor-error-row")).
-						AlignItems(ui.Center).Justify(ui.SpaceBetween).
-						Padding(6, 10, 6, 10).Radius(6).
-						Background(p.redBg).
-						Children(func() {
-							ui.Text(c, a.ruleEditor.errText).FontSize(12).TextColor(p.red).Grow(1)
-							btnCopy := ui.ButtonBase(c.Key("btn-copy-rule-error")).
-								Label("btn-copy-rule-error").
-								Padding(2, 6, 2, 6).Radius(4).
-								Background(p.card).Border(1, p.borderSubtle).
-								Tooltip(cat.ActionCopyError()).
-								Children(func() {
-									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
-								})
-							if btnCopy.Clicked() {
-								a.writeClipboard(a.ruleEditor.errText, cat.ToastErrorCopied())
+					// Card 3: Matching Criteria
+					if !a.ruleEditor.isFinal {
+						ruleEditorCompactCard(func() {
+							if a.ruleEditor.tab == 0 {
+								a.renderChipsTagInput(c, p, "rule-set-geosite", cat.RuleGeoSiteLabel(), &a.ruleEditor.geosites, &a.ruleEditor.geositeQuery, cat.RuleGeoSiteHint(), a.availableGeoSiteTags(), true)
+								a.renderChipsTagInput(c, p, "rule-set-geoip", cat.RuleGeoIPLabel(), &a.ruleEditor.geoips, &a.ruleEditor.geoipQuery, cat.RuleGeoIPHint(), a.availableGeoIPTags(), true)
+							} else {
+								labeledTextArea(c, p, "rule-set-domains", cat.RuleDomainsLabel(), &a.ruleEditor.domainsInput, cat.RuleDomainsHint(), 2, 4)
+								labeledTextArea(c, p, "rule-set-full-domains", cat.RuleFullDomainsLabel(), &a.ruleEditor.fullDomainsInput, cat.RuleFullDomainsHint(), 2, 3)
+								labeledTextArea(c, p, "rule-set-cidrs", cat.RuleCIDRsLabel(), &a.ruleEditor.cidrsInput, cat.RuleCIDRsHint(), 2, 3)
+								labeledInput(c, p, "rule-set-keywords", cat.RuleKeywordsLabel(), &a.ruleEditor.keywordsInput, cat.RuleKeywordsHint())
 							}
 						})
-				}
-
-				// Action buttons
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Gap(8).Children(func() {
-					cancelBtn := ui.ButtonBase(c.Key("btn-cancel-rule-editor")).
-						PaddingX(14).PaddingY(6).Radius(6).
-						Background(p.card).
-						Children(func() {
-							ui.Text(c, cat.Cancel()).FontSize(12).TextColor(p.text)
-						})
-					if cancelBtn.Clicked() {
-						a.ruleEditor.open = false
-					}
-
-					saveBtn := primaryPillButton(c.Key("btn-save-rule-editor"), p, nil, cat.Confirm(), p.accent, false)
-					if saveBtn.Clicked() {
-						a.saveRuleEditor()
 					}
 				})
-			})
+
+			// Sticky footer
+			ui.Row(c).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
+				Padding(12, 20, 14, 20).
+				Background(p.drawerBg).
+				BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
+				Children(func() {
+					if a.ruleEditor.returnToDrawer && !a.ruleEditor.isNew {
+						if subtleActionChip(c.Key("rule-editor-back-to-details"), p, iconArrowLeft, cat.EditorBackToDetails(), false).Clicked() {
+							a.dismissRuleEditorDrawer(true)
+						}
+					} else {
+						ui.Box(c)
+					}
+
+					ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
+						if ui.Button(c.Key("btn-cancel-rule-editor"), cat.Cancel()).Clicked() {
+							a.dismissRuleEditorDrawer(false)
+						}
+						if primaryPillButton(c.Key("btn-save-rule-editor"), p, nil, cat.Confirm(), p.accent, false).Clicked() {
+							a.saveRuleEditor()
+						}
+					})
+				})
+		})
 	})
 }

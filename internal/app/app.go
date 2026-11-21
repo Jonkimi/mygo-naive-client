@@ -69,6 +69,7 @@ type ruleEditorForm struct {
 	open             bool
 	isNew            bool
 	isFinal          bool
+	returnToDrawer   bool
 	ruleID           string
 	name             string
 	desc             string
@@ -199,8 +200,9 @@ type app struct {
 	openNodeMenuID     string
 	openBatchMenu      bool
 
-	showRoutingDnsDetail  bool
-	showRoutingPoolDetail bool
+	routingSearch           string
+	openRoutingMoreMenu     bool
+	showRoutingStrategyHelp bool
 
 	insightsFilter           string
 	insightsSearch           string

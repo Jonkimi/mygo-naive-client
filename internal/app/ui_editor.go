@@ -818,12 +818,6 @@ func (a *app) renderALPNField(c *ui.Context, p palette, key string) {
 	)
 }
 
-func editorSectionCard(c *ui.Context, p palette, children func()) {
-	ui.Column(c).Gap(10).Padding(14).Radius(10).
-		Background(p.card).Border(1, p.borderSubtle).
-		Children(children)
-}
-
 func (a *app) renderEditorServerPortRow(c *ui.Context, p palette, keyPrefix, portPlaceholder string) {
 	cat := a.catalog()
 	ui.Grid(c.Key("editor-srv-port-"+keyPrefix)).ColumnTracks(ui.Fr(3), ui.Fr(1)).Gap(10).Children(func() {
