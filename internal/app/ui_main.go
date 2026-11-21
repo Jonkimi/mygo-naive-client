@@ -115,12 +115,23 @@ func (a *app) renderPlaceholderPage(c *ui.Context, p palette, title, desc string
 }
 
 func (a *app) applyThemeToContext(c *ui.Context) {
+	var t *ui.Theme
 	switch a.state.Appearance {
 	case appearanceDark:
-		c.SetTheme(ui.DarkTheme())
+		t = ui.DarkTheme()
 	case appearanceLight:
-		c.SetTheme(ui.LightTheme())
+		t = ui.LightTheme()
+	default:
+		if cur := c.Theme(); cur != nil {
+			cp := *cur
+			t = &cp
+		} else {
+			t = ui.LightTheme()
+		}
 	}
+	p := paletteFor(t)
+	p.applyToTheme(t)
+	c.SetTheme(t)
 }
 
 func (a *app) renderToolbar(c *ui.Context, p palette) {

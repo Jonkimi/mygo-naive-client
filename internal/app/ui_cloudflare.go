@@ -394,6 +394,7 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 						ui.TextInput(c.Key("input-warp-license"), &a.warpLicenseInput).
 							Label(cat.CloudflareWarpLicenseTitle()).
 							Placeholder(cat.CloudflareWarpLicensePlaceholder()).
+							Background(p.card).
 							Grow(1)
 
 						bindLabel := cat.CloudflareWarpLicenseBindBtn()

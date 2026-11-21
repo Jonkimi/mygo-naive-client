@@ -421,7 +421,8 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 				ui.Column(c.Key("settings-naive-adv-panel")).
 					Padding(12).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Gap(10).
 					Children(func() {
-						if labeledInput(c, p, "page-set-custom-bin", cat.CustomCorePathLabel(), &a.state.CustomNaiveBinaryPath, cat.CustomCorePathHint()).Changed() {
+						if labeledInput(c, p, "page-set-custom-bin", cat.CustomCorePathLabel(), &a.state.CustomNaiveBinaryPath, cat.CustomCorePathHint()).
+							Background(p.card).Border(1, p.borderSubtle).Changed() {
 							a.saveState()
 							a.syncBinaryPathAndVersion()
 						}
@@ -493,7 +494,8 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 				ui.Column(c.Key("settings-xray-adv-panel")).
 					Padding(12).Radius(8).Background(p.surface).Border(1, p.borderSubtle).Gap(10).
 					Children(func() {
-						if labeledInput(c, p, "page-set-custom-xray-bin", cat.CustomXrayPathLabel(), &a.state.CustomXrayBinaryPath, cat.CustomCorePathHint()).Changed() {
+						if labeledInput(c, p, "page-set-custom-xray-bin", cat.CustomXrayPathLabel(), &a.state.CustomXrayBinaryPath, cat.CustomCorePathHint()).
+							Background(p.card).Border(1, p.borderSubtle).Changed() {
 							a.saveState()
 							a.syncXrayBinaryPathAndVersion()
 						}

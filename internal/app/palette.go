@@ -20,6 +20,7 @@ type palette struct {
 
 	border       ui.Color
 	borderSubtle ui.Color
+	switchOff    ui.Color
 
 	text      ui.Color
 	textMuted ui.Color
@@ -49,6 +50,7 @@ var lightPalette = palette{
 	codeBg:       ui.RGB(242, 244, 248),
 	border:       ui.RGB(224, 228, 235),
 	borderSubtle: ui.RGB(235, 238, 244),
+	switchOff:    ui.RGB(209, 213, 219),
 	text:         ui.RGB(20, 24, 33),
 	textMuted:    ui.RGB(94, 102, 117),
 	textDim:      ui.RGB(145, 153, 168),
@@ -75,6 +77,7 @@ var darkPalette = palette{
 	codeBg:       ui.RGB(14, 16, 24),
 	border:       ui.RGB(38, 44, 62),
 	borderSubtle: ui.RGB(28, 33, 47),
+	switchOff:    ui.RGB(51, 65, 85),
 	text:         ui.RGB(241, 245, 249),
 	textMuted:    ui.RGB(148, 163, 184),
 	textDim:      ui.RGB(100, 116, 139),
@@ -94,6 +97,23 @@ func paletteFor(t *ui.Theme) palette {
 		return darkPalette
 	}
 	return lightPalette
+}
+
+// applyToTheme synchronizes MyGo's global ui.Theme tokens with this palette
+// so all built-in widgets (TextInput, TextArea, Switch, Combobox, etc.) share
+// the same visual language as custom palette-styled containers.
+func (p palette) applyToTheme(t *ui.Theme) {
+	t.Background = p.card
+	t.Surface = p.surface
+	t.SurfaceHover = p.cardHover
+	t.SurfacePressed = p.switchOff
+	t.Border = p.border
+	t.Text = p.text
+	t.TextMuted = p.textMuted
+	t.Accent = p.accent
+	t.Danger = p.red
+	t.Warning = p.amber
+	t.Success = p.green
 }
 
 func (p palette) navActiveColor() ui.Color {
