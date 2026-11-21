@@ -254,7 +254,7 @@ func (a *app) renderLogsFilterToolbar(c *ui.Context, p palette) {
 				}
 			}
 			ui.Row(c).Shrink(0).Children(func() {
-				if compactSegmentedOptions(c.Key("logs-level-filter-pills"), p, &lvlIdx, lvlOpts) {
+				if segmentedOptions(c.Key("logs-level-filter-pills"), p, &lvlIdx, lvlOpts) {
 					a.logsLevelFilter = levels[lvlIdx].key
 				}
 			})
@@ -281,7 +281,7 @@ func (a *app) renderGatewaySourceTrack(c *ui.Context, p palette) {
 		srcOpts[i] = segmentedOption{Label: item.label}
 	}
 	ui.Row(c).Shrink(0).Children(func() {
-		if compactSegmentedOptions(c.Key("logs-source-bar"), p, &srcIdx, srcOpts) {
+		if segmentedOptions(c.Key("logs-source-bar"), p, &srcIdx, srcOpts) {
 			a.logsSourceFilter = sources[srcIdx].key
 		}
 	})

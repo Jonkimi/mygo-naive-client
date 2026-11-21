@@ -455,7 +455,7 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 				// Line 2: Clean Metadata (Protocol · Engine · compact endpoint)
 				ui.Row(c).AlignItems(ui.Center).Gap(5).Padding(0, 0, 0, 15).MinWidth(0).Children(func() {
 					ui.Text(c, nodeCompactMeta(svc)).FontSize(12).FontWeight(500).TextColor(p.textMuted).NoWrap().Shrink(0)
-					if compactRemote := svc.CompactRemoteEndpoint(); compactRemote != "" {
+					if compactRemote := stripEndpointSchemes(svc.CompactRemoteEndpoint()); compactRemote != "" {
 						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap().Shrink(0)
 						ui.Text(c, compactRemote).Font("monospace").FontSize(11).TextColor(p.textDim).
 							SingleLine().Ellipsis("…").Shrink(1).MinWidth(0).
@@ -984,4 +984,17 @@ func isMissingCoreError(errText string) (missing bool, isXray bool) {
 		return true, false
 	}
 	return false, false
+}
+
+// stripEndpointSchemes removes "scheme://" from every hop of a compact endpoint
+// chain ("a://h:1 → b://h:2 → WARP"), leaving host:port. The protocol is
+// already shown in the metadata label next to it.
+func stripEndpointSchemes(ep string) string {
+	parts := strings.Split(ep, " → ")
+	for i, part := range parts {
+		if idx := strings.Index(part, "://"); idx >= 0 {
+			parts[i] = part[idx+3:]
+		}
+	}
+	return strings.Join(parts, " → ")
 }

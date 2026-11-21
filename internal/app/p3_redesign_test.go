@@ -241,19 +241,22 @@ func TestUnifiedSegmentedHierarchyAndInteraction(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 	tt.SetSize(900, 660)
 
-	// 1. Settings page: L1 header tab is taller than L2 form option, and L2 clicks mutate state
+	// 1. Settings page: Header tabs and General form controls share standard ~28px height,
+	//    and Light vs Dark themes preserve identical segment height (borderless).
 	a.activeTab = TabSettings
 	a.settingsSubTab = 0
+	a.state.Appearance = appearanceLight
 	tt.Frame()
 
 	cat := a.catalog()
-	l1SetRect, ok1 := tt.Find(cat.SettingsTabGeneral())
-	l2LangRect, ok2 := tt.Find(cat.LanguageSystem())
+	stdHeaderRect, ok1 := tt.Find(cat.SettingsTabGeneral())
+	stdFormRect, ok2 := tt.Find(cat.LanguageSystem())
 	if !ok1 || !ok2 {
-		t.Fatalf("expected Settings L1/L2 segments visible, ok1=%v ok2=%v", ok1, ok2)
+		t.Fatalf("expected Settings segmented controls visible, ok1=%v ok2=%v", ok1, ok2)
 	}
-	if l1SetRect.H <= l2LangRect.H {
-		t.Fatalf("expected L1 header segment taller than L2 form segment on Settings, L1.H=%.1f L2.H=%.1f", l1SetRect.H, l2LangRect.H)
+	if diff := math.Abs(float64(stdHeaderRect.H - stdFormRect.H)); diff > 1 {
+		t.Fatalf("expected Settings header and form segments to share standard height, diff=%.2f (header=%.1f form=%.1f)",
+			diff, stdHeaderRect.H, stdFormRect.H)
 	}
 
 	if err := tt.Click(cat.LanguageEn()); err != nil {
@@ -261,49 +264,69 @@ func TestUnifiedSegmentedHierarchyAndInteraction(t *testing.T) {
 	}
 	tt.Frame()
 	if a.state.Language != locales.LangEn {
-		t.Fatalf("expected Language = en after L2 click, got %q", a.state.Language)
+		t.Fatalf("expected Language = en after click, got %q", a.state.Language)
 	}
 	if err := tt.Click(a.catalog().AppearanceDark()); err != nil {
 		t.Fatalf("click AppearanceDark: %v", err)
 	}
 	tt.Frame()
 	if a.state.Appearance != appearanceDark {
-		t.Fatalf("expected Appearance = dark after L2 click, got %q", a.state.Appearance)
+		t.Fatalf("expected Appearance = dark after click, got %q", a.state.Appearance)
+	}
+	darkHeaderRect, okDark := tt.Find(a.catalog().SettingsTabGeneral())
+	if !okDark {
+		t.Fatalf("expected Settings header segment visible in dark theme")
+	}
+	if diff := math.Abs(float64(stdHeaderRect.H - darkHeaderRect.H)); diff > 1 {
+		t.Fatalf("expected light and dark segmented controls to have identical height, diff=%.2f (light=%.1f dark=%.1f)",
+			diff, stdHeaderRect.H, darkHeaderRect.H)
 	}
 	a.state.Language = locales.LangZhHans
 	a.state.Appearance = appearanceSystem
 	a.applyLanguagePolicy()
 	tt.Frame()
 
-	// 2. Cloudflare page: L1 header tab taller than L2 transport tile, and Tunnel L2 matches L2 height
+	// 2. Cloudflare page: Standard header segment is taller than compact embedded WARP/Tunnel tile segments,
+	//    and both compact tiles share identical height.
 	cat = a.catalog()
 	a.activeTab = TabCloudflare
 	a.cloudflareSubTab = 0
 	tt.Frame()
 
-	l1CfRect, okCf1 := tt.Find(cat.CloudflareSubtabWarp())
-	l2WarpRect, okCf2 := tt.Find(cat.CloudflareWarpTransportMasque())
+	stdCfRect, okCf1 := tt.Find(cat.CloudflareSubtabWarp())
+	cmpWarpRect, okCf2 := tt.Find(cat.CloudflareWarpTransportMasque())
 	if !okCf1 || !okCf2 {
-		t.Fatalf("expected Cloudflare L1/L2 segments visible, ok1=%v ok2=%v", okCf1, okCf2)
+		t.Fatalf("expected Cloudflare segmented controls visible, ok1=%v ok2=%v", okCf1, okCf2)
 	}
-	if l1CfRect.H <= l2WarpRect.H {
-		t.Fatalf("expected Cloudflare L1 header segment taller than L2 transport segment, L1.H=%.1f L2.H=%.1f", l1CfRect.H, l2WarpRect.H)
+	if stdCfRect.H <= cmpWarpRect.H {
+		t.Fatalf("expected Cloudflare standard header segment taller than compact tile segment, std=%.1f cmp=%.1f",
+			stdCfRect.H, cmpWarpRect.H)
 	}
 
 	a.cloudflareSubTab = 1
 	tt.Frame()
-	l2TunRect, okTun := tt.Find("QUIC")
+	cmpTunRect, okTun := tt.Find("QUIC")
 	if !okTun {
-		t.Fatalf("expected Tunnel L2 protocol segment 'QUIC'")
+		t.Fatalf("expected Tunnel compact protocol segment 'QUIC'")
 	}
-	if diff := math.Abs(float64(l2WarpRect.H - l2TunRect.H)); diff > 1 {
-		t.Fatalf("expected consistent L2 segment height across WARP and Tunnel tiles, diff=%.2f (warp=%.1f tunnel=%.1f)", diff, l2WarpRect.H, l2TunRect.H)
+	if diff := math.Abs(float64(cmpWarpRect.H - cmpTunRect.H)); diff > 1 {
+		t.Fatalf("expected consistent compact height across WARP and Tunnel tiles, diff=%.2f (warp=%.1f tunnel=%.1f)",
+			diff, cmpWarpRect.H, cmpTunRect.H)
 	}
 
-	// 3. Logs & Insights L2 filter controls update filter state and keep zero idle FramePending
+	// 3. Logs Layer 2 filter matches standard height and Insights compact filter keeps zero idle FramePending
 	a.activeTab = TabLogs
 	a.logsSubTab = 0
 	tt.Frame()
+	logsHeaderRect, okLH := tt.Find(cat.LogsTabGateway())
+	logsFilterRect, okLF := tt.Find("btn-logs-filter-error")
+	if !okLH || !okLF {
+		t.Fatalf("expected Logs segments visible, header=%v filter=%v", okLH, okLF)
+	}
+	if diff := math.Abs(float64(logsHeaderRect.H - logsFilterRect.H)); diff > 1 {
+		t.Fatalf("expected Logs Layer 2 filter segment to match standard height, diff=%.2f (header=%.1f filter=%.1f)",
+			diff, logsHeaderRect.H, logsFilterRect.H)
+	}
 	if err := tt.Click("btn-logs-filter-error"); err != nil {
 		t.Fatalf("click btn-logs-filter-error: %v", err)
 	}
@@ -314,7 +337,7 @@ func TestUnifiedSegmentedHierarchyAndInteraction(t *testing.T) {
 	tt.Advance(500 * time.Millisecond)
 	tt.Frame()
 	if tt.FramePending() {
-		t.Fatalf("expected zero idle frames on Logs after L2 filter click")
+		t.Fatalf("expected zero idle frames on Logs after filter click")
 	}
 
 	a.activeTab = TabInsights
@@ -329,6 +352,6 @@ func TestUnifiedSegmentedHierarchyAndInteraction(t *testing.T) {
 	tt.Advance(500 * time.Millisecond)
 	tt.Frame()
 	if tt.FramePending() {
-		t.Fatalf("expected zero idle frames on Insights after L2 filter click")
+		t.Fatalf("expected zero idle frames on Insights after filter click")
 	}
 }

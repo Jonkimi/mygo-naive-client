@@ -258,20 +258,20 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 	parts := ui.SegmentedBase(c, selected, len(opts))
 	track := parts.Track
 
-	trackPad, trackRadius := float32(3), float32(8)
-	segPadV, segPadH, segRadius := float32(4), float32(12), float32(6)
+	trackRadius := float32(8)
+	segPadV, segPadH, segRadius := float32(4), float32(10), float32(6)
 	fontSize := float32(12)
 	shBlur, shAlpha := float32(2), float32(0.08)
 	if compact {
-		trackPad, trackRadius = 2, 6
-		segPadV, segPadH, segRadius = 3, 9, 5
+		trackRadius = 6
+		segPadV, segPadH, segRadius = 2, 8, 4
 		fontSize = 11
 		shBlur, shAlpha = 1, 0.06
 	}
 
-	track.AlignItems(ui.Stretch).Padding(trackPad).Gap(2).Radius(trackRadius)
+	track.AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(trackRadius)
 	if p.dark {
-		track.Background(p.codeBg).Border(1, p.borderSubtle)
+		track.Background(p.codeBg)
 	} else {
 		track.Background(p.elevated)
 	}
@@ -300,23 +300,18 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 					fg = p.text
 				}
 				if p.dark {
-					seg.Background(p.elevated).Border(1, p.border).
+					seg.Background(p.elevated).
 						Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.28))
 				} else {
 					seg.Background(p.card).
 						Shadow(0, 1, shBlur, 0, ui.RGBA(0, 0, 0, shAlpha))
 				}
-			} else {
+			} else if seg.Hovered() {
+				fg = p.text
 				if p.dark {
-					seg.Border(1, ui.Transparent)
-				}
-				if seg.Hovered() {
-					fg = p.text
-					if p.dark {
-						seg.Background(p.card)
-					} else {
-						seg.Background(ui.RGBA(255, 255, 255, 0.55))
-					}
+					seg.Background(p.card)
+				} else {
+					seg.Background(ui.RGBA(255, 255, 255, 0.55))
 				}
 			}
 
@@ -328,17 +323,23 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 	return track.Changed()
 }
 
-// segmentedControl renders an L1 palette-driven segmented control for page headers and drawer top tabs.
+// segmentedControl renders a standard (~28px) palette-driven segmented control for page headers,
+// drawer top tabs, Settings general rows, and Logs filter bars.
 func segmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
 	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), false)
 }
 
-// compactSegmentedControl renders an L2 compact palette-driven segmented control for in-page form enums and filters.
+// segmentedOptions renders a standard (~28px) palette-driven segmented control with custom a11y labels and active colors.
+func segmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
+	return renderSegmentedTrack(c, p, selected, opts, false)
+}
+
+// compactSegmentedControl renders a compact (~24px) palette-driven segmented control for embedded card tiles and form enums.
 func compactSegmentedControl(c *ui.Context, p palette, selected *int, labels []string) bool {
 	return renderSegmentedTrack(c, p, selected, segmentedOptionsFromStrings(labels), true)
 }
 
-// compactSegmentedOptions renders an L2 compact palette-driven segmented control supporting custom a11y labels and active colors.
+// compactSegmentedOptions renders a compact (~24px) palette-driven segmented control supporting custom a11y labels and active colors.
 func compactSegmentedOptions(c *ui.Context, p palette, selected *int, opts []segmentedOption) bool {
 	return renderSegmentedTrack(c, p, selected, opts, true)
 }

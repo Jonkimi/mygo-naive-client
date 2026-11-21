@@ -1475,8 +1475,8 @@ func TestSidebarGatewayCardAndCompactCardUX(t *testing.T) {
 	}
 
 	// 3. Card displays compact remote host without inline credentials
-	if !tt.HasText("https://proxy.example.com:443") {
-		t.Fatalf("expected compact remote endpoint 'https://proxy.example.com:443' on card, got: %v", tt.Texts())
+	if !tt.HasText("proxy.example.com:443") {
+		t.Fatalf("expected compact remote endpoint 'proxy.example.com:443' on card, got: %v", tt.Texts())
 	}
 
 	a.state.GatewayPort = freeLocalPort(t)
