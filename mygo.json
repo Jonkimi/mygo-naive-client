@@ -1,6 +1,6 @@
 {
   "name": "Naive Client",
-  "identifier": "dev.egoist.naiveclient",
+  "identifier": "com.jonkimi.naiveclient",
   "slug": "naive-client",
   "version": "0.1.7",
   "out": "build",
