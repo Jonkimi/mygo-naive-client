@@ -222,6 +222,10 @@ type app struct {
 	logsPaused         bool
 	logsFrozenLines    []string
 
+	settingsSubTab         int
+	settingsExpandNaiveAdv bool
+	settingsExpandXrayAdv  bool
+
 	batchTesting bool
 	batchStage   string
 	batchCancel  context.CancelFunc

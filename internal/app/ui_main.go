@@ -805,6 +805,7 @@ func (a *app) renderServiceErrorStrip(c *ui.Context, p palette, svc config.Servi
 					Tooltip(cat.ActionGoToSettings())
 				if btnSettings.Clicked() {
 					a.activeTab = TabSettings
+					a.settingsSubTab = 2
 				}
 			}
 

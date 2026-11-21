@@ -143,8 +143,9 @@ exit 0
 		t.Fatalf("write mock xray: %v", err)
 	}
 
-	// Navigate to Settings
+	// Navigate to Settings -> Core Engines tab
 	a.activeTab = TabSettings
+	a.settingsSubTab = 2
 	tt.Frame()
 
 	// Set custom Xray path
@@ -231,11 +232,12 @@ func TestServiceCard_ProtocolAndEngineCapsule(t *testing.T) {
 func TestSettings_LanguageHotSwitch(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 
-	// Switch to English
+	// Switch to English on Core Engines tab
 	a.state.Language = "en"
 	a.saveState()
 	a.applyLanguagePolicy()
 	a.activeTab = TabSettings
+	a.settingsSubTab = 2
 	tt.Frame()
 
 	if _, ok := tt.Find("Core Engines & Geodata Manager"); !ok {

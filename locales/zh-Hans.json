@@ -921,5 +921,17 @@
   "insightsBuiltinAdsShort": "内置广告库",
   "insightsDrawerEyebrow": "拦截配置",
   "insightsRulesCountShort": "{count} 条规则",
-  "logsNodeSelectorLabel": "选择节点"
+  "logsNodeSelectorLabel": "选择节点",
+  "tailnetCopyAddress": "复制地址",
+  "tailnetAddressCopied": "已复制 Tailnet 地址",
+  "tailnetOnlinePeersSummary": "{online}/{total} 台在线",
+  "tailnetPeerOffline": "离线",
+  "settingsTabGeneral": "常规",
+  "settingsTabGateway": "网关与 DNS",
+  "settingsTabCore": "核心引擎",
+  "settingsTabTelemetry": "测速与更新",
+  "settingsCoreAdvancedToggle": "高级选项",
+  "settingsCoreBuiltInLabel": "内置",
+  "settingsCoreUpToDate": "已是最新",
+  "actionRetry": "重试"
 }

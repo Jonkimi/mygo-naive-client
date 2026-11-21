@@ -953,5 +953,23 @@
       "count": { "type": "int" }
     }
   },
-  "logsNodeSelectorLabel": "Select node"
+  "logsNodeSelectorLabel": "Select node",
+  "tailnetCopyAddress": "Copy Address",
+  "tailnetAddressCopied": "Copied Tailnet address",
+  "tailnetOnlinePeersSummary": "{online}/{total} peers online",
+  "@tailnetOnlinePeersSummary": {
+    "placeholders": {
+      "online": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "tailnetPeerOffline": "Offline",
+  "settingsTabGeneral": "General",
+  "settingsTabGateway": "Gateway & DoH",
+  "settingsTabCore": "Core Engines",
+  "settingsTabTelemetry": "Probe & Updates",
+  "settingsCoreAdvancedToggle": "Advanced",
+  "settingsCoreBuiltInLabel": "Built-in",
+  "settingsCoreUpToDate": "Up to date",
+  "actionRetry": "Retry"
 }

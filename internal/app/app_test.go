@@ -486,6 +486,10 @@ done
 		t.Fatalf("click settings: %v", err)
 	}
 	tt.Frame()
+	if err := tt.Click(a.catalog().SettingsTabCore()); err != nil {
+		t.Fatalf("click Core Engines tab: %v", err)
+	}
+	tt.Frame()
 
 	// Verify update button is shown and click it
 	if err := tt.Click("无感更新至 v154.0.8037.49-5"); err != nil {
@@ -549,17 +553,11 @@ func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 		t.Fatalf("expected activeTab = TabSettings, got %v", a.activeTab)
 	}
 
-	if _, ok := tt.Find("全局偏好设置"); !ok {
-		t.Fatalf("expected settings workbench header '全局偏好设置'")
+	if _, ok := tt.Find(a.catalog().SettingsTitle()); !ok {
+		t.Fatalf("expected settings workbench header %q", a.catalog().SettingsTitle())
 	}
 	if _, ok := tt.Find("外观与系统集成"); !ok {
 		t.Fatalf("expected section '外观与系统集成'")
-	}
-	if _, ok := tt.Find(a.catalog().TriCoreSectionTitle()); !ok {
-		t.Fatalf("expected section %q", a.catalog().TriCoreSectionTitle())
-	}
-	if _, ok := tt.Find(a.catalog().DownloadChannelTitle()); !ok {
-		t.Fatalf("expected section %q", a.catalog().DownloadChannelTitle())
 	}
 
 	if err := tt.Click("深色"); err != nil {
@@ -569,6 +567,22 @@ func TestSettingsPage_SidebarNavigationAndTheme(t *testing.T) {
 
 	if a.state.Appearance != appearanceDark {
 		t.Fatalf("expected state.Appearance = %q, got %q", appearanceDark, a.state.Appearance)
+	}
+
+	if err := tt.Click(a.catalog().SettingsTabCore()); err != nil {
+		t.Fatalf("click SettingsTabCore: %v", err)
+	}
+	tt.Frame()
+	if _, ok := tt.Find(a.catalog().TriCoreSectionTitle()); !ok {
+		t.Fatalf("expected section %q", a.catalog().TriCoreSectionTitle())
+	}
+
+	if err := tt.Click(a.catalog().SettingsTabTelemetry()); err != nil {
+		t.Fatalf("click SettingsTabTelemetry: %v", err)
+	}
+	tt.Frame()
+	if _, ok := tt.Find(a.catalog().DownloadChannelTitle()); !ok {
+		t.Fatalf("expected section %q", a.catalog().DownloadChannelTitle())
 	}
 }
 
@@ -864,11 +878,15 @@ func TestSettings_CoreEnginesAndGeodataProximity(t *testing.T) {
 	a.state.AutoUpdateXray = true
 	a.refreshGeoDataStatus()
 
-	// Navigate to settings workbench
+	// Navigate to settings workbench and select Core Engines tab
 	if err := tt.Click(a.catalog().NavSettings()); err != nil {
 		t.Fatalf("click settings: %v", err)
 	}
 	tt.SetSize(900, 1400)
+	tt.Frame()
+	if err := tt.Click(a.catalog().SettingsTabCore()); err != nil {
+		t.Fatalf("click SettingsTabCore: %v", err)
+	}
 	tt.Frame()
 
 	// Verify section title is present
@@ -882,7 +900,11 @@ func TestSettings_CoreEnginesAndGeodataProximity(t *testing.T) {
 		t.Fatalf("expected geodata version badge %q, got texts: %v", expectedGeodataBadge, tt.Texts())
 	}
 
-	// Toggle Naive auto check switch
+	// Expand NaiveProxy advanced options and toggle auto check / auto update switches
+	if err := tt.Click("btn-toggle-naive-adv"); err != nil {
+		t.Fatalf("click btn-toggle-naive-adv: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click(a.catalog().CoreAutoCheckLabel()); err != nil {
 		t.Fatalf("click CoreAutoCheckLabel: %v", err)
 	}
@@ -900,7 +922,11 @@ func TestSettings_CoreEnginesAndGeodataProximity(t *testing.T) {
 		t.Fatalf("expected AutoUpdateCore to be false after toggle, got %v", a.state.AutoUpdateCore)
 	}
 
-	// Toggle Xray auto check switch
+	// Expand Xray advanced options and toggle auto check / auto update switches
+	if err := tt.Click("btn-toggle-xray-adv"); err != nil {
+		t.Fatalf("click btn-toggle-xray-adv: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click(a.catalog().XrayAutoCheckLabel()); err != nil {
 		t.Fatalf("click XrayAutoCheckLabel: %v", err)
 	}
@@ -2372,9 +2398,13 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 		t.Fatalf("expected geodata not present initially")
 	}
 
-	// Navigate to settings and check status badge
+	// Navigate to settings and check status badge on Core Engines tab
 	if err := tt.Click(a.catalog().NavSettings()); err != nil {
 		t.Fatalf("click settings: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(a.catalog().SettingsTabCore()); err != nil {
+		t.Fatalf("click SettingsTabCore: %v", err)
 	}
 	tt.Frame()
 	if !tt.HasText(a.catalog().GeodataStatusMissing()) {
@@ -3170,6 +3200,7 @@ func TestLogsPage_GatewayAndNodeTabsFilteringAndActions(t *testing.T) {
 func TestApp_DnsSelectDropdownUI(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
+	a.settingsSubTab = 1
 
 	tt := ui.NewTester(func(c *ui.Context) {
 		a.renderSettingsPage(c, darkPalette)
@@ -3219,6 +3250,7 @@ func TestApp_DnsSelectDropdownUI(t *testing.T) {
 func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 	a, _, _ := newTestApp(t, nil)
 	a.initDNS()
+	a.settingsSubTab = 1
 
 	if !a.state.PreferIPv4 {
 		t.Fatalf("expected PreferIPv4 to default to true")
@@ -3228,12 +3260,10 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 		a.renderSettingsPage(c, darkPalette)
 	}, 800, 2000)
 
-	// Click Prefer IPv4 switch on the right side of the row to toggle it off
-	label, ok := tt.Find(a.catalog().DnsPreferIPv4Label())
-	if !ok {
-		t.Fatalf("no row %s", a.catalog().DnsPreferIPv4Label())
+	// Click Prefer IPv4 switch row to toggle it off
+	if err := tt.Click(a.catalog().DnsPreferIPv4Label()); err != nil {
+		t.Fatalf("click %s: %v", a.catalog().DnsPreferIPv4Label(), err)
 	}
-	tt.ClickAt(750, label.Y+label.H/2)
 	tt.Frame()
 
 	if a.state.PreferIPv4 {
@@ -3663,6 +3693,7 @@ func TestTunRequestDeviceFailure_PreStartAndSettingsRefresh(t *testing.T) {
 
 	// Verify Settings page displays the error status and error message when gateway is down
 	a.activeTab = TabSettings
+	a.settingsSubTab = 1
 	tt.SetSize(900, 1400)
 	tt.Frame()
 	if !tt.HasText(a.catalog().StatusError()) {

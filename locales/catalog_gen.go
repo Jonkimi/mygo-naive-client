@@ -7497,3 +7497,125 @@ func LogsNodeSelectorLabel() string { return In(i18n.Locale()).LogsNodeSelectorL
 func (msgs Messages) LogsNodeSelectorLabel() string {
 	return Catalog.Format(msgs.locale, "logsNodeSelectorLabel", nil)
 }
+
+// TailnetCopyAddress says "Copy Address"
+// in the language the app shows.
+func TailnetCopyAddress() string { return In(i18n.Locale()).TailnetCopyAddress() }
+
+// TailnetCopyAddress says "Copy Address"
+// in the language of msgs.
+func (msgs Messages) TailnetCopyAddress() string {
+	return Catalog.Format(msgs.locale, "tailnetCopyAddress", nil)
+}
+
+// TailnetAddressCopied says "Copied Tailnet address"
+// in the language the app shows.
+func TailnetAddressCopied() string { return In(i18n.Locale()).TailnetAddressCopied() }
+
+// TailnetAddressCopied says "Copied Tailnet address"
+// in the language of msgs.
+func (msgs Messages) TailnetAddressCopied() string {
+	return Catalog.Format(msgs.locale, "tailnetAddressCopied", nil)
+}
+
+// TailnetOnlinePeersSummary says "{online}/{total} peers online"
+// in the language the app shows.
+func TailnetOnlinePeersSummary(online int, total int) string {
+	return In(i18n.Locale()).TailnetOnlinePeersSummary(online, total)
+}
+
+// TailnetOnlinePeersSummary says "{online}/{total} peers online"
+// in the language of msgs.
+func (msgs Messages) TailnetOnlinePeersSummary(online int, total int) string {
+	return Catalog.Format(msgs.locale, "tailnetOnlinePeersSummary", map[string]any{"online": online, "total": total})
+}
+
+// TailnetPeerOffline says "Offline"
+// in the language the app shows.
+func TailnetPeerOffline() string { return In(i18n.Locale()).TailnetPeerOffline() }
+
+// TailnetPeerOffline says "Offline"
+// in the language of msgs.
+func (msgs Messages) TailnetPeerOffline() string {
+	return Catalog.Format(msgs.locale, "tailnetPeerOffline", nil)
+}
+
+// SettingsTabGeneral says "General"
+// in the language the app shows.
+func SettingsTabGeneral() string { return In(i18n.Locale()).SettingsTabGeneral() }
+
+// SettingsTabGeneral says "General"
+// in the language of msgs.
+func (msgs Messages) SettingsTabGeneral() string {
+	return Catalog.Format(msgs.locale, "settingsTabGeneral", nil)
+}
+
+// SettingsTabGateway says "Gateway & DoH"
+// in the language the app shows.
+func SettingsTabGateway() string { return In(i18n.Locale()).SettingsTabGateway() }
+
+// SettingsTabGateway says "Gateway & DoH"
+// in the language of msgs.
+func (msgs Messages) SettingsTabGateway() string {
+	return Catalog.Format(msgs.locale, "settingsTabGateway", nil)
+}
+
+// SettingsTabCore says "Core Engines"
+// in the language the app shows.
+func SettingsTabCore() string { return In(i18n.Locale()).SettingsTabCore() }
+
+// SettingsTabCore says "Core Engines"
+// in the language of msgs.
+func (msgs Messages) SettingsTabCore() string {
+	return Catalog.Format(msgs.locale, "settingsTabCore", nil)
+}
+
+// SettingsTabTelemetry says "Probe & Updates"
+// in the language the app shows.
+func SettingsTabTelemetry() string { return In(i18n.Locale()).SettingsTabTelemetry() }
+
+// SettingsTabTelemetry says "Probe & Updates"
+// in the language of msgs.
+func (msgs Messages) SettingsTabTelemetry() string {
+	return Catalog.Format(msgs.locale, "settingsTabTelemetry", nil)
+}
+
+// SettingsCoreAdvancedToggle says "Advanced"
+// in the language the app shows.
+func SettingsCoreAdvancedToggle() string { return In(i18n.Locale()).SettingsCoreAdvancedToggle() }
+
+// SettingsCoreAdvancedToggle says "Advanced"
+// in the language of msgs.
+func (msgs Messages) SettingsCoreAdvancedToggle() string {
+	return Catalog.Format(msgs.locale, "settingsCoreAdvancedToggle", nil)
+}
+
+// SettingsCoreBuiltInLabel says "Built-in"
+// in the language the app shows.
+func SettingsCoreBuiltInLabel() string { return In(i18n.Locale()).SettingsCoreBuiltInLabel() }
+
+// SettingsCoreBuiltInLabel says "Built-in"
+// in the language of msgs.
+func (msgs Messages) SettingsCoreBuiltInLabel() string {
+	return Catalog.Format(msgs.locale, "settingsCoreBuiltInLabel", nil)
+}
+
+// SettingsCoreUpToDate says "Up to date"
+// in the language the app shows.
+func SettingsCoreUpToDate() string { return In(i18n.Locale()).SettingsCoreUpToDate() }
+
+// SettingsCoreUpToDate says "Up to date"
+// in the language of msgs.
+func (msgs Messages) SettingsCoreUpToDate() string {
+	return Catalog.Format(msgs.locale, "settingsCoreUpToDate", nil)
+}
+
+// ActionRetry says "Retry"
+// in the language the app shows.
+func ActionRetry() string { return In(i18n.Locale()).ActionRetry() }
+
+// ActionRetry says "Retry"
+// in the language of msgs.
+func (msgs Messages) ActionRetry() string {
+	return Catalog.Format(msgs.locale, "actionRetry", nil)
+}

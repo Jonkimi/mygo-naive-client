@@ -539,6 +539,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				}
 				if gwBtn.Clicked() {
 					a.activeTab = TabSettings
+					a.settingsSubTab = 1
 				}
 
 				// Divider (separates Gateway and Tailnet)
@@ -634,6 +635,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			}
 			if row1.Clicked() {
 				a.activeTab = TabSettings
+				a.settingsSubTab = 1
 			}
 
 			// Divider: separates Gateway and Tailnet
