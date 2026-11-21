@@ -438,6 +438,22 @@ func TestP1Redesign_RuleEditorActionSegmentedLayout(t *testing.T) {
 			t.Fatalf("[%s] expected segments aligned on same row, got proxy=%+v direct=%+v block=%+v",
 				mode, proxyRect, directRect, blockRect)
 		}
+
+		if a.ruleEditor.actionIndex == 0 {
+			smartRect, okS := tt.Find(cat.RuleDispatchSmart())
+			orderRect, okO := tt.Find(cat.RuleDispatchOrder())
+			if !okS || !okO {
+				t.Fatalf("[%s] missing dispatch policy segment rects: smart=%v order=%v", mode, okS, okO)
+			}
+			if smartRect.H < 24 || orderRect.H < 24 {
+				t.Fatalf("[%s] expected comfortable dispatch segment height >= 24px, got smart=%.1f order=%.1f",
+					mode, smartRect.H, orderRect.H)
+			}
+			if math.Abs(float64(smartRect.Y-orderRect.Y)) > 0.5 {
+				t.Fatalf("[%s] expected dispatch segments aligned on same row, got smart=%+v order=%+v",
+					mode, smartRect, orderRect)
+			}
+		}
 	}
 
 	// 1. New Rule drawer
@@ -448,6 +464,14 @@ func TestP1Redesign_RuleEditorActionSegmentedLayout(t *testing.T) {
 	tt.Advance(500 * time.Millisecond)
 	tt.Frame()
 	assertActionSegments("new-rule")
+
+	if err := tt.Click(cat.RuleDispatchOrder()); err != nil {
+		t.Fatalf("click Ordered Failover segment: %v", err)
+	}
+	tt.Frame()
+	if a.ruleEditor.dispatchPolicy != routing.DispatchOrder {
+		t.Fatalf("expected dispatchPolicy=%q after clicking Ordered Failover, got %q", routing.DispatchOrder, a.ruleEditor.dispatchPolicy)
+	}
 
 	if err := tt.Click(cat.RoutingDirect()); err != nil {
 		t.Fatalf("click Direct segment: %v", err)

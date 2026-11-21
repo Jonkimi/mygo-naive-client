@@ -267,13 +267,13 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 	track := parts.Track
 
 	trackPad, trackGap, trackRadius := float32(2), float32(2), float32(8)
-	segPadV, segPadH, segRadius := float32(4), float32(10), float32(6)
+	segPadV, segPadH, segRadius := float32(5), float32(10), float32(6)
 	fontSize := float32(12)
 	shBlur, shAlpha := float32(2), float32(0.08)
 	switch style {
 	case segmentedCompact:
 		trackRadius = 6
-		segPadV, segPadH, segRadius = 2, 8, 4
+		segPadV, segPadH, segRadius = 3, 8, 4
 		fontSize = 11
 		shBlur, shAlpha = 1, 0.06
 	case segmentedFullWidth:

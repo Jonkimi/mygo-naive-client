@@ -961,22 +961,24 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 				if a.ruleEditor.dispatchPolicy == routing.DispatchOrder {
 					polIdx = 1
 				}
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
-					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Text(c, cat.RuleDispatchPolicyLabel()).FontSize(12).FontWeight(600).TextColor(p.text)
-						desc := cat.RuleDispatchSmartDesc()
-						if polIdx == 1 {
-							desc = cat.RuleDispatchOrderDesc()
-						}
-						ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+						ui.Text(c, cat.RuleDispatchPolicyLabel()).FontSize(12).FontWeight(600).TextColor(p.text).Grow(1).MinWidth(0)
+						ui.Row(c).Shrink(0).Children(func() {
+							if segmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
+								if polIdx == 1 {
+									a.ruleEditor.dispatchPolicy = routing.DispatchOrder
+								} else {
+									a.ruleEditor.dispatchPolicy = routing.DispatchSmart
+								}
+							}
+						})
 					})
-					if compactSegmentedControl(c.Key("rule-dispatch-policy"), p, &polIdx, []string{cat.RuleDispatchSmart(), cat.RuleDispatchOrder()}) {
-						if polIdx == 1 {
-							a.ruleEditor.dispatchPolicy = routing.DispatchOrder
-						} else {
-							a.ruleEditor.dispatchPolicy = routing.DispatchSmart
-						}
+					desc := cat.RuleDispatchSmartDesc()
+					if polIdx == 1 {
+						desc = cat.RuleDispatchOrderDesc()
 					}
+					ui.Text(c, desc).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
 				})
 
 				if len(a.ruleEditor.targets) > 0 {
