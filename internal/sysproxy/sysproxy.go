@@ -103,7 +103,17 @@ func (s *Sysproxy) Set(addr string, bypass []string) error {
 	}
 
 	if len(bypass) == 0 {
-		bypass = []string{"127.0.0.1", "localhost", "192.168.0.0/16", "10.0.0.0/8", "*.local"}
+		bypass = []string{
+			"127.0.0.1",
+			"127.0.0.0/8",
+			"::1",
+			"localhost",
+			"*.local",
+			"10.0.0.0/8",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"169.254.0.0/16",
+		}
 	}
 
 	// Write dirty recovery marker before touching system state
@@ -247,7 +257,20 @@ func (s *Sysproxy) setLinux(host, port string, bypass []string) error {
 	_, _ = s.exec("gsettings", "set", "org.gnome.system.proxy.https", "port", port)
 	_, _ = s.exec("gsettings", "set", "org.gnome.system.proxy.socks", "host", host)
 	_, _ = s.exec("gsettings", "set", "org.gnome.system.proxy.socks", "port", port)
+	if len(bypass) > 0 {
+		_, _ = s.exec("gsettings", "set", "org.gnome.system.proxy", "ignore-hosts", formatGSettingsStringArray(bypass))
+	}
 	return nil
+}
+
+func formatGSettingsStringArray(items []string) string {
+	quoted := make([]string, len(items))
+	for i, item := range items {
+		escaped := strings.ReplaceAll(item, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+		quoted[i] = "'" + escaped + "'"
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 func (s *Sysproxy) unsetLinux() error {
