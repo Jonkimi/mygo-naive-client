@@ -30,6 +30,7 @@ type blockerTransportRegistry struct {
 	fm                 *telemetry.FailureMonitor
 	tailnetSuffix      string
 	tailnetHostRecords map[string][]string
+	skipDomain         func(domain string) bool
 }
 
 func (r *blockerTransportRegistry) OptionTypes() []string {
@@ -55,6 +56,7 @@ func (r *blockerTransportRegistry) CreateDNSTransport(ctx context.Context, logge
 		underlying: tr,
 		blocker:    r.blocker,
 		fm:         r.fm,
+		skipDomain: r.skipDomain,
 	}, nil
 }
 
@@ -220,6 +222,7 @@ type blockerDNSTransport struct {
 	underlying adapter.DNSTransport
 	blocker    *blocker.Engine
 	fm         *telemetry.FailureMonitor
+	skipDomain func(domain string) bool
 }
 
 func (t *blockerDNSTransport) Type() string {
@@ -251,6 +254,9 @@ func (t *blockerDNSTransport) handleQuery(q mDNS.Question) (*mDNS.Msg, bool, int
 		return nil, false, 0
 	}
 	domain := strings.Trim(q.Name, ".")
+	if t.skipDomain != nil && t.skipDomain(domain) {
+		return nil, false, 0
+	}
 	blocked, rule, verdict := t.blocker.Evaluate(domain)
 	chain := formatDNSChain(t.underlying.Tag(), blocked, rule)
 	var logID int64

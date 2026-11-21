@@ -2118,3 +2118,204 @@ func TestEngine_VMessWebSocket_E2E(t *testing.T) {
 		t.Fatalf("unexpected wss body: %q", string(body2))
 	}
 }
+
+type infraSkipMockDNSTransport struct {
+	tag   string
+	calls int
+}
+
+func (m *infraSkipMockDNSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	return nil
+}
+func (m *infraSkipMockDNSTransport) Type() string           { return "mock" }
+func (m *infraSkipMockDNSTransport) Tag() string            { return m.tag }
+func (m *infraSkipMockDNSTransport) Dependencies() []string { return nil }
+func (m *infraSkipMockDNSTransport) Reset()                 {}
+
+func (m *infraSkipMockDNSTransport) Exchange(ctx context.Context, message *dns.Msg) (*dns.Msg, error) {
+	m.calls++
+	resp := new(dns.Msg)
+	resp.SetReply(message)
+	if len(message.Question) > 0 {
+		resp.Answer = append(resp.Answer, &dns.A{
+			Hdr: dns.RR_Header{
+				Name:   message.Question[0].Name,
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    60,
+			},
+			A: net.ParseIP("1.2.3.4"),
+		})
+	}
+	return resp, nil
+}
+
+func (m *infraSkipMockDNSTransport) ExchangeAsync(ctx context.Context, message *dns.Msg, callback func(response *dns.Msg, err error)) {
+	resp, err := m.Exchange(ctx, message)
+	callback(resp, err)
+}
+
+type infraSkipMockDNSRegistry struct {
+	transport adapter.DNSTransport
+}
+
+func (r *infraSkipMockDNSRegistry) OptionTypes() []string            { return nil }
+func (r *infraSkipMockDNSRegistry) CreateOptions(string) (any, bool) { return nil, false }
+func (r *infraSkipMockDNSRegistry) CreateDNSTransport(context.Context, log.ContextLogger, string, string, any) (adapter.DNSTransport, error) {
+	return r.transport, nil
+}
+
+func TestBlockerDNSTransport_SkipsNodeAndInfraDomains(t *testing.T) {
+	bl := blocker.NewEngine(blocker.Options{
+		Denylist: []string{"image.jonkimi.com", "blocked.example.com", "doh.infra.example"},
+	})
+
+	eng, err := New(EngineOptions{
+		ListenAddr:       "127.0.0.1:0",
+		Blocker:          bl,
+		FinalAction:      "direct",
+		BootstrapDomains: []string{"probe.infra.example"},
+		BootstrapDNS:     []string{"223.5.5.5:53"},
+		DomesticDoH:      []string{"https://doh.infra.example/dns-query"},
+		RemoteDoH:        []string{"https://remote-doh.infra.example/dns-query"},
+		NodeIPResolver:   func(string) []net.IP { return nil },
+		Services: []config.Service{
+			{
+				ID:         "svc-image",
+				Name:       "image",
+				Protocol:   config.ProtoVMess,
+				Engine:     config.EngineSingBox,
+				Server:     "image.jonkimi.com",
+				ServerPort: 443,
+				UUID:       "12345678-1234-1234-1234-123456789abc",
+			},
+			{
+				ID:          "svc-ext",
+				Name:        "ext",
+				Kind:        config.KindExternalProxy,
+				ExternalURI: "socks5://ext-node.example:1080",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New Engine failed: %v", err)
+	}
+	defer func() {
+		_ = eng.Close()
+	}()
+
+	mockUnderlying := &infraSkipMockDNSTransport{tag: "domestic-doh"}
+	reg := &blockerTransportRegistry{
+		underlying: &infraSkipMockDNSRegistry{transport: mockUnderlying},
+		blocker:    bl,
+		skipDomain: eng.IsInfrastructureDomain,
+	}
+	tr, err := reg.CreateDNSTransport(context.Background(), nil, "domestic-doh", "https", nil)
+	if err != nil {
+		t.Fatalf("CreateDNSTransport failed: %v", err)
+	}
+
+	querySync := func(qname string) *dns.Msg {
+		t.Helper()
+		req := new(dns.Msg)
+		req.SetQuestion(dns.Fqdn(qname), dns.TypeA)
+		resp, err := tr.Exchange(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Exchange(%s) failed: %v", qname, err)
+		}
+		return resp
+	}
+
+	// 1. Node server domains and DoH/bootstrap infrastructure domains must bypass blocker and Insights logging,
+	// even if present in the user denylist.
+	for _, infraDomain := range []string{
+		"image.jonkimi.com",
+		"IMAGE.JONKIMI.COM.",
+		"ext-node.example",
+		"doh.infra.example",
+		"remote-doh.infra.example",
+		"probe.infra.example",
+		"dns.google",
+	} {
+		beforeCalls := mockUnderlying.calls
+		resp := querySync(infraDomain)
+		if mockUnderlying.calls != beforeCalls+1 {
+			t.Fatalf("expected infra domain %q to reach underlying DNS transport, calls=%d->%d", infraDomain, beforeCalls, mockUnderlying.calls)
+		}
+		if len(resp.Answer) != 1 || resp.Answer[0].(*dns.A).A.String() != "1.2.3.4" {
+			t.Fatalf("expected infra domain %q to resolve via underlying transport, got %+v", infraDomain, resp.Answer)
+		}
+	}
+
+	// Verify ExchangeAsync also skips infra domain logging and blocking.
+	asyncDone := make(chan *dns.Msg, 1)
+	asyncReq := new(dns.Msg)
+	asyncReq.SetQuestion("image.jonkimi.com.", dns.TypeA)
+	tr.ExchangeAsync(context.Background(), asyncReq, func(resp *dns.Msg, err error) {
+		if err != nil {
+			t.Errorf("ExchangeAsync failed: %v", err)
+		}
+		asyncDone <- resp
+	})
+	select {
+	case resp := <-asyncDone:
+		if len(resp.Answer) != 1 || resp.Answer[0].(*dns.A).A.String() != "1.2.3.4" {
+			t.Fatalf("expected async infra query to resolve to 1.2.3.4, got %+v", resp.Answer)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for ExchangeAsync")
+	}
+
+	// 2. Dynamic UpdateNodes updates the skipped node server domains.
+	eng.UpdateNodes([]config.Service{
+		{
+			ID:       "svc-updated",
+			Protocol: config.ProtoNaive,
+			Proxies:  []string{"naive+https://user:pass@updated-node.jonkimi.com:443"},
+		},
+	}, nil, nil)
+	beforeCalls := mockUnderlying.calls
+	_ = querySync("updated-node.jonkimi.com")
+	if mockUnderlying.calls != beforeCalls+1 {
+		t.Fatalf("expected dynamically updated node domain to bypass blocker")
+	}
+
+	if entries := bl.Logger().GetEntries(50); len(entries) != 0 {
+		t.Fatalf("expected no Insights query log entries for infra domains, got %+v", entries)
+	}
+	if top := bl.Logger().GetTopAllowed(10); len(top) != 0 {
+		t.Fatalf("expected empty TopAllowed for infra domains, got %+v", top)
+	}
+
+	// 3. Normal user domains must still be logged and evaluated against blocker rules.
+	userResp := querySync("example.com")
+	if len(userResp.Answer) != 1 || userResp.Answer[0].(*dns.A).A.String() != "1.2.3.4" {
+		t.Fatalf("expected example.com to resolve to 1.2.3.4, got %+v", userResp.Answer)
+	}
+	blockedBefore := mockUnderlying.calls
+	blockedResp := querySync("blocked.example.com")
+	if mockUnderlying.calls != blockedBefore {
+		t.Fatalf("expected blocked.example.com not to hit underlying transport")
+	}
+	if len(blockedResp.Answer) != 1 || blockedResp.Answer[0].(*dns.A).A.String() != "0.0.0.0" {
+		t.Fatalf("expected blocked.example.com to return 0.0.0.0, got %+v", blockedResp.Answer)
+	}
+
+	entries := bl.Logger().GetEntries(50)
+	if len(entries) != 2 {
+		t.Fatalf("expected exactly 2 Insights log entries for user domains, got %d: %+v", len(entries), entries)
+	}
+	seenUser := map[string]blocker.Verdict{}
+	for _, e := range entries {
+		if e.Source != blocker.SourceDNS {
+			t.Errorf("expected SourceDNS, got %s", e.Source)
+		}
+		seenUser[e.Domain] = e.Verdict
+	}
+	if seenUser["example.com"] != blocker.VerdictAllowed {
+		t.Errorf("expected example.com to be VerdictAllowed, got %+v", seenUser)
+	}
+	if seenUser["blocked.example.com"] != blocker.VerdictBlocked {
+		t.Errorf("expected blocked.example.com to be VerdictBlocked, got %+v", seenUser)
+	}
+}

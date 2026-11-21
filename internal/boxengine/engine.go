@@ -166,7 +166,9 @@ type Engine struct {
 	failureMonitor    *telemetry.FailureMonitor
 	blocker           *blocker.Engine
 	connTracker       *BlockerConnectionTracker
-	onDemandStart             func(poolTag string)
+	staticInfraDomains map[string]bool
+	nodeInfraDomains   map[string]bool
+	onDemandStart      func(poolTag string)
 	onTelemetryUpdate         func()
 	onCloudflareAccountUpdate func(warp.Account)
 	cloudflareConfig          *warp.Config
@@ -251,6 +253,8 @@ func New(opts EngineOptions) (*Engine, error) {
 		tracker:                   opts.Tracker,
 		failureMonitor:            opts.FailureMonitor,
 		blocker:                   opts.Blocker,
+		staticInfraDomains:        collectStaticInfraDomains(opts),
+		nodeInfraDomains:          collectNodeInfraDomains(opts.Services),
 		onDemandStart:             opts.OnDemandStart,
 		onTelemetryUpdate:         opts.OnTelemetryUpdate,
 		onCloudflareAccountUpdate: opts.OnCloudflareAccountUpdate,
@@ -401,6 +405,7 @@ func createBoxContext(ctx context.Context, eng *Engine) context.Context {
 			fm:                 eng.failureMonitor,
 			tailnetSuffix:      eng.tailnetMagicDNSSuffix,
 			tailnetHostRecords: eng.tailnetHostRecords,
+			skipDomain:         eng.IsInfrastructureDomain,
 		}
 	}
 
@@ -506,12 +511,86 @@ func (e *Engine) UpdateNodes(services []config.Service, allocatedPorts map[strin
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.services = services
+	e.nodeInfraDomains = collectNodeInfraDomains(services)
 	if allocatedPorts != nil {
 		e.allocatedPorts = allocatedPorts
 	}
 	if activeIDs != nil {
 		e.activeIDs = activeIDs
 	}
+}
+
+// IsInfrastructureDomain reports whether domain is a configured proxy node server
+// or DNS/bootstrap infrastructure host whose DNS queries should bypass blocker rules and Insights logs.
+func (e *Engine) IsInfrastructureDomain(domain string) bool {
+	if e == nil {
+		return false
+	}
+	norm := tailnet.NormalizeHost(domain)
+	if norm == "" {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.staticInfraDomains[norm] || e.nodeInfraDomains[norm]
+}
+
+func extractInfraHost(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+		raw = u.Hostname()
+	} else if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	raw = tailnet.NormalizeHost(raw)
+	if raw == "" || net.ParseIP(raw) != nil {
+		return ""
+	}
+	return raw
+}
+
+func collectStaticInfraDomains(opts EngineOptions) map[string]bool {
+	set := make(map[string]bool)
+	sources := [][]string{
+		opts.BootstrapDomains,
+		opts.DomesticDoH,
+		opts.BootstrapDNS,
+		opts.RemoteDoH,
+		DefaultDomesticDoH,
+		DefaultBootstrapDNS,
+		DefaultRemoteDoH,
+	}
+	for _, list := range sources {
+		for _, raw := range list {
+			if host := extractInfraHost(raw); host != "" {
+				set[host] = true
+			}
+		}
+	}
+	return set
+}
+
+func collectNodeInfraDomains(services []config.Service) map[string]bool {
+	set := make(map[string]bool)
+	add := func(raw string) {
+		if host := extractInfraHost(raw); host != "" {
+			set[host] = true
+		}
+	}
+	for _, svc := range services {
+		add(svc.Server)
+		for _, proxyURI := range svc.Proxies {
+			add(proxyURI)
+		}
+		add(svc.ExternalURI)
+		if svc.WARPConfig != nil {
+			add(svc.WARPConfig.Endpoint)
+		}
+	}
+	return set
 }
 
 // GetCandidates implements NodeProvider.
