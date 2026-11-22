@@ -978,11 +978,11 @@ func (msgs Messages) NodeDrawerCircuit() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuit", nil)
 }
 
-// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s before half-open recovery probing"
+// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s; auto-recovery requires 3 healthy probes (ma…"
 // in the language the app shows.
 func NodeDrawerCircuitDesc() string { return In(i18n.Locale()).NodeDrawerCircuitDesc() }
 
-// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s before half-open recovery probing"
+// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s; auto-recovery requires 3 healthy probes (ma…"
 // in the language of msgs.
 func (msgs Messages) NodeDrawerCircuitDesc() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuitDesc", nil)

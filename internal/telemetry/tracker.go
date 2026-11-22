@@ -670,10 +670,21 @@ func (t *Tracker) clearNodeDomainErrorsLocked(nodeID string) {
 	}
 }
 
-// RecordProbe records an active probe RTT measurement for nodeID into EWMA
-// and counts the probe in the sliding window connectivity metrics.
+// RecordProbe records a manual/UI active probe RTT measurement for nodeID into EWMA
+// and immediately clears a tripped circuit breaker on a healthy measurement.
 // Probe measurements smaller than 1ms are ignored as local loopback artifacts.
 func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
+	t.recordProbe(nodeID, rtt, true)
+}
+
+// RecordAutoProbe records a background automatic probe RTT measurement for nodeID.
+// Unlike manual UI probes, automatic probes must meet circuitRecoverySuccessTarget (3)
+// consecutive healthy probes before clearing a tripped circuit breaker.
+func (t *Tracker) RecordAutoProbe(nodeID string, rtt time.Duration) {
+	t.recordProbe(nodeID, rtt, false)
+}
+
+func (t *Tracker) recordProbe(nodeID string, rtt time.Duration, manual bool) {
 	if rtt < time.Millisecond {
 		return
 	}
@@ -742,14 +753,29 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		st.washHistoricalFailures(idleWashFailuresCount)
 	}
 
-	hadFailures := st.ConsecutiveFailures > 0 || !st.circuitTrippedAt.IsZero()
+	wasTripped := !st.circuitTrippedAt.IsZero()
+	hadFailures := st.ConsecutiveFailures > 0
 	st.ConsecutiveFailures = 0
 	st.ConsecutiveSuccesses++
-	if st.clearCircuit() || hadFailures {
+
+	if manual {
+		if st.clearCircuit() || hadFailures || wasTripped {
+			cb = t.onHealthChange
+			notify = true
+			recovered = true
+		}
+	} else if wasTripped {
+		if st.ConsecutiveSuccesses >= circuitRecoverySuccessTarget && st.clearCircuit() {
+			cb = t.onHealthChange
+			notify = true
+			recovered = true
+		}
+	} else if hadFailures {
 		cb = t.onHealthChange
 		notify = true
 		recovered = true
 	}
+
 	t.mu.Unlock()
 	if notify {
 		t.notifyHealthChange(cb, nodeID, recovered)

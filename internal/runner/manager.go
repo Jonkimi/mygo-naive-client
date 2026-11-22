@@ -95,9 +95,10 @@ type Manager struct {
 	workDir        string
 	instances      map[string]*instance
 	onChange       func()
-	OnLog            func(id string)
-	OnProbeSuccess   func(id string, rtt time.Duration)
-	OnProbeFailure   func(id string, err error)
+	OnLog              func(id string)
+	OnProbeSuccess     func(id string, rtt time.Duration)
+	OnAutoProbeSuccess func(id string, rtt time.Duration)
+	OnProbeFailure     func(id string, err error)
 	OnServiceStarted func(svc config.Service)
 	ServiceDialer    ServiceDialerFunc
 	PreStartChecker  PreStartCheckerFunc
@@ -798,6 +799,16 @@ func (m *Manager) ClearRecoveredErrors(id string, clearSpeedIf func(string) bool
 // ProbeServiceCtx synchronously measures latency through the service's primary listen endpoint,
 // respecting the provided context for cancellation. The service must be in StateRunning.
 func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probeURL string) (time.Duration, error) {
+	return m.probeServiceCtx(ctx, svc, probeURL, false)
+}
+
+// ProbeServiceAutoCtx runs a background automatic latency probe and notifies OnAutoProbeSuccess
+// on completion so callers can distinguish automated health checks from manual UI triggers.
+func (m *Manager) ProbeServiceAutoCtx(ctx context.Context, svc config.Service, probeURL string) (time.Duration, error) {
+	return m.probeServiceCtx(ctx, svc, probeURL, true)
+}
+
+func (m *Manager) probeServiceCtx(ctx context.Context, svc config.Service, probeURL string, isAuto bool) (time.Duration, error) {
 	m.mu.Lock()
 	inst := m.ensureInstanceLocked(svc.ID)
 	if inst.status.State != StateRunning || inst.status.Probing {
@@ -854,9 +865,13 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 			inst.status.SpeedError = ""
 		}
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试成功: %d ms", max(1, rtt.Milliseconds())))
+		onSuccess := m.OnProbeSuccess
+		if isAuto && m.OnAutoProbeSuccess != nil {
+			onSuccess = m.OnAutoProbeSuccess
+		}
 		m.mu.Unlock()
-		if m.OnProbeSuccess != nil {
-			m.OnProbeSuccess(svc.ID, rtt)
+		if onSuccess != nil {
+			onSuccess(svc.ID, rtt)
 		}
 	}
 	m.onChange()

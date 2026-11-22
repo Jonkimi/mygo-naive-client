@@ -4149,18 +4149,27 @@ func TestNodeHealth_WarpConfigChangeResetsUnhealthyState(t *testing.T) {
 // Regression: when a node's circuit cooldown elapses into CircuitHalfOpen, expedited recovery
 // probing verifies the node and transitions it cleanly back to CircuitClosed & healthy.
 func TestNodeHealth_HalfOpenExpeditedProbeRecovery(t *testing.T) {
+	origGap := halfOpenProbeGap
+	halfOpenProbeGap = 10 * time.Millisecond
+	defer func() { halfOpenProbeGap = origGap }()
+
 	probeLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	defer probeLn.Close()
 
+	var hitMu sync.Mutex
+	var probeHits int
 	go func() {
 		for {
 			c, acceptErr := probeLn.Accept()
 			if acceptErr != nil {
 				return
 			}
+			hitMu.Lock()
+			probeHits++
+			hitMu.Unlock()
 			go func(conn net.Conn) {
 				defer conn.Close()
 				buf := make([]byte, 512)
@@ -4216,7 +4225,7 @@ func TestNodeHealth_HalfOpenExpeditedProbeRecovery(t *testing.T) {
 		t.Fatalf("expected HalfOpen node to remain unhealthy until probe verifies recovery")
 	}
 
-	// Expedited recovery probe verifies the node and closes the circuit
+	// Expedited automatic recovery probing runs 3 consecutive probes before closing the circuit
 	a.probeDegradedServicesSilent()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -4227,10 +4236,31 @@ func TestNodeHealth_HalfOpenExpeditedProbeRecovery(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 	}
 
+	hitMu.Lock()
+	hits := probeHits
+	hitMu.Unlock()
+	if hits != 3 {
+		t.Fatalf("expected HalfOpen automatic verification to execute 3 consecutive probes, got %d", hits)
+	}
+
 	sc := a.tracker.GetScore(svc.ID)
 	rt := a.mgr.StatusOf(svc.ID)
 	if sc.CircuitState != telemetry.CircuitClosed || sc.IsBroken || rt.ProbeError != "" || a.isNodeUnhealthy(svc, rt) {
 		t.Fatalf("expected HalfOpen expedited probe to recover node cleanly, got sc=%+v rt=%+v", sc, rt)
+	}
+
+	// Re-trip, advance to HalfOpen, and verify 1 manual UI probe (ProbeServiceCtx) recovers immediately
+	for i := 0; i < 3; i++ {
+		a.tracker.RecordProbeFailureReason(svc.ID, "second outage")
+	}
+	nowMu.Lock()
+	now = now.Add(61 * time.Second)
+	nowMu.Unlock()
+	if _, err := a.mgr.ProbeServiceCtx(context.Background(), svc, a.state.ProbeURL); err != nil {
+		t.Fatalf("manual ProbeServiceCtx failed: %v", err)
+	}
+	if scManual := a.tracker.GetScore(svc.ID); scManual.CircuitState != telemetry.CircuitClosed || a.isNodeUnhealthy(svc, a.mgr.StatusOf(svc.ID)) {
+		t.Fatalf("expected 1 manual UI probe to recover from HalfOpen immediately, got %+v", scManual)
 	}
 }
 

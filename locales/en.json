@@ -94,7 +94,7 @@
   "nodeDrawerSuccessRate": "Connection Success Rate",
   "nodeDrawerSuccessRateDesc": "Calculated from successful vs total proxy connections",
   "nodeDrawerCircuit": "Circuit Breaker Status",
-  "nodeDrawerCircuitDesc": "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s before half-open recovery probing",
+  "nodeDrawerCircuitDesc": "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s; auto-recovery requires 3 healthy probes (manual test takes 1)",
   "nodeDrawerCircuitNormal": "Healthy",
   "nodeDrawerCircuitTripped": "Tripped (+10000ms)",
   "nodeDrawerCircuitTrippedCooldown": "Tripped (+10000ms · {seconds}s)",

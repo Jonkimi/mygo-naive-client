@@ -889,3 +889,56 @@ func TestTracker_IsSiteFaultIsolatesNoDNSRecords(t *testing.T) {
 	}
 }
 
+// Regression: automatic background probes require 3 consecutive healthy probes to exit
+// Open/HalfOpen, while a single manual UI probe clears the circuit immediately.
+func TestTracker_AutoProbeRequiresThreeSuccessesWhileManualTakesOne(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	tr := NewTracker()
+	tr.SetNowFuncForTest(func() time.Time { return now })
+	tr.SetActiveRecoveryProbe(true)
+
+	node := "node-auto-vs-manual"
+	for i := 0; i < 3; i++ {
+		tr.RecordProbeFailureReason(node, "timeout")
+	}
+	now = now.Add(61 * time.Second)
+	if sc := tr.GetScore(node); sc.CircuitState != CircuitHalfOpen || !sc.IsBroken {
+		t.Fatalf("expected CircuitHalfOpen after 60s cooldown, got %+v", sc)
+	}
+
+	// 1st and 2nd automatic probes must NOT prematurely clear HalfOpen
+	tr.RecordAutoProbe(node, 40*time.Millisecond)
+	if sc1 := tr.GetScore(node); sc1.CircuitState != CircuitHalfOpen || !sc1.IsBroken {
+		t.Fatalf("expected 1st auto probe not to close circuit, got %+v", sc1)
+	}
+	tr.RecordAutoProbe(node, 40*time.Millisecond)
+	if sc2 := tr.GetScore(node); sc2.CircuitState != CircuitHalfOpen || !sc2.IsBroken {
+		t.Fatalf("expected 2nd auto probe not to close circuit, got %+v", sc2)
+	}
+
+	// 3rd consecutive automatic probe closes circuit cleanly
+	tr.RecordAutoProbe(node, 40*time.Millisecond)
+	if sc3 := tr.GetScore(node); sc3.CircuitState != CircuitClosed || sc3.IsBroken {
+		t.Fatalf("expected 3rd consecutive auto probe to close circuit, got %+v", sc3)
+	}
+
+	// Re-trip, advance to HalfOpen, succeed 1 auto probe then fail 1 -> immediately backs off to Open (120s)
+	for i := 0; i < 3; i++ {
+		tr.RecordProbeFailureReason(node, "timeout again")
+	}
+	now = now.Add(61 * time.Second)
+	tr.RecordAutoProbe(node, 40*time.Millisecond)
+	tr.RecordProbeFailureReason(node, "flaky drop")
+	scBackoff := tr.GetScore(node)
+	if scBackoff.CircuitState != CircuitOpen || scBackoff.CircuitCooldownRemaining != 120*time.Second {
+		t.Fatalf("expected failure during HalfOpen verification to re-trip with 120s backoff, got %+v", scBackoff)
+	}
+
+	// Advance 120s to HalfOpen, then 1 manual UI probe clears immediately
+	now = now.Add(120 * time.Second)
+	tr.RecordProbe(node, 35*time.Millisecond)
+	if scManual := tr.GetScore(node); scManual.CircuitState != CircuitClosed || scManual.IsBroken {
+		t.Fatalf("expected 1 manual UI probe to close circuit immediately, got %+v", scManual)
+	}
+}
+

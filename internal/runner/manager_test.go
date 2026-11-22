@@ -668,5 +668,61 @@ func TestManager_DownloadTestFailureDecoupledFromProbeFailure(t *testing.T) {
 	}
 }
 
+// Regression: ProbeServiceAutoCtx routes success to OnAutoProbeSuccess while ProbeServiceCtx
+// routes success to OnProbeSuccess so automatic and manual probe recovery rules stay distinct.
+func TestManager_ProbeServiceAutoCtxInvokesAutoCallback(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))
+			}(c)
+		}
+	}()
+
+	mgr := NewManager("", t.TempDir(), nil)
+	svc := config.Service{
+		ID:       "auto-cb-svc",
+		Name:     "Auto CB",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "127.0.0.1",
+	}
+	mgr.SetStatusForTest(svc.ID, Status{State: StateRunning})
+	mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", ln.Addr().String())
+	}
+
+	var manualCalls, autoCalls int
+	mgr.OnProbeSuccess = func(id string, rtt time.Duration) { manualCalls++ }
+	mgr.OnAutoProbeSuccess = func(id string, rtt time.Duration) { autoCalls++ }
+
+	probeURL := fmt.Sprintf("http://%s/generate_204", ln.Addr().String())
+	if _, err := mgr.ProbeServiceAutoCtx(context.Background(), svc, probeURL); err != nil {
+		t.Fatalf("ProbeServiceAutoCtx failed: %v", err)
+	}
+	if autoCalls != 1 || manualCalls != 0 {
+		t.Fatalf("expected autoCalls=1 manualCalls=0, got auto=%d manual=%d", autoCalls, manualCalls)
+	}
+
+	if _, err := mgr.ProbeServiceCtx(context.Background(), svc, probeURL); err != nil {
+		t.Fatalf("ProbeServiceCtx failed: %v", err)
+	}
+	if autoCalls != 1 || manualCalls != 1 {
+		t.Fatalf("expected autoCalls=1 manualCalls=1, got auto=%d manual=%d", autoCalls, manualCalls)
+	}
+}
+
 
 

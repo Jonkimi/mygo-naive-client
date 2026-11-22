@@ -94,7 +94,7 @@
   "nodeDrawerSuccessRate": "连接成功率",
   "nodeDrawerSuccessRateDesc": "基于代理实际连接成功与失败次数统计的成功率",
   "nodeDrawerCircuit": "熔断与健康状态",
-  "nodeDrawerCircuitDesc": "连续失败达 3 次触发 60 秒熔断保护，追加 10 秒劣质惩罚并在冷却后进入半开试探",
+  "nodeDrawerCircuitDesc": "连续失败达 3 次触发 60 秒熔断保护，追加 10 秒劣质惩罚；冷却后需连续 3 次自动探活正常恢复（手动测延迟 1 次即可恢复）",
   "nodeDrawerCircuitNormal": "正常",
   "nodeDrawerCircuitTripped": "已熔断 (+10000ms)",
   "nodeDrawerCircuitTrippedCooldown": "已熔断 (+10000ms · 剩余 {seconds}s)",

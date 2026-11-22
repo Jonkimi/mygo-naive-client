@@ -181,6 +181,7 @@ type app struct {
 	telemetryPending       bool
 	recoveryProbeMu        sync.Mutex
 	lastRecoveryProbeAt    map[string]time.Time
+	halfOpenProbing        map[string]bool
 	cooldownTimers         map[string]*time.Timer
 
 	activeTab              TabID
@@ -592,6 +593,11 @@ func (a *app) initSubsystems() {
 			a.tracker.RecordProbe(id, rtt)
 		}
 	}
+	a.mgr.OnAutoProbeSuccess = func(id string, rtt time.Duration) {
+		if a.tracker != nil {
+			a.tracker.RecordAutoProbe(id, rtt)
+		}
+	}
 	a.mgr.OnProbeFailure = func(id string, err error) {
 		if a.tracker != nil {
 			reason := ""
@@ -826,6 +832,10 @@ func (a *app) probeAllRunningServicesSilent() {
 	a.probeServicesListSilent(running)
 }
 
+var halfOpenProbeGap = 300 * time.Millisecond
+
+const halfOpenProbeAttempts = 3
+
 // probeDegradedServicesSilent runs expedited silent verification probes for nodes in Half-Open
 // recovery, nodes with nascent probe/dial failures, or WARP nodes with tunnel errors.
 func (a *app) probeDegradedServicesSilent() {
@@ -834,25 +844,35 @@ func (a *app) probeDegradedServicesSilent() {
 	}
 	now := time.Now()
 	var targets []config.Service
+	var halfOpenTargets []config.Service
 
 	a.recoveryProbeMu.Lock()
 	if a.lastRecoveryProbeAt == nil {
 		a.lastRecoveryProbeAt = make(map[string]time.Time)
+	}
+	if a.halfOpenProbing == nil {
+		a.halfOpenProbing = make(map[string]bool)
 	}
 	for _, svc := range a.snapshotServices() {
 		rt := a.mgr.StatusOf(svc.ID)
 		if rt.State != runner.StateRunning || rt.Probing {
 			continue
 		}
+		sc := a.tracker.GetScore(svc.ID)
+		if sc.CircuitState == telemetry.CircuitHalfOpen {
+			if !a.halfOpenProbing[svc.ID] {
+				a.halfOpenProbing[svc.ID] = true
+				a.lastRecoveryProbeAt[svc.ID] = now
+				halfOpenTargets = append(halfOpenTargets, svc)
+			}
+			continue
+		}
 		if lastAt, ok := a.lastRecoveryProbeAt[svc.ID]; ok && now.Sub(lastAt) < 20*time.Second {
 			continue
 		}
-		sc := a.tracker.GetScore(svc.ID)
 		isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
 		shouldProbe := false
 		switch {
-		case sc.CircuitState == telemetry.CircuitHalfOpen:
-			shouldProbe = true
 		case sc.CircuitState == telemetry.CircuitClosed && sc.ConsecutiveFailures > 0 && !sc.LastFailure.IsZero() && now.Sub(sc.LastFailure) >= 25*time.Second:
 			shouldProbe = true
 		case isWarpNode && isWarpTunnelError(rt.ProbeError):
@@ -870,11 +890,62 @@ func (a *app) probeDegradedServicesSilent() {
 	if len(targets) > 0 {
 		a.probeServicesListSilent(targets)
 	}
+	for _, svc := range halfOpenTargets {
+		a.probeHalfOpenService(svc)
+	}
+}
+
+func (a *app) probeHalfOpenService(svc config.Service) {
+	go func() {
+		defer func() {
+			a.recoveryProbeMu.Lock()
+			delete(a.halfOpenProbing, svc.ID)
+			a.recoveryProbeMu.Unlock()
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+
+		for i := 0; i < halfOpenProbeAttempts; i++ {
+			select {
+			case <-a.quitCh:
+				return
+			default:
+			}
+			if a.mgr == nil || a.tracker == nil {
+				return
+			}
+			if a.mgr.StatusOf(svc.ID).State != runner.StateRunning {
+				return
+			}
+			if a.tracker.GetScore(svc.ID).CircuitState != telemetry.CircuitHalfOpen {
+				return
+			}
+			if _, err := a.mgr.ProbeServiceAutoCtx(ctx, svc, a.probeURLForService(svc)); err != nil {
+				return
+			}
+			if a.tracker.GetScore(svc.ID).CircuitState != telemetry.CircuitHalfOpen {
+				return
+			}
+			if i+1 < halfOpenProbeAttempts && halfOpenProbeGap > 0 {
+				timer := time.NewTimer(halfOpenProbeGap)
+				select {
+				case <-a.quitCh:
+					timer.Stop()
+					return
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+		}
+	}()
 }
 
 func (a *app) probeServicesListSilent(targets []config.Service) {
 	go func() {
-		// Parent safety deadline exceeds ProbeServiceCtx's internal 10s timeout so timeouts
+		// Parent safety deadline exceeds ProbeServiceAutoCtx's internal 10s timeout so timeouts
 		// are always reported as probe failures rather than parent context cancellations.
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -884,7 +955,7 @@ func (a *app) probeServicesListSilent(targets []config.Service) {
 			wg.Add(1)
 			go func(s config.Service) {
 				defer wg.Done()
-				_, _ = a.mgr.ProbeServiceCtx(ctx, s, a.probeURLForService(s))
+				_, _ = a.mgr.ProbeServiceAutoCtx(ctx, s, a.probeURLForService(s))
 			}(svc)
 		}
 		wg.Wait()
