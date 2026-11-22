@@ -603,6 +603,8 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 		svc.Password = pass
 		svc.SNI = q.Get("sni")
 		svc.CongestionController = "bbr"
+		svc.UpMbps = parseQueryMbps(q, "up_mbps", "upmbps")
+		svc.DownMbps = parseQueryMbps(q, "down_mbps", "downmbps")
 		return svc, nil
 
 	case "tuic":
@@ -705,6 +707,20 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 	default:
 		return Service{}, fmt.Errorf("不支持的链接协议 %q，仅支持 https://user:pass@example.com、naive+https://user:pass@example.com 或完整的 config.json", u.Scheme)
 	}
+}
+
+func parseQueryMbps(q url.Values, keys ...string) int {
+	for _, k := range keys {
+		raw := strings.TrimSpace(q.Get(k))
+		if raw == "" {
+			continue
+		}
+		raw = strings.TrimSpace(strings.TrimSuffix(strings.ToLower(raw), "mbps"))
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func normalizeUserInfo(ui *url.Userinfo) *url.Userinfo {

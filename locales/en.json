@@ -426,6 +426,14 @@
   "ssMethodLabel": "Cipher Method",
   "vmessMethodLabel": "Encryption Method",
   "congestionCtlLabel": "Congestion Control",
+  "upMbpsLabel": "Upload Bandwidth (up_mbps)",
+  "downMbpsLabel": "Download Bandwidth (down_mbps)",
+  "invalidBandwidthMbps": "{field} must be a non-negative integer",
+  "@invalidBandwidthMbps": {
+    "placeholders": {
+      "field": { "type": "String" }
+    }
+  },
   "zeroRTTLabel": "0-RTT Handshake",
   "triCoreSectionTitle": "Core Engines & Geodata Manager",
   "coreSingBoxTitle": "Embedded Sing-Box Core (In-Process)",

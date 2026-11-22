@@ -103,6 +103,8 @@ type Service struct {
 	Plugin               string   `json:"plugin,omitempty"`      // Shadowsocks plugin
 	PluginOpts           string   `json:"pluginOpts,omitempty"`
 	CongestionController string   `json:"congestionController,omitempty"` // "bbr"
+	UpMbps               int      `json:"upMbps,omitempty"`
+	DownMbps             int      `json:"downMbps,omitempty"`
 	UDPRelayMode         string   `json:"udpRelayMode,omitempty"`
 	ZeroRTTHandshake     bool     `json:"zeroRttHandshake,omitempty"`
 
@@ -612,6 +614,12 @@ func (s Service) Validate() error {
 		}
 		if s.ServerPort < 0 || s.ServerPort > 65535 {
 			return errors.New("无效的服务器端口 (serverPort)")
+		}
+		if s.UpMbps < 0 {
+			return errors.New("上行带宽不能为负数")
+		}
+		if s.DownMbps < 0 {
+			return errors.New("下行带宽不能为负数")
 		}
 		return nil
 	}

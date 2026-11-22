@@ -791,3 +791,103 @@ func TestEditor_FingerprintComboboxCandidates(t *testing.T) {
 		t.Fatalf("expected reopened Fingerprint='firefox', got %q", a.editor.fingerprint)
 	}
 }
+
+func TestEditor_Hysteria2BandwidthUpDownMbps(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	cat := a.catalog()
+
+	hy2Svc := config.Service{
+		ID:                   "hy2-bw-ui",
+		Name:                 "Hy2-BW",
+		Protocol:             config.ProtoHysteria2,
+		Engine:               config.EngineSingBox,
+		Server:               "hy2.example.com",
+		ServerPort:           443,
+		Password:             "secret-pass",
+		SNI:                  "hy2.example.com",
+		CongestionController: "bbr",
+	}
+	a.state.Services = []config.Service{hy2Svc}
+	a.openEditServiceDialog(hy2Svc)
+	tt.Frame()
+
+	// Scroll down if needed so both up_mbps and down_mbps inputs are visible in the drawer viewport.
+	a.editor.scroll.Y = 200
+	tt.Frame()
+
+	downRect, ok := tt.Find(cat.DownMbpsLabel())
+	if !ok {
+		t.Fatalf("expected DownMbps label %q in Hysteria2 editor, got texts: %v", cat.DownMbpsLabel(), tt.Texts())
+	}
+	upRect, ok := tt.Find(cat.UpMbpsLabel())
+	if !ok {
+		t.Fatalf("expected UpMbps label %q in Hysteria2 editor, got texts: %v", cat.UpMbpsLabel(), tt.Texts())
+	}
+	if downRect.X >= upRect.X {
+		t.Fatalf("expected DownMbps (%v) to appear to the left of UpMbps (%v)", downRect, upRect)
+	}
+	tt.ClickAt(downRect.X+10, downRect.Y+downRect.H+10)
+	tt.Frame()
+	tt.Type("200")
+	tt.Frame()
+
+	tt.ClickAt(upRect.X+10, upRect.Y+upRect.H+10)
+	tt.Frame()
+	tt.Type("50")
+	tt.Frame()
+
+	if a.editor.upMbps != "50" || a.editor.downMbps != "200" {
+		t.Fatalf("expected editor upMbps='50' downMbps='200', got upMbps=%q downMbps=%q", a.editor.upMbps, a.editor.downMbps)
+	}
+
+	// Switch to Preview tab and verify Sing-Box JSON includes up_mbps and down_mbps.
+	if err := tt.Click(cat.EditorTabPreview()); err != nil {
+		t.Fatalf("click Preview tab: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText(`"up_mbps": 50`) || !tt.HasText(`"down_mbps": 200`) {
+		t.Fatalf("expected up_mbps/down_mbps in Sing-Box JSON preview, got texts: %v", tt.Texts())
+	}
+
+	// Switch back to Basic tab and test invalid bandwidth rejects save.
+	if err := tt.Click(cat.EditorTabBasic()); err != nil {
+		t.Fatalf("click Basic tab: %v", err)
+	}
+	tt.Frame()
+	a.editor.upMbps = "abc"
+	if err := tt.Click(cat.EditorSaveEdit()); err != nil {
+		t.Fatalf("click Save Edit with invalid up_mbps: %v", err)
+	}
+	tt.Frame()
+	if !a.editor.open || a.editor.errText == "" {
+		t.Fatalf("expected invalid up_mbps to keep editor open with error banner")
+	}
+	if a.state.Services[0].UpMbps != 0 {
+		t.Fatalf("expected failed validation not to mutate saved UpMbps, got %d", a.state.Services[0].UpMbps)
+	}
+
+	// Fix up_mbps and save cleanly.
+	a.editor.upMbps = "50"
+	sigBefore := a.gatewayConfigSignature()
+	if err := tt.Click(cat.EditorSaveEdit()); err != nil {
+		t.Fatalf("click Save Edit: %v", err)
+	}
+	tt.Frame()
+	if a.editor.open {
+		t.Fatalf("expected valid edit to close editor, errText=%q", a.editor.errText)
+	}
+	saved := a.state.Services[0]
+	if saved.UpMbps != 50 || saved.DownMbps != 200 {
+		t.Fatalf("expected saved UpMbps=50 DownMbps=200, got UpMbps=%d DownMbps=%d", saved.UpMbps, saved.DownMbps)
+	}
+	if a.gatewayConfigSignature() == sigBefore {
+		t.Fatalf("expected changing up_mbps/down_mbps to change gatewayConfigSignature")
+	}
+
+	// Re-open saved node and verify values populate back into editor fields.
+	a.openEditServiceDialog(saved)
+	tt.Frame()
+	if a.editor.upMbps != "50" || a.editor.downMbps != "200" {
+		t.Fatalf("expected reopened editor upMbps='50' downMbps='200', got upMbps=%q downMbps=%q", a.editor.upMbps, a.editor.downMbps)
+	}
+}

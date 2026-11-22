@@ -1,7 +1,10 @@
 package boxengine
 
 import (
+	"encoding/json"
 	"testing"
+
+	"github.com/sagernet/sing-box/option"
 
 	"naive-client/internal/config"
 )
@@ -369,5 +372,51 @@ func TestBuildNativeOutbound_VMessVariants(t *testing.T) {
 	plainAuto.Method = "auto"
 	if got := buildNativeOutbound(plainAuto)["security"]; got != "auto" {
 		t.Errorf("expected auto without TLS to stay 'auto', got %v", got)
+	}
+}
+
+func TestBuildNativeOutbound_Hysteria2Bandwidth(t *testing.T) {
+	svc := config.Service{
+		ID:         "hy2-bw",
+		Protocol:   config.ProtoHysteria2,
+		Engine:     config.EngineSingBox,
+		Server:     "hy2.example.com",
+		ServerPort: 443,
+		Password:   "secret-token",
+		SNI:        "hy2.example.com",
+		UpMbps:     100,
+		DownMbps:   300,
+	}
+
+	ob := buildNativeOutbound(svc)
+	if ob["type"] != "hysteria2" {
+		t.Fatalf("expected type=hysteria2, got %v", ob["type"])
+	}
+	if ob["up_mbps"] != 100 || ob["down_mbps"] != 300 {
+		t.Fatalf("expected up_mbps=100 down_mbps=300, got up_mbps=%v down_mbps=%v", ob["up_mbps"], ob["down_mbps"])
+	}
+
+	raw, err := json.Marshal(ob)
+	if err != nil {
+		t.Fatalf("marshal hysteria2 outbound: %v", err)
+	}
+	var parsed option.Hysteria2OutboundOptions
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal into sing-box Hysteria2OutboundOptions: %v", err)
+	}
+	if parsed.UpMbps != 100 || parsed.DownMbps != 300 {
+		t.Fatalf("expected parsed UpMbps=100 DownMbps=300, got UpMbps=%d DownMbps=%d", parsed.UpMbps, parsed.DownMbps)
+	}
+
+	// Zero values omit up_mbps and down_mbps so sing-box falls back to BBR.
+	noBW := svc
+	noBW.UpMbps = 0
+	noBW.DownMbps = 0
+	obNoBW := buildNativeOutbound(noBW)
+	if _, ok := obNoBW["up_mbps"]; ok {
+		t.Errorf("expected up_mbps to be omitted when 0, got %v", obNoBW["up_mbps"])
+	}
+	if _, ok := obNoBW["down_mbps"]; ok {
+		t.Errorf("expected down_mbps to be omitted when 0, got %v", obNoBW["down_mbps"])
 	}
 }

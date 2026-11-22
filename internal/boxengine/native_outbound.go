@@ -193,6 +193,12 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 				"enabled": true,
 			},
 		}
+		if svc.UpMbps > 0 {
+			ob["up_mbps"] = svc.UpMbps
+		}
+		if svc.DownMbps > 0 {
+			ob["down_mbps"] = svc.DownMbps
+		}
 		if svc.SNI != "" {
 			ob["tls"].(map[string]any)["server_name"] = svc.SNI
 		}

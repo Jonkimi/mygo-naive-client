@@ -3951,6 +3951,8 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		Plugin               string
 		PluginOpts           string
 		CongestionController string
+		UpMbps               int
+		DownMbps             int
 		UDPRelayMode         string
 		ZeroRTTHandshake     bool
 		ExtraJSON            string
@@ -4007,6 +4009,8 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 			Plugin:               s.Plugin,
 			PluginOpts:           s.PluginOpts,
 			CongestionController: s.CongestionController,
+			UpMbps:               s.UpMbps,
+			DownMbps:             s.DownMbps,
 			UDPRelayMode:         s.UDPRelayMode,
 			ZeroRTTHandshake:     s.ZeroRTTHandshake,
 			ExtraJSON:            s.ExtraJSON,

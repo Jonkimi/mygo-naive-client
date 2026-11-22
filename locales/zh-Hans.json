@@ -410,6 +410,14 @@
   "ssMethodLabel": "加密算法 (Method)",
   "vmessMethodLabel": "加密方式 (Security)",
   "congestionCtlLabel": "拥塞控制算法",
+  "upMbpsLabel": "上行带宽",
+  "downMbpsLabel": "下行带宽",
+  "invalidBandwidthMbps": "{field} 必须为非负整数",
+  "@invalidBandwidthMbps": {
+    "placeholders": {
+      "field": { "type": "String" }
+    }
+  },
   "zeroRTTLabel": "0-RTT 握手",
   "triCoreSectionTitle": "核心引擎与规则库管理",
   "coreSingBoxTitle": "内嵌 Sing-Box 主干 (In-Process Core)",

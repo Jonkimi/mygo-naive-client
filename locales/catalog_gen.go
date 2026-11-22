@@ -4094,6 +4094,36 @@ func (msgs Messages) CongestionCtlLabel() string {
 	return Catalog.Format(msgs.locale, "congestionCtlLabel", nil)
 }
 
+// UpMbpsLabel says "Upload Bandwidth (up_mbps)"
+// in the language the app shows.
+func UpMbpsLabel() string { return In(i18n.Locale()).UpMbpsLabel() }
+
+// UpMbpsLabel says "Upload Bandwidth (up_mbps)"
+// in the language of msgs.
+func (msgs Messages) UpMbpsLabel() string {
+	return Catalog.Format(msgs.locale, "upMbpsLabel", nil)
+}
+
+// DownMbpsLabel says "Download Bandwidth (down_mbps)"
+// in the language the app shows.
+func DownMbpsLabel() string { return In(i18n.Locale()).DownMbpsLabel() }
+
+// DownMbpsLabel says "Download Bandwidth (down_mbps)"
+// in the language of msgs.
+func (msgs Messages) DownMbpsLabel() string {
+	return Catalog.Format(msgs.locale, "downMbpsLabel", nil)
+}
+
+// InvalidBandwidthMbps says "{field} must be a non-negative integer"
+// in the language the app shows.
+func InvalidBandwidthMbps(field string) string { return In(i18n.Locale()).InvalidBandwidthMbps(field) }
+
+// InvalidBandwidthMbps says "{field} must be a non-negative integer"
+// in the language of msgs.
+func (msgs Messages) InvalidBandwidthMbps(field string) string {
+	return Catalog.Format(msgs.locale, "invalidBandwidthMbps", map[string]any{"field": field})
+}
+
 // ZeroRTTLabel says "0-RTT Handshake"
 // in the language the app shows.
 func ZeroRTTLabel() string { return In(i18n.Locale()).ZeroRTTLabel() }

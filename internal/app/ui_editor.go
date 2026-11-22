@@ -96,6 +96,8 @@ type editorForm struct {
 	method        string
 	vmessMethod   string
 	congestionCtl string
+	upMbps        string
+	downMbps      string
 	zeroRTT       bool
 
 	// External SOCKS5 / HTTP
@@ -256,6 +258,14 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 	if congestion == "" && (proto == config.ProtoHysteria2 || proto == config.ProtoTUIC) {
 		congestion = "bbr"
 	}
+	upMbps := ""
+	if svc.UpMbps > 0 {
+		upMbps = strconv.Itoa(svc.UpMbps)
+	}
+	downMbps := ""
+	if svc.DownMbps > 0 {
+		downMbps = strconv.Itoa(svc.DownMbps)
+	}
 	fingerprint := svc.Fingerprint
 	if isNew && fingerprint == "" && (proto == config.ProtoVLESS || (proto == config.ProtoVMess && vmessSecIdx == 0)) {
 		fingerprint = "chrome"
@@ -332,6 +342,8 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 		method:             method,
 		vmessMethod:        vmessMethod,
 		congestionCtl:      congestion,
+		upMbps:             upMbps,
+		downMbps:           downMbps,
 		zeroRTT:            svc.ZeroRTTHandshake,
 		externalURI:        svc.ExternalURI,
 		enableWARP:         svc.EnableWARP,
@@ -566,6 +578,18 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		}
 	}
 
+	var upMbps, downMbps int
+	if proto == config.ProtoHysteria2 {
+		cat := a.catalog()
+		var ok bool
+		if upMbps, ok = parseOptionalNonNegInt(a.editor.upMbps); !ok {
+			return config.Service{}, fmt.Errorf("%s", cat.InvalidBandwidthMbps(cat.UpMbpsLabel()))
+		}
+		if downMbps, ok = parseOptionalNonNegInt(a.editor.downMbps); !ok {
+			return config.Service{}, fmt.Errorf("%s", cat.InvalidBandwidthMbps(cat.DownMbpsLabel()))
+		}
+	}
+
 	svc := config.Service{
 		ID:                   a.editor.svcID,
 		Name:                 strings.TrimSpace(a.editor.name),
@@ -593,6 +617,8 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		ServiceName:          serviceName,
 		Method:               method,
 		CongestionController: strings.TrimSpace(a.editor.congestionCtl),
+		UpMbps:               upMbps,
+		DownMbps:             downMbps,
 		ZeroRTTHandshake:     a.editor.zeroRTT,
 		ExtraJSON:            strings.TrimSpace(a.editor.extraJSON),
 	}
@@ -608,6 +634,18 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		return svc, err
 	}
 	return svc, nil
+}
+
+func parseOptionalNonNegInt(raw string) (int, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, true
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 func splitMultiValues(raw string) []string {
@@ -1031,6 +1069,10 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 			ui.Grid(c.Key("editor-hy2-grid")).Columns(2).Gap(10).Children(func() {
 				labeledInput(c, p, "inp-hy2-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
 				labeledInput(c, p, "inp-hy2-cc", cat.CongestionCtlLabel(), &a.editor.congestionCtl, "bbr")
+			})
+			ui.Grid(c.Key("editor-hy2-bw-grid")).Columns(2).Gap(10).Children(func() {
+				labeledInput(c, p, "inp-hy2-down-mbps", cat.DownMbpsLabel(), &a.editor.downMbps, "Mbps")
+				labeledInput(c, p, "inp-hy2-up-mbps", cat.UpMbpsLabel(), &a.editor.upMbps, "Mbps")
 			})
 
 		case config.ProtoTUIC:

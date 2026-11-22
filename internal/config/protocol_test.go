@@ -453,3 +453,36 @@ func TestServiceIsNaiveHTTP2Sidecar(t *testing.T) {
 		})
 	}
 }
+
+func TestHysteria2BandwidthValidationAndImport(t *testing.T) {
+	hy2Svc, err := ParseImport("hysteria2://auth-token@hy2.example.com:443?sni=hy2.example.com&up_mbps=50&down_mbps=200#Hy2-BW", 1083)
+	if err != nil {
+		t.Fatalf("ParseImport Hysteria2 with up_mbps/down_mbps failed: %v", err)
+	}
+	if hy2Svc.UpMbps != 50 || hy2Svc.DownMbps != 200 {
+		t.Fatalf("expected UpMbps=50 DownMbps=200, got UpMbps=%d DownMbps=%d", hy2Svc.UpMbps, hy2Svc.DownMbps)
+	}
+	if err := hy2Svc.Validate(); err != nil {
+		t.Fatalf("expected valid hysteria2 service, got %v", err)
+	}
+
+	hy2Alt, err := ParseImport("hy2://auth-token@hy2.example.com:443?upmbps=30Mbps&downmbps=150Mbps#Hy2-Alt", 1084)
+	if err != nil {
+		t.Fatalf("ParseImport hy2 with upmbps/downmbps failed: %v", err)
+	}
+	if hy2Alt.UpMbps != 30 || hy2Alt.DownMbps != 150 {
+		t.Fatalf("expected UpMbps=30 DownMbps=150, got UpMbps=%d DownMbps=%d", hy2Alt.UpMbps, hy2Alt.DownMbps)
+	}
+
+	negUp := hy2Svc
+	negUp.UpMbps = -1
+	if err := negUp.Validate(); err == nil {
+		t.Fatalf("expected Validate() error for negative UpMbps")
+	}
+
+	negDown := hy2Svc
+	negDown.DownMbps = -10
+	if err := negDown.Validate(); err == nil {
+		t.Fatalf("expected Validate() error for negative DownMbps")
+	}
+}
