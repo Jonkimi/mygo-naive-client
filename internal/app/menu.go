@@ -10,50 +10,52 @@ func (a *app) installAppMenu() {
 	if a.headless {
 		return
 	}
+	if runtime.GOOS != "darwin" {
+		mygo.App.SetMenu(nil)
+		return
+	}
 	var top []*mygo.MenuItem
 
 	cat := a.catalog()
-	if runtime.GOOS == "darwin" {
-		top = append(top, &mygo.MenuItem{
-			Label: "NaiveClient",
-			Submenu: []*mygo.MenuItem{
-				{Role: mygo.MenuRole("about"), Label: cat.MenuAbout()},
-				{
-					Label: cat.CheckClientUpdates() + "…",
-					Click: func(*mygo.MenuItem, *mygo.Window) {
-						checkForClientUpdates()
-					},
-				},
-				mygo.Separator(),
-				{
-					Label:       cat.MenuPreferences(),
-					Accelerator: "CmdOrCtrl+,",
-					Click: func(*mygo.MenuItem, *mygo.Window) {
-						a.showMainWindow()
-						a.dispatchUI(func() {
-							a.activeTab = TabSettings
-						})
-					},
-				},
-				mygo.Separator(),
-				{Role: mygo.MenuRole("hide"), Label: cat.TrayHide()},
-				{Role: mygo.MenuRole("hideOthers")},
-				{Role: mygo.MenuRole("unhide")},
-				mygo.Separator(),
-				{
-					Label:       cat.TrayQuit(),
-					Accelerator: "CmdOrCtrl+Q",
-					Click: func(*mygo.MenuItem, *mygo.Window) {
-						a.quitting = true
-						if a.mgr != nil {
-							_ = a.mgr.StopAll()
-						}
-						mygo.App.Quit()
-					},
+	top = append(top, &mygo.MenuItem{
+		Label: "NaiveClient",
+		Submenu: []*mygo.MenuItem{
+			{Role: mygo.MenuRole("about"), Label: cat.MenuAbout()},
+			{
+				Label: cat.CheckClientUpdates() + "…",
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					checkForClientUpdates()
 				},
 			},
-		})
-	}
+			mygo.Separator(),
+			{
+				Label:       cat.MenuPreferences(),
+				Accelerator: "CmdOrCtrl+,",
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.showMainWindow()
+					a.dispatchUI(func() {
+						a.activeTab = TabSettings
+					})
+				},
+			},
+			mygo.Separator(),
+			{Role: mygo.MenuRole("hide"), Label: cat.TrayHide()},
+			{Role: mygo.MenuRole("hideOthers")},
+			{Role: mygo.MenuRole("unhide")},
+			mygo.Separator(),
+			{
+				Label:       cat.TrayQuit(),
+				Accelerator: "CmdOrCtrl+Q",
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.quitting = true
+					if a.mgr != nil {
+						_ = a.mgr.StopAll()
+					}
+					mygo.App.Quit()
+				},
+			},
+		},
+	})
 
 	top = append(top, &mygo.MenuItem{
 		Label: cat.NavNodes(),
