@@ -51,6 +51,12 @@ const (
 	dsCardGap  float32 = 8
 	dsInsetPad float32 = 10
 	dsInsetGap float32 = 8
+
+	// Read-only detail drawer rhythm (shared across node & rule detail drawers)
+	dsDetailBodyPadTop float32 = 14
+	dsDetailCardPad    float32 = 14
+	dsDetailCardGap    float32 = 10
+	dsDetailGroupGap   float32 = 8
 )
 
 // dsDrawerSpec configures a unified 460px right-edge slide-over drawer.
@@ -220,4 +226,88 @@ func dsSettingHeaderRow(c *ui.Context, p palette, key, title, desc string, contr
 			dsHintText(c, desc, p.textMuted)
 		}
 	})
+}
+
+// dsDetailBody renders the standardized scrollable body for read-only detail drawers.
+func dsDetailBody(c *ui.Context, p palette, key string, scroll *ui.ScrollState, children func()) ui.Element {
+	return dsDrawerBody(c, p, key, scroll, children).
+		Padding(dsDetailBodyPadTop, dsDrawerPadH, dsDrawerPadH, dsDrawerPadH).
+		Gap(dsDrawerBodyGap)
+}
+
+// dsDetailHeaderEyebrow renders the compact eyebrow status line ("Title · Status") in detail drawer headers.
+func dsDetailHeaderEyebrow(c *ui.Context, p palette, title, statusText string, statusCol ui.Color) {
+	ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+		ui.Text(c, title).FontSize(dsFontCaption).FontWeight(600).TextColor(p.textDim).NoWrap()
+		ui.Text(c, "·").FontSize(dsFontCaption).TextColor(p.textDim)
+		ui.Text(c, statusText).FontSize(dsFontCaption).FontWeight(600).TextColor(statusCol).NoWrap()
+	})
+}
+
+// dsDetailCard renders a light, well-spaced section card inside detail drawers.
+func dsDetailCard(c *ui.Context, p palette, children func()) {
+	ui.Column(c).Gap(dsDetailCardGap).Padding(dsDetailCardPad).Radius(dsRadiusLG).
+		Background(p.card).Border(1, p.borderSubtle).
+		Children(children)
+}
+
+// dsDetailSectionTitle renders a restrained card group heading in detail drawers.
+func dsDetailSectionTitle(c *ui.Context, p palette, text string) {
+	ui.Text(c, text).FontSize(dsFontCaption).FontWeight(600).TextColor(p.textDim)
+}
+
+// dsDetailSubTitle renders a subordinate sub-group heading inside a detail card.
+func dsDetailSubTitle(c *ui.Context, p palette, text string) {
+	ui.Text(c, text).FontSize(dsFontCaption).FontWeight(500).TextColor(p.textMuted)
+}
+
+// dsDetailKvGroup groups key-value rows inside a detail card with consistent vertical rhythm.
+func dsDetailKvGroup(c *ui.Context, children func()) {
+	ui.Column(c).Gap(dsDetailGroupGap).Children(children)
+}
+
+// dsDetailKvRow renders a two-column key-value metadata row inside detail drawers.
+func dsDetailKvRow(c *ui.Context, p palette, label, value string, mono, tabular bool, valColor ui.Color, tip string) {
+	ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(dsSpaceLG).Children(func() {
+		ui.Text(c, label).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap().Shrink(0)
+		v := ui.Text(c, value).FontSize(dsFontBody).TextColor(valColor).TextAlign(ui.End).
+			SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+		if mono {
+			v.Font("monospace").FontSize(dsFontCaption)
+		} else {
+			v.FontWeight(400)
+		}
+		if tabular {
+			v.FontFeatures("tnum")
+		}
+		if tip != "" {
+			v.Tooltip(tip)
+		}
+	})
+}
+
+// dsDetailMetricTile renders a compact telemetry metric cell inside detail drawers.
+func dsDetailMetricTile(c *ui.Context, p palette, label, value string, valColor ui.Color, compactVal bool, tip string) {
+	tile := ui.Column(c).Gap(dsSpaceXS).Padding(10, 12, 10, 12).Radius(dsRadiusMD).Background(p.surface)
+	if tip != "" {
+		tile.Tooltip(tip)
+	}
+	tile.Children(func() {
+		ui.Text(c, label).FontSize(dsFontCaption).TextColor(p.textDim).SingleLine().Ellipsis("…")
+		size := dsFontCardTitle
+		weight := 600
+		if compactVal {
+			size = dsFontBody
+			weight = 500
+		}
+		ui.Text(c, value).FontSize(size).FontWeight(weight).FontFeatures("tnum").TextColor(valColor).
+			SingleLine().Ellipsis("…")
+	})
+}
+
+// dsDetailInsetBlock renders a subtle code/URI preview inset block inside detail drawers.
+func dsDetailInsetBlock(c *ui.Context, p palette, gap float32, children func()) {
+	ui.Column(c).Gap(gap).Padding(10, 12, 10, 12).Radius(dsRadiusMD).
+		Background(p.codeBg).Border(1, p.borderSubtle).
+		Children(children)
 }

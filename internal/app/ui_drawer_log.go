@@ -110,7 +110,7 @@ func (a *app) renderLogDrawerHeader(
 		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
 		Children(func() {
 			// Left: eyebrow (LogDrawerTitle · LIVE · lines) + service dot & name
-			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
+			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					ui.Text(c, cat.LogDrawerTitle()).FontSize(11).FontWeight(600).TextColor(p.textDim).NoWrap()
 					ui.Text(c, "·").FontSize(11).TextColor(p.textDim)

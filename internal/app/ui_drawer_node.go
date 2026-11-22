@@ -48,12 +48,12 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 	}, func() {
 		a.renderNodeDrawerHeader(c, p, svc, rt, unhealthy)
 
-		dsDrawerBody(c, p, "node-drawer-scroll", nil, func() {
+		dsDetailBody(c, p, "node-drawer-scroll", nil, func() {
 			a.renderNodeDrawerDiagnosticBanner(c, p, svc, rt, unhealthy)
 			a.renderNodeDrawerTelemetryCard(c, p, svc, rt, unhealthy)
 			a.renderNodeDrawerParamsCard(c, p, svc, rt)
 			a.renderNodeDrawerConfigCard(c, p, svc)
-		}).Padding(14, 20, 20, 20).Gap(10)
+		})
 	})
 }
 
@@ -69,11 +69,7 @@ func (a *app) renderNodeDrawerHeader(c *ui.Context, p palette, svc config.Servic
 		Children(func() {
 			// Left: eyebrow + status dot & name + compact meta line
 			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, cat.NodeDrawerTitle()).FontSize(11).FontWeight(600).TextColor(p.textDim).NoWrap()
-					ui.Text(c, "·").FontSize(11).TextColor(p.textDim)
-					ui.Text(c, statusText).FontSize(11).FontWeight(600).TextColor(statusColor).NoWrap()
-				})
+				dsDetailHeaderEyebrow(c, p, cat.NodeDrawerTitle(), statusText, statusColor)
 
 				ui.Row(c).AlignItems(ui.Center).Gap(8).MinWidth(0).Children(func() {
 					renderServiceStatusDot(c, p, rt, unhealthy)
@@ -189,13 +185,11 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 	running := rt.State == runner.StateRunning
 	canTest := running
 
-	ui.Column(c).Gap(10).Padding(14).Radius(10).
-		Background(p.card).Border(1, p.borderSubtle).
-		Children(func() {
-			// Card Header: Section label + ? Help Popover + Immediate Ping/Speed actions
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, cat.NodeDrawerTelemetry()).FontSize(11).FontWeight(600).TextColor(p.textDim)
+	dsDetailCard(c, p, func() {
+		// Card Header: Section label + ? Help Popover + Immediate Ping/Speed actions
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				dsDetailSectionTitle(c, p, cat.NodeDrawerTelemetry())
 
 					helpBtn := ui.ButtonBase(c.Key("btn-drawer-telemetry-help")).
 						Label(cat.NodeDrawerMetricsHelpButton()).
@@ -306,10 +300,10 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 			}
 
 			ui.Grid(c.Key("drawer-telemetry-grid")).Columns(2).Gap(8).Children(func() {
-				drawerMetricTile(c, p, cat.NodeDrawerRealLatency(), ewmaText, ewmaColor, ewmaSub == "small", "")
-				drawerMetricTile(c, p, cat.NodeDrawerProbeLatency(), probeText, probeColor, rt.Latency <= 0 && !rt.Probing && rt.ProbeError == "" && running, probeTip)
-				drawerMetricTile(c, p, cat.NodeDrawerSuccessRate(), rateText, rateColor, rateText == cat.NodeDrawerAwaitingSample(), "")
-				drawerMetricTile(c, p, cat.NodeDrawerFinalScore(), scoreText, scoreColor, false, "")
+				dsDetailMetricTile(c, p, cat.NodeDrawerRealLatency(), ewmaText, ewmaColor, ewmaSub == "small", "")
+				dsDetailMetricTile(c, p, cat.NodeDrawerProbeLatency(), probeText, probeColor, rt.Latency <= 0 && !rt.Probing && rt.ProbeError == "" && running, probeTip)
+				dsDetailMetricTile(c, p, cat.NodeDrawerSuccessRate(), rateText, rateColor, rateText == cat.NodeDrawerAwaitingSample(), "")
+				dsDetailMetricTile(c, p, cat.NodeDrawerFinalScore(), scoreText, scoreColor, false, "")
 			})
 
 			if rt.ProbeError != "" {
@@ -395,151 +389,147 @@ func (a *app) renderNodeDrawerHelpPopover(c *ui.Context, anchor ui.Element, p pa
 
 func (a *app) renderNodeDrawerParamsCard(c *ui.Context, p palette, svc config.Service, rt runner.Status) {
 	cat := a.catalog()
-	ui.Column(c).Gap(10).Padding(14).Radius(10).
-		Background(p.card).Border(1, p.borderSubtle).
-		Children(func() {
-			ui.Text(c, cat.NodeDrawerNetwork()).FontSize(11).FontWeight(600).TextColor(p.textDim)
+	dsDetailCard(c, p, func() {
+		dsDetailSectionTitle(c, p, cat.NodeDrawerNetwork())
 
-			ui.Column(c).Gap(8).Children(func() {
-				// PID
-				pidText, pidColor := cat.NodeDrawerPIDNone(), p.textDim
-				if rt.State == runner.StateRunning {
-					if rt.PID > 0 {
-						pidText, pidColor = fmt.Sprintf("PID %d", rt.PID), p.text
-					} else if svc.EffectiveEngine() == config.EngineSingBox {
-						pidText, pidColor = cat.NodeDrawerPIDEmbedded(), p.textMuted
+		dsDetailKvGroup(c, func() {
+			// PID
+			pidText, pidColor := cat.NodeDrawerPIDNone(), p.textDim
+			if rt.State == runner.StateRunning {
+				if rt.PID > 0 {
+					pidText, pidColor = fmt.Sprintf("PID %d", rt.PID), p.text
+				} else if svc.EffectiveEngine() == config.EngineSingBox {
+					pidText, pidColor = cat.NodeDrawerPIDEmbedded(), p.textMuted
+				}
+			}
+			dsDetailKvRow(c, p, cat.NodeDrawerPID(), pidText, false, true, pidColor, "")
+
+			// Local Listen
+			listenSummary := cat.NodeDrawerLocalListenInProcess()
+			if svc.EffectiveEngine() == config.EngineSidecar {
+				listens := strings.Join(svc.Listens, ", ")
+				if listens == "" || svc.PrimaryListen() == "socks://127.0.0.1:0" {
+					if rt.State == runner.StateRunning && rt.PID > 0 {
+						listens = svc.PrimaryListen()
+					} else {
+						listens = "Auto Loopback (:0)"
 					}
 				}
-				drawerKvRow(c, p, cat.NodeDrawerPID(), pidText, false, true, pidColor, "")
+				listenSummary = listens
+			}
+			dsDetailKvRow(c, p, cat.NodeDrawerLocalListen(), listenSummary, svc.EffectiveEngine() == config.EngineSidecar, false, p.text, listenSummary)
 
-				// Local Listen
-				listenSummary := cat.NodeDrawerLocalListenInProcess()
-				if svc.EffectiveEngine() == config.EngineSidecar {
-					listens := strings.Join(svc.Listens, ", ")
-					if listens == "" || svc.PrimaryListen() == "socks://127.0.0.1:0" {
-						if rt.State == runner.StateRunning && rt.PID > 0 {
-							listens = svc.PrimaryListen()
-						} else {
-							listens = "Auto Loopback (:0)"
-						}
-					}
-					listenSummary = listens
-				}
-				drawerKvRow(c, p, cat.NodeDrawerLocalListen(), listenSummary, svc.EffectiveEngine() == config.EngineSidecar, false, p.text, listenSummary)
+			// Remote Endpoint
+			remote := svc.RedactedProxy()
+			if remote == "" {
+				remote = svc.CompactRemoteEndpoint()
+			}
+			if remote == "" {
+				remote = cat.NoRemoteConfigured()
+			}
+			dsDetailKvRow(c, p, cat.NodeDrawerRemoteEndpoint(), remote, true, false, p.textMuted, remote)
 
-				// Remote Endpoint
-				remote := svc.RedactedProxy()
-				if remote == "" {
-					remote = svc.CompactRemoteEndpoint()
-				}
-				if remote == "" {
-					remote = cat.NoRemoteConfigured()
-				}
-				drawerKvRow(c, p, cat.NodeDrawerRemoteEndpoint(), remote, true, false, p.textMuted, remote)
+			// AutoStart
+			autoText, autoColor := cat.NodeDrawerDisabled(), p.textDim
+			if svc.AutoStart {
+				autoText, autoColor = cat.NodeDrawerEnabled(), p.text
+			}
+			dsDetailKvRow(c, p, cat.NodeDrawerAutoStart(), autoText, false, false, autoColor, "")
 
-				// AutoStart
-				autoText, autoColor := cat.NodeDrawerDisabled(), p.textDim
-				if svc.AutoStart {
-					autoText, autoColor = cat.NodeDrawerEnabled(), p.text
-				}
-				drawerKvRow(c, p, cat.NodeDrawerAutoStart(), autoText, false, false, autoColor, "")
-
-				if svc.InsecureConcurrency > 1 {
-					drawerKvRow(c, p, cat.NodeDrawerConcurrency(), fmt.Sprintf("%dx", svc.InsecureConcurrency), false, true, p.text, "")
-				}
-				if svc.EnableWARP && svc.EffectiveProtocol() != config.ProtoWARP {
-					drawerKvRow(c, p, cat.NodeDrawerWarpChain(), a.warpTransportPillLabel(svc), false, false, p.text, "")
-				}
-				if rt.Restarts > 0 {
-					drawerKvRow(c, p, cat.NodeDrawerRestarts(), cat.RestartsPill(rt.Restarts), false, true, p.amber, "")
-				}
-				if len(svc.Tags) > 2 {
-					drawerKvRow(c, p, cat.TagsLabel(), strings.Join(svc.Tags, ", "), false, false, p.textMuted, "")
-				}
-			})
-
-			// Subtle ID metadata footer
-			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(6, 0, 0, 0).
-				BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
-				Children(func() {
-					ui.Text(c, "ID").FontSize(11).TextColor(p.textDim)
-					ui.Text(c, svc.ID).Font("monospace").FontSize(11).TextColor(p.textDim)
-				})
+			if svc.InsecureConcurrency > 1 {
+				dsDetailKvRow(c, p, cat.NodeDrawerConcurrency(), fmt.Sprintf("%dx", svc.InsecureConcurrency), false, true, p.text, "")
+			}
+			if svc.EnableWARP && svc.EffectiveProtocol() != config.ProtoWARP {
+				dsDetailKvRow(c, p, cat.NodeDrawerWarpChain(), a.warpTransportPillLabel(svc), false, false, p.text, "")
+			}
+			if rt.Restarts > 0 {
+				dsDetailKvRow(c, p, cat.NodeDrawerRestarts(), cat.RestartsPill(rt.Restarts), false, true, p.amber, "")
+			}
+			if len(svc.Tags) > 2 {
+				dsDetailKvRow(c, p, cat.TagsLabel(), strings.Join(svc.Tags, ", "), false, false, p.textMuted, "")
+			}
 		})
+
+		// Subtle ID metadata footer
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(6, 0, 0, 0).
+			BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
+			Children(func() {
+				ui.Text(c, "ID").FontSize(11).TextColor(p.textDim)
+				ui.Text(c, svc.ID).Font("monospace").FontSize(11).TextColor(p.textDim)
+			})
+	})
 }
 
 func (a *app) renderNodeDrawerConfigCard(c *ui.Context, p palette, svc config.Service) {
 	cat := a.catalog()
-	ui.Column(c).Gap(10).Padding(14).Radius(10).
-		Background(p.card).Border(1, p.borderSubtle).
-		Children(func() {
-			ui.Text(c, cat.NodeDrawerConfigPreview()).FontSize(11).FontWeight(600).TextColor(p.textDim)
+	dsDetailCard(c, p, func() {
+		dsDetailSectionTitle(c, p, cat.NodeDrawerConfigPreview())
 
-			shareURI := svc.ShareURI()
-			if shareURI != "" {
-				ui.Column(c).Gap(5).Padding(10, 12, 10, 12).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(500).TextColor(p.textMuted)
-						if compactSubtleActionChip(c.Key("drawer-preview-copy-share"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
-							a.writeClipboard(shareURI, cat.CopiedNaiveShareLink())
-						}
-					})
-					ui.Text(c, shareURI).Font("monospace").FontSize(11).TextColor(p.text).
-						SingleLine().Ellipsis("…").Tooltip(shareURI)
+		shareURI := svc.ShareURI()
+		if shareURI != "" {
+			dsDetailInsetBlock(c, p, 5, func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, cat.PreviewNaiveShareLink()).FontSize(11).FontWeight(500).TextColor(p.textMuted)
+					if compactSubtleActionChip(c.Key("drawer-preview-copy-share"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+						a.writeClipboard(shareURI, cat.CopiedNaiveShareLink())
+					}
 				})
-			}
+				ui.Text(c, shareURI).Font("monospace").FontSize(11).TextColor(p.text).
+					SingleLine().Ellipsis("…").Tooltip(shareURI)
+			})
+		}
 
-			if svc.EffectiveEngine() == config.EngineSidecar {
-				localURI := svc.V2rayNSocksURI()
-				ui.Column(c).Gap(5).Padding(10, 12, 10, 12).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, cat.PreviewLocalLink()).FontSize(11).FontWeight(500).TextColor(p.textMuted)
-						if compactSubtleActionChip(c.Key("drawer-preview-copy-local"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
-							a.writeClipboard(localURI, cat.CopiedLocalLink())
-						}
-					})
-					ui.Text(c, localURI).Font("monospace").FontSize(11).TextColor(p.accent).
-						SingleLine().Ellipsis("…").Tooltip(localURI)
+		if svc.EffectiveEngine() == config.EngineSidecar {
+			localURI := svc.V2rayNSocksURI()
+			dsDetailInsetBlock(c, p, 5, func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, cat.PreviewLocalLink()).FontSize(11).FontWeight(500).TextColor(p.textMuted)
+					if compactSubtleActionChip(c.Key("drawer-preview-copy-local"), p, iconCopy, cat.BtnCopy(), false).Clicked() {
+						a.writeClipboard(localURI, cat.CopiedLocalLink())
+					}
 				})
-			}
+				ui.Text(c, localURI).Font("monospace").FontSize(11).TextColor(p.accent).
+					SingleLine().Ellipsis("…").Tooltip(localURI)
+			})
+		}
 
-			// Collapsible Core Engine JSON Preview
-			jsonTitle, copyKey := nodeCoreJSONMeta(cat, svc)
-			col := ui.CollapsibleBase(c.Key("drawer-json-collapsible"), &a.nodeDrawerJSONOpen)
-			toggleLabel := cat.NodeDrawerExpandPreview()
-			chevIcon := iconChevronDown
-			if a.nodeDrawerJSONOpen {
-				toggleLabel = cat.NodeDrawerCollapsePreview()
-				chevIcon = iconChevronUp
-			}
-			col.Trigger.FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(6, 4, 6, 4).Radius(6).
-				Children(func() {
-					ui.Text(c, jsonTitle).FontSize(11).FontWeight(500).TextColor(p.textMuted).
-						SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
-					ui.Row(c).AlignItems(ui.Center).Gap(4).Shrink(0).Children(func() {
-						ui.Text(c, toggleLabel).FontSize(11).FontWeight(500).TextColor(p.accentText).NoWrap()
-						ui.Icon(c, chevIcon).Size(12, 12).TextColor(p.accentText)
-					})
+		// Collapsible Core Engine JSON Preview
+		jsonTitle, copyKey := nodeCoreJSONMeta(cat, svc)
+		col := ui.CollapsibleBase(c.Key("drawer-json-collapsible"), &a.nodeDrawerJSONOpen)
+		toggleLabel := cat.NodeDrawerExpandPreview()
+		chevIcon := iconChevronDown
+		if a.nodeDrawerJSONOpen {
+			toggleLabel = cat.NodeDrawerCollapsePreview()
+			chevIcon = iconChevronUp
+		}
+		col.Trigger.FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).
+			Padding(6, 4, 6, 4).Radius(6).
+			Children(func() {
+				ui.Text(c, jsonTitle).FontSize(11).FontWeight(500).TextColor(p.textMuted).
+					SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+				ui.Row(c).AlignItems(ui.Center).Gap(4).Shrink(0).Children(func() {
+					ui.Text(c, toggleLabel).FontSize(11).FontWeight(500).TextColor(p.accentText).NoWrap()
+					ui.Icon(c, chevIcon).Size(12, 12).TextColor(p.accentText)
 				})
-			if col.Trigger.Hovered() {
-				col.Trigger.Background(p.elevated)
-			}
-			if panel := col.Panel(func() {
-				rawJSON, toastMsg := buildNodeCoreConfigJSON(cat, svc)
-				ui.Column(c).Gap(6).Padding(11, 12, 11, 12).Radius(8).Background(p.codeBg).Border(1, p.borderSubtle).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-						ui.Text(c, "JSON").FontSize(11).FontWeight(500).TextColor(p.textDim)
-						if compactSubtleActionChip(c.Key(copyKey), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
-							a.writeClipboard(rawJSON, toastMsg)
-						}
-					})
-					ui.Text(c, rawJSON).Font("monospace").FontSize(11).TextColor(p.text).LineHeight(1.35)
+			})
+		if col.Trigger.Hovered() {
+			col.Trigger.Background(p.elevated)
+		}
+		if panel := col.Panel(func() {
+			rawJSON, toastMsg := buildNodeCoreConfigJSON(cat, svc)
+			dsDetailInsetBlock(c, p, 6, func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
+					ui.Text(c, "JSON").FontSize(11).FontWeight(500).TextColor(p.textDim)
+					if compactSubtleActionChip(c.Key(copyKey), p, iconCopy, cat.BtnCopyJSON(), false).Clicked() {
+						a.writeClipboard(rawJSON, toastMsg)
+					}
 				})
-			}); panel.Valid() {
-				panel.Padding(4, 0, 0, 0)
-			}
-		})
+				ui.Text(c, rawJSON).Font("monospace").FontSize(11).TextColor(p.text).LineHeight(1.35)
+			})
+		}); panel.Valid() {
+			panel.Padding(4, 0, 0, 0)
+		}
+	})
 }
 
 func runtimeStatusTextAndColor(cat locales.Messages, p palette, st runner.State, unhealthy bool) (string, ui.Color) {
@@ -567,43 +557,6 @@ func drawerInlineNeutralChip(c *ui.Context, p palette, label string) {
 func drawerInlineAccentChip(c *ui.Context, p palette, label string) {
 	ui.Row(c).AlignItems(ui.Center).Shrink(0).PaddingX(6).PaddingY(1).Radius(4).Background(p.accentBg).Children(func() {
 		ui.Text(c, label).FontSize(10).FontWeight(500).TextColor(p.accentText).NoWrap()
-	})
-}
-
-func drawerMetricTile(c *ui.Context, p palette, label, value string, valColor ui.Color, compactVal bool, tip string) {
-	tile := ui.Column(c).Gap(4).Padding(10, 12, 10, 12).Radius(8).Background(p.surface)
-	if tip != "" {
-		tile.Tooltip(tip)
-	}
-	tile.Children(func() {
-		ui.Text(c, label).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
-		size := float32(14)
-		weight := 600
-		if compactVal {
-			size = 12
-			weight = 500
-		}
-		ui.Text(c, value).FontSize(size).FontWeight(weight).FontFeatures("tnum").TextColor(valColor).
-			SingleLine().Ellipsis("…")
-	})
-}
-
-func drawerKvRow(c *ui.Context, p palette, label, value string, mono, tabular bool, valColor ui.Color, tip string) {
-	ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(p.textMuted).NoWrap().Shrink(0)
-		v := ui.Text(c, value).FontSize(12).TextColor(valColor).TextAlign(ui.End).
-			SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
-		if mono {
-			v.Font("monospace").FontSize(11)
-		} else {
-			v.FontWeight(400)
-		}
-		if tabular {
-			v.FontFeatures("tnum")
-		}
-		if tip != "" {
-			v.Tooltip(tip)
-		}
 	})
 }
 
