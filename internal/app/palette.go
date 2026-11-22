@@ -164,12 +164,24 @@ func actionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disable
 	})
 }
 
-func styledActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, fg, bg, hoverFg, hoverBg ui.Color, disabled bool) ui.Element {
+func styledActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, fg, bg, hoverFg, hoverBg ui.Color, disabled, compact bool) ui.Element {
 	if disabled {
 		fg = p.textDim.Alpha(0.6)
 	}
+	height := dsHeightRowAction
+	padX := dsSpaceMD
+	gap := float32(5)
+	iconSize := float32(13)
+	fontSize := dsFontBody
+	if compact {
+		height = dsHeightCompact
+		padX = 7
+		gap = 4
+		iconSize = 12
+		fontSize = dsFontCaption
+	}
 	btn := ui.ButtonBase(c).
-		Height(dsHeightRowAction).PaddingX(dsSpaceMD).Radius(dsRadiusSM).
+		Height(height).PaddingX(padX).Radius(dsRadiusSM).
 		Background(bg).
 		Disabled(disabled)
 	if !disabled && btn.Hovered() {
@@ -177,25 +189,29 @@ func styledActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, f
 		btn.Background(hoverBg)
 	}
 	return btn.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(gap).TextColor(fg).Children(func() {
 			if iconSVG != nil {
-				ui.Icon(c, iconSVG).Size(13, 13)
+				ui.Icon(c, iconSVG).Size(iconSize, iconSize)
 			}
-			ui.Text(c, label).FontSize(dsFontBody).FontWeight(500)
+			ui.Text(c, label).FontSize(fontSize).FontWeight(500)
 		})
 	})
 }
 
 func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
-	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.text, p.elevated, disabled)
+	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.text, p.elevated, disabled, false)
 }
 
-func activeDangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string) ui.Element {
-	return styledActionChip(c, p, iconSVG, label, p.red, p.redBg, p.red, p.red.Alpha(0.22), false)
+func compactSubtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
+	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.text, p.elevated, disabled, true)
+}
+
+func compactDangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string) ui.Element {
+	return styledActionChip(c, p, iconSVG, label, p.red, p.redBg, p.red, p.red.Alpha(0.22), false, true)
 }
 
 func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
-	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.red, p.redBg, disabled)
+	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.red, p.redBg, disabled, false)
 }
 
 func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, bg ui.Color, disabled bool) ui.Element {
