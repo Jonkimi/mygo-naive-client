@@ -597,7 +597,7 @@ func TestDialMASQUEH2_TimeoutReturnsDeadlineExceededNotCanceled(t *testing.T) {
 		ServerName:         DefaultMASQUESNI,
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
-	}, ns, tunnelCtx, tunnelCancel, false)
+	}, ns, tunnelCtx, tunnelCancel, MASQUEOptions{})
 	if dialErr == nil {
 		t.Fatalf("expected timeout error from stalled H2 CONNECT")
 	}
@@ -677,6 +677,7 @@ func TestConnectMASQUEWithOptions_H2_TLSFragmentation(t *testing.T) {
 	tun, err := ConnectMASQUEWithOptions(ctx, dialer, rawLn.Addr().String(), acc, MASQUEOptions{
 		ForceH2:     true,
 		TLSFragment: true,
+		UTLS:        true,
 	})
 	if err != nil {
 		t.Fatalf("ConnectMASQUEWithOptions(TLSFragment=true) failed: %v", err)

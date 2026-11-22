@@ -144,10 +144,12 @@ func (t *MASQUETunnel) Close() error {
 
 // MASQUEOptions controls how ConnectMASQUEWithOptions establishes the tunnel.
 type MASQUEOptions struct {
-	TCPOnly     bool // Upstream proxy only supports TCP; skip HTTP/3 and use HTTP/2 only.
-	ForceH2     bool // Force HTTP/2 only without falling back to HTTP/3.
-	PreferH2    bool // Try HTTP/2 first and fall back to HTTP/3 if HTTP/2 fails.
-	TLSFragment bool // Fragment the outgoing TLS ClientHello into multiple TLS records and TCP segments.
+	TCPOnly      bool // Upstream proxy only supports TCP; skip HTTP/3 and use HTTP/2 only.
+	ForceH2      bool // Force HTTP/2 only without falling back to HTTP/3.
+	PreferH2     bool // Try HTTP/2 first and fall back to HTTP/3 if HTTP/2 fails.
+	TLSFragment  bool // Fragment the outgoing TLS ClientHello into multiple TLS records and TCP segments.
+	UTLS         bool // Use Chrome uTLS fingerprint with randomized TLS padding instead of stdlib crypto/tls.
+	MixedCaseSNI bool // Randomize SNI hostname casing in ClientHello.
 }
 
 // ConnectMASQUE establishes a Cloudflare Consumer MASQUE tunnel.
@@ -203,7 +205,7 @@ func ConnectMASQUEWithOptions(ctx context.Context, dialer Dialer, endpoint strin
 	// MASQUE Anycast address (non-::1/::2), connect over HTTP/2 directly without falling back to QUIC.
 	if opts.TCPOnly || opts.ForceH2 || isKnownMASQUEH2OnlyEndpoint(endpoint) {
 		h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
-		tun, err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel, opts.TLSFragment)
+		tun, err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel, opts)
 		h2Cancel()
 		if err != nil {
 			cancel()
@@ -216,7 +218,7 @@ func ConnectMASQUEWithOptions(ctx context.Context, dialer Dialer, endpoint strin
 	if opts.PreferH2 {
 		// Try HTTP/2 first (avoids UDP QoS throttling)
 		h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
-		tun, h2Err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel, opts.TLSFragment)
+		tun, h2Err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel, opts)
 		h2Cancel()
 		if h2Err == nil {
 			return tun, nil
@@ -254,7 +256,7 @@ func ConnectMASQUEWithOptions(ctx context.Context, dialer Dialer, endpoint strin
 
 	// Fallback to HTTP/2
 	h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
-	tun, err = dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel, opts.TLSFragment)
+	tun, err = dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel, opts)
 	h2Cancel()
 	if err != nil {
 		cancel()
@@ -450,7 +452,7 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 	return tun, nil
 }
 
-func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseTLS *tls.Config, ns *Netstack, tunnelCtx context.Context, cancel context.CancelFunc, tlsFragment bool) (*MASQUETunnel, error) {
+func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseTLS *tls.Config, ns *Netstack, tunnelCtx context.Context, cancel context.CancelFunc, opts MASQUEOptions) (*MASQUETunnel, error) {
 	tlsCfg := baseTLS.Clone()
 	tlsCfg.NextProtos = []string{"h2"}
 
@@ -467,11 +469,12 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 			if err != nil {
 				return nil, err
 			}
-			underlying := rawConn
-			if tlsFragment {
-				underlying = newTLSFragmentConn(dialCtx, rawConn)
-			}
-			tlsConn := tls.Client(underlying, tlsCfg)
+			tlsConn := newWarpTLSConn(dialCtx, rawConn, tlsCfg, tlsDialOptions{
+				TLSFragment:  opts.TLSFragment,
+				UTLS:         opts.UTLS,
+				TLSPadding:   opts.UTLS,
+				MixedCaseSNI: opts.MixedCaseSNI,
+			})
 			if err := tlsConn.HandshakeContext(dialCtx); err != nil {
 				_ = rawConn.Close()
 				return nil, err

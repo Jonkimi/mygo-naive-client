@@ -32,35 +32,60 @@ type Client struct {
 func NewClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
 		dialer := &net.Dialer{Timeout: 8 * time.Second}
+		dialTCP := func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, _ := net.SplitHostPort(addr)
+			if host == "api.cloudflareclient.com" {
+				// Direct Anycast IPs bypass DNS pollution in Mainland China while preserving SNI TLS verification
+				ips := []string{"162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.200.1"}
+				var lastErr error
+				for _, ip := range ips {
+					subCtx, subCancel := context.WithTimeout(ctx, 2*time.Second)
+					conn, err := dialer.DialContext(subCtx, network, net.JoinHostPort(ip, port))
+					subCancel()
+					if err == nil {
+						return conn, nil
+					}
+					lastErr = err
+				}
+				if conn, err := dialer.DialContext(ctx, network, addr); err == nil {
+					return conn, nil
+				}
+				return nil, lastErr
+			}
+			return dialer.DialContext(ctx, network, addr)
+		}
 		tr := &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, port, _ := net.SplitHostPort(addr)
-				if host == "api.cloudflareclient.com" {
-					// Direct Anycast IPs bypass DNS pollution in Mainland China while preserving SNI TLS verification
-					ips := []string{"162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.200.1"}
-					var lastErr error
-					for _, ip := range ips {
-						subCtx, subCancel := context.WithTimeout(ctx, 2*time.Second)
-						conn, err := dialer.DialContext(subCtx, network, net.JoinHostPort(ip, port))
-						subCancel()
-						if err == nil {
-							return newTLSFragmentConn(ctx, conn), nil
-						}
-						lastErr = err
-					}
-					if conn, err := dialer.DialContext(ctx, network, addr); err == nil {
-						return newTLSFragmentConn(ctx, conn), nil
-					}
-					return nil, lastErr
-				}
-				conn, err := dialer.DialContext(ctx, network, addr)
+				conn, err := dialTCP(ctx, network, addr)
 				if err != nil {
 					return nil, err
 				}
 				return newTLSFragmentConn(ctx, conn), nil
 			},
-			TLSClientConfig: &tls.Config{
-				ServerName: "api.cloudflareclient.com",
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				rawConn, err := dialTCP(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				serverName, _, splitErr := net.SplitHostPort(addr)
+				if splitErr != nil || serverName == "" {
+					serverName = "api.cloudflareclient.com"
+				}
+				hsCtx, hsCancel := context.WithTimeout(ctx, 8*time.Second)
+				defer hsCancel()
+				tlsConn := newWarpTLSConn(hsCtx, rawConn, &tls.Config{
+					ServerName: serverName,
+					NextProtos: []string{"h2", "http/1.1"},
+				}, tlsDialOptions{
+					TLSFragment: true,
+					UTLS:        true,
+					TLSPadding:  true,
+				})
+				if err := tlsConn.HandshakeContext(hsCtx); err != nil {
+					_ = rawConn.Close()
+					return nil, err
+				}
+				return tlsConn, nil
 			},
 			ForceAttemptHTTP2:   true,
 			TLSHandshakeTimeout: 8 * time.Second,

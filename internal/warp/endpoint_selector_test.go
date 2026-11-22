@@ -741,6 +741,7 @@ func TestProbeMASQUEEndpoint_EnrolledAccountVerifiesConnectIP(t *testing.T) {
 	proto3, _, fragErr := probeMASQUEEndpoint(ctx3, recDialer, okLn.Addr().String(), acc, MASQUEOptions{
 		ForceH2:     true,
 		TLSFragment: true,
+		UTLS:        true,
 	})
 	if fragErr != nil {
 		t.Fatalf("expected fragmented H2 probe to succeed, got %v", fragErr)

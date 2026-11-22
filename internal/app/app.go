@@ -1982,6 +1982,7 @@ func (a *app) triggerWarpEndpointScan() {
 			Mode:           mode,
 			PreferH2:       preferH2,
 			TLSFragment:    true,
+			UTLS:           true,
 			Account:        &acc,
 			Dialer:         warp.NewBypassTUNDialer(),
 			TopN:           8,
