@@ -215,16 +215,36 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 					a.renderNodeDrawerHelpPopover(c, helpBtn, p)
 				})
 
-				manualProbing := rt.Probing && !rt.AutoProbing
-				probeBtn := subtleActionChip(c.Key("btn-drawer-probe"), p, iconBolt, cat.ActionLatency(), !canTest || manualProbing)
-				if !canTest {
-					probeBtn.Tooltip(cat.TestRequiresRunning())
-				} else if rt.Probing && rt.AutoProbing {
-					probeBtn.Tooltip(cat.AutoProbingActionHint())
-				}
-				if probeBtn.Clicked() {
-					a.triggerServiceProbe(svc)
-				}
+				ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+					manualProbing := rt.Probing && !rt.AutoProbing
+					probeBtn := subtleActionChip(c.Key("btn-drawer-probe"), p, iconBolt, cat.ActionLatency(), !canTest || manualProbing)
+					if !canTest {
+						probeBtn.Tooltip(cat.TestRequiresRunning())
+					} else if rt.Probing && rt.AutoProbing {
+						probeBtn.Tooltip(cat.AutoProbingActionHint())
+					}
+					if probeBtn.Clicked() {
+						a.triggerServiceProbe(svc)
+					}
+
+					var speedBtn ui.Element
+					if rt.SpeedTesting {
+						speedBtn = activeDangerActionChip(c.Key("btn-drawer-speed"), p, iconStop, cat.ActionCancelSpeed())
+						speedBtn.Tooltip(cat.ActionCancelSpeed())
+					} else {
+						speedBtn = subtleActionChip(c.Key("btn-drawer-speed"), p, iconDownload, cat.ActionDownload(), !canTest)
+						if !canTest {
+							speedBtn.Tooltip(cat.TestRequiresRunning())
+						}
+					}
+					if speedBtn.Clicked() {
+						if rt.SpeedTesting {
+							a.cancelServiceDownloadTest(svc)
+						} else {
+							a.triggerServiceDownloadTest(svc)
+						}
+					}
+				})
 			})
 
 			// 2x2 Tabular Metrics Grid
@@ -326,9 +346,9 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 			bwText, bwColor, bwTip := "—", p.textDim, ""
 			switch {
 			case rt.SpeedTesting && rt.DownloadSpeed > 0:
-				bwText, bwColor = cat.DownloadTesting()+" "+runner.FormatSpeed(rt.DownloadSpeed), p.amber
+				bwText, bwColor = "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.amber
 			case rt.SpeedTesting:
-				bwText, bwColor = cat.DownloadTesting(), p.amber
+				bwText, bwColor = "—", p.amber
 			case rt.SpeedError != "":
 				bwText, bwColor, bwTip = cat.DownloadFailed(), p.red, rt.SpeedError
 			case rt.DownloadSpeed > 0:

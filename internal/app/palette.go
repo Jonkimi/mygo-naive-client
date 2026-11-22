@@ -164,9 +164,7 @@ func actionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disable
 	})
 }
 
-func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
-	fg := p.textMuted
-	bg := ui.Transparent
+func styledActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, fg, bg, hoverFg, hoverBg ui.Color, disabled bool) ui.Element {
 	if disabled {
 		fg = p.textDim.Alpha(0.6)
 	}
@@ -175,8 +173,8 @@ func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 		Background(bg).
 		Disabled(disabled)
 	if !disabled && btn.Hovered() {
-		fg = p.text
-		btn.Background(p.elevated)
+		fg = hoverFg
+		btn.Background(hoverBg)
 	}
 	return btn.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
@@ -188,28 +186,16 @@ func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, d
 	})
 }
 
+func subtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
+	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.text, p.elevated, disabled)
+}
+
+func activeDangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string) ui.Element {
+	return styledActionChip(c, p, iconSVG, label, p.red, p.redBg, p.red, p.red.Alpha(0.22), false)
+}
+
 func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
-	fg := p.textMuted
-	bg := ui.Transparent
-	if disabled {
-		fg = p.textDim.Alpha(0.6)
-	}
-	btn := ui.ButtonBase(c).
-		Height(dsHeightRowAction).PaddingX(dsSpaceMD).Radius(dsRadiusSM).
-		Background(bg).
-		Disabled(disabled)
-	if !disabled && btn.Hovered() {
-		fg = p.red
-		btn.Background(p.redBg)
-	}
-	return btn.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
-			if iconSVG != nil {
-				ui.Icon(c, iconSVG).Size(13, 13)
-			}
-			ui.Text(c, label).FontSize(dsFontBody).FontWeight(500)
-		})
-	})
+	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.red, p.redBg, disabled)
 }
 
 func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, bg ui.Color, disabled bool) ui.Element {

@@ -829,5 +829,58 @@ func TestManager_ManualProbePreemptsAutoProbeAndSetsAutoFlag(t *testing.T) {
 	}
 }
 
+func TestManager_CancelDownloadTest(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager("", dir, nil)
+	svc := config.Service{
+		ID:       "dl-cancel-svc",
+		Name:     "DL-Cancel",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "dl.example.com",
+	}
+
+	dialEntered := make(chan struct{})
+	var enteredOnce sync.Once
+	mgr.ServiceDialer = func(ctx context.Context, _ config.Service, _, _ string) (net.Conn, error) {
+		enteredOnce.Do(func() { close(dialEntered) })
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	if err := mgr.Start(svc); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer mgr.StopAll()
+
+	mgr.DownloadTestService(svc, "https://speed.cloudflare.com/__down?bytes=1000")
+	select {
+	case <-dialEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for download dial")
+	}
+
+	if !mgr.StatusOf(svc.ID).SpeedTesting {
+		t.Fatalf("expected SpeedTesting=true while dial is in flight")
+	}
+	if !mgr.CancelDownloadTest(svc.ID) {
+		t.Fatalf("expected CancelDownloadTest to return true for active download test")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !mgr.StatusOf(svc.ID).SpeedTesting {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if mgr.StatusOf(svc.ID).SpeedTesting {
+		t.Fatalf("expected SpeedTesting=false after CancelDownloadTest")
+	}
+	if !strings.Contains(mgr.LogsOf(svc.ID).Text(), "下载测速已取消") {
+		t.Fatalf("expected cancel log entry, got:\n%s", mgr.LogsOf(svc.ID).Text())
+	}
+}
+
 
 

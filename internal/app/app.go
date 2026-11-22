@@ -1348,6 +1348,10 @@ func (a *app) triggerServiceDownloadTest(svc config.Service) {
 	a.mgr.DownloadTestService(svc, a.state.DownloadTestURL)
 }
 
+func (a *app) cancelServiceDownloadTest(svc config.Service) {
+	a.mgr.CancelDownloadTest(svc.ID)
+}
+
 func (a *app) triggerBatchTest() {
 	if a.batchTesting {
 		a.batchRunID++

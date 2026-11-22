@@ -244,6 +244,7 @@
   "actionStop": "Stop",
   "actionLatency": "Ping",
   "actionDownload": "Speed",
+  "actionCancelSpeed": "Cancel Speed",
   "actionLogs": "Logs",
   "actionEdit": "Edit",
   "actionDetails": "Details",

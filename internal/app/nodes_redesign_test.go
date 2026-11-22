@@ -1,8 +1,13 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -741,5 +746,131 @@ func TestLogDrawer_MouseSelectionAndCopyAcrossLines(t *testing.T) {
 	tt.Frame()
 	if !strings.Contains(a.clipboardMem, lineC) || !strings.Contains(a.clipboardMem, "background heartbeat ok") {
 		t.Fatalf("expected header Copy button to copy full log stream, got %q", a.clipboardMem)
+	}
+}
+
+func TestNodeDrawer_DownloadSpeedTestAndCancel(t *testing.T) {
+	svc := config.Service{
+		ID:         "svc-drawer-speed",
+		Name:       "HK-Speed-01",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSingBox,
+		Server:     "hk01.edge.net",
+		ServerPort: 443,
+		UUID:       "11111111-2222-3333-4444-555555555555",
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	a.state.GatewayPort = freeLocalPort(t)
+	a.saveState()
+	tt.SetSize(1000, 760)
+
+	var mu sync.Mutex
+	holdStream := true
+	releaseCh := make(chan struct{})
+	firstChunkSent := make(chan struct{})
+	var firstOnce sync.Once
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fl, _ := w.(http.Flusher)
+		chunk := make([]byte, 32*1024)
+		_, _ = w.Write(chunk)
+		if fl != nil {
+			fl.Flush()
+		}
+		mu.Lock()
+		hold := holdStream
+		mu.Unlock()
+		if hold {
+			time.Sleep(220 * time.Millisecond)
+			_, _ = w.Write(chunk)
+			if fl != nil {
+				fl.Flush()
+			}
+			firstOnce.Do(func() { close(firstChunkSent) })
+			select {
+			case <-r.Context().Done():
+			case <-releaseCh:
+			}
+			return
+		}
+		for i := 0; i < 4; i++ {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	defer srv.Close()
+	defer close(releaseCh)
+
+	a.state.DownloadTestURL = srv.URL
+	a.mgr.ServiceDialer = func(ctx context.Context, _ config.Service, _, addr string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", addr)
+	}
+
+	if err := a.mgr.Start(svc); err != nil {
+		t.Fatalf("start service: %v", err)
+	}
+	a.activeNodeDrawerID = svc.ID
+	tt.Advance(300 * time.Millisecond)
+
+	cat := a.catalog()
+
+	// 1. Clicking Download Speed in drawer starts test; active state uses color only (no extra DownloadTesting text).
+	if err := tt.Click(cat.ActionDownload()); err != nil {
+		t.Fatalf("click drawer speed button: %v", err)
+	}
+	select {
+	case <-firstChunkSent:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for download speed server response")
+	}
+	if !waitForUI(t, a, tt, 2*time.Second, func() bool {
+		st := a.mgr.StatusOf(svc.ID)
+		return st.SpeedTesting && st.DownloadSpeed > 0
+	}) {
+		t.Fatalf("expected SpeedTesting=true with live DownloadSpeed sample, got %+v", a.mgr.StatusOf(svc.ID))
+	}
+	if tt.HasText(cat.DownloadTesting()) {
+		t.Fatalf("expected drawer to indicate speed testing by color without extra %q text, got texts: %v", cat.DownloadTesting(), tt.Texts())
+	}
+
+	// 2. Active state swaps the header speed button to Cancel Speed; clicking it cancels the in-flight test.
+	if err := tt.Click(cat.ActionCancelSpeed()); err != nil {
+		t.Fatalf("click drawer cancel speed button: %v", err)
+	}
+	if !waitForUI(t, a, tt, 2*time.Second, func() bool {
+		return !a.mgr.StatusOf(svc.ID).SpeedTesting
+	}) {
+		t.Fatalf("expected SpeedTesting=false after clicking speed button to cancel")
+	}
+
+	// 3. Re-running with fast completion populates DownloadSpeed without error.
+	mu.Lock()
+	holdStream = false
+	mu.Unlock()
+	if err := tt.Click(cat.ActionDownload()); err != nil {
+		t.Fatalf("click drawer speed button for full run: %v", err)
+	}
+	if !waitForUI(t, a, tt, 2*time.Second, func() bool {
+		st := a.mgr.StatusOf(svc.ID)
+		return !st.SpeedTesting && st.DownloadSpeed > 0 && st.SpeedError == ""
+	}) {
+		t.Fatalf("expected completed download speed test, got %+v", a.mgr.StatusOf(svc.ID))
+	}
+	expectedPrefix := "↓ " + runner.FormatSpeed(a.mgr.StatusOf(svc.ID).DownloadSpeed)
+	if !tt.HasText(expectedPrefix) {
+		t.Fatalf("expected drawer to render %q, got texts: %v", expectedPrefix, tt.Texts())
+	}
+
+	// 4. When service is stopped, drawer speed button is disabled.
+	if err := a.mgr.Stop(svc.ID); err != nil {
+		t.Fatalf("stop service: %v", err)
+	}
+	tt.Frame()
+	_ = tt.Click(cat.ActionDownload())
+	tt.Frame()
+	if a.mgr.StatusOf(svc.ID).SpeedTesting {
+		t.Fatalf("expected drawer speed button disabled while service is stopped")
 	}
 }

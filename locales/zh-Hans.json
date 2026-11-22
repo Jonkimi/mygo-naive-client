@@ -244,6 +244,7 @@
   "actionStop": "停止",
   "actionLatency": "延迟测速",
   "actionDownload": "下载测速",
+  "actionCancelSpeed": "取消测速",
   "actionLogs": "日志",
   "actionEdit": "编辑",
   "actionDetails": "详情",

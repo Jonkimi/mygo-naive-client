@@ -2432,6 +2432,16 @@ func (msgs Messages) ActionDownload() string {
 	return Catalog.Format(msgs.locale, "actionDownload", nil)
 }
 
+// ActionCancelSpeed says "Cancel Speed"
+// in the language the app shows.
+func ActionCancelSpeed() string { return In(i18n.Locale()).ActionCancelSpeed() }
+
+// ActionCancelSpeed says "Cancel Speed"
+// in the language of msgs.
+func (msgs Messages) ActionCancelSpeed() string {
+	return Catalog.Format(msgs.locale, "actionCancelSpeed", nil)
+}
+
 // ActionLogs says "Logs"
 // in the language the app shows.
 func ActionLogs() string { return In(i18n.Locale()).ActionLogs() }

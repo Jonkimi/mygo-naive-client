@@ -78,6 +78,8 @@ type instance struct {
 	probeAutoCancel context.CancelFunc
 	probeCancel     context.CancelFunc
 	probeDone       chan struct{}
+	speedCancel     context.CancelFunc
+	speedDone       chan struct{}
 	cmd             *exec.Cmd
 	stopping   bool
 	configPath string
@@ -688,6 +690,7 @@ func (m *Manager) stopLocked(id string, inst *instance) error {
 
 	if inst.svc.EffectiveKind() == config.KindExternalProxy || inst.svc.EffectiveEngine() == config.EngineSingBox {
 		probeCancel := inst.probeCancel
+		speedCancel := inst.speedCancel
 		inst.status.State = StateStopped
 		inst.status.PID = 0
 		inst.status.StartedAt = time.Time{}
@@ -700,6 +703,9 @@ func (m *Manager) stopLocked(id string, inst *instance) error {
 		if probeCancel != nil {
 			probeCancel()
 		}
+		if speedCancel != nil {
+			speedCancel()
+		}
 		m.onChange()
 		return nil
 	}
@@ -707,12 +713,16 @@ func (m *Manager) stopLocked(id string, inst *instance) error {
 	inst.stopping = true
 	cancel := inst.cancel
 	probeCancel := inst.probeCancel
+	speedCancel := inst.speedCancel
 	done := inst.done
 	cmd := inst.cmd
 	m.mu.Unlock()
 
 	if probeCancel != nil {
 		probeCancel()
+	}
+	if speedCancel != nil {
+		speedCancel()
 	}
 	if cancel != nil {
 		cancel()
@@ -966,64 +976,94 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 		m.mu.Unlock()
 		return 0, errors.New("服务未在运行中或正在测速")
 	}
+	runCtx, runCancel := context.WithCancel(ctx)
+	speedDone := make(chan struct{})
 	inst.status.SpeedTesting = true
 	inst.status.DownloadSpeed = 0
+	inst.speedCancel = runCancel
+	inst.speedDone = speedDone
 	allocPort := inst.status.AllocatedPort
 	m.mu.Unlock()
 	m.onChange()
 
+	onSample := func(sample float64) {
+		if runCtx.Err() != nil {
+			return
+		}
+		m.mu.Lock()
+		if inst.speedDone == speedDone {
+			inst.status.DownloadSpeed = sample
+		}
+		m.mu.Unlock()
+		m.onChange()
+	}
+
 	var bps float64
 	var err error
 	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && m.ServiceDialer != nil {
-		speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		speedCtx, cancel := context.WithTimeout(runCtx, 12*time.Second)
 		tr := &http.Transport{
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				return m.ServiceDialer(c, svc, network, addr)
 			},
 		}
-		bps, err = MeasureDownloadSpeedWithTransport(speedCtx, tr, downloadURL, func(sample float64) {
-			m.mu.Lock()
-			inst.status.DownloadSpeed = sample
-			m.mu.Unlock()
-			m.onChange()
-		})
+		bps, err = MeasureDownloadSpeedWithTransport(speedCtx, tr, downloadURL, onSample)
 		cancel()
 	} else {
 		var ep config.ListenEndpoint
 		ep, err = resolveProbeEndpoint(svc, allocPort)
 		if err == nil {
-			speedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-			bps, err = MeasureDownloadSpeed(speedCtx, ep, downloadURL, func(sample float64) {
-				m.mu.Lock()
-				inst.status.DownloadSpeed = sample
-				m.mu.Unlock()
-				m.onChange()
-			})
+			speedCtx, cancel := context.WithTimeout(runCtx, 12*time.Second)
+			bps, err = MeasureDownloadSpeed(speedCtx, ep, downloadURL, onSample)
 			cancel()
 		}
 	}
 
+	canceled := errors.Is(runCtx.Err(), context.Canceled)
+	runCancel()
+
 	m.mu.Lock()
-	inst.status.SpeedTesting = false
-	if errors.Is(ctx.Err(), context.Canceled) {
+	if inst.speedDone == speedDone {
+		inst.status.SpeedTesting = false
+		inst.speedCancel = nil
+		inst.speedDone = nil
+	}
+	if canceled {
 		inst.logs.AppendLine("[测速] 下载测速已取消")
 		m.mu.Unlock()
+		close(speedDone)
 		m.onChange()
-		return 0, ctx.Err()
+		return 0, context.Canceled
 	}
 	if err != nil {
 		inst.status.DownloadSpeed = 0
 		inst.status.SpeedError = err.Error()
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 下载测速失败: %v", err))
 		m.mu.Unlock()
+		close(speedDone)
 	} else {
 		inst.status.DownloadSpeed = bps
 		inst.status.SpeedError = ""
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 下载测速完成: %s", FormatSpeed(bps)))
 		m.mu.Unlock()
+		close(speedDone)
 	}
 	m.onChange()
 	return bps, err
+}
+
+// CancelDownloadTest aborts an in-flight download speed test for the given service, if any.
+func (m *Manager) CancelDownloadTest(id string) bool {
+	m.mu.Lock()
+	inst := m.instances[id]
+	if inst == nil || inst.speedCancel == nil {
+		m.mu.Unlock()
+		return false
+	}
+	cancel := inst.speedCancel
+	m.mu.Unlock()
+	cancel()
+	return true
 }
 
 // DownloadTestService asynchronously measures download throughput through the service's primary listen endpoint.
