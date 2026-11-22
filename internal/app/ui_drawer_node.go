@@ -158,7 +158,7 @@ func (a *app) renderNodeDrawerDiagnosticBanner(c *ui.Context, p palette, svc con
 	}
 
 	if unhealthy {
-		hint, _, _ := a.diagnoseNodeUnhealthy(svc, rt)
+		hint, isWarp, _ := a.diagnoseNodeUnhealthy(svc, rt)
 		if hint == "" {
 			return
 		}
@@ -167,7 +167,7 @@ func (a *app) renderNodeDrawerDiagnosticBanner(c *ui.Context, p palette, svc con
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
 					ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(12).FontWeight(700).TextColor(p.amber)
-					if svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP {
+					if isWarp {
 						if compactStripButton(c.Key("btn-drawer-goto-cf"), p, cat.ActionGoToCloudflare(), cat.ActionGoToCloudflare(), p.text).Clicked() {
 							a.activeNodeDrawerID = ""
 							a.nodeDrawerHelpOpen = false
@@ -364,6 +364,26 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 						}
 					})
 				})
+
+			if svc.IsNaiveHTTP2Sidecar() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).
+					Padding(9, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).
+					Children(func() {
+						ui.Text(c, cat.NaiveH2TelemetryHint()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35).
+							Grow(1).Shrink(1).MinWidth(0)
+						restartBtn := compactSubtleActionChip(c.Key("btn-drawer-restart-"+svc.ID), p, iconRefresh, cat.ActionRestartNode(), !canTest).
+							Label("btn-drawer-restart-" + svc.ID).
+							Shrink(0)
+						if !canTest {
+							restartBtn.Tooltip(cat.TestRequiresRunning())
+						} else {
+							restartBtn.Tooltip(cat.ActionRestartH2Tooltip())
+						}
+						if restartBtn.Clicked() && canTest {
+							a.restartService(svc)
+						}
+					})
+			}
 		})
 }
 

@@ -973,5 +973,10 @@
   "settingsCoreAdvancedToggle": "高级选项",
   "settingsCoreBuiltInLabel": "内置",
   "settingsCoreUpToDate": "已是最新",
-  "actionRetry": "重试"
+  "actionRetry": "重试",
+  "actionRestartNode": "重启节点",
+  "actionRestartH2Tooltip": "重启服务以重建 HTTP/2 单连接",
+  "naiveH2TelemetryHint": "Naive HTTP/2 默认单连接复用；若延迟正常但下载偏慢，可重启重建连接或适当调高并发连接数。",
+  "toastServiceRestarted": "已重启服务: {name}",
+  "toastServiceRestartFailed": "重启失败 ({name}): {err}"
 }

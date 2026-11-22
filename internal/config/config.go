@@ -191,6 +191,36 @@ func (s Service) IsTCPOnlyProxy() bool {
 	return proto == ProtoNaive || proto == ProtoHTTP
 }
 
+// IsNaiveHTTP2Sidecar reports whether the node is a NaiveProxy sidecar using HTTPS (HTTP/2)
+// rather than HTTP/3 QUIC (quic://) or other proxy transports.
+func (s Service) IsNaiveHTTP2Sidecar() bool {
+	if s.EffectiveKind() == KindExternalProxy ||
+		s.EffectiveProtocol() != ProtoNaive ||
+		s.EffectiveEngine() != EngineSidecar {
+		return false
+	}
+	hasHTTPS := false
+	for _, raw := range cleanSlice(s.Proxies) {
+		for _, hop := range strings.Split(raw, ",") {
+			hop = strings.TrimSpace(hop)
+			if hop == "" {
+				continue
+			}
+			u, err := url.Parse(hop)
+			if err != nil {
+				continue
+			}
+			switch strings.ToLower(u.Scheme) {
+			case "quic":
+				return false
+			case "https":
+				hasHTTPS = true
+			}
+		}
+	}
+	return hasHTTPS
+}
+
 // NormalizeVMessSecurity returns the normalized VMess cipher name if supported, or "".
 func NormalizeVMessSecurity(method string) string {
 	switch m := strings.ToLower(strings.TrimSpace(method)); m {

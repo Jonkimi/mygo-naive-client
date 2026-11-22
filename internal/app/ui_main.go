@@ -654,20 +654,7 @@ func (a *app) serviceLatencyDisplay(p palette, svc config.Service, rt runner.Sta
 		return txt, p.red, rt.ProbeError
 	}
 
-	var ewmaMs, probeMs int
-	if a.tracker != nil && rt.State == runner.StateRunning {
-		if sc := a.tracker.GetScore(svc.ID); sc.EWMA > 0 {
-			ewmaMs = int(max(1, sc.EWMA.Milliseconds()))
-		}
-	}
-	if rt.Latency > 0 {
-		probeMs = int(max(1, rt.Latency.Milliseconds()))
-	}
-
-	ms := ewmaMs
-	if ms <= 0 {
-		ms = probeMs
-	}
+	ms, ewmaMs, probeMs := a.nodeLatencyMs(svc.ID, rt)
 	if ms <= 0 {
 		return "—", p.textDim, ""
 	}
@@ -722,6 +709,19 @@ func (a *app) renderNodeOverflowMenu(c *ui.Context, panel, anchor ui.Element, p 
 			a.openNodeMenuID = ""
 			if !rt.SpeedTesting {
 				a.triggerServiceDownloadTest(svc)
+			}
+		}
+
+		if svc.IsNaiveHTTP2Sidecar() {
+			restartItem := popoverMenuItem(c.Key("menu-restart-h2"), p, cat.ActionRestartNode(), p.text, !canTest, false)
+			if !canTest {
+				restartItem.Tooltip(cat.TestRequiresRunning())
+			} else {
+				restartItem.Tooltip(cat.ActionRestartH2Tooltip())
+			}
+			if restartItem.Clicked() && canTest {
+				a.openNodeMenuID = ""
+				a.restartService(svc)
 			}
 		}
 

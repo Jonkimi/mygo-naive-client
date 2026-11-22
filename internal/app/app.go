@@ -1164,6 +1164,16 @@ func (a *app) toggleService(svc config.Service) {
 	a.rebuildTrayMenu()
 }
 
+func (a *app) restartService(svc config.Service) {
+	cat := a.catalog()
+	if err := a.mgr.Start(svc); err != nil {
+		a.toast(cat.ToastServiceRestartFailed(svc.Name, err.Error()))
+		return
+	}
+	a.toast(cat.ToastServiceRestarted(svc.Name))
+	a.rebuildTrayMenu()
+}
+
 func (a *app) startAllServices() {
 	cat := a.catalog()
 	started := 0
@@ -1222,6 +1232,22 @@ func isWarpTunnelError(errText string) bool {
 		strings.Contains(lower, "detour outbound") ||
 		strings.Contains(lower, "masque") ||
 		strings.Contains(lower, "wireguard")
+}
+
+func (a *app) nodeLatencyMs(serviceID string, rt runner.Status) (ms, ewmaMs, probeMs int) {
+	if a.tracker != nil && rt.State == runner.StateRunning {
+		if sc := a.tracker.GetScore(serviceID); sc.EWMA > 0 {
+			ewmaMs = int(max(1, sc.EWMA.Milliseconds()))
+		}
+	}
+	if rt.Latency > 0 {
+		probeMs = int(max(1, rt.Latency.Milliseconds()))
+	}
+	ms = ewmaMs
+	if ms <= 0 {
+		ms = probeMs
+	}
+	return ms, ewmaMs, probeMs
 }
 
 func (a *app) isNodeUnhealthy(svc config.Service, rt runner.Status) bool {

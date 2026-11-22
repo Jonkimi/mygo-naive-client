@@ -7927,3 +7927,55 @@ func ActionRetry() string { return In(i18n.Locale()).ActionRetry() }
 func (msgs Messages) ActionRetry() string {
 	return Catalog.Format(msgs.locale, "actionRetry", nil)
 }
+
+// ActionRestartNode says "Restart Node"
+// in the language the app shows.
+func ActionRestartNode() string { return In(i18n.Locale()).ActionRestartNode() }
+
+// ActionRestartNode says "Restart Node"
+// in the language of msgs.
+func (msgs Messages) ActionRestartNode() string {
+	return Catalog.Format(msgs.locale, "actionRestartNode", nil)
+}
+
+// ActionRestartH2Tooltip says "Restart sidecar to rebuild HTTP/2 connection"
+// in the language the app shows.
+func ActionRestartH2Tooltip() string { return In(i18n.Locale()).ActionRestartH2Tooltip() }
+
+// ActionRestartH2Tooltip says "Restart sidecar to rebuild HTTP/2 connection"
+// in the language of msgs.
+func (msgs Messages) ActionRestartH2Tooltip() string {
+	return Catalog.Format(msgs.locale, "actionRestartH2Tooltip", nil)
+}
+
+// NaiveH2TelemetryHint says "Naive HTTP/2 reuses a single connection by default. If throughput feels slow while latency looks normal, restart to r…"
+// in the language the app shows.
+func NaiveH2TelemetryHint() string { return In(i18n.Locale()).NaiveH2TelemetryHint() }
+
+// NaiveH2TelemetryHint says "Naive HTTP/2 reuses a single connection by default. If throughput feels slow while latency looks normal, restart to r…"
+// in the language of msgs.
+func (msgs Messages) NaiveH2TelemetryHint() string {
+	return Catalog.Format(msgs.locale, "naiveH2TelemetryHint", nil)
+}
+
+// ToastServiceRestarted says "Restarted service: {name}"
+// in the language the app shows.
+func ToastServiceRestarted(name string) string { return In(i18n.Locale()).ToastServiceRestarted(name) }
+
+// ToastServiceRestarted says "Restarted service: {name}"
+// in the language of msgs.
+func (msgs Messages) ToastServiceRestarted(name string) string {
+	return Catalog.Format(msgs.locale, "toastServiceRestarted", map[string]any{"name": name})
+}
+
+// ToastServiceRestartFailed says "Failed to restart {name}: {err}"
+// in the language the app shows.
+func ToastServiceRestartFailed(name string, err string) string {
+	return In(i18n.Locale()).ToastServiceRestartFailed(name, err)
+}
+
+// ToastServiceRestartFailed says "Failed to restart {name}: {err}"
+// in the language of msgs.
+func (msgs Messages) ToastServiceRestartFailed(name string, err string) string {
+	return Catalog.Format(msgs.locale, "toastServiceRestartFailed", map[string]any{"name": name, "err": err})
+}

@@ -1011,5 +1011,21 @@
   "settingsCoreAdvancedToggle": "Advanced",
   "settingsCoreBuiltInLabel": "Built-in",
   "settingsCoreUpToDate": "Up to date",
-  "actionRetry": "Retry"
+  "actionRetry": "Retry",
+  "actionRestartNode": "Restart Node",
+  "actionRestartH2Tooltip": "Restart sidecar to rebuild HTTP/2 connection",
+  "naiveH2TelemetryHint": "Naive HTTP/2 reuses a single connection by default. If throughput feels slow while latency looks normal, restart to rebuild the connection or raise concurrency.",
+  "toastServiceRestarted": "Restarted service: {name}",
+  "@toastServiceRestarted": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "toastServiceRestartFailed": "Failed to restart {name}: {err}",
+  "@toastServiceRestartFailed": {
+    "placeholders": {
+      "name": { "type": "String" },
+      "err": { "type": "String" }
+    }
+  }
 }

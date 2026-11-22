@@ -316,3 +316,140 @@ func TestDynamicPortAndProtocolValidation(t *testing.T) {
 		t.Errorf("vlessSvc.Validate() failed: %v", err)
 	}
 }
+
+func TestServiceIsNaiveHTTP2Sidecar(t *testing.T) {
+	cases := []struct {
+		name string
+		svc  Service
+		want bool
+	}{
+		{
+			name: "naive sidecar https",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"https://user:pass@hk.example.com:443"},
+			},
+			want: true,
+		},
+		{
+			name: "naive sidecar uppercase HTTPS",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"HTTPS://user:pass@hk.example.com:443"},
+			},
+			want: true,
+		},
+		{
+			name: "naive legacy empty protocol and engine with https",
+			svc: Service{
+				Proxies: []string{"https://user:pass@hk.example.com"},
+			},
+			want: true,
+		},
+		{
+			name: "naive with EngineSingBox resolves to sidecar",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSingBox,
+				Proxies:  []string{"https://user:pass@hk.example.com"},
+			},
+			want: true,
+		},
+		{
+			name: "naive sidecar quic excluded",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"quic://user:pass@jp.example.com:443"},
+			},
+			want: false,
+		},
+		{
+			name: "naive sidecar proxy chain all https",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"https://a.example.com, https://b.example.com"},
+			},
+			want: true,
+		},
+		{
+			name: "naive sidecar proxy chain socks to https",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"socks://127.0.0.1:1080, https://b.example.com"},
+			},
+			want: true,
+		},
+		{
+			name: "naive sidecar proxy chain starting with quic excluded",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"quic://a.example.com, https://b.example.com"},
+			},
+			want: false,
+		},
+		{
+			name: "naive sidecar multiple proxies containing quic excluded",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"https://a.example.com", "quic://b.example.com"},
+			},
+			want: false,
+		},
+		{
+			name: "naive sidecar socks only excluded",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+				Proxies:  []string{"socks://127.0.0.1:1080"},
+			},
+			want: false,
+		},
+		{
+			name: "naive sidecar empty proxies excluded",
+			svc: Service{
+				Protocol: ProtoNaive,
+				Engine:   EngineSidecar,
+			},
+			want: false,
+		},
+		{
+			name: "external proxy https excluded",
+			svc: Service{
+				Kind:        KindExternalProxy,
+				ExternalURI: "https://user:pass@ext.example.com:8080",
+			},
+			want: false,
+		},
+		{
+			name: "vless excluded even if proxies populated",
+			svc: Service{
+				Protocol: ProtoVLESS,
+				Engine:   EngineSingBox,
+				Proxies:  []string{"https://stale.example.com"},
+			},
+			want: false,
+		},
+		{
+			name: "warp excluded",
+			svc: Service{
+				Protocol: ProtoWARP,
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.svc.IsNaiveHTTP2Sidecar(); got != tc.want {
+				t.Errorf("IsNaiveHTTP2Sidecar() = %v, want %v (svc=%+v)", got, tc.want, tc.svc)
+			}
+		})
+	}
+}
