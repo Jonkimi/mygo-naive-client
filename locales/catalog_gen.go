@@ -3964,6 +3964,26 @@ func (msgs Messages) FingerprintLabel() string {
 	return Catalog.Format(msgs.locale, "fingerprintLabel", nil)
 }
 
+// FingerprintPlaceholder says "Select or type fingerprint (e.g. chrome)"
+// in the language the app shows.
+func FingerprintPlaceholder() string { return In(i18n.Locale()).FingerprintPlaceholder() }
+
+// FingerprintPlaceholder says "Select or type fingerprint (e.g. chrome)"
+// in the language of msgs.
+func (msgs Messages) FingerprintPlaceholder() string {
+	return Catalog.Format(msgs.locale, "fingerprintPlaceholder", nil)
+}
+
+// FingerprintDropdownLabel says "uTLS fingerprint candidates"
+// in the language the app shows.
+func FingerprintDropdownLabel() string { return In(i18n.Locale()).FingerprintDropdownLabel() }
+
+// FingerprintDropdownLabel says "uTLS fingerprint candidates"
+// in the language of msgs.
+func (msgs Messages) FingerprintDropdownLabel() string {
+	return Catalog.Format(msgs.locale, "fingerprintDropdownLabel", nil)
+}
+
 // PublicKeyLabel says "REALITY Public Key (pbk)"
 // in the language the app shows.
 func PublicKeyLabel() string { return In(i18n.Locale()).PublicKeyLabel() }
@@ -4052,6 +4072,26 @@ func SsMethodLabel() string { return In(i18n.Locale()).SsMethodLabel() }
 // in the language of msgs.
 func (msgs Messages) SsMethodLabel() string {
 	return Catalog.Format(msgs.locale, "ssMethodLabel", nil)
+}
+
+// VmessMethodLabel says "Encryption Method"
+// in the language the app shows.
+func VmessMethodLabel() string { return In(i18n.Locale()).VmessMethodLabel() }
+
+// VmessMethodLabel says "Encryption Method"
+// in the language of msgs.
+func (msgs Messages) VmessMethodLabel() string {
+	return Catalog.Format(msgs.locale, "vmessMethodLabel", nil)
+}
+
+// VmessAutoTlsHint says "Sing-Box downgrades \"auto\" to \"zero\" over TLS; select aes-128-gcm or chacha20-poly1305 if your Xray server rejects it."
+// in the language the app shows.
+func VmessAutoTlsHint() string { return In(i18n.Locale()).VmessAutoTlsHint() }
+
+// VmessAutoTlsHint says "Sing-Box downgrades \"auto\" to \"zero\" over TLS; select aes-128-gcm or chacha20-poly1305 if your Xray server rejects it."
+// in the language of msgs.
+func (msgs Messages) VmessAutoTlsHint() string {
+	return Catalog.Format(msgs.locale, "vmessAutoTlsHint", nil)
 }
 
 // CongestionCtlLabel says "Congestion Control"

@@ -3925,17 +3925,39 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		MTU            int
 	}
 	type svcSig struct {
-		ID          string
-		Engine      config.ExecutionEngine
-		Kind        config.NodeKind
-		Protocol    config.Protocol
-		Server      string
-		Proxies     []string
-		ExternalURI string
-		Tags        []string
-		Listens     []string
-		EnableWARP  bool
-		WARPConfig  warpConfigSig
+		ID                   string
+		Engine               config.ExecutionEngine
+		Kind                 config.NodeKind
+		Protocol             config.Protocol
+		Server               string
+		ServerPort           int
+		UUID                 string
+		Password             string
+		Security             string
+		SNI                  string
+		ALPN                 []string
+		Fingerprint          string
+		PublicKey            string
+		ShortID              string
+		SpiderX              string
+		Flow                 string
+		Network              string
+		Path                 string
+		Host                 string
+		ServiceName          string
+		Method               string
+		Plugin               string
+		PluginOpts           string
+		CongestionController string
+		UDPRelayMode         string
+		ZeroRTTHandshake     bool
+		ExtraJSON            string
+		Proxies              []string
+		ExternalURI          string
+		Tags                 []string
+		Listens              []string
+		EnableWARP           bool
+		WARPConfig           warpConfigSig
 	}
 	svcs := make([]svcSig, len(snap.Services))
 	for i, s := range snap.Services {
@@ -3959,17 +3981,39 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 			}
 		}
 		svcs[i] = svcSig{
-			ID:          s.ID,
-			Engine:      s.Engine,
-			Kind:        s.Kind,
-			Protocol:    s.Protocol,
-			Server:      s.Server,
-			Proxies:     s.Proxies,
-			ExternalURI: s.ExternalURI,
-			Tags:        s.Tags,
-			Listens:     s.Listens,
-			EnableWARP:  s.EnableWARP,
-			WARPConfig:  wcSig,
+			ID:                   s.ID,
+			Engine:               s.Engine,
+			Kind:                 s.Kind,
+			Protocol:             s.Protocol,
+			Server:               s.Server,
+			ServerPort:           s.ServerPort,
+			UUID:                 s.UUID,
+			Password:             s.Password,
+			Security:             s.Security,
+			SNI:                  s.SNI,
+			ALPN:                 s.ALPN,
+			Fingerprint:          s.Fingerprint,
+			PublicKey:            s.PublicKey,
+			ShortID:              s.ShortID,
+			SpiderX:              s.SpiderX,
+			Flow:                 s.Flow,
+			Network:              s.Network,
+			Path:                 s.Path,
+			Host:                 s.Host,
+			ServiceName:          s.ServiceName,
+			Method:               s.Method,
+			Plugin:               s.Plugin,
+			PluginOpts:           s.PluginOpts,
+			CongestionController: s.CongestionController,
+			UDPRelayMode:         s.UDPRelayMode,
+			ZeroRTTHandshake:     s.ZeroRTTHandshake,
+			ExtraJSON:            s.ExtraJSON,
+			Proxies:              s.Proxies,
+			ExternalURI:          s.ExternalURI,
+			Tags:                 s.Tags,
+			Listens:              s.Listens,
+			EnableWARP:           s.EnableWARP,
+			WARPConfig:           wcSig,
 		}
 	}
 	sigObj := struct {

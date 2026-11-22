@@ -333,4 +333,27 @@ func TestBuildNativeOutbound_VMessVariants(t *testing.T) {
 	if !ok || len(alpn) != 1 || alpn[0] != "h2" {
 		t.Errorf("expected grpc to preserve h2 ALPN, got %#v", tlsMap["alpn"])
 	}
+
+	// Regression: WS path without leading slash and empty Host on port 443 must normalize path
+	// and default Host header without ":443" so sagernet/ws matches Xray/V2rayN behavior.
+	wsNoHostNoSlash := config.Service{
+		ID:         "vmess-ws-default-host",
+		Protocol:   config.ProtoVMess,
+		Server:     "v.example.com",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Security:   "tls",
+		Network:    "ws",
+		Path:       "wss_path",
+		Method:     "aes-128-gcm",
+	}
+	ob = buildNativeOutbound(wsNoHostNoSlash)
+	trMap = ob["transport"].(map[string]any)
+	if trMap["path"] != "/wss_path" {
+		t.Errorf("expected normalized leading slash '/wss_path', got %#v", trMap["path"])
+	}
+	headers, ok := trMap["headers"].(map[string]string)
+	if !ok || headers["Host"] != "v.example.com" {
+		t.Errorf("expected default WS Host 'v.example.com', got %#v", trMap["headers"])
+	}
 }

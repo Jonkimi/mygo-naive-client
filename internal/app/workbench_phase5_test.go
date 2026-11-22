@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 )
 
@@ -586,5 +587,147 @@ func TestEditor_ALPNComboboxCandidates(t *testing.T) {
 	}
 	if len(built.ALPN) != 2 || built.ALPN[0] != "h2" || built.ALPN[1] != "custom/1" {
 		t.Fatalf("expected saved ALPN [h2 custom/1], got %#v", built.ALPN)
+	}
+}
+
+func TestEditor_VMessCipherSelectionAndSave(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	cat := a.catalog()
+
+	vmessSvc := config.Service{
+		ID:         "vmess-cipher-ui",
+		Name:       "VMess-Cipher",
+		Protocol:   config.ProtoVMess,
+		Engine:     config.EngineSingBox,
+		Server:     "v.example.com",
+		ServerPort: 443,
+		UUID:       "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		Security:   "tls",
+		Network:    "ws",
+		Path:       "/ws",
+	}
+	a.state.Services = []config.Service{vmessSvc}
+
+	// 1. Opening VMess node with empty Method shows "auto" and Sing-Box+TLS auto hint
+	a.openEditServiceDialog(vmessSvc)
+	tt.Frame()
+	if a.editor.vmessMethod != "auto" {
+		t.Fatalf("expected default vmessMethod='auto', got %q", a.editor.vmessMethod)
+	}
+	if !tt.HasText(cat.VmessAutoTlsHint()) {
+		t.Fatalf("expected auto+TLS hint when Engine=SingBox, Security=TLS, Method=auto")
+	}
+
+	// 2. Selecting "aes-128-gcm" from the UI dropdown updates vmessMethod, hides hint, and persists on save
+	if err := tt.Click("auto"); err != nil {
+		t.Fatalf("open VMess cipher dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("aes-128-gcm"); err != nil {
+		t.Fatalf("select aes-128-gcm cipher: %v", err)
+	}
+	tt.Frame()
+	if a.editor.vmessMethod != "aes-128-gcm" {
+		t.Fatalf("expected vmessMethod='aes-128-gcm', got %q", a.editor.vmessMethod)
+	}
+	if tt.HasText(cat.VmessAutoTlsHint()) {
+		t.Fatalf("expected auto+TLS hint hidden after selecting explicit aes-128-gcm")
+	}
+
+	if err := tt.Click(cat.EditorSaveEdit()); err != nil {
+		t.Fatalf("save edited VMess node: %v", err)
+	}
+	tt.Frame()
+
+	saved := a.state.Services[0]
+	if saved.Method != "aes-128-gcm" {
+		t.Fatalf("expected saved.Method='aes-128-gcm', got %q", saved.Method)
+	}
+	ob := boxengine.BuildNativeOutbound(saved)
+	if ob["security"] != "aes-128-gcm" {
+		t.Fatalf("expected sing-box outbound security='aes-128-gcm', got %v", ob["security"])
+	}
+
+	// 3. Re-opening saved node preserves the selected cipher in UI state
+	a.openEditServiceDialog(saved)
+	tt.Frame()
+	if a.editor.vmessMethod != "aes-128-gcm" {
+		t.Fatalf("expected reopened vmessMethod='aes-128-gcm', got %q", a.editor.vmessMethod)
+	}
+
+	// 4. Regression: editing sing-box outbound fields (Method/Host/Path/SNI/ServerPort) must change
+	// gatewayConfigSignature() so syncRouter() restarts the embedded sing-box gateway, while renaming
+	// the node must keep the signature stable.
+	sigBase := a.gatewayConfigSignature()
+	a.state.Services[0].Name = "VMess-Renamed"
+	if a.gatewayConfigSignature() != sigBase {
+		t.Fatalf("expected renaming node not to change gatewayConfigSignature")
+	}
+	a.state.Services[0].Method = "chacha20-poly1305"
+	if a.gatewayConfigSignature() == sigBase {
+		t.Fatalf("expected changing VMess Method to change gatewayConfigSignature")
+	}
+	sigAfterMethod := a.gatewayConfigSignature()
+	a.state.Services[0].Host = "cdn2.example.com"
+	if a.gatewayConfigSignature() == sigAfterMethod {
+		t.Fatalf("expected changing WS Host to change gatewayConfigSignature")
+	}
+}
+
+func TestEditor_FingerprintComboboxCandidates(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	cat := a.catalog()
+
+	vmessSvc := config.Service{
+		ID:          "vmess-fp-ui",
+		Name:        "VMess-FP",
+		Protocol:    config.ProtoVMess,
+		Server:      "ws.example.com",
+		ServerPort:  443,
+		UUID:        "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+		Security:    "tls",
+		Fingerprint: "chrome",
+		Network:     "ws",
+		Path:        "/ws",
+	}
+	a.state.Services = []config.Service{vmessSvc}
+	a.openEditServiceDialog(vmessSvc)
+	tt.Frame()
+	a.editor.scroll.Y = 140
+	tt.Frame()
+
+	// 1. Clicking the dropdown toggle opens preset uTLS fingerprint candidates.
+	if err := tt.Click(cat.FingerprintDropdownLabel()); err != nil {
+		t.Fatalf("click fingerprint dropdown toggle: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("firefox") || !tt.HasText("safari") || !tt.HasText("randomized") {
+		t.Fatalf("expected uTLS fingerprint candidates in popup, got texts: %q", tt.Texts())
+	}
+
+	// 2. Picking a candidate updates fingerprint and closes the popup.
+	if err := tt.Click("firefox"); err != nil {
+		t.Fatalf("click firefox candidate: %v", err)
+	}
+	tt.Frame()
+	if a.editor.fingerprint != "firefox" {
+		t.Fatalf("expected fingerprint='firefox', got %q", a.editor.fingerprint)
+	}
+	if tt.HasText("safari") {
+		t.Fatalf("expected fingerprint popup to close after selection, still visible: %q", tt.Texts())
+	}
+
+	if err := tt.Click(cat.EditorSaveEdit()); err != nil {
+		t.Fatalf("save selected fingerprint: %v", err)
+	}
+	tt.Frame()
+	if a.state.Services[0].Fingerprint != "firefox" {
+		t.Fatalf("expected saved Fingerprint='firefox', got %q", a.state.Services[0].Fingerprint)
+	}
+
+	a.openEditServiceDialog(a.state.Services[0])
+	tt.Frame()
+	if a.editor.fingerprint != "firefox" {
+		t.Fatalf("expected reopened Fingerprint='firefox', got %q", a.editor.fingerprint)
 	}
 }

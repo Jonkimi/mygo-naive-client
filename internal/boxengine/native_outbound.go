@@ -296,13 +296,16 @@ func buildNativeTransport(svc config.Service) map[string]any {
 		transport := map[string]any{"type": "ws"}
 		path, maxED := splitWSEarlyDataPath(svc.Path)
 		if path != "" {
+			if !strings.HasPrefix(path, "/") {
+				path = "/" + path
+			}
 			transport["path"] = path
 		}
 		if maxED > 0 {
 			transport["max_early_data"] = maxED
 			transport["early_data_header_name"] = "Sec-WebSocket-Protocol"
 		}
-		if host := strings.TrimSpace(svc.Host); host != "" {
+		if host := effectiveWSHostHeader(svc); host != "" {
 			transport["headers"] = map[string]string{"Host": host}
 		}
 		return transport
@@ -337,6 +340,27 @@ func buildNativeTransport(svc config.Service) map[string]any {
 	default:
 		return nil
 	}
+}
+
+// effectiveWSHostHeader returns the WebSocket Host header, defaulting on standard ports (443/80)
+// to SNI or domain server without the port suffix so sagernet/ws does not emit "Host: domain:443".
+func effectiveWSHostHeader(svc config.Service) string {
+	if host := strings.TrimSpace(svc.Host); host != "" {
+		return host
+	}
+	if sni := strings.TrimSpace(svc.SNI); sni != "" {
+		return sni
+	}
+	srv := strings.TrimSpace(svc.Server)
+	if srv == "" || net.ParseIP(strings.Trim(srv, "[]")) != nil {
+		return ""
+	}
+	sec := strings.ToLower(strings.TrimSpace(svc.Security))
+	isTLS := sec == "tls" || sec == "reality"
+	if (isTLS && (svc.ServerPort == 443 || svc.ServerPort == 0)) || (!isTLS && svc.ServerPort == 80) {
+		return srv
+	}
+	return ""
 }
 
 func splitWSEarlyDataPath(rawPath string) (string, uint32) {

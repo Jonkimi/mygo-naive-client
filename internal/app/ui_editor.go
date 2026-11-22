@@ -38,6 +38,15 @@ var editorProtocolNames = []string{
 	"Cloudflare WARP (Direct)",
 }
 
+var vmessCipherOptions = []string{
+	"auto",
+	"aes-128-gcm",
+	"chacha20-poly1305",
+	"zero",
+	"none",
+	"aes-128-cfb",
+}
+
 type editorForm struct {
 	open           bool
 	isNew          bool
@@ -72,9 +81,10 @@ type editorForm struct {
 	securityIndex int // 0: tls, 1: reality, 2: none
 	vmessSecIndex int // 0: tls, 1: none
 	sni           string
-	alpnInput     string
-	alpnHandle    ui.Handle
-	fingerprint   string
+	alpnInput         string
+	alpnHandle        ui.Handle
+	fingerprint       string
+	fingerprintHandle ui.Handle
 	publicKey     string
 	shortID       string
 	spiderX       string
@@ -84,6 +94,7 @@ type editorForm struct {
 	host          string
 	serviceName   string
 	method        string
+	vmessMethod   string
 	congestionCtl string
 	zeroRTT       bool
 
@@ -237,12 +248,16 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 	if method == "" && proto == config.ProtoShadowsocks {
 		method = "2022-blake3-aes-128-gcm"
 	}
+	vmessMethod := "auto"
+	if proto == config.ProtoVMess {
+		vmessMethod = config.VMessSecurityOrAuto(svc.Method)
+	}
 	congestion := svc.CongestionController
 	if congestion == "" && (proto == config.ProtoHysteria2 || proto == config.ProtoTUIC) {
 		congestion = "bbr"
 	}
 	fingerprint := svc.Fingerprint
-	if fingerprint == "" && (proto == config.ProtoVLESS || (proto == config.ProtoVMess && vmessSecIdx == 0)) {
+	if isNew && fingerprint == "" && (proto == config.ProtoVLESS || (proto == config.ProtoVMess && vmessSecIdx == 0)) {
 		fingerprint = "chrome"
 	}
 	serviceName := svc.ServiceName
@@ -315,6 +330,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 		host:               svc.Host,
 		serviceName:        serviceName,
 		method:             method,
+		vmessMethod:        vmessMethod,
 		congestionCtl:      congestion,
 		zeroRTT:            svc.ZeroRTTHandshake,
 		externalURI:        svc.ExternalURI,
@@ -518,7 +534,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 
 	method := strings.TrimSpace(a.editor.method)
 	if proto == config.ProtoVMess {
-		method = config.NormalizeVMessSecurity(method)
+		method = config.VMessSecurityOrAuto(a.editor.vmessMethod)
 	}
 
 	var alpn []string
@@ -732,6 +748,7 @@ func (a *app) syncEditorFieldsForProtocolSwitch(oldProto, newProto config.Protoc
 	case config.ProtoVMess:
 		if oldProto != config.ProtoVMess {
 			a.editor.method = ""
+			a.editor.vmessMethod = "auto"
 		}
 	case config.ProtoShadowsocks:
 		if oldProto != config.ProtoShadowsocks || strings.TrimSpace(a.editor.method) == "" {
@@ -758,6 +775,28 @@ func (a *app) renderALPNField(c *ui.Context, p palette, key string) {
 		cat.AlpnLabel(), cat.AlpnDropdownLabel(),
 		&a.editor.alpnInput, &a.editor.alpnHandle,
 		cat.AlpnPlaceholder(), options,
+	)
+}
+
+func (a *app) renderFingerprintField(c *ui.Context, p palette, key string) {
+	cat := a.catalog()
+	options := []comboboxOption{
+		{Value: "chrome", Label: "chrome"},
+		{Value: "firefox", Label: "firefox"},
+		{Value: "edge", Label: "edge"},
+		{Value: "safari", Label: "safari"},
+		{Value: "ios", Label: "ios"},
+		{Value: "android", Label: "android"},
+		{Value: "random", Label: "random"},
+		{Value: "randomized", Label: "randomized"},
+		{Value: "360", Label: "360"},
+		{Value: "qq", Label: "qq"},
+	}
+	labeledCombobox(
+		c, p, key,
+		cat.FingerprintLabel(), cat.FingerprintDropdownLabel(),
+		&a.editor.fingerprint, &a.editor.fingerprintHandle,
+		cat.FingerprintPlaceholder(), options,
 	)
 }
 
@@ -910,7 +949,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 				if a.editor.securityIndex != 2 {
 					ui.Grid(c.Key("editor-vless-tls-grid")).Columns(2).Gap(10).Children(func() {
 						labeledInput(c, p, "inp-vless-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-						labeledInput(c, p, "inp-vless-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
+						a.renderFingerprintField(c, p, "inp-vless-fp")
 					})
 				}
 				if a.editor.securityIndex == 0 {
@@ -935,6 +974,16 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 		case config.ProtoVMess:
 			a.renderEditorServerPortRow(c, p, "vmess", "443")
 			labeledInput(c, p, "inp-vmess-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.VmessMethodLabel()).FontSize(12).FontWeight(500).TextColor(p.text).NoWrap()
+					ui.Select(c.Key("inp-vmess-method"), &a.editor.vmessMethod, vmessCipherOptions).
+						Label(cat.VmessMethodLabel()).Width(220)
+				})
+				if a.editor.engineIndex == 0 && a.editor.vmessSecIndex == 0 && config.VMessSecurityOrAuto(a.editor.vmessMethod) == "auto" {
+					ui.Text(c, cat.VmessAutoTlsHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
+				}
+			})
 
 			ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
@@ -948,7 +997,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 				if a.editor.vmessSecIndex == 0 {
 					ui.Grid(c.Key("editor-vmess-tls-grid")).Columns(2).Gap(10).Children(func() {
 						labeledInput(c, p, "inp-vmess-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
-						labeledInput(c, p, "inp-vmess-fp", cat.FingerprintLabel(), &a.editor.fingerprint, "chrome")
+						a.renderFingerprintField(c, p, "inp-vmess-fp")
 					})
 					a.renderALPNField(c, p, "inp-vmess-alpn")
 				}
