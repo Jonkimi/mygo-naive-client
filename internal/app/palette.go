@@ -381,116 +381,138 @@ type comboboxOption struct {
 	Label string
 }
 
+// comboboxField renders an editable text input with a dropdown list of preset candidates.
+// It returns the outer container element, the underlying input element, and whether a
+// preset option was chosen in the current frame.
+func comboboxField(c *ui.Context, p palette, key, label, toggleLabel string, value *string, handle *ui.Handle, placeholder string, options []comboboxOption) (container ui.Element, inp ui.Element, chosen bool) {
+	container = ui.Column(c).Children(func() {
+		t := c.Theme()
+		cb := ui.ComboboxBase(c.Key(key), value)
+		inp = cb.Input
+
+		borderCol := t.Border
+		if handle != nil && handle.Focused(c) {
+			borderCol = t.Accent
+		} else if inp.Hovered() {
+			borderCol = p.textDim
+		}
+		inp.Label(label).
+			Placeholder(placeholder).
+			Padding(t.Space(1.5), t.Space(2.5)).
+			PaddingEnd(t.Space(7)).
+			Radius(t.Radius).
+			Background(t.Surface).
+			Border(1, borderCol)
+		if handle != nil {
+			inp.Bind(handle)
+		}
+
+		shown := options
+		if cb.Filtering() {
+			q := strings.ToLower(strings.TrimSpace(*value))
+			if q != "" {
+				var starts, contains []comboboxOption
+				for _, opt := range options {
+					if opt.Value == "" {
+						continue
+					}
+					lv := strings.ToLower(opt.Value)
+					ll := strings.ToLower(opt.Label)
+					switch {
+					case strings.HasPrefix(lv, q) || strings.HasPrefix(ll, q):
+						starts = append(starts, opt)
+					case strings.Contains(lv, q) || strings.Contains(ll, q):
+						contains = append(contains, opt)
+					}
+				}
+				shown = append(starts, contains...)
+			}
+		}
+
+		cb.Popup(func(panel ui.Element) {
+			panel.Margin(4, 0, 0, 0).
+				Padding(4).
+				Radius(t.Radius+2).
+				Background(p.card).
+				Border(1, p.border).
+				Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18)).
+				Children(func() {
+					cur := strings.TrimSpace(*value)
+					for _, opt := range shown {
+						item := cb.Item(opt.Value).
+							PaddingX(10).PaddingY(6).
+							Radius(t.Radius)
+						isCurrent := opt.Value == cur
+						switch {
+						case item.Highlighted():
+							item.Background(p.accent).TextColor(t.AccentText)
+						case isCurrent:
+							item.Background(p.elevated)
+						}
+						item.Children(func() {
+							fg := p.text
+							if item.Highlighted() {
+								fg = t.AccentText
+							} else if opt.Value == "" {
+								fg = p.textMuted
+							}
+							ui.Text(c, opt.Label).FontSize(12).TextColor(fg).NoWrap()
+						})
+					}
+				})
+		})
+
+		chevIcon := iconChevronDown
+		if cb.Open() {
+			chevIcon = iconChevronUp
+		}
+		toggleBtn := ui.ButtonBase(c.Key(key+"-toggle")).
+			KeepFocus().
+			Absolute().Top(0).Bottom(0).Right(2).Width(26).
+			AlignItems(ui.Center).Justify(ui.Center).
+			Label(toggleLabel).
+			Children(func() {
+				ui.Icon(c, chevIcon).Size(12, 12).TextColor(p.textMuted)
+			})
+		if toggleBtn.Clicked() {
+			if cb.Open() {
+				cb.SetOpen(false)
+			} else {
+				inp.Focus()
+				cb.SetOpen(true)
+			}
+		}
+
+		if cVal, ok := cb.Chosen(); ok {
+			*value = cVal
+			chosen = true
+		}
+	})
+	return container, inp, chosen
+}
+
 // labeledCombobox builds an editable text input with a dropdown list of preset
 // candidates. Clicking the field or trailing chevron opens all options; typing
-// filters options while still preserving custom comma-separated input on blur.
+// filters options while still preserving custom input on blur.
 func labeledCombobox(c *ui.Context, p palette, key, label, toggleLabel string, value *string, handle *ui.Handle, placeholder string, options []comboboxOption) ui.Element {
 	var inp ui.Element
 	ui.Column(c).Gap(5).Children(func() {
 		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.text)
-		ui.Column(c).Children(func() {
-			t := c.Theme()
-			cb := ui.ComboboxBase(c.Key(key), value)
-			inp = cb.Input
-
-			borderCol := t.Border
-			if handle != nil && handle.Focused(c) {
-				borderCol = t.Accent
-			} else if inp.Hovered() {
-				borderCol = p.textDim
-			}
-			inp.Label(label).
-				Placeholder(placeholder).
-				Padding(t.Space(1.5), t.Space(2.5)).
-				PaddingEnd(t.Space(7)).
-				Radius(t.Radius).
-				Background(t.Surface).
-				Border(1, borderCol)
-			if handle != nil {
-				inp.Bind(handle)
-			}
-
-			shown := options
-			if cb.Filtering() {
-				q := strings.ToLower(strings.TrimSpace(*value))
-				if q != "" {
-					var starts, contains []comboboxOption
-					for _, opt := range options {
-						if opt.Value == "" {
-							continue
-						}
-						lv := strings.ToLower(opt.Value)
-						switch {
-						case strings.HasPrefix(lv, q):
-							starts = append(starts, opt)
-						case strings.Contains(lv, q):
-							contains = append(contains, opt)
-						}
-					}
-					shown = append(starts, contains...)
-				}
-			}
-
-			cb.Popup(func(panel ui.Element) {
-				panel.Margin(4, 0, 0, 0).
-					Padding(4).
-					Radius(t.Radius+2).
-					Background(p.card).
-					Border(1, p.border).
-					Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18)).
-					Children(func() {
-						cur := strings.TrimSpace(*value)
-						for _, opt := range shown {
-							item := cb.Item(opt.Value).
-								PaddingX(10).PaddingY(6).
-								Radius(t.Radius)
-							isCurrent := opt.Value == cur
-							switch {
-							case item.Highlighted():
-								item.Background(p.accent).TextColor(t.AccentText)
-							case isCurrent:
-								item.Background(p.elevated)
-							}
-							item.Children(func() {
-								fg := p.text
-								if item.Highlighted() {
-									fg = t.AccentText
-								} else if opt.Value == "" {
-									fg = p.textMuted
-								}
-								ui.Text(c, opt.Label).FontSize(12).TextColor(fg).NoWrap()
-							})
-						}
-					})
-			})
-
-			chevIcon := iconChevronDown
-			if cb.Open() {
-				chevIcon = iconChevronUp
-			}
-			toggleBtn := ui.ButtonBase(c.Key(key+"-toggle")).
-				KeepFocus().
-				Absolute().Top(0).Bottom(0).Right(2).Width(26).
-				AlignItems(ui.Center).Justify(ui.Center).
-				Label(toggleLabel).
-				Children(func() {
-					ui.Icon(c, chevIcon).Size(12, 12).TextColor(p.textMuted)
-				})
-			if toggleBtn.Clicked() {
-				if cb.Open() {
-					cb.SetOpen(false)
-				} else {
-					inp.Focus()
-					cb.SetOpen(true)
-				}
-			}
-
-			if chosen, ok := cb.Chosen(); ok {
-				*value = chosen
-			}
-		})
+		_, inp, _ = comboboxField(c, p, key, label, toggleLabel, value, handle, placeholder, options)
 	})
 	return inp
+}
+
+// labeledComboboxChanged renders labeledCombobox and reports true when the user edits the text
+// or chooses a preset from the dropdown list.
+func labeledComboboxChanged(c *ui.Context, p palette, key, label, toggleLabel string, value *string, handle *ui.Handle, placeholder string, options []comboboxOption) bool {
+	var inp ui.Element
+	var chosen bool
+	ui.Column(c).Gap(5).Children(func() {
+		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.text)
+		_, inp, chosen = comboboxField(c, p, key, label, toggleLabel, value, handle, placeholder, options)
+	})
+	return chosen || inp.Changed()
 }
 
 func labeledTextArea(c *ui.Context, p palette, key, label string, value *string, placeholder string, minLines, maxLines int) ui.Element {

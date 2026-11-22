@@ -476,15 +476,18 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 
 				canTest := rt.State == runner.StateRunning
 				ui.Row(c).AlignItems(ui.Center).Gap(2).Shrink(0).Children(func() {
+					manualProbing := rt.Probing && !rt.AutoProbing
 					probeTip := cat.ActionLatency()
-					if rt.Probing {
+					if manualProbing {
 						probeTip = cat.LatencyTesting()
+					} else if rt.Probing && rt.AutoProbing {
+						probeTip = cat.AutoProbingActionHint()
 					} else if !canTest {
 						probeTip = cat.TestRequiresRunning()
 					}
-					probeBtn := quietRowIconButton(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency(), !canTest || rt.Probing, false).
+					probeBtn := quietRowIconButton(c.Key("probe-btn"), p, iconBolt, cat.ActionLatency(), !canTest || manualProbing, false).
 						Tooltip(probeTip)
-					if probeBtn.Clicked() && !rt.Probing {
+					if probeBtn.Clicked() && !manualProbing {
 						a.openNodeMenuID = ""
 						a.openBatchMenu = false
 						a.triggerServiceProbe(svc)
@@ -638,6 +641,9 @@ func (a *app) serviceLatencyDisplay(p palette, svc config.Service, rt runner.Sta
 		return "—", p.textDim, ""
 	}
 	if rt.Probing {
+		if rt.AutoProbing {
+			return cat.AutoProbingShort(), p.textMuted, cat.AutoProbing()
+		}
 		return cat.LatencyTestingShort(), p.amber, cat.LatencyTesting()
 	}
 	if rt.ProbeError != "" {

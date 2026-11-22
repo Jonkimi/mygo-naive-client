@@ -259,6 +259,8 @@
   "labelLocalListen": "Local:",
   "labelRemoteNode": "Remote:",
   "latencyTesting": "Pinging...",
+  "autoProbing": "Background health check in progress...",
+  "autoProbingActionHint": "Background health check in progress (click to test manually now)",
   "latencyFailed": "Ping Failed",
   "downloadTesting": "Testing Speed...",
   "downloadFailed": "Speed Test Failed",
@@ -319,6 +321,8 @@
   "autoProbePeriodic": "Periodic latency testing (keeps all node metrics fresh)",
   "autoProbeIntervalLabel": "Periodic Test Interval (minutes)",
   "probeURLLabel": "HTTP 204 Ping Test Target URL",
+  "probeURLDropdownLabel": "Show preset Probe URLs",
+  "probeURLDefaultSuffix": "Default",
   "downloadURLLabel": "Download Speed Test Target URL",
   "saveSettings": "Save Preferences",
   "editNodeTitle": "Edit Node",
@@ -888,6 +892,7 @@
     }
   },
   "latencyTestingShort": "Pinging…",
+  "autoProbingShort": "Probing…",
   "latencyTooltipBoth": "Real traffic EWMA: {ewma} ms · Probe RTT: {probe} ms",
   "@latencyTooltipBoth": {
     "placeholders": {

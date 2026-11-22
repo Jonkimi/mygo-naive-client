@@ -4355,3 +4355,220 @@ func TestNodeHealth_WarmTrafficClearsWarpSpeedErrorAndCooldownUI(t *testing.T) {
 	}
 }
 
+// Regression: startup AutoProbeOnStart routes through ProbeServiceAutoCtx, background AutoProbing
+// renders distinct UI status (AutoProbingShort) while keeping the row manual probe button interactive
+// to preempt and unlock in 1 click, and Settings/Cloudflare ProbeURL comboboxes support presets + custom input.
+func TestNodeHealth_StartupAutoProbeDistinguishedUIAndProbeURLPresets(t *testing.T) {
+	probeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer probeLn.Close()
+	go func() {
+		for {
+			c, err := probeLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))
+			}(c)
+		}
+	}()
+
+	svc := config.Service{
+		ID:         "startup-ui-probe",
+		Name:       "Startup-Probe-UI",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSingBox,
+		Server:     "127.0.0.1",
+		ServerPort: 443,
+		UUID:       "23ad6b10-8d1a-40f7-8ad0-e3e35ff382a3",
+	}
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	a.state.AutoProbeOnStart = true
+	a.state.ProbeURL = fmt.Sprintf("http://%s/generate_204", probeLn.Addr().String())
+	a.saveState()
+
+	var dialMu sync.Mutex
+	blockFirstDial := false
+	firstDialEntered := make(chan struct{})
+	firstDialOnce := sync.Once{}
+	a.mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		dialMu.Lock()
+		block := blockFirstDial
+		dialMu.Unlock()
+		if block {
+			firstDialOnce.Do(func() { close(firstDialEntered) })
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", probeLn.Addr().String())
+	}
+
+	// 1. Cold-start AutoProbeOnStart routes through ProbeServiceAutoCtx ([自动探活] log + healthy latency).
+	a.headless = false
+	a.mgr.SetStatusForTest(svc.ID, runner.Status{State: runner.StateRunning})
+	a.mgr.OnServiceStarted(svc)
+	if !waitForUI(t, a, tt, 3*time.Second, func() bool {
+		return a.mgr.StatusOf(svc.ID).Latency > 0
+	}) {
+		t.Fatalf("expected AutoProbeOnStart to record latency, got %+v", a.mgr.StatusOf(svc.ID))
+	}
+	if !strings.Contains(a.mgr.LogsOf(svc.ID).Text(), "[自动探活]") {
+		t.Fatalf("expected AutoProbeOnStart to log [自动探活], got:\n%s", a.mgr.LogsOf(svc.ID).Text())
+	}
+	a.headless = true
+
+	// 2. While a tripped HalfOpen node is actively auto-probing, UI renders AutoProbingShort
+	//    (not LatencyTestingShort) and clicking the row probe button preempts it to recover in 1 click.
+	baseNow := time.Now()
+	var nowMu sync.Mutex
+	now := baseNow
+	a.tracker.SetNowFuncForTest(func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		return now
+	})
+	for i := 0; i < 3; i++ {
+		a.tracker.RecordProbeFailureReason(svc.ID, "outage")
+	}
+	nowMu.Lock()
+	now = baseNow.Add(61 * time.Second)
+	nowMu.Unlock()
+
+	dialMu.Lock()
+	blockFirstDial = true
+	dialMu.Unlock()
+
+	autoDone := make(chan error, 1)
+	go func() {
+		_, err := a.mgr.ProbeServiceAutoCtx(context.Background(), svc, a.state.ProbeURL)
+		autoDone <- err
+	}()
+	select {
+	case <-firstDialEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for auto probe dial")
+	}
+
+	tt.SetSize(1000, 760)
+	a.activeTab = TabNodes
+	tt.Frame()
+	cat := a.catalog()
+	if !tt.HasText(cat.AutoProbingShort()) {
+		t.Fatalf("expected AutoProbingShort %q during background auto probe, got texts: %v", cat.AutoProbingShort(), tt.Texts())
+	}
+	if tt.HasText(cat.LatencyTestingShort()) {
+		t.Fatalf("did not expect manual LatencyTestingShort %q during auto probe", cat.LatencyTestingShort())
+	}
+
+	// Drawer also displays AutoProbingShort while keeping its manual action button enabled.
+	a.activeNodeDrawerID = svc.ID
+	tt.Frame()
+	if !tt.HasText(cat.AutoProbingShort()) {
+		t.Fatalf("expected drawer to render AutoProbingShort %q during background auto probe, got: %v", cat.AutoProbingShort(), tt.Texts())
+	}
+	a.activeNodeDrawerID = ""
+	tt.Frame()
+
+	// Unblock subsequent dial so clicking manual button succeeds after preempting auto probe.
+	dialMu.Lock()
+	blockFirstDial = false
+	dialMu.Unlock()
+	if err := tt.Click(cat.ActionLatency()); err != nil {
+		t.Fatalf("click row manual probe button during AutoProbing: %v", err)
+	}
+	select {
+	case err := <-autoDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected auto probe preempted with context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for preempted auto probe")
+	}
+	if !waitForUI(t, a, tt, 3*time.Second, func() bool {
+		return a.tracker.GetScore(svc.ID).CircuitState == telemetry.CircuitClosed
+	}) {
+		t.Fatalf("expected manual click during AutoProbing to preempt & recover to Closed, got %+v", a.tracker.GetScore(svc.ID))
+	}
+
+	// 3. Settings Telemetry ProbeURL combobox: preset dropdown selection updates & persists state.
+	a.activeTab = TabSettings
+	a.settingsSubTab = 3
+	tt.Frame()
+	if err := tt.Click(cat.ProbeURLDropdownLabel()); err != nil {
+		t.Fatalf("open settings ProbeURL preset dropdown: %v", err)
+	}
+	tt.Frame()
+	wantPreset := "https://www.gstatic.com/generate_204 · Google (gstatic)"
+	if !tt.HasText(wantPreset) {
+		t.Fatalf("expected ProbeURL preset %q in dropdown, got texts: %v", wantPreset, tt.Texts())
+	}
+	if err := tt.Click(wantPreset); err != nil {
+		t.Fatalf("click ProbeURL preset: %v", err)
+	}
+	tt.Frame()
+	if a.state.ProbeURL != "https://www.gstatic.com/generate_204" {
+		t.Fatalf("expected ProbeURL updated to gstatic preset, got %q", a.state.ProbeURL)
+	}
+	a.loadState()
+	if a.state.ProbeURL != "https://www.gstatic.com/generate_204" {
+		t.Fatalf("expected preset ProbeURL persisted to disk, got %q", a.state.ProbeURL)
+	}
+
+	// Custom text input preserves and persists custom suffix after blurring.
+	toggleRect, ok := tt.Find(cat.ProbeURLDropdownLabel())
+	if !ok {
+		t.Fatalf("could not find ProbeURL dropdown toggle")
+	}
+	tt.ClickAt(toggleRect.X-40, toggleRect.Y+toggleRect.H/2)
+	tt.Frame()
+	tt.Type("/custom")
+	tt.Key(0, ui.KeyEscape)
+	tt.Key(0, ui.KeyTab)
+	tt.Frame()
+	if a.state.ProbeURL != "https://www.gstatic.com/generate_204/custom" {
+		t.Fatalf("expected custom ProbeURL preserved after edit, got %q", a.state.ProbeURL)
+	}
+	a.loadState()
+	if a.state.ProbeURL != "https://www.gstatic.com/generate_204/custom" {
+		t.Fatalf("expected custom ProbeURL persisted to disk, got %q", a.state.ProbeURL)
+	}
+
+	// 4. Cloudflare WARP ProbeURL combobox: selecting a preset updates & persists, and selecting default clears it.
+	a.activeTab = TabCloudflare
+	a.warpShowAdvanced = true
+	tt.Frame()
+	if err := tt.Click(cat.ProbeURLDropdownLabel()); err != nil {
+		t.Fatalf("open WARP ProbeURL preset dropdown: %v", err)
+	}
+	tt.Frame()
+	wantWarpPreset := "http://captive.apple.com/hotspot-detect.html · Apple Captive"
+	if err := tt.Click(wantWarpPreset); err != nil {
+		t.Fatalf("click WARP ProbeURL preset: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.ProbeURL != "http://captive.apple.com/hotspot-detect.html" {
+		t.Fatalf("expected WARP ProbeURL updated to Apple preset, got %q", a.state.Cloudflare.ProbeURL)
+	}
+	a.loadState()
+	if a.state.Cloudflare.ProbeURL != "http://captive.apple.com/hotspot-detect.html" {
+		t.Fatalf("expected WARP ProbeURL preset persisted, got %q", a.state.Cloudflare.ProbeURL)
+	}
+	if err := tt.Click(cat.ProbeURLDropdownLabel()); err != nil {
+		t.Fatalf("reopen WARP ProbeURL preset dropdown: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(cat.CloudflareWarpProbeURLPlaceholder()); err != nil {
+		t.Fatalf("click WARP default ProbeURL preset: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.ProbeURL != "" {
+		t.Fatalf("expected WARP ProbeURL cleared by default preset option, got %q", a.state.Cloudflare.ProbeURL)
+	}
+}
+

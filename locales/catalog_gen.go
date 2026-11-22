@@ -2582,6 +2582,26 @@ func (msgs Messages) LatencyTesting() string {
 	return Catalog.Format(msgs.locale, "latencyTesting", nil)
 }
 
+// AutoProbing says "Background health check in progress..."
+// in the language the app shows.
+func AutoProbing() string { return In(i18n.Locale()).AutoProbing() }
+
+// AutoProbing says "Background health check in progress..."
+// in the language of msgs.
+func (msgs Messages) AutoProbing() string {
+	return Catalog.Format(msgs.locale, "autoProbing", nil)
+}
+
+// AutoProbingActionHint says "Background health check in progress (click to test manually now)"
+// in the language the app shows.
+func AutoProbingActionHint() string { return In(i18n.Locale()).AutoProbingActionHint() }
+
+// AutoProbingActionHint says "Background health check in progress (click to test manually now)"
+// in the language of msgs.
+func (msgs Messages) AutoProbingActionHint() string {
+	return Catalog.Format(msgs.locale, "autoProbingActionHint", nil)
+}
+
 // LatencyFailed says "Ping Failed"
 // in the language the app shows.
 func LatencyFailed() string { return In(i18n.Locale()).LatencyFailed() }
@@ -3180,6 +3200,26 @@ func ProbeURLLabel() string { return In(i18n.Locale()).ProbeURLLabel() }
 // in the language of msgs.
 func (msgs Messages) ProbeURLLabel() string {
 	return Catalog.Format(msgs.locale, "probeURLLabel", nil)
+}
+
+// ProbeURLDropdownLabel says "Show preset Probe URLs"
+// in the language the app shows.
+func ProbeURLDropdownLabel() string { return In(i18n.Locale()).ProbeURLDropdownLabel() }
+
+// ProbeURLDropdownLabel says "Show preset Probe URLs"
+// in the language of msgs.
+func (msgs Messages) ProbeURLDropdownLabel() string {
+	return Catalog.Format(msgs.locale, "probeURLDropdownLabel", nil)
+}
+
+// ProbeURLDefaultSuffix says "Default"
+// in the language the app shows.
+func ProbeURLDefaultSuffix() string { return In(i18n.Locale()).ProbeURLDefaultSuffix() }
+
+// ProbeURLDefaultSuffix says "Default"
+// in the language of msgs.
+func (msgs Messages) ProbeURLDefaultSuffix() string {
+	return Catalog.Format(msgs.locale, "probeURLDefaultSuffix", nil)
 }
 
 // DownloadURLLabel says "Download Speed Test Target URL"
@@ -7156,6 +7196,16 @@ func LatencyTestingShort() string { return In(i18n.Locale()).LatencyTestingShort
 // in the language of msgs.
 func (msgs Messages) LatencyTestingShort() string {
 	return Catalog.Format(msgs.locale, "latencyTestingShort", nil)
+}
+
+// AutoProbingShort says "Probing…"
+// in the language the app shows.
+func AutoProbingShort() string { return In(i18n.Locale()).AutoProbingShort() }
+
+// AutoProbingShort says "Probing…"
+// in the language of msgs.
+func (msgs Messages) AutoProbingShort() string {
+	return Catalog.Format(msgs.locale, "autoProbingShort", nil)
 }
 
 // LatencyTooltipBoth says "Real traffic EWMA: {ewma} ms · Probe RTT: {probe} ms"

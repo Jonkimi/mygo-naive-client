@@ -745,10 +745,14 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 				ui.Column(c).Gap(6).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
 					ui.Text(c, cat.CloudflareWarpProbeURL()).FontSize(12).FontWeight(500).TextColor(p.text)
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						probeInp := ui.TextInput(c.Key("input-warp-probe-url"), &a.state.Cloudflare.ProbeURL).
-							Placeholder(cat.CloudflareWarpProbeURLPlaceholder()).
-							Grow(1)
-						if probeInp.Changed() {
+						fieldBox, probeInp, chosen := comboboxField(
+							c, p, "input-warp-probe-url",
+							cat.CloudflareWarpProbeURL(), cat.ProbeURLDropdownLabel(),
+							&a.state.Cloudflare.ProbeURL, &a.warpProbeURLHandle,
+							cat.CloudflareWarpProbeURLPlaceholder(), warpProbeURLPresetOptions(cat),
+						)
+						fieldBox.Grow(1).Shrink(1).MinWidth(0)
+						if chosen || probeInp.Changed() {
 							a.saveState()
 							a.resetWarpNodesHealth(false)
 						}

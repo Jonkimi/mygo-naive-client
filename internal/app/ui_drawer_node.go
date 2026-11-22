@@ -215,9 +215,12 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 					a.renderNodeDrawerHelpPopover(c, helpBtn, p)
 				})
 
-				probeBtn := subtleActionChip(c.Key("btn-drawer-probe"), p, iconBolt, cat.ActionLatency(), !canTest || rt.Probing)
+				manualProbing := rt.Probing && !rt.AutoProbing
+				probeBtn := subtleActionChip(c.Key("btn-drawer-probe"), p, iconBolt, cat.ActionLatency(), !canTest || manualProbing)
 				if !canTest {
 					probeBtn.Tooltip(cat.TestRequiresRunning())
+				} else if rt.Probing && rt.AutoProbing {
+					probeBtn.Tooltip(cat.AutoProbingActionHint())
 				}
 				if probeBtn.Clicked() {
 					a.triggerServiceProbe(svc)
@@ -261,8 +264,14 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 			}
 
 			if rt.Probing {
-				probeText = cat.LatencyTestingShort()
-				probeColor = p.amber
+				if rt.AutoProbing {
+					probeText = cat.AutoProbingShort()
+					probeColor = p.textMuted
+					probeTip = cat.AutoProbing()
+				} else {
+					probeText = cat.LatencyTestingShort()
+					probeColor = p.amber
+				}
 			} else if rt.ProbeError != "" {
 				probeText = cat.LatencyFailed()
 				probeColor = p.red

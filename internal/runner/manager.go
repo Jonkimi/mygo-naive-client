@@ -48,6 +48,7 @@ type Status struct {
 	LastError     string
 	Latency       time.Duration
 	Probing       bool
+	AutoProbing   bool
 	ProbeError    string
 	SpeedTesting  bool
 	DownloadSpeed float64
@@ -73,8 +74,11 @@ type instance struct {
 	svc        config.Service
 	status     Status
 	logs       *LogBuffer
-	cancel     context.CancelFunc
-	cmd        *exec.Cmd
+	cancel          context.CancelFunc
+	probeAutoCancel context.CancelFunc
+	probeCancel     context.CancelFunc
+	probeDone       chan struct{}
+	cmd             *exec.Cmd
 	stopping   bool
 	configPath string
 	done       chan struct{}
@@ -683,6 +687,7 @@ func (m *Manager) stopLocked(id string, inst *instance) error {
 	}
 
 	if inst.svc.EffectiveKind() == config.KindExternalProxy || inst.svc.EffectiveEngine() == config.EngineSingBox {
+		probeCancel := inst.probeCancel
 		inst.status.State = StateStopped
 		inst.status.PID = 0
 		inst.status.StartedAt = time.Time{}
@@ -692,16 +697,23 @@ func (m *Manager) stopLocked(id string, inst *instance) error {
 			inst.logs.AppendLine(fmt.Sprintf("[%s] 外部代理已停止", time.Now().Format("15:04:05")))
 		}
 		m.mu.Unlock()
+		if probeCancel != nil {
+			probeCancel()
+		}
 		m.onChange()
 		return nil
 	}
 
 	inst.stopping = true
 	cancel := inst.cancel
+	probeCancel := inst.probeCancel
 	done := inst.done
 	cmd := inst.cmd
 	m.mu.Unlock()
 
+	if probeCancel != nil {
+		probeCancel()
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -809,21 +821,63 @@ func (m *Manager) ProbeServiceAutoCtx(ctx context.Context, svc config.Service, p
 }
 
 func (m *Manager) probeServiceCtx(ctx context.Context, svc config.Service, probeURL string, isAuto bool) (time.Duration, error) {
-	m.mu.Lock()
-	inst := m.ensureInstanceLocked(svc.ID)
-	if inst.status.State != StateRunning || inst.status.Probing {
+	var inst *instance
+	var runCtx context.Context
+	var runCancel context.CancelFunc
+	var probeDone chan struct{}
+	var allocPort int
+
+	for {
+		m.mu.Lock()
+		inst = m.ensureInstanceLocked(svc.ID)
+		if inst.status.State != StateRunning {
+			m.mu.Unlock()
+			return 0, errors.New("服务未在运行中或正在测速")
+		}
+		if inst.status.Probing {
+			if isAuto || !inst.status.AutoProbing {
+				m.mu.Unlock()
+				return 0, errors.New("服务未在运行中或正在测速")
+			}
+			// Manual probe preempts an in-flight background automatic probe so UI actions
+			// take priority instead of failing silently or being queued behind stale probes.
+			cancelAuto := inst.probeAutoCancel
+			done := inst.probeDone
+			m.mu.Unlock()
+			if cancelAuto != nil {
+				cancelAuto()
+			}
+			if done != nil {
+				select {
+				case <-done:
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				}
+			}
+			continue
+		}
+
+		runCtx, runCancel = context.WithCancel(ctx)
+		probeDone = make(chan struct{})
+		inst.status.Probing = true
+		inst.status.AutoProbing = isAuto
+		inst.probeCancel = runCancel
+		if isAuto {
+			inst.probeAutoCancel = runCancel
+		} else {
+			inst.probeAutoCancel = nil
+		}
+		inst.probeDone = probeDone
+		allocPort = inst.status.AllocatedPort
 		m.mu.Unlock()
-		return 0, errors.New("服务未在运行中或正在测速")
+		break
 	}
-	inst.status.Probing = true
-	allocPort := inst.status.AllocatedPort
-	m.mu.Unlock()
 	m.onChange()
 
 	var rtt time.Duration
 	var err error
 	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && m.ServiceDialer != nil {
-		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		probeCtx, cancel := context.WithTimeout(runCtx, 10*time.Second)
 		tr := &http.Transport{
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				return m.ServiceDialer(c, svc, network, addr)
@@ -835,25 +889,41 @@ func (m *Manager) probeServiceCtx(ctx context.Context, svc config.Service, probe
 		var ep config.ListenEndpoint
 		ep, err = resolveProbeEndpoint(svc, allocPort)
 		if err == nil {
-			probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			probeCtx, cancel := context.WithTimeout(runCtx, 10*time.Second)
 			rtt, err = Probe(probeCtx, ep, probeURL)
 			cancel()
 		}
 	}
 
+	canceled := errors.Is(runCtx.Err(), context.Canceled)
+	runCancel()
+
+	logPrefix := "[测速]"
+	if isAuto {
+		logPrefix = "[自动探活]"
+	}
+
 	m.mu.Lock()
-	inst.status.Probing = false
-	if errors.Is(ctx.Err(), context.Canceled) {
-		inst.logs.AppendLine("[测速] 延迟测试已取消")
+	if inst.probeDone == probeDone {
+		inst.status.Probing = false
+		inst.status.AutoProbing = false
+		inst.probeCancel = nil
+		inst.probeAutoCancel = nil
+		inst.probeDone = nil
+	}
+	if canceled {
+		inst.logs.AppendLine(logPrefix + " 延迟测试已取消")
 		m.mu.Unlock()
+		close(probeDone)
 		m.onChange()
-		return 0, ctx.Err()
+		return 0, context.Canceled
 	}
 	if err != nil {
 		inst.status.Latency = 0
 		inst.status.ProbeError = err.Error()
-		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试失败: %v", err))
+		inst.logs.AppendLine(fmt.Sprintf("%s 延迟测试失败: %v", logPrefix, err))
 		m.mu.Unlock()
+		close(probeDone)
 		if m.OnProbeFailure != nil {
 			m.OnProbeFailure(svc.ID, err)
 		}
@@ -864,12 +934,13 @@ func (m *Manager) probeServiceCtx(ctx context.Context, svc config.Service, probe
 			// Clear stale WARP tunnel errors from a previous download test once connectivity recovers.
 			inst.status.SpeedError = ""
 		}
-		inst.logs.AppendLine(fmt.Sprintf("[测速] 延迟测试成功: %d ms", max(1, rtt.Milliseconds())))
+		inst.logs.AppendLine(fmt.Sprintf("%s 延迟测试成功: %d ms", logPrefix, max(1, rtt.Milliseconds())))
 		onSuccess := m.OnProbeSuccess
 		if isAuto && m.OnAutoProbeSuccess != nil {
 			onSuccess = m.OnAutoProbeSuccess
 		}
 		m.mu.Unlock()
+		close(probeDone)
 		if onSuccess != nil {
 			onSuccess(svc.ID, rtt)
 		}

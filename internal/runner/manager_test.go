@@ -724,5 +724,110 @@ func TestManager_ProbeServiceAutoCtxInvokesAutoCallback(t *testing.T) {
 	}
 }
 
+// Regression: in-flight background auto probes set Status.AutoProbing=true (and log [自动探活]),
+// cannot be entered by another auto probe, and are cleanly preempted (canceled without failure
+// penalty) when a user-triggered manual probe runs.
+func TestManager_ManualProbePreemptsAutoProbeAndSetsAutoFlag(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))
+			}(c)
+		}
+	}()
+
+	mgr := NewManager("", t.TempDir(), nil)
+	svc := config.Service{
+		ID:       "preempt-svc",
+		Name:     "Preempt Node",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "127.0.0.1",
+	}
+	mgr.SetStatusForTest(svc.ID, Status{State: StateRunning})
+
+	autoDialEntered := make(chan struct{})
+	var dialMu sync.Mutex
+	dialSeq := 0
+	mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		dialMu.Lock()
+		dialSeq++
+		seq := dialSeq
+		dialMu.Unlock()
+		if seq == 1 {
+			close(autoDialEntered)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", ln.Addr().String())
+	}
+
+	var autoSuccess, manualSuccess, failures int
+	mgr.OnAutoProbeSuccess = func(id string, rtt time.Duration) { autoSuccess++ }
+	mgr.OnProbeSuccess = func(id string, rtt time.Duration) { manualSuccess++ }
+	mgr.OnProbeFailure = func(id string, err error) { failures++ }
+
+	probeURL := fmt.Sprintf("http://%s/generate_204", ln.Addr().String())
+	autoErrCh := make(chan error, 1)
+	go func() {
+		_, err := mgr.ProbeServiceAutoCtx(context.Background(), svc, probeURL)
+		autoErrCh <- err
+	}()
+
+	select {
+	case <-autoDialEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for auto dial start")
+	}
+
+	st := mgr.StatusOf(svc.ID)
+	if !st.Probing || !st.AutoProbing {
+		t.Fatalf("expected Probing=true and AutoProbing=true during auto probe, got %+v", st)
+	}
+
+	// Second auto probe must NOT preempt first auto probe.
+	if _, err := mgr.ProbeServiceAutoCtx(context.Background(), svc, probeURL); err == nil {
+		t.Fatalf("expected second auto probe to be rejected while auto probe running")
+	}
+
+	// Manual probe preempts the in-flight auto probe and succeeds.
+	if rtt, err := mgr.ProbeServiceCtx(context.Background(), svc, probeURL); err != nil || rtt <= 0 {
+		t.Fatalf("expected manual probe to preempt auto probe and succeed, got rtt=%v err=%v", rtt, err)
+	}
+
+	select {
+	case autoErr := <-autoErrCh:
+		if !errors.Is(autoErr, context.Canceled) {
+			t.Fatalf("expected preempted auto probe to return context.Canceled, got %v", autoErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for preempted auto probe exit")
+	}
+
+	stAfter := mgr.StatusOf(svc.ID)
+	if stAfter.Probing || stAfter.AutoProbing || stAfter.ProbeError != "" || stAfter.Latency <= 0 {
+		t.Fatalf("expected clean post-manual status, got %+v", stAfter)
+	}
+	if failures != 0 || autoSuccess != 0 || manualSuccess != 1 {
+		t.Fatalf("expected failures=0 autoSuccess=0 manualSuccess=1, got fail=%d auto=%d manual=%d", failures, autoSuccess, manualSuccess)
+	}
+	logTxt := mgr.LogsOf(svc.ID).Text()
+	if !strings.Contains(logTxt, "[自动探活]") || !strings.Contains(logTxt, "[测速]") {
+		t.Fatalf("expected distinct log prefixes [自动探活] and [测速], got:\n%s", logTxt)
+	}
+}
+
 
 

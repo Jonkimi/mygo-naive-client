@@ -259,6 +259,8 @@
   "labelLocalListen": "本地监听:",
   "labelRemoteNode": "远端节点:",
   "latencyTesting": "延迟测速中...",
+  "autoProbing": "后台自动探活中...",
+  "autoProbingActionHint": "后台自动探活中，点击可立即手动测速",
   "latencyFailed": "延迟测速失败",
   "downloadTesting": "下载测速中...",
   "downloadFailed": "下载测速失败",
@@ -319,6 +321,8 @@
   "autoProbePeriodic": "周期性自动测速（保持所有节点延迟最新）",
   "autoProbeIntervalLabel": "周期性测速间隔 (分钟)",
   "probeURLLabel": "HTTP 204 延迟测速目标地址",
+  "probeURLDropdownLabel": "展开预设测速地址",
+  "probeURLDefaultSuffix": "默认",
   "downloadURLLabel": "下载测速目标地址",
   "saveSettings": "保存设置",
   "editNodeTitle": "编辑节点",
@@ -872,6 +876,7 @@
     }
   },
   "latencyTestingShort": "测速中…",
+  "autoProbingShort": "探活中…",
   "latencyTooltipBoth": "真实业务 EWMA: {ewma} ms · 主动探针 RTT: {probe} ms",
   "@latencyTooltipBoth": {
     "placeholders": {

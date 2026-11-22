@@ -53,7 +53,42 @@ var (
 		"prefer_ipv6",
 		"ipv6_only",
 	}
+
+	probeURLPresets = []struct {
+		url   string
+		label string
+	}{
+		{url: defaultProbeURL, label: "Cloudflare"},
+		{url: "https://www.gstatic.com/generate_204", label: "Google (gstatic)"},
+		{url: "https://clients3.google.com/generate_204", label: "Google (clients3)"},
+		{url: "http://captive.apple.com/hotspot-detect.html", label: "Apple Captive"},
+		{url: defaultWarpProbeURL, label: "MIUI 204"},
+	}
 )
+
+func probeURLPresetOptions(cat locales.Messages) []comboboxOption {
+	opts := make([]comboboxOption, 0, len(probeURLPresets))
+	for _, item := range probeURLPresets {
+		lbl := item.url + " · " + item.label
+		if item.url == defaultProbeURL {
+			lbl += " (" + cat.ProbeURLDefaultSuffix() + ")"
+		}
+		opts = append(opts, comboboxOption{Value: item.url, Label: lbl})
+	}
+	return opts
+}
+
+func warpProbeURLPresetOptions(cat locales.Messages) []comboboxOption {
+	opts := make([]comboboxOption, 0, len(probeURLPresets)+1)
+	opts = append(opts, comboboxOption{Value: "", Label: cat.CloudflareWarpProbeURLPlaceholder()})
+	for _, item := range probeURLPresets {
+		opts = append(opts, comboboxOption{
+			Value: item.url,
+			Label: item.url + " · " + item.label,
+		})
+	}
+	return opts
+}
 
 func ensureSelectOption(opts []string, cur string) []string {
 	if cur == "" {
@@ -719,7 +754,12 @@ func (a *app) renderSettingsTelemetryTab(c *ui.Context, p palette) {
 
 		ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
 
-		if labeledInput(c, p, "page-set-probe-url", cat.ProbeURLLabel(), &a.state.ProbeURL, defaultProbeURL).Changed() {
+		if labeledComboboxChanged(
+			c, p, "page-set-probe-url",
+			cat.ProbeURLLabel(), cat.ProbeURLDropdownLabel(),
+			&a.state.ProbeURL, &a.probeURLHandle,
+			defaultProbeURL, probeURLPresetOptions(cat),
+		) {
 			a.saveState()
 		}
 		if labeledInput(c, p, "page-set-download-url", cat.DownloadURLLabel(), &a.state.DownloadTestURL, defaultDownloadURL).Changed() {

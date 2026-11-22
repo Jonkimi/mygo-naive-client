@@ -175,6 +175,8 @@ type app struct {
 	geoDataReady     bool
 	gatewayPortInput       string
 	autoProbeIntervalInput string
+	probeURLHandle         ui.Handle
+	warpProbeURLHandle     ui.Handle
 	expandedLogs           map[string]bool
 	telemetryUIMu          sync.Mutex
 	lastTelemetryUI        time.Time
@@ -635,7 +637,9 @@ func (a *app) initSubsystems() {
 				if svc.EnableWARP && a.isGatewayEnabled() {
 					_ = a.ensureGatewaySynced()
 				}
-				a.mgr.ProbeService(svc, a.probeURLForService(svc))
+				probeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				_, _ = a.mgr.ProbeServiceAutoCtx(probeCtx, svc, a.probeURLForService(svc))
+				cancel()
 			}
 		}()
 	}
