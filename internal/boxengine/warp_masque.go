@@ -23,6 +23,7 @@ type warpMasqueOptions struct {
 	TCPOnlyDetour     bool   `json:"tcp_only_detour,omitempty"`
 	ForceH2           bool   `json:"force_h2,omitempty"`
 	PreferH2          bool   `json:"prefer_h2,omitempty"`
+	TLSFragment       bool   `json:"tls_fragment,omitempty"`
 	PrivateKey        string `json:"private_key,omitempty"`
 	CertPEM           string `json:"cert_pem,omitempty"`
 	IPv4              string `json:"ipv4,omitempty"`
@@ -317,9 +318,10 @@ func (w *warpMasqueOutbound) getOrCreateTunnel(ctx context.Context) (*warp.MASQU
 	}
 	connectCtx, connectCancel := w.deriveContext(ctx, masqueTimeout)
 	mOpts := warp.MASQUEOptions{
-		TCPOnly:  w.opts.TCPOnlyDetour,
-		ForceH2:  w.opts.ForceH2,
-		PreferH2: w.opts.PreferH2,
+		TCPOnly:     w.opts.TCPOnlyDetour,
+		ForceH2:     w.opts.ForceH2,
+		PreferH2:    w.opts.PreferH2,
+		TLSFragment: w.opts.TLSFragment,
 	}
 	explicitEP := strings.TrimSpace(w.opts.Endpoint)
 	var selectedEP string

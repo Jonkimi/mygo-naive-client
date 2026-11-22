@@ -147,11 +147,17 @@ func TestBuildOutboundsConfig_MASQUEPreferH2(t *testing.T) {
 	if byTag["node-warp-inherit"]["prefer_h2"] != true {
 		t.Fatalf("expected inherited prefer_h2=true, got %+v", byTag["node-warp-inherit"])
 	}
+	if byTag["node-warp-inherit"]["tls_fragment"] != true {
+		t.Fatalf("expected direct WARP MASQUE outbound to enable tls_fragment=true, got %+v", byTag["node-warp-inherit"])
+	}
 	if _, has := byTag["node-warp-override-off"]["prefer_h2"]; has {
 		t.Fatalf("expected explicit false override to omit prefer_h2, got %+v", byTag["node-warp-override-off"])
 	}
 	if _, has := byTag["node-naive-warp"]["prefer_h2"]; has || byTag["node-naive-warp"]["tcp_only_detour"] != true {
 		t.Fatalf("expected tcp_only_detour without prefer_h2 on naive node, got %+v", byTag["node-naive-warp"])
+	}
+	if _, has := byTag["node-naive-warp"]["tls_fragment"]; has {
+		t.Fatalf("expected chained MASQUE outbound to omit tls_fragment, got %+v", byTag["node-naive-warp"])
 	}
 }
 

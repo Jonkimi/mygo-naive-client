@@ -1805,6 +1805,8 @@ func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, 
 	}
 	if detour != "" {
 		ob["detour"] = detour
+	} else {
+		ob["tls_fragment"] = true
 	}
 	if tcpOnlyDetour {
 		ob["tcp_only_detour"] = true

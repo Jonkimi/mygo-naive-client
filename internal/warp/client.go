@@ -44,16 +44,20 @@ func NewClient(httpClient *http.Client) *Client {
 						conn, err := dialer.DialContext(subCtx, network, net.JoinHostPort(ip, port))
 						subCancel()
 						if err == nil {
-							return conn, nil
+							return newTLSFragmentConn(ctx, conn), nil
 						}
 						lastErr = err
 					}
 					if conn, err := dialer.DialContext(ctx, network, addr); err == nil {
-						return conn, nil
+						return newTLSFragmentConn(ctx, conn), nil
 					}
 					return nil, lastErr
 				}
-				return dialer.DialContext(ctx, network, addr)
+				conn, err := dialer.DialContext(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				return newTLSFragmentConn(ctx, conn), nil
 			},
 			TLSClientConfig: &tls.Config{
 				ServerName: "api.cloudflareclient.com",

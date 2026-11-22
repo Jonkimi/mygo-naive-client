@@ -733,4 +733,25 @@ func TestProbeMASQUEEndpoint_EnrolledAccountVerifiesConnectIP(t *testing.T) {
 	if !sawConnectProto.Load() {
 		t.Fatalf("expected server to receive cf-connect-proto: cf-connect-ip header")
 	}
+
+	// 3. With TLSFragment=true, probeMASQUEEndpoint splits ClientHello SNI and still succeeds.
+	recDialer := &recordingTCPDialer{}
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel3()
+	proto3, _, fragErr := probeMASQUEEndpoint(ctx3, recDialer, okLn.Addr().String(), acc, MASQUEOptions{
+		ForceH2:     true,
+		TLSFragment: true,
+	})
+	if fragErr != nil {
+		t.Fatalf("expected fragmented H2 probe to succeed, got %v", fragErr)
+	}
+	if proto3 != "h2" {
+		t.Fatalf("expected protocol h2, got %q", proto3)
+	}
+	recDialer.mu.Lock()
+	recs := append([]*writeRecorderConn(nil), recDialer.recorded...)
+	recDialer.mu.Unlock()
+	if len(recs) == 0 || len(recs[0].snapshotWrites()) < 4 {
+		t.Fatalf("expected fragmented ClientHello writes during probeH2")
+	}
 }

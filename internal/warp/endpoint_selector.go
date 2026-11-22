@@ -201,6 +201,7 @@ type ScanOptions struct {
 	Mode           Mode
 	PreferH2       bool
 	TCPOnly        bool
+	TLSFragment    bool
 	IncludeIPv6    *bool // nil = auto-detect global IPv6 connectivity; non-nil forces on/off
 	Dialer         Dialer
 	Account        *Account
@@ -744,8 +745,9 @@ func scanBestEndpointsWithProbers(
 
 	if len(opts.Candidates) > 0 {
 		hits, lastErr = sweepInitialCandidates(ctx, opts.Candidates, mode, MASQUEOptions{
-			TCPOnly:  opts.TCPOnly,
-			PreferH2: opts.PreferH2,
+			TCPOnly:     opts.TCPOnly,
+			PreferH2:    opts.PreferH2,
+			TLSFragment: opts.TLSFragment,
 		}, opts, masqueProbe, wgProbe)
 	} else if mode == ModeWireGuard {
 		candidates := sampleWireGuardCandidatesWithIPv6(opts.SampleCount, includeIPv6)
@@ -759,8 +761,9 @@ func scanBestEndpointsWithProbers(
 			return nil, errors.New("no scan candidates generated")
 		}
 		hits, lastErr = sweepInitialCandidates(ctx, candidates, mode, MASQUEOptions{
-			TCPOnly:  opts.TCPOnly,
-			PreferH2: opts.PreferH2,
+			TCPOnly:     opts.TCPOnly,
+			PreferH2:    opts.PreferH2,
+			TLSFragment: opts.TLSFragment,
 		}, opts, masqueProbe, wgProbe)
 	} else {
 		// QUIC-first MASQUE mode: Tier 1 tests dedicated ::1/::2 QUIC Anycast endpoints across all official ports.
@@ -768,7 +771,9 @@ func scanBestEndpointsWithProbers(
 		if len(quicCandidates) == 0 {
 			return nil, errors.New("no scan candidates generated")
 		}
-		hits, lastErr = sweepInitialCandidates(ctx, quicCandidates, mode, MASQUEOptions{}, opts, masqueProbe, wgProbe)
+		hits, lastErr = sweepInitialCandidates(ctx, quicCandidates, mode, MASQUEOptions{
+			TLSFragment: opts.TLSFragment,
+		}, opts, masqueProbe, wgProbe)
 
 		hasH3 := slices.ContainsFunc(hits, func(h scanInitialHit) bool {
 			return h.protocol == "h3"
@@ -787,7 +792,10 @@ func scanBestEndpointsWithProbers(
 				}
 			}
 			if len(h2Candidates) > 0 {
-				h2Hits, h2Err := sweepInitialCandidates(ctx, h2Candidates, mode, MASQUEOptions{ForceH2: true}, opts, masqueProbe, wgProbe)
+				h2Hits, h2Err := sweepInitialCandidates(ctx, h2Candidates, mode, MASQUEOptions{
+					ForceH2:     true,
+					TLSFragment: opts.TLSFragment,
+				}, opts, masqueProbe, wgProbe)
 				hits = append(hits, h2Hits...)
 				if h2Err != nil {
 					lastErr = h2Err
@@ -848,9 +856,10 @@ func scanBestEndpointsWithProbers(
 					}
 				} else {
 					p, rtt, err := masqueProbe(pCtx, opts.Dialer, hit.endpoint, opts.Account, MASQUEOptions{
-						TCPOnly:  opts.TCPOnly,
-						ForceH2:  stage2ForceH2,
-						PreferH2: opts.PreferH2,
+						TCPOnly:     opts.TCPOnly,
+						ForceH2:     stage2ForceH2,
+						PreferH2:    opts.PreferH2,
+						TLSFragment: opts.TLSFragment,
 					})
 					if err == nil {
 						received++
@@ -1202,7 +1211,11 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 		defer stopWatch()
 		tlsCfg := baseTLS.Clone()
 		tlsCfg.NextProtos = []string{"h2"}
-		tlsConn := tls.Client(rawConn, tlsCfg)
+		underlying := rawConn
+		if opts.TLSFragment {
+			underlying = newTLSFragmentConn(pCtx, rawConn)
+		}
+		tlsConn := tls.Client(underlying, tlsCfg)
 		if err := tlsConn.HandshakeContext(pCtx); err != nil {
 			return 0, err
 		}
@@ -1227,7 +1240,11 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 				if dErr != nil {
 					return nil, dErr
 				}
-				tc := tls.Client(rc, tlsCfg)
+				u := rc
+				if opts.TLSFragment {
+					u = newTLSFragmentConn(pCtx, rc)
+				}
+				tc := tls.Client(u, tlsCfg)
 				if hErr := tc.HandshakeContext(pCtx); hErr != nil {
 					_ = rc.Close()
 					return nil, hErr

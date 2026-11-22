@@ -597,7 +597,7 @@ func TestDialMASQUEH2_TimeoutReturnsDeadlineExceededNotCanceled(t *testing.T) {
 		ServerName:         DefaultMASQUESNI,
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
-	}, ns, tunnelCtx, tunnelCancel)
+	}, ns, tunnelCtx, tunnelCancel, false)
 	if dialErr == nil {
 		t.Fatalf("expected timeout error from stalled H2 CONNECT")
 	}
@@ -606,6 +606,101 @@ func TestDialMASQUEH2_TimeoutReturnsDeadlineExceededNotCanceled(t *testing.T) {
 	}
 	if errors.Is(dialErr, context.Canceled) {
 		t.Fatalf("timeout must not be wrapped as context.Canceled: %v", dialErr)
+	}
+}
+
+type recordingTCPDialer struct {
+	mu       sync.Mutex
+	recorded []*writeRecorderConn
+}
+
+func (d *recordingTCPDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	var nd net.Dialer
+	c, err := nd.DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	rec := &writeRecorderConn{Conn: c}
+	d.mu.Lock()
+	d.recorded = append(d.recorded, rec)
+	d.mu.Unlock()
+	return rec, nil
+}
+
+func (d *recordingTCPDialer) ListenPacket(_ context.Context, _ string, _ string) (net.PacketConn, error) {
+	return nil, errors.New("unexpected udp ListenPacket")
+}
+
+func TestConnectMASQUEWithOptions_H2_TLSFragmentation(t *testing.T) {
+	srvCert := generateTestServerCert(t)
+	rawLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer rawLn.Close()
+
+	tlsLn := tls.NewListener(rawLn, &tls.Config{
+		Certificates: []tls.Certificate{srvCert},
+		ClientAuth:   tls.RequireAnyClientCert,
+		NextProtos:   []string{"h2"},
+	})
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodConnect || r.Header.Get("cf-connect-proto") != "cf-connect-ip" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		}),
+	}
+	_ = http2.ConfigureServer(srv, &http2.Server{})
+	go func() { _ = srv.Serve(tlsLn) }()
+	defer srv.Close()
+
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+
+	dialer := &recordingTCPDialer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	tun, err := ConnectMASQUEWithOptions(ctx, dialer, rawLn.Addr().String(), acc, MASQUEOptions{
+		ForceH2:     true,
+		TLSFragment: true,
+	})
+	if err != nil {
+		t.Fatalf("ConnectMASQUEWithOptions(TLSFragment=true) failed: %v", err)
+	}
+	defer tun.Close()
+
+	if tun.Protocol() != "h2" {
+		t.Fatalf("expected protocol h2, got %q", tun.Protocol())
+	}
+
+	dialer.mu.Lock()
+	recs := append([]*writeRecorderConn(nil), dialer.recorded...)
+	dialer.mu.Unlock()
+	if len(recs) == 0 {
+		t.Fatalf("expected at least 1 recorded TCP connection")
+	}
+	writes := recs[0].snapshotWrites()
+	if len(writes) < 4 {
+		t.Fatalf("expected fragmented ClientHello to produce multiple TCP writes, got %d", len(writes))
+	}
+	for _, w := range writes {
+		if bytes.Contains(w, []byte(DefaultMASQUESNI)) || bytes.Contains(w, []byte("cloudflareclient.com")) {
+			t.Fatalf("expected no single wire write to expose full MASQUE SNI, got %q", w)
+		}
 	}
 }
 
