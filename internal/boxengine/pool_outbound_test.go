@@ -1525,4 +1525,138 @@ func TestPoolOutbound_UnifiedTargetsOrderFailoverAndIsolation(t *testing.T) {
 	})
 }
 
+// Regression: a single slow TLS domain triggering firstPacketStall before eventually returning
+// a response must NOT double-penalize ConsecutiveFailures or pollute MaxProbeRTT.
+func TestPoolOutbound_SidecarSingleSlowTLSNoDoublePenaltyOrProbePollution(t *testing.T) {
+	origTimeout := firstPacketTimeout
+	origStall := firstPacketStall
+	firstPacketTimeout = 300 * time.Millisecond
+	firstPacketStall = 25 * time.Millisecond
+	defer func() {
+		firstPacketTimeout = origTimeout
+		firstPacketStall = origStall
+	}()
+
+	tr := telemetry.NewTracker()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = serverConn.Read(buf)
+		time.Sleep(55 * time.Millisecond) // exceeds firstPacketStall (25ms), well before timeout (300ms)
+		_, _ = serverConn.Write([]byte("server-hello"))
+	}()
+
+	provider := &testNodeProvider{
+		candidates: map[string][]string{"PROXY_POOL": {"node-slow-tls"}},
+		nodes:      map[string]adapter.Outbound{"node-slow-tls": &customMockOutbound{tag: "node-slow-tls", conn: clientConn}},
+		sidecars:   map[string]bool{"node-slow-tls": true},
+	}
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+	})
+
+	conn, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("slow-cold-forum.org:443"))
+	if err != nil {
+		t.Fatalf("DialContext failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Write TLS ClientHello
+	if _, err := conn.Write([]byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00}); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	resp := make([]byte, 32)
+	if n, err := conn.Read(resp); err != nil || n == 0 {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	sc := tr.GetScore("node-slow-tls")
+	if sc.ConsecutiveFailures != 0 || sc.MaxProbeRTT != 0 || sc.IsBroken {
+		t.Fatalf("expected single slow TLS domain not to charge ConsecutiveFailures or pollute MaxProbeRTT, got %+v", sc)
+	}
+}
+
+// Regression: closing a sidecar connection before writing any data (e.g. speculative preconnect abort)
+// or canceling the caller's dial context before response must NOT penalize the node.
+func TestPoolOutbound_PreWriteCloseAndCanceledDialIgnored(t *testing.T) {
+	tr := telemetry.NewTracker()
+	provider := &testNodeProvider{
+		candidates: map[string][]string{"PROXY_POOL": {"node-pre"}},
+		nodes: map[string]adapter.Outbound{
+			"node-pre": &funcMockOutbound{
+				tag: "node-pre",
+				dialFn: func() (net.Conn, error) {
+					c1, c2 := net.Pipe()
+					go func() {
+						buf := make([]byte, 64)
+						_, _ = c2.Read(buf)
+					}()
+					return c1, nil
+				},
+			},
+		},
+		sidecars: map[string]bool{"node-pre": true},
+	}
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+	})
+
+	// 1. Pre-write closes (3 times) must never trip the circuit breaker
+	for i := 0; i < 3; i++ {
+		c, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("preconnect.com:443"))
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		_ = c.Close()
+	}
+
+	// 2. Caller-canceled context after Write must also be ignored as client cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cCancel, err := pool.DialContext(ctx, "tcp", M.ParseSocksaddr("tabclose.com:443"))
+	if err != nil {
+		t.Fatalf("dial cancel: %v", err)
+	}
+	_, _ = cCancel.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	cancel()
+	_ = cCancel.Close()
+
+	sc := tr.GetScore("node-pre")
+	if sc.ConsecutiveFailures != 0 || sc.TotalDials != 0 || sc.IsBroken {
+		t.Fatalf("expected pre-write and canceled closes not to penalize node, got %+v", sc)
+	}
+}
+
+// Regression: UDP ListenPacket failures must feed tracker so UDP-broken nodes trip the circuit breaker.
+func TestPoolOutbound_UDPFailureTripsCircuitBreaker(t *testing.T) {
+	tr := telemetry.NewTracker()
+	provider := &testNodeProvider{
+		candidates: map[string][]string{"PROXY_POOL": {"node-udp-bad"}},
+		nodes: map[string]adapter.Outbound{
+			"node-udp-bad": &mockOutbound{tag: "node-udp-bad", dialErr: errors.New("udp relay unreachable")},
+		},
+	}
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+	})
+
+	for i := 0; i < 3; i++ {
+		if _, err := pool.ListenPacket(context.Background(), M.ParseSocksaddr("dns.google:443")); err == nil {
+			t.Fatalf("expected ListenPacket to fail")
+		}
+	}
+	sc := tr.GetScore("node-udp-bad")
+	if !sc.IsBroken || sc.ConsecutiveFailures != 3 {
+		t.Fatalf("expected 3 UDP ListenPacket failures to trip circuit breaker, got %+v", sc)
+	}
+}
+
 

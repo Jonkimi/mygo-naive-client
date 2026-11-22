@@ -178,6 +178,8 @@ type app struct {
 	telemetryUIMu          sync.Mutex
 	lastTelemetryUI        time.Time
 	telemetryPending       bool
+	recoveryProbeMu        sync.Mutex
+	lastRecoveryProbeAt    map[string]time.Time
 
 	activeTab              TabID
 	activeLogDrawerID      string
@@ -496,8 +498,17 @@ func newApp(dataDir string) *app {
 }
 
 func (a *app) initSubsystems() {
-	if a.tracker != nil && a.state.AutoProbeInterval > 0 {
-		a.tracker.SetProbeInterval(time.Duration(a.state.AutoProbeInterval) * time.Minute)
+	if a.tracker != nil {
+		if a.state.AutoProbeInterval > 0 {
+			a.tracker.SetProbeInterval(time.Duration(a.state.AutoProbeInterval) * time.Minute)
+		}
+		a.tracker.SetActiveRecoveryProbe(!a.headless && a.state.AutoProbePeriodic)
+		a.tracker.SetOnHealthChange(func(nodeID string, recovered bool) {
+			if recovered && a.mgr != nil {
+				a.mgr.ClearProbeError(nodeID)
+			}
+			a.notifyTelemetryUI()
+		})
 	}
 	binPath := a.resolveBinaryPath()
 	cfgDir := filepath.Join(a.userDataDir(), "configs")
@@ -565,7 +576,11 @@ func (a *app) initSubsystems() {
 	}
 	a.mgr.OnProbeFailure = func(id string, err error) {
 		if a.tracker != nil {
-			a.tracker.RecordProbeFailure(id)
+			reason := ""
+			if err != nil {
+				reason = err.Error()
+			}
+			a.tracker.RecordProbeFailureReason(id, reason)
 		}
 	}
 	a.mgr.OnServiceStarted = func(svc config.Service) {
@@ -740,7 +755,7 @@ func (a *app) startPeriodicUpdateCheck() {
 }
 
 func (a *app) startPeriodicProbe() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	var lastProbe time.Time
@@ -749,6 +764,9 @@ func (a *app) startPeriodicProbe() {
 		case <-a.quitCh:
 			return
 		case <-ticker.C:
+			if a.tracker != nil {
+				a.tracker.SetActiveRecoveryProbe(!a.headless && a.state.AutoProbePeriodic)
+			}
 			if a.headless || !a.state.AutoProbePeriodic {
 				continue
 			}
@@ -760,11 +778,12 @@ func (a *app) startPeriodicProbe() {
 			if a.tracker != nil {
 				a.tracker.SetProbeInterval(interval)
 			}
-			if !lastProbe.IsZero() && time.Since(lastProbe) < interval {
+			if lastProbe.IsZero() || time.Since(lastProbe) >= interval {
+				lastProbe = time.Now()
+				a.probeAllRunningServicesSilent()
 				continue
 			}
-			lastProbe = time.Now()
-			a.probeAllRunningServicesSilent()
+			a.probeDegradedServicesSilent()
 		}
 	}
 }
@@ -776,7 +795,7 @@ func (a *app) probeAllRunningServicesSilent() {
 		return
 	}
 	var running []config.Service
-	for _, svc := range a.state.Services {
+	for _, svc := range a.snapshotServices() {
 		if a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
 			running = append(running, svc)
 		}
@@ -785,17 +804,67 @@ func (a *app) probeAllRunningServicesSilent() {
 		return
 	}
 
+	a.probeServicesListSilent(running)
+}
+
+// probeDegradedServicesSilent runs expedited silent verification probes for nodes in Half-Open
+// recovery, nodes with nascent probe/dial failures, or WARP nodes with tunnel errors.
+func (a *app) probeDegradedServicesSilent() {
+	if a.mgr == nil || a.tracker == nil {
+		return
+	}
+	now := time.Now()
+	var targets []config.Service
+
+	a.recoveryProbeMu.Lock()
+	if a.lastRecoveryProbeAt == nil {
+		a.lastRecoveryProbeAt = make(map[string]time.Time)
+	}
+	for _, svc := range a.snapshotServices() {
+		rt := a.mgr.StatusOf(svc.ID)
+		if rt.State != runner.StateRunning || rt.Probing {
+			continue
+		}
+		if lastAt, ok := a.lastRecoveryProbeAt[svc.ID]; ok && now.Sub(lastAt) < 20*time.Second {
+			continue
+		}
+		sc := a.tracker.GetScore(svc.ID)
+		isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+		shouldProbe := false
+		switch {
+		case sc.CircuitState == telemetry.CircuitHalfOpen:
+			shouldProbe = true
+		case sc.CircuitState == telemetry.CircuitClosed && sc.ConsecutiveFailures > 0 && !sc.LastFailure.IsZero() && now.Sub(sc.LastFailure) >= 25*time.Second:
+			shouldProbe = true
+		case isWarpNode && isWarpTunnelError(rt.ProbeError):
+			if lastAt, ok := a.lastRecoveryProbeAt[svc.ID]; !ok || now.Sub(lastAt) >= 60*time.Second {
+				shouldProbe = true
+			}
+		}
+		if shouldProbe {
+			a.lastRecoveryProbeAt[svc.ID] = now
+			targets = append(targets, svc)
+		}
+	}
+	a.recoveryProbeMu.Unlock()
+
+	if len(targets) > 0 {
+		a.probeServicesListSilent(targets)
+	}
+}
+
+func (a *app) probeServicesListSilent(targets []config.Service) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Parent safety deadline exceeds ProbeServiceCtx's internal 10s timeout so timeouts
+		// are always reported as probe failures rather than parent context cancellations.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
 		var wg sync.WaitGroup
-		for _, svc := range running {
+		for _, svc := range targets {
 			wg.Add(1)
 			go func(s config.Service) {
 				defer wg.Done()
-				// ProbeServiceCtx updates inst.status.Latency and fires OnProbeSuccess,
-				// which automatically records probe RTT into QualityTracker via a.tracker.RecordProbe.
 				_, _ = a.mgr.ProbeServiceCtx(ctx, s, a.probeURLForService(s))
 			}(svc)
 		}
@@ -1012,22 +1081,16 @@ func (a *app) isNodeUnhealthy(svc config.Service, rt runner.Status) bool {
 	if rt.State != runner.StateRunning {
 		return false
 	}
-	isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
-	if isWarpNode {
-		if rt.LastError != "" || isWarpTunnelError(rt.ProbeError) || isWarpTunnelError(rt.SpeedError) {
-			return true
-		}
-		if a.tracker != nil && a.tracker.GetScore(svc.ID).IsBroken {
-			return true
-		}
-		return false
+	if rt.LastError != "" {
+		return true
 	}
-	if rt.ProbeError != "" || rt.SpeedError != "" {
+	isWarpNode := svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP
+	if isWarpNode && (isWarpTunnelError(rt.ProbeError) || isWarpTunnelError(rt.SpeedError)) {
 		return true
 	}
 	if a.tracker != nil {
 		sc := a.tracker.GetScore(svc.ID)
-		if sc.IsBroken {
+		if sc.IsBroken || sc.CircuitState != telemetry.CircuitClosed {
 			return true
 		}
 	}
@@ -1079,14 +1142,21 @@ func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint 
 		return cat.WarpUnhealthyDetourHint(endpoint), true, false
 	}
 
-	errText := rt.ProbeError
-	if errText == "" {
-		errText = rt.SpeedError
+	if rt.ProbeError != "" {
+		return rt.ProbeError, false, false
 	}
-	if errText == "" {
-		errText = cat.NodeDrawerCircuitTripped()
+	if a.tracker != nil {
+		sc := a.tracker.GetScore(svc.ID)
+		label := cat.NodeDrawerCircuitTripped()
+		if sc.CircuitState == telemetry.CircuitHalfOpen {
+			label = cat.NodeDrawerCircuitHalfOpen()
+		}
+		if sc.LastFailureReason != "" {
+			return label + " · " + sc.LastFailureReason, false, false
+		}
+		return label, false, false
 	}
-	return errText, false, false
+	return cat.NodeDrawerCircuitTripped(), false, false
 }
 
 func extractWarpServerEndpoint(errText string) string {
@@ -1662,6 +1732,23 @@ func (a *app) triggerWarpBindLicense() {
 	}()
 }
 
+func (a *app) resetWarpNodesHealth(reprobe bool) {
+	for _, svc := range a.snapshotServices() {
+		if svc.EffectiveProtocol() != config.ProtoWARP && !svc.EnableWARP {
+			continue
+		}
+		if a.tracker != nil {
+			a.tracker.ResetNode(svc.ID)
+		}
+		if a.mgr != nil {
+			a.mgr.ClearErrors(svc.ID)
+			if reprobe && !a.headless && a.mgr.StatusOf(svc.ID).State == runner.StateRunning {
+				a.mgr.ProbeService(svc, a.probeURLForService(svc))
+			}
+		}
+	}
+}
+
 func (a *app) applyWarpCleanEndpoint(raw string) {
 	raw = strings.TrimSpace(raw)
 	a.warpCleanEndpointInput = raw
@@ -1680,6 +1767,7 @@ func (a *app) applyWarpCleanEndpoint(raw string) {
 		a.state.Cloudflare.CleanPort = 0
 	}
 	a.saveState()
+	a.resetWarpNodesHealth(false)
 	if a.win != nil {
 		a.win.Invalidate()
 	}

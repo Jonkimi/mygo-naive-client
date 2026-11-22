@@ -243,11 +243,19 @@ func TestNodesRedesign_ContextualLogsOnErrorAndUnhealthyStrips(t *testing.T) {
 	a.activeLogDrawerID = ""
 	a.mgr.SetStatusForTest("svc-err", runner.Status{State: runner.StateStopped})
 
-	// 3. Inject unhealthy probe failure on svc-unhealthy -> inline unhealthy strip exposes Logs button
+	// 3. A single transient probe failure shows failed latency without tripping Unhealthy yet;
+	// tripping the circuit breaker exposes the inline unhealthy strip and contextual Logs button.
 	a.mgr.SetStatusForTest("svc-unhealthy", runner.Status{
 		State:      runner.StateRunning,
 		ProbeError: "timeout reaching probe target",
 	})
+	tt.Frame()
+	if _, ok := tt.Find(cat.StatusUnhealthy()); ok {
+		t.Fatalf("did not expect single transient ProbeError to mark non-WARP node unhealthy before circuit trips")
+	}
+	a.tracker.RecordProbeFailureReason("svc-unhealthy", "timeout reaching probe target")
+	a.tracker.RecordProbeFailureReason("svc-unhealthy", "timeout reaching probe target")
+	a.tracker.RecordProbeFailureReason("svc-unhealthy", "timeout reaching probe target")
 	tt.Frame()
 	if err := tt.Click(cat.ActionLogs()); err != nil {
 		t.Fatalf("click contextual Logs button on unhealthy strip: %v", err)

@@ -457,6 +457,12 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		rtt := time.Since(start)
 
 		if err != nil {
+			if errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+				if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+					p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
+				}
+				return nil, err
+			}
 			if p.tracker != nil {
 				if isSidecar {
 					p.tracker.RecordDial(candID, targetHost, 0, err)
@@ -478,27 +484,31 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 			destPort := destination.Port
 			poolTag := p.tag
 			singleCandidate := len(ordered) == 1
-			var wasStalled atomic.Bool
-			conn = wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
-				if p.tracker != nil {
-					if !wasStalled.Load() || firstErr == nil {
-						trackerRTT := realRTT
-						if firstErr == nil {
-							// Only plausible first-response RTTs feed the tracker; the log keeps the real value.
-							if trackerRTT < minValidFirstRTT {
-								trackerRTT = 0
-							} else if trackerRTT > maxValidFirstRTT {
-								trackerRTT = maxValidFirstRTT
-							}
-						}
-						if !isTLS && firstErr == nil && realRTT >= telemetry.SeverePacketLossRTT {
-							// For non-TLS traffic, latencies >= SeverePacketLossRTT (3000ms) typically reflect
-							// backend application computation (e.g. AI inference, slow search, report export)
-							// rather than network RTO packet loss.
-							// Pass trackerRTT = 0 to record a successful dial and maintain domain affinity
-							// without contaminating network EWMA or triggering false packet-loss stalls.
+			var stalledPenalized atomic.Bool
+			wrapped := wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
+				if p.tracker != nil && !errors.Is(firstErr, errPreWriteAborted) {
+					trackerRTT := realRTT
+					if firstErr == nil {
+						// Only plausible first-response RTTs feed the tracker; the log keeps the real value.
+						if trackerRTT < minValidFirstRTT {
 							trackerRTT = 0
+						} else if trackerRTT > maxValidFirstRTT {
+							trackerRTT = maxValidFirstRTT
 						}
+					}
+					if !isTLS && firstErr == nil && realRTT >= telemetry.SeverePacketLossRTT {
+						// For non-TLS traffic, latencies >= SeverePacketLossRTT (3000ms) typically reflect
+						// backend application computation (e.g. AI inference, slow search, report export)
+						// rather than network RTO packet loss.
+						// Pass trackerRTT = 0 to record a successful dial and maintain domain affinity
+						// without contaminating network EWMA or triggering false packet-loss stalls.
+						trackerRTT = 0
+					}
+					if stalledPenalized.Load() {
+						if firstErr == nil && trackerRTT > 0 {
+							p.tracker.RecordRecoveredStalledDial(candID, trackerRTT)
+						}
+					} else {
 						p.tracker.RecordDial(candID, targetHost, trackerRTT, firstErr)
 					}
 				}
@@ -507,7 +517,7 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 				} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 					p.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
 				}
-				if firstErr != nil && p.failureMonitor != nil && singleCandidate {
+				if firstErr != nil && !errors.Is(firstErr, errPreWriteAborted) && p.failureMonitor != nil && singleCandidate {
 					p.failureMonitor.Record(telemetry.FailureEvent{
 						Category:       telemetry.FailureProxy,
 						Target:         targetHost,
@@ -520,14 +530,17 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 					p.onTelemetryUpdate()
 				}
 			}, func() {
-				wasStalled.Store(true)
-				if p.tracker != nil {
-					p.tracker.RecordStall(candID, targetHost)
+				if p.tracker != nil && p.tracker.RecordStall(candID, targetHost) {
+					stalledPenalized.Store(true)
 				}
 				if p.onTelemetryUpdate != nil {
 					p.onTelemetryUpdate()
 				}
 			})
+			if fc, ok := wrapped.(*firstRTTConn); ok {
+				fc.dialCtx = ctx
+			}
+			conn = wrapped
 		} else {
 			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
 				p.blocker.Logger().AnnotateDurationBySource(sourceKey, rtt)
@@ -628,6 +641,15 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 			unbindUDP()
 			return conn, nil
 		}
+		if errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+			if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(err))
+			}
+			return nil, err
+		}
+		if p.tracker != nil {
+			p.tracker.RecordDial(candID, targetHost, 0, err)
+		}
 		lastErr = err
 	}
 
@@ -652,9 +674,11 @@ var (
 )
 
 var errFirstPacketAborted = errors.New("connection closed before receiving first response byte")
+var errPreWriteAborted = errors.New("connection closed before sending request data")
 
 type firstRTTConn struct {
 	net.Conn
+	dialCtx    context.Context
 	onResult   func(rtt time.Duration, isTLS bool, err error)
 	onStall    func()
 	writeTime  time.Time
@@ -806,14 +830,22 @@ func (c *firstRTTConn) Close() error {
 	_ = c.Conn.SetReadDeadline(time.Time{})
 	if !c.done {
 		c.done = true
+		hasWritten := c.hasWritten
 		var elapsed time.Duration
 		if !c.writeTime.IsZero() {
 			elapsed = time.Since(c.writeTime)
 		}
 		isTLS := c.isTLS
+		dialCtx := c.dialCtx
 		c.mu.Unlock()
 		if c.onResult != nil {
-			c.onResult(elapsed, isTLS, errFirstPacketAborted)
+			closeErr := errFirstPacketAborted
+			if !hasWritten {
+				closeErr = errPreWriteAborted
+			} else if dialCtx != nil && errors.Is(dialCtx.Err(), context.Canceled) {
+				closeErr = context.Canceled
+			}
+			c.onResult(elapsed, isTLS, closeErr)
 		}
 	} else {
 		c.mu.Unlock()

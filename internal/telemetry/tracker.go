@@ -15,6 +15,7 @@ const (
 	circuitFailureThreshold      = 3
 	circuitRecoverySuccessTarget = 3
 	circuitCooldownDuration      = 60 * time.Second
+	circuitMaxCooldownDuration   = 5 * time.Minute
 	hysteresisRTTDelta           = 30 * time.Millisecond
 	hysteresisRatioDelta         = 0.20
 	defaultInitialRTT            = 150 * time.Millisecond
@@ -35,6 +36,26 @@ const (
 	idleWashFailuresCount = 2
 )
 
+// CircuitState represents the three-state circuit breaker lifecycle for a node.
+type CircuitState int
+
+const (
+	CircuitClosed CircuitState = iota
+	CircuitOpen
+	CircuitHalfOpen
+)
+
+func (s CircuitState) String() string {
+	switch s {
+	case CircuitOpen:
+		return "open"
+	case CircuitHalfOpen:
+		return "half-open"
+	default:
+		return "closed"
+	}
+}
+
 type slowDomainRecord struct {
 	root string
 	at   time.Time
@@ -50,8 +71,11 @@ type NodeStats struct {
 	TotalDials           int
 	SuccessfulDials      int
 	LastFailure          time.Time
+	LastFailureReason    string
 	LastPassiveDial      time.Time
 	circuitTrippedAt     time.Time
+	circuitCooldown      time.Duration
+	circuitTripCount     int
 	samplesSinceRecovery int
 	recentSlow           []slowDomainRecord
 	probeHistory         [probeHistorySize]time.Duration
@@ -191,41 +215,92 @@ func (st *NodeStats) recordWindowSample(success bool) {
 	st.TotalDials = recentWindowSize
 }
 
-func (st *NodeStats) checkAndTripCircuit() {
-	now := time.Now()
-	st.LastFailure = now
-	if st.ConsecutiveFailures >= circuitFailureThreshold {
-		st.circuitTrippedAt = now
-		return
+func backoffCircuitCooldown(tripCount int) time.Duration {
+	if tripCount <= 1 {
+		return circuitCooldownDuration
 	}
-	if st.TotalDials >= highLossMinSamples && st.samplesSinceRecovery >= highLossMinSamples {
-		sr := float64(st.SuccessfulDials) / float64(st.TotalDials)
-		if sr < highLossSuccessRate {
-			st.circuitTrippedAt = now
+	d := circuitCooldownDuration
+	for i := 1; i < tripCount; i++ {
+		d *= 2
+		if d >= circuitMaxCooldownDuration {
+			return circuitMaxCooldownDuration
 		}
 	}
+	return d
 }
 
-func (st *NodeStats) clearCircuit() {
-	if !st.circuitTrippedAt.IsZero() {
-		st.circuitTrippedAt = time.Time{}
-		st.samplesSinceRecovery = 0
+func (st *NodeStats) effectiveCooldown() time.Duration {
+	if st != nil && st.circuitCooldown > 0 {
+		return st.circuitCooldown
 	}
+	return circuitCooldownDuration
+}
+
+func (st *NodeStats) effectiveCircuitState(now time.Time) (CircuitState, time.Duration) {
+	if st == nil || st.circuitTrippedAt.IsZero() {
+		return CircuitClosed, 0
+	}
+	cd := st.effectiveCooldown()
+	elapsed := now.Sub(st.circuitTrippedAt)
+	if elapsed < cd {
+		return CircuitOpen, cd - elapsed
+	}
+	return CircuitHalfOpen, 0
+}
+
+func (st *NodeStats) checkAndTripCircuit(now time.Time, reason string) bool {
+	st.LastFailure = now
+	if reason != "" {
+		st.LastFailureReason = reason
+	}
+	state, _ := st.effectiveCircuitState(now)
+	inHalfOpen := state == CircuitHalfOpen
+	highLossTripped := st.TotalDials >= highLossMinSamples &&
+		st.samplesSinceRecovery >= highLossMinSamples &&
+		float64(st.SuccessfulDials)/float64(st.TotalDials) < highLossSuccessRate
+
+	if !inHalfOpen && st.ConsecutiveFailures < circuitFailureThreshold && !highLossTripped {
+		return false
+	}
+
+	if state == CircuitClosed || inHalfOpen {
+		st.circuitTripCount++
+		st.circuitTrippedAt = now
+		st.circuitCooldown = backoffCircuitCooldown(st.circuitTripCount)
+	}
+	return true
+}
+
+func (st *NodeStats) clearCircuit() bool {
+	if st.circuitTrippedAt.IsZero() && st.circuitTripCount == 0 && st.LastFailureReason == "" {
+		return false
+	}
+	wasBroken := !st.circuitTrippedAt.IsZero()
+	st.circuitTrippedAt = time.Time{}
+	st.circuitCooldown = 0
+	st.circuitTripCount = 0
+	st.samplesSinceRecovery = 0
+	st.LastFailureReason = ""
+	return wasBroken
 }
 
 type QualityScore struct {
-	EWMA                time.Duration
-	PassiveEWMA         time.Duration
-	ProbeRTT            time.Duration
-	MaxProbeRTT         time.Duration
-	SuccessRate         float64
-	Score               float64
-	IsBroken            bool
-	TotalDials          int
-	SuccessfulDials     int
-	ConsecutiveFailures int
-	CircuitPenalty      float64
-	LastPassiveDial     time.Time
+	EWMA                     time.Duration
+	PassiveEWMA              time.Duration
+	ProbeRTT                 time.Duration
+	MaxProbeRTT              time.Duration
+	SuccessRate              float64
+	Score                    float64
+	IsBroken                 bool
+	CircuitState             CircuitState
+	CircuitCooldownRemaining time.Duration
+	LastFailure              time.Time
+	LastFailureReason        string
+	TotalDials               int
+	SuccessfulDials          int
+	ConsecutiveFailures      int
+	CircuitPenalty           float64
+	LastPassiveDial          time.Time
 }
 
 // SiteFault represents an error caused by the remote target website rather than the proxy node.
@@ -270,25 +345,30 @@ func IsSiteFault(err error) bool {
 		return true
 	}
 	errStr := strings.ToLower(err.Error())
-	// Target site certificate issues (e.g. expired, self-signed, host mismatch)
+	// Target site certificate issues (e.g. expired, self-signed, host mismatch) or nonexistent target domain
 	if strings.Contains(errStr, "x509:") ||
 		strings.Contains(errStr, "certificate is not trusted") ||
 		strings.Contains(errStr, "bad certificate") ||
 		strings.Contains(errStr, "tls: unknown authority") ||
 		strings.Contains(errStr, "remote connection refused") ||
-		strings.Contains(errStr, "site closed connection") {
+		strings.Contains(errStr, "site closed connection") ||
+		strings.Contains(errStr, "no dns records") ||
+		strings.Contains(errStr, "nxdomain") {
 		return true
 	}
 	return false
 }
 
 type Tracker struct {
-	mu            sync.RWMutex
-	nodes         map[string]*NodeStats
-	affinity      map[string]string         // rootDomain -> nodeID
-	domainErrors  map[string]map[string]int // rootDomain -> nodeID -> count
-	probeInterval time.Duration             // configurable active probe interval, default 5m
-	idleThreshold time.Duration             // passive idle threshold, default 60s
+	mu                  sync.RWMutex
+	nodes               map[string]*NodeStats
+	affinity            map[string]string         // rootDomain -> nodeID
+	domainErrors        map[string]map[string]int // rootDomain -> nodeID -> count
+	probeInterval       time.Duration             // configurable active probe interval, default 5m
+	idleThreshold       time.Duration             // passive idle threshold, default 60s
+	activeRecoveryProbe bool
+	onHealthChange      func(nodeID string, recovered bool)
+	nowFn               func() time.Time
 }
 
 func NewTracker() *Tracker {
@@ -298,6 +378,46 @@ func NewTracker() *Tracker {
 		domainErrors:  make(map[string]map[string]int),
 		probeInterval: defaultProbeInterval,
 		idleThreshold: defaultIdleThreshold,
+		nowFn:         time.Now,
+	}
+}
+
+func (t *Tracker) nowLocked() time.Time {
+	if t.nowFn != nil {
+		return t.nowFn()
+	}
+	return time.Now()
+}
+
+// SetNowFuncForTest overrides the clock used by Tracker in tests.
+func (t *Tracker) SetNowFuncForTest(fn func() time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if fn == nil {
+		t.nowFn = time.Now
+		return
+	}
+	t.nowFn = fn
+}
+
+// SetActiveRecoveryProbe configures whether Half-Open nodes await an active probe before
+// returning to healthy pool rotation (true when periodic auto-probing is active).
+func (t *Tracker) SetActiveRecoveryProbe(enabled bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.activeRecoveryProbe = enabled
+}
+
+// SetOnHealthChange registers a callback invoked (outside locks) when a node trips or recovers.
+func (t *Tracker) SetOnHealthChange(fn func(nodeID string, recovered bool)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.onHealthChange = fn
+}
+
+func (t *Tracker) notifyHealthChange(cb func(nodeID string, recovered bool), nodeID string, recovered bool) {
+	if cb != nil {
+		cb(nodeID, recovered)
 	}
 }
 
@@ -370,45 +490,52 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 		return
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	var cb func(string, bool)
+	var notify bool
+	var recovered bool
 
+	t.mu.Lock()
+	now := t.nowLocked()
 	root := ExtractRootDomain(targetHost)
 	st, exists := t.nodes[nodeID]
 	if !exists {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
-	st.LastPassiveDial = time.Now()
+	st.LastPassiveDial = now
 
 	if err != nil {
 		// Site-level errors do not penalize node's global success rate or trip circuit breaker
 		if IsSiteFault(err) {
 			t.recordDomainFailureLocked(root, nodeID)
+			t.mu.Unlock()
 			return
 		}
 
-		st.recordSlowDomain(root, time.Now())
+		st.recordSlowDomain(root, now)
 		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
 		st.ConsecutiveSuccesses = 0
-		st.checkAndTripCircuit()
+		if st.checkAndTripCircuit(now, err.Error()) {
+			cb = t.onHealthChange
+			notify = true
+			recovered = false
+		}
 		t.recordDomainFailureLocked(root, nodeID)
+		t.mu.Unlock()
+		if notify {
+			t.notifyHealthChange(cb, nodeID, recovered)
+		}
 		return
 	}
 
 	if rtt > 0 {
-		if st.PassiveEWMA == 0 {
-			st.PassiveEWMA = rtt
-		} else {
-			st.PassiveEWMA = time.Duration((1.0-ewmaAlpha)*float64(st.PassiveEWMA) + ewmaAlpha*float64(rtt))
-		}
-		st.updateEffectiveEWMA()
+		st.recordPassiveRTT(rtt)
 	}
 
 	// Connections that took >= severePacketLossRTT (3000ms) suffered multi-RTO packet loss stalls.
 	if rtt >= severePacketLossRTT {
-		uniqueSlowRoots := st.recordSlowDomain(root, time.Now())
+		uniqueSlowRoots := st.recordSlowDomain(root, now)
 		hasRecentProbeSpike := st.MaxProbeRTT >= 1000*time.Millisecond
 		if uniqueSlowRoots >= multiDomainVetoThreshold || hasRecentProbeSpike {
 			// Multi-domain correlation collapse OR recent probe jitter spike:
@@ -416,14 +543,23 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 			st.recordWindowSample(false)
 			st.ConsecutiveFailures++
 			st.ConsecutiveSuccesses = 0
-			st.checkAndTripCircuit()
+			if st.checkAndTripCircuit(now, "severe packet-loss stall") {
+				cb = t.onHealthChange
+				notify = true
+				recovered = false
+			}
 			t.recordDomainFailureLocked(root, nodeID)
+			t.mu.Unlock()
+			if notify {
+				t.notifyHealthChange(cb, nodeID, recovered)
+			}
 			return
 		}
 
 		// Single domain stall on a jitter-free line: isolate to domain level.
 		// Evict affinity so the domain can test alternative nodes, but isolate from global node failure.
 		t.recordDomainFailureLocked(root, nodeID)
+		t.mu.Unlock()
 		return
 	}
 
@@ -431,10 +567,16 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 	st.recordWindowSample(true)
 	st.ConsecutiveFailures = 0
 	st.ConsecutiveSuccesses++
-	if st.ConsecutiveSuccesses >= circuitRecoverySuccessTarget ||
-		st.TotalDials < highLossMinSamples ||
-		float64(st.SuccessfulDials)/float64(st.TotalDials) >= highLossSuccessRate {
-		st.clearCircuit()
+	if !st.circuitTrippedAt.IsZero() && st.ConsecutiveSuccesses >= circuitRecoverySuccessTarget {
+		if st.clearCircuit() {
+			cb = t.onHealthChange
+			notify = true
+			recovered = true
+		}
+	} else if st.ConsecutiveSuccesses == circuitRecoverySuccessTarget {
+		cb = t.onHealthChange
+		notify = true
+		recovered = true
 	}
 
 	if root != "" {
@@ -453,6 +595,38 @@ func (t *Tracker) RecordDial(nodeID string, targetHost string, rtt time.Duration
 			t.affinity[root] = nodeID
 		}
 	}
+	t.mu.Unlock()
+	if notify {
+		t.notifyHealthChange(cb, nodeID, recovered)
+	}
+}
+
+func (st *NodeStats) recordPassiveRTT(rtt time.Duration) {
+	if rtt <= 0 {
+		return
+	}
+	if st.PassiveEWMA == 0 {
+		st.PassiveEWMA = rtt
+	} else {
+		st.PassiveEWMA = time.Duration((1.0-ewmaAlpha)*float64(st.PassiveEWMA) + ewmaAlpha*float64(rtt))
+	}
+	st.updateEffectiveEWMA()
+}
+
+// RecordRecoveredStalledDial updates PassiveEWMA when a connection that already triggered
+// a global stall penalty eventually receives a response byte, without double-counting failures.
+func (t *Tracker) RecordRecoveredStalledDial(nodeID string, rtt time.Duration) {
+	if rtt <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st, exists := t.nodes[nodeID]
+	if !exists {
+		return
+	}
+	st.LastPassiveDial = t.nowLocked()
+	st.recordPassiveRTT(rtt)
 }
 
 func (t *Tracker) recordDomainFailureLocked(root string, nodeID string) {
@@ -496,9 +670,13 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 	if rtt < time.Millisecond {
 		return
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
+	var cb func(string, bool)
+	var notify bool
+	var recovered bool
+
+	t.mu.Lock()
+	now := t.nowLocked()
 	st, exists := t.nodes[nodeID]
 	if !exists {
 		st = &NodeStats{}
@@ -506,7 +684,6 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 	}
 	st.recordProbeSample(rtt)
 
-	now := time.Now()
 	idleThresh := t.idleThreshold
 	if idleThresh <= 0 {
 		idleThresh = defaultIdleThreshold
@@ -523,7 +700,15 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		st.recordWindowSample(false)
 		st.ConsecutiveFailures++
 		st.ConsecutiveSuccesses = 0
-		st.checkAndTripCircuit()
+		if st.checkAndTripCircuit(now, "probe latency exceeded threshold") {
+			cb = t.onHealthChange
+			notify = true
+			recovered = false
+		}
+		t.mu.Unlock()
+		if notify {
+			t.notifyHealthChange(cb, nodeID, recovered)
+		}
 		return
 	}
 
@@ -550,10 +735,18 @@ func (t *Tracker) RecordProbe(nodeID string, rtt time.Duration) {
 		st.washHistoricalFailures(idleWashFailuresCount)
 	}
 
+	hadFailures := st.ConsecutiveFailures > 0 || !st.circuitTrippedAt.IsZero()
 	st.ConsecutiveFailures = 0
 	st.ConsecutiveSuccesses++
-	st.clearCircuit()
-	t.clearNodeDomainErrorsLocked(nodeID)
+	if st.clearCircuit() || hadFailures {
+		cb = t.onHealthChange
+		notify = true
+		recovered = true
+	}
+	t.mu.Unlock()
+	if notify {
+		t.notifyHealthChange(cb, nodeID, recovered)
+	}
 }
 
 // ResetNode clears all telemetry stats, sticky domain affinities, and domain error records for nodeID.
@@ -572,9 +765,16 @@ func (t *Tracker) ResetNode(nodeID string) {
 // RecordProbeFailure records an active probe failure (e.g. timeout or connection reset)
 // into the node's success rate and consecutive failure circuit breaker metrics.
 func (t *Tracker) RecordProbeFailure(nodeID string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.RecordProbeFailureReason(nodeID, "")
+}
 
+// RecordProbeFailureReason records an active probe failure along with its failure description.
+func (t *Tracker) RecordProbeFailureReason(nodeID string, reason string) {
+	var cb func(string, bool)
+	var notify bool
+
+	t.mu.Lock()
+	now := t.nowLocked()
 	st, exists := t.nodes[nodeID]
 	if !exists {
 		st = &NodeStats{}
@@ -584,16 +784,29 @@ func (t *Tracker) RecordProbeFailure(nodeID string) {
 	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
 	st.ConsecutiveSuccesses = 0
-	st.checkAndTripCircuit()
+	if reason == "" {
+		reason = "active probe failed"
+	}
+	if st.checkAndTripCircuit(now, reason) {
+		cb = t.onHealthChange
+		notify = true
+	}
+	t.mu.Unlock()
+	if notify {
+		t.notifyHealthChange(cb, nodeID, false)
+	}
 }
 
 // RecordStall records an in-flight stall when a connection takes longer than severePacketLossRTT
 // to receive its first response byte. It immediately evicts sticky domain affinity and penalizes
-// the node so subsequent concurrent requests are not funneled into the blackhole.
-func (t *Tracker) RecordStall(nodeID string, targetHost string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+// the node only when multi-domain correlation or recent probe jitter confirms node degradation.
+// It returns true when global failure metrics were charged for this stall.
+func (t *Tracker) RecordStall(nodeID string, targetHost string) bool {
+	var cb func(string, bool)
+	var notify bool
 
+	t.mu.Lock()
+	now := t.nowLocked()
 	root := ExtractRootDomain(targetHost)
 	t.recordDomainFailureLocked(root, nodeID)
 
@@ -602,19 +815,38 @@ func (t *Tracker) RecordStall(nodeID string, targetHost string) {
 		st = &NodeStats{}
 		t.nodes[nodeID] = st
 	}
-	st.LastPassiveDial = time.Now()
-	st.recordProbeSample(severePacketLossRTT)
+	uniqueSlowRoots := st.recordSlowDomain(root, now)
+	hasRecentProbeSpike := st.MaxProbeRTT >= 1000*time.Millisecond
+	if uniqueSlowRoots < multiDomainVetoThreshold && !hasRecentProbeSpike {
+		t.mu.Unlock()
+		return false
+	}
+
+	st.LastPassiveDial = now
 	st.recordWindowSample(false)
 	st.ConsecutiveFailures++
 	st.ConsecutiveSuccesses = 0
-	st.checkAndTripCircuit()
+	if st.checkAndTripCircuit(now, "multi-domain connection stall") {
+		cb = t.onHealthChange
+		notify = true
+	}
+	t.mu.Unlock()
+	if notify {
+		t.notifyHealthChange(cb, nodeID, false)
+	}
+	return true
 }
 
-func isNodeBrokenLocked(st *NodeStats) bool {
-	if st == nil || st.circuitTrippedAt.IsZero() {
+func (t *Tracker) isNodeBrokenLocked(st *NodeStats, now time.Time) bool {
+	state, _ := st.effectiveCircuitState(now)
+	switch state {
+	case CircuitOpen:
+		return true
+	case CircuitHalfOpen:
+		return t.activeRecoveryProbe
+	default:
 		return false
 	}
-	return time.Since(st.circuitTrippedAt) < circuitCooldownDuration
 }
 
 func (t *Tracker) IsBroken(nodeID string) bool {
@@ -624,7 +856,7 @@ func (t *Tracker) IsBroken(nodeID string) bool {
 	if !ok {
 		return false
 	}
-	return isNodeBrokenLocked(st)
+	return t.isNodeBrokenLocked(st, t.nowLocked())
 }
 
 func (t *Tracker) GetScore(nodeID string) QualityScore {
@@ -641,6 +873,7 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 			SuccessRate:         1.0,
 			Score:               float64(defaultInitialRTT.Milliseconds()),
 			IsBroken:            false,
+			CircuitState:        CircuitClosed,
 			TotalDials:          0,
 			SuccessfulDials:     0,
 			ConsecutiveFailures: 0,
@@ -648,6 +881,7 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 		}
 	}
 
+	now := t.nowLocked()
 	sr := 1.0
 	if st.TotalDials > 0 {
 		sr = float64(st.SuccessfulDials) / float64(st.TotalDials)
@@ -656,9 +890,10 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 		}
 	}
 
-	isBroken := isNodeBrokenLocked(st)
+	circuitState, cooldownRem := st.effectiveCircuitState(now)
+	isBroken := t.isNodeBrokenLocked(st, now)
 	circuitPenalty := 0.0
-	if isBroken {
+	if isBroken || circuitState != CircuitClosed {
 		circuitPenalty = 10000.0 // 10s artificial penalty
 	}
 
@@ -669,18 +904,22 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 	score := (rttMs / (sr * sr)) + circuitPenalty
 
 	return QualityScore{
-		EWMA:                st.EWMA,
-		PassiveEWMA:         st.PassiveEWMA,
-		ProbeRTT:            st.ProbeRTT,
-		MaxProbeRTT:         st.MaxProbeRTT,
-		SuccessRate:         sr,
-		Score:               score,
-		IsBroken:            isBroken,
-		TotalDials:          st.TotalDials,
-		SuccessfulDials:     st.SuccessfulDials,
-		ConsecutiveFailures: st.ConsecutiveFailures,
-		CircuitPenalty:      circuitPenalty,
-		LastPassiveDial:     st.LastPassiveDial,
+		EWMA:                     st.EWMA,
+		PassiveEWMA:              st.PassiveEWMA,
+		ProbeRTT:                 st.ProbeRTT,
+		MaxProbeRTT:              st.MaxProbeRTT,
+		SuccessRate:              sr,
+		Score:                    score,
+		IsBroken:                 isBroken,
+		CircuitState:             circuitState,
+		CircuitCooldownRemaining: cooldownRem,
+		LastFailure:              st.LastFailure,
+		LastFailureReason:        st.LastFailureReason,
+		TotalDials:               st.TotalDials,
+		SuccessfulDials:          st.SuccessfulDials,
+		ConsecutiveFailures:      st.ConsecutiveFailures,
+		CircuitPenalty:           circuitPenalty,
+		LastPassiveDial:          st.LastPassiveDial,
 	}
 }
 

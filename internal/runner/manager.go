@@ -764,6 +764,37 @@ func resolveProbeEndpoint(svc config.Service, allocPort int) (config.ListenEndpo
 	return ep, err
 }
 
+// ClearProbeError clears any stale probe error on a running/registered service without resetting latency.
+func (m *Manager) ClearProbeError(id string) {
+	m.mu.Lock()
+	inst, ok := m.instances[id]
+	changed := false
+	if ok && inst.status.ProbeError != "" {
+		inst.status.ProbeError = ""
+		changed = true
+	}
+	m.mu.Unlock()
+	if changed {
+		m.onChange()
+	}
+}
+
+// ClearErrors clears stale probe and download speed errors for service id.
+func (m *Manager) ClearErrors(id string) {
+	m.mu.Lock()
+	inst, ok := m.instances[id]
+	changed := false
+	if ok && (inst.status.ProbeError != "" || inst.status.SpeedError != "") {
+		inst.status.ProbeError = ""
+		inst.status.SpeedError = ""
+		changed = true
+	}
+	m.mu.Unlock()
+	if changed {
+		m.onChange()
+	}
+}
+
 // ProbeServiceCtx synchronously measures latency through the service's primary listen endpoint,
 // respecting the provided context for cancellation. The service must be in StateRunning.
 func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probeURL string) (time.Duration, error) {
@@ -774,7 +805,6 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 		return 0, errors.New("服务未在运行中或正在测速")
 	}
 	inst.status.Probing = true
-	inst.status.ProbeError = ""
 	allocPort := inst.status.AllocatedPort
 	m.mu.Unlock()
 	m.onChange()
@@ -802,7 +832,7 @@ func (m *Manager) ProbeServiceCtx(ctx context.Context, svc config.Service, probe
 
 	m.mu.Lock()
 	inst.status.Probing = false
-	if ctx.Err() != nil {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		inst.logs.AppendLine("[测速] 延迟测试已取消")
 		m.mu.Unlock()
 		m.onChange()
@@ -851,7 +881,6 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 		return 0, errors.New("服务未在运行中或正在测速")
 	}
 	inst.status.SpeedTesting = true
-	inst.status.SpeedError = ""
 	inst.status.DownloadSpeed = 0
 	allocPort := inst.status.AllocatedPort
 	m.mu.Unlock()
@@ -890,7 +919,7 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 
 	m.mu.Lock()
 	inst.status.SpeedTesting = false
-	if ctx.Err() != nil {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		inst.logs.AppendLine("[测速] 下载测速已取消")
 		m.mu.Unlock()
 		m.onChange()
@@ -901,9 +930,6 @@ func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service
 		inst.status.SpeedError = err.Error()
 		inst.logs.AppendLine(fmt.Sprintf("[测速] 下载测速失败: %v", err))
 		m.mu.Unlock()
-		if m.OnProbeFailure != nil {
-			m.OnProbeFailure(svc.ID, err)
-		}
 	} else {
 		inst.status.DownloadSpeed = bps
 		inst.status.SpeedError = ""

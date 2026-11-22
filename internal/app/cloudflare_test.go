@@ -583,7 +583,7 @@ func TestNodeDrawer_UnhealthyReflected(t *testing.T) {
 	}
 }
 
-func TestDownloadSpeedFailure_TriggersUnhealthy(t *testing.T) {
+func TestDownloadSpeedFailure_DoesNotTriggerUnhealthy(t *testing.T) {
 	a, tt, _ := newTestApp(t, nil)
 	svc := config.Service{
 		ID:       "test-vless-node",
@@ -594,21 +594,28 @@ func TestDownloadSpeedFailure_TriggersUnhealthy(t *testing.T) {
 	a.saveState()
 	tt.Frame()
 
-	// Download test error causes unhealthy status
+	// Download bandwidth test failure shows inline "DownloadFailed" telemetry without marking
+	// the node globally Unhealthy or tripping its connectivity circuit breaker.
 	stSpeedErr := runner.Status{
 		State:      runner.StateRunning,
 		SpeedError: "download test failed: context deadline exceeded",
 	}
 	a.mgr.SetStatusForTest(svc.ID, stSpeedErr)
 
-	if !a.isNodeUnhealthy(svc, stSpeedErr) {
-		t.Errorf("expected service to be unhealthy when SpeedError is present")
+	if a.isNodeUnhealthy(svc, stSpeedErr) {
+		t.Errorf("expected service not to be marked unhealthy from download SpeedError alone")
+	}
+	if a.tracker.GetScore(svc.ID).IsBroken {
+		t.Errorf("expected download SpeedError not to trip connectivity circuit breaker")
 	}
 
 	tt.Frame()
 	cat := a.catalog()
-	if _, ok := tt.Find(cat.StatusUnhealthy()); !ok {
-		t.Errorf("expected StatusUnhealthy badge on card for speed test failure")
+	if _, ok := tt.Find(cat.StatusUnhealthy()); ok {
+		t.Errorf("did not expect StatusUnhealthy badge on card for speed test failure alone")
+	}
+	if !tt.HasText(cat.DownloadFailed()) {
+		t.Errorf("expected %q telemetry indicator when SpeedError is present", cat.DownloadFailed())
 	}
 }
 

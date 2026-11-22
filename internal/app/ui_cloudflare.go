@@ -463,6 +463,7 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 					func(mode warp.Mode) {
 						a.state.Cloudflare.DefaultMode = mode
 						a.saveState()
+						a.resetWarpNodesHealth(true)
 					},
 				)
 
@@ -479,6 +480,7 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 					func(mode warp.Mode) {
 						a.state.Cloudflare.ChainedMode = mode
 						a.saveState()
+						a.resetWarpNodesHealth(true)
 					},
 				)
 			})
@@ -491,6 +493,7 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 					Children(func() {
 						if switchRow(c, p, "toggle-warp-prefer-h2", cat.CloudflareWarpPreferH2(), &a.state.Cloudflare.MasquePreferH2) {
 							a.saveState()
+							a.resetWarpNodesHealth(true)
 						}
 					})
 			}
@@ -544,6 +547,7 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 							})
 							if resetBtn.Clicked() {
 								a.applyWarpCleanEndpoint("")
+								a.resetWarpNodesHealth(true)
 							}
 						}
 					})
@@ -610,6 +614,7 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 								})
 								if rowBtn.Clicked() {
 									a.applyWarpCleanEndpoint(res.Endpoint)
+									a.resetWarpNodesHealth(true)
 								}
 							}
 						})

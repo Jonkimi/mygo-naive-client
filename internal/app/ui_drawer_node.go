@@ -10,6 +10,7 @@ import (
 	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
+	"naive-client/internal/telemetry"
 	"naive-client/locales"
 )
 
@@ -295,7 +296,9 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 				if a.tracker != nil {
 					sc := a.tracker.GetScore(svc.ID)
 					switch {
-					case sc.IsBroken:
+					case sc.CircuitState == telemetry.CircuitHalfOpen:
+						circuitText, circuitColor = cat.NodeDrawerCircuitHalfOpen(), p.amber
+					case sc.IsBroken || sc.CircuitState == telemetry.CircuitOpen:
 						circuitText, circuitColor = cat.NodeDrawerCircuitTripped(), p.red
 					case sc.ConsecutiveFailures > 0:
 						circuitText, circuitColor = fmt.Sprintf("%d", sc.ConsecutiveFailures), p.amber

@@ -134,11 +134,11 @@ func (msgs Messages) RoutingSmartPoolDetailEWMA() string {
 	return Catalog.Format(msgs.locale, "routingSmartPoolDetailEWMA", nil)
 }
 
-// RoutingSmartPoolDetailCircuit says "Success Rate & Circuit Breaker: Evaluates EWMA / SuccessRate²; 3 consecutive failures trip a 30s circuit breaker pen…"
+// RoutingSmartPoolDetailCircuit says "Success Rate & Circuit Breaker: Evaluates EWMA / SuccessRate²; 3 consecutive failures trip a 60s circuit breaker pen…"
 // in the language the app shows.
 func RoutingSmartPoolDetailCircuit() string { return In(i18n.Locale()).RoutingSmartPoolDetailCircuit() }
 
-// RoutingSmartPoolDetailCircuit says "Success Rate & Circuit Breaker: Evaluates EWMA / SuccessRate²; 3 consecutive failures trip a 30s circuit breaker pen…"
+// RoutingSmartPoolDetailCircuit says "Success Rate & Circuit Breaker: Evaluates EWMA / SuccessRate²; 3 consecutive failures trip a 60s circuit breaker pen…"
 // in the language of msgs.
 func (msgs Messages) RoutingSmartPoolDetailCircuit() string {
 	return Catalog.Format(msgs.locale, "routingSmartPoolDetailCircuit", nil)
@@ -978,11 +978,11 @@ func (msgs Messages) NodeDrawerCircuit() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuit", nil)
 }
 
-// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 30s"
+// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s before half-open recovery probing"
 // in the language the app shows.
 func NodeDrawerCircuitDesc() string { return In(i18n.Locale()).NodeDrawerCircuitDesc() }
 
-// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 30s"
+// NodeDrawerCircuitDesc says "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s before half-open recovery probing"
 // in the language of msgs.
 func (msgs Messages) NodeDrawerCircuitDesc() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuitDesc", nil)
@@ -1006,6 +1006,16 @@ func NodeDrawerCircuitTripped() string { return In(i18n.Locale()).NodeDrawerCirc
 // in the language of msgs.
 func (msgs Messages) NodeDrawerCircuitTripped() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuitTripped", nil)
+}
+
+// NodeDrawerCircuitHalfOpen says "Half-Open (Probing)"
+// in the language the app shows.
+func NodeDrawerCircuitHalfOpen() string { return In(i18n.Locale()).NodeDrawerCircuitHalfOpen() }
+
+// NodeDrawerCircuitHalfOpen says "Half-Open (Probing)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuitHalfOpen() string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuitHalfOpen", nil)
 }
 
 // NodeDrawerFinalScore says "Adaptive Quality Score"

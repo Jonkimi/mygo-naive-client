@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -31,6 +32,7 @@ import (
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
 	"naive-client/internal/sysproxy"
+	"naive-client/internal/telemetry"
 	"naive-client/internal/tunhelper"
 	"naive-client/internal/updater"
 	"naive-client/locales"
@@ -4048,6 +4050,187 @@ func TestRouting_RuleCardDefaultDescription(t *testing.T) {
 	tt.Frame()
 	if a.ruleEditor.desc != "" {
 		t.Fatalf("expected editor description to stay empty for rule without description, got %q", a.ruleEditor.desc)
+	}
+}
+
+// Regression: real business traffic recovery (3 consecutive RecordDial successes) must exit
+// Unhealthy, clear stale ProbeError, and update UI; passive trips also surface LastFailureReason.
+func TestNodeHealth_RealTrafficRecoveryClearsProbeErrorAndExitsUnhealthy(t *testing.T) {
+	svc := config.Service{
+		ID:       "svc-recover",
+		Name:     "Recover-Node",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "recover.example.com",
+	}
+	a, tt, _ := newTestApp(t, []config.Service{svc})
+	a.mgr.SetStatusForTest(svc.ID, runner.Status{State: runner.StateRunning})
+
+	// 1. Passive dial failures trip circuit breaker without ProbeError
+	a.tracker.RecordDial(svc.ID, "example.com", 0, errors.New("dial tcp: i/o timeout"))
+	a.tracker.RecordDial(svc.ID, "example.com", 0, errors.New("dial tcp: i/o timeout"))
+	a.tracker.RecordDial(svc.ID, "example.com", 0, errors.New("dial tcp: i/o timeout"))
+
+	rt := a.mgr.StatusOf(svc.ID)
+	if !a.isNodeUnhealthy(svc, rt) {
+		t.Fatalf("expected node to be unhealthy after 3 consecutive dial failures")
+	}
+	hint, _, _ := a.diagnoseNodeUnhealthy(svc, rt)
+	if !strings.Contains(hint, "i/o timeout") {
+		t.Fatalf("expected passive circuit diagnostic hint to include failure reason, got %q", hint)
+	}
+
+	// Inject stale ProbeError too, simulating an earlier failed probe
+	a.mgr.SetStatusForTest(svc.ID, runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "stale probe timeout",
+	})
+
+	// 2. Three consecutive real traffic successes recover circuit and clear stale ProbeError
+	a.tracker.RecordDial(svc.ID, "example.com", 40*time.Millisecond, nil)
+	a.tracker.RecordDial(svc.ID, "example.com", 40*time.Millisecond, nil)
+	if !a.isNodeUnhealthy(svc, a.mgr.StatusOf(svc.ID)) {
+		t.Fatalf("expected node to remain unhealthy after only 2 successes")
+	}
+	a.tracker.RecordDial(svc.ID, "example.com", 40*time.Millisecond, nil)
+	tt.Frame()
+
+	rtAfter := a.mgr.StatusOf(svc.ID)
+	if rtAfter.ProbeError != "" {
+		t.Fatalf("expected real traffic recovery to clear stale ProbeError, got %q", rtAfter.ProbeError)
+	}
+	if a.isNodeUnhealthy(svc, rtAfter) {
+		t.Fatalf("expected node to exit unhealthy state after 3 consecutive traffic successes")
+	}
+}
+
+// Regression: changing Cloudflare clean endpoint / WARP configuration clears stale WARP
+// unhealthy errors and resets circuit breaker state so UI reflects the updated config.
+func TestNodeHealth_WarpConfigChangeResetsUnhealthyState(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true
+	a.setCnDirectWarpEnabled(true)
+	tt.Frame()
+
+	var warpSvc *config.Service
+	for i := range a.state.Services {
+		if a.state.Services[i].IsBuiltinWarp() {
+			warpSvc = &a.state.Services[i]
+			break
+		}
+	}
+	if warpSvc == nil {
+		t.Fatalf("expected builtin-warp service")
+	}
+
+	a.mgr.SetStatusForTest(warpSvc.ID, runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "warp server (162.159.198.2:443) connection failed: i/o timeout",
+	})
+	a.tracker.RecordProbeFailureReason(warpSvc.ID, "warp server timeout")
+	a.tracker.RecordProbeFailureReason(warpSvc.ID, "warp server timeout")
+	a.tracker.RecordProbeFailureReason(warpSvc.ID, "warp server timeout")
+	if !a.isNodeUnhealthy(*warpSvc, a.mgr.StatusOf(warpSvc.ID)) {
+		t.Fatalf("expected warp node unhealthy before config fix")
+	}
+
+	a.applyWarpCleanEndpoint("162.159.193.5:2408")
+	tt.Frame()
+
+	rtAfter := a.mgr.StatusOf(warpSvc.ID)
+	if rtAfter.ProbeError != "" || a.tracker.GetScore(warpSvc.ID).IsBroken {
+		t.Fatalf("expected applyWarpCleanEndpoint to clear stale ProbeError and reset tracker, got rt=%+v score=%+v", rtAfter, a.tracker.GetScore(warpSvc.ID))
+	}
+	if a.isNodeUnhealthy(*warpSvc, rtAfter) {
+		t.Fatalf("expected warp node healthy after endpoint reset")
+	}
+}
+
+// Regression: when a node's circuit cooldown elapses into CircuitHalfOpen, expedited recovery
+// probing verifies the node and transitions it cleanly back to CircuitClosed & healthy.
+func TestNodeHealth_HalfOpenExpeditedProbeRecovery(t *testing.T) {
+	probeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer probeLn.Close()
+
+	go func() {
+		for {
+			c, acceptErr := probeLn.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))
+			}(c)
+		}
+	}()
+
+	svc := config.Service{
+		ID:       "svc-halfopen",
+		Name:     "HalfOpen-Node",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "halfopen.example.com",
+	}
+	a, _, _ := newTestApp(t, []config.Service{svc})
+	a.state.ProbeURL = fmt.Sprintf("http://%s/generate_204", probeLn.Addr().String())
+
+	var nowMu sync.Mutex
+	now := time.Unix(1700000000, 0)
+	a.tracker.SetNowFuncForTest(func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		return now
+	})
+	a.tracker.SetActiveRecoveryProbe(true)
+
+	a.mgr.SetStatusForTest(svc.ID, runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "previous timeout",
+	})
+	a.mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", probeLn.Addr().String())
+	}
+
+	// Trip into CircuitOpen
+	for i := 0; i < 3; i++ {
+		a.tracker.RecordProbeFailureReason(svc.ID, "i/o timeout")
+	}
+	if a.tracker.GetScore(svc.ID).CircuitState != telemetry.CircuitOpen {
+		t.Fatalf("expected CircuitOpen after 3 failures")
+	}
+
+	// Advance clock past 60s cooldown -> CircuitHalfOpen
+	nowMu.Lock()
+	now = now.Add(61 * time.Second)
+	nowMu.Unlock()
+	if a.tracker.GetScore(svc.ID).CircuitState != telemetry.CircuitHalfOpen {
+		t.Fatalf("expected CircuitHalfOpen after 60s cooldown")
+	}
+	if !a.isNodeUnhealthy(svc, a.mgr.StatusOf(svc.ID)) {
+		t.Fatalf("expected HalfOpen node to remain unhealthy until probe verifies recovery")
+	}
+
+	// Expedited recovery probe verifies the node and closes the circuit
+	a.probeDegradedServicesSilent()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.tracker.GetScore(svc.ID).CircuitState == telemetry.CircuitClosed &&
+			a.mgr.StatusOf(svc.ID).ProbeError == "" {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	sc := a.tracker.GetScore(svc.ID)
+	rt := a.mgr.StatusOf(svc.ID)
+	if sc.CircuitState != telemetry.CircuitClosed || sc.IsBroken || rt.ProbeError != "" || a.isNodeUnhealthy(svc, rt) {
+		t.Fatalf("expected HalfOpen expedited probe to recover node cleanly, got sc=%+v rt=%+v", sc, rt)
 	}
 }
 

@@ -737,3 +737,155 @@ func TestTracker_ConfigurableProbeIntervalAffectsDecay(t *testing.T) {
 	}
 }
 
+// Regression: three-state circuit lifecycle (Closed -> Open -> HalfOpen -> Closed),
+// exponential backoff on Half-Open failure, strict 3-success passive recovery (without
+// TotalDials < 5 or SR >= 0.60 bypass), and survival-mode failures not stalling cooldown.
+func TestTracker_ThreeStateCircuitLifecycleAndBackoff(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	tr := NewTracker()
+	tr.nowFn = func() time.Time { return now }
+	tr.SetActiveRecoveryProbe(true)
+
+	var events []bool
+	tr.SetOnHealthChange(func(nodeID string, recovered bool) {
+		events = append(events, recovered)
+	})
+
+	node := "node-3state"
+	// 1. Low-sample trip (0/3, TotalDials = 3 < 5) -> enters CircuitOpen for 60s
+	for i := 0; i < 3; i++ {
+		tr.RecordDial(node, "a.com", 0, errors.New("dial timeout"))
+	}
+	scOpen := tr.GetScore(node)
+	if scOpen.CircuitState != CircuitOpen || !scOpen.IsBroken || scOpen.CircuitCooldownRemaining != 60*time.Second {
+		t.Fatalf("expected CircuitOpen with 60s cooldown, got %+v", scOpen)
+	}
+	if scOpen.LastFailureReason != "dial timeout" {
+		t.Fatalf("expected LastFailureReason='dial timeout', got %q", scOpen.LastFailureReason)
+	}
+
+	// 2. Survival-mode failures while already CircuitOpen must NOT push cooldown expiration forward
+	now = now.Add(30 * time.Second)
+	tr.RecordDial(node, "b.com", 0, errors.New("still down"))
+	scMid := tr.GetScore(node)
+	if scMid.CircuitState != CircuitOpen || scMid.CircuitCooldownRemaining != 30*time.Second {
+		t.Fatalf("expected cooldown remaining 30s without timer reset, got %+v", scMid)
+	}
+
+	// 3. Single passive success while Open must NOT prematurely clear circuit (even when TotalDials < 5)
+	tr.RecordDial(node, "c.com", 50*time.Millisecond, nil)
+	if scAfter1 := tr.GetScore(node); scAfter1.CircuitState != CircuitOpen || !scAfter1.IsBroken {
+		t.Fatalf("expected 1 lucky success not to clear circuit when TotalDials < 5, got %+v", scAfter1)
+	}
+
+	// 4. Advance past 60s cooldown -> enters CircuitHalfOpen (IsBroken=true when activeRecoveryProbe=true)
+	now = now.Add(31 * time.Second)
+	scHalfActive := tr.GetScore(node)
+	if scHalfActive.CircuitState != CircuitHalfOpen || !scHalfActive.IsBroken {
+		t.Fatalf("expected CircuitHalfOpen with IsBroken=true under activeRecoveryProbe, got %+v", scHalfActive)
+	}
+
+	// When activeRecoveryProbe=false (passive half-open mode), IsBroken=false admits trial while CircuitState stays HalfOpen
+	tr.SetActiveRecoveryProbe(false)
+	scHalfPassive := tr.GetScore(node)
+	if scHalfPassive.CircuitState != CircuitHalfOpen || scHalfPassive.IsBroken {
+		t.Fatalf("expected CircuitHalfOpen with IsBroken=false under passive mode, got %+v", scHalfPassive)
+	}
+	tr.SetActiveRecoveryProbe(true)
+
+	// 5. A single failure in HalfOpen immediately re-trips to CircuitOpen with 120s backoff
+	tr.RecordDial(node, "d.com", 0, errors.New("half-open fail"))
+	scBackoff := tr.GetScore(node)
+	if scBackoff.CircuitState != CircuitOpen || !scBackoff.IsBroken || scBackoff.CircuitCooldownRemaining != 120*time.Second {
+		t.Fatalf("expected HalfOpen failure to immediately re-trip with 120s backoff, got %+v", scBackoff)
+	}
+
+	// 6. Advance 120s to HalfOpen, then require 3 consecutive passive successes to close circuit
+	now = now.Add(120 * time.Second)
+	tr.RecordDial(node, "ok1.com", 40*time.Millisecond, nil)
+	tr.RecordDial(node, "ok2.com", 40*time.Millisecond, nil)
+	if sc2 := tr.GetScore(node); sc2.CircuitState != CircuitHalfOpen {
+		t.Fatalf("expected 2 consecutive successes to remain HalfOpen until target=3, got %+v", sc2)
+	}
+	tr.RecordDial(node, "ok3.com", 40*time.Millisecond, nil)
+	scClosed := tr.GetScore(node)
+	if scClosed.CircuitState != CircuitClosed || scClosed.IsBroken || scClosed.LastFailureReason != "" {
+		t.Fatalf("expected 3 consecutive successes to close circuit cleanly, got %+v", scClosed)
+	}
+
+	// 7. Also verify high-SR previously healthy node (47/50, 3 failures -> 94% SR) cannot recover on 1 dial
+	healthyNode := "node-high-sr"
+	for i := 0; i < 47; i++ {
+		tr.RecordDial(healthyNode, "good.com", 40*time.Millisecond, nil)
+	}
+	for i := 0; i < 3; i++ {
+		tr.RecordDial(healthyNode, "bad.com", 0, errors.New("sudden outage"))
+	}
+	if !tr.IsBroken(healthyNode) {
+		t.Fatalf("expected high-SR node to trip after 3 consecutive failures")
+	}
+	tr.RecordDial(healthyNode, "lucky.com", 40*time.Millisecond, nil)
+	if !tr.IsBroken(healthyNode) {
+		t.Fatalf("expected 1 lucky dial NOT to clear circuit even though sliding window SR >= 60%%")
+	}
+	if len(events) < 2 || events[len(events)-1] != false {
+		t.Fatalf("expected health change notifications, got %v", events)
+	}
+}
+
+// Regression: healthy active probes (e.g. cp.cloudflare.com) must NOT wipe domain-level
+// failure isolation for blocked domains like openai.com.
+func TestTracker_RecordProbePreservesDomainErrors(t *testing.T) {
+	tr := NewTracker()
+	nodeA := "node-a"
+	nodeB := "node-b"
+
+	tr.RecordDial(nodeA, "openai.com", 0, errors.New("tls reset"))
+	tr.RecordDial(nodeB, "openai.com", 80*time.Millisecond, nil)
+
+	// Periodic active probe succeeds on nodeA
+	tr.RecordProbe(nodeA, 30*time.Millisecond)
+
+	tr.mu.RLock()
+	errCount := tr.domainErrors["openai.com"][nodeA]
+	tr.mu.RUnlock()
+	if errCount == 0 {
+		t.Fatalf("expected RecordProbe to preserve domain-level failure record for openai.com on nodeA")
+	}
+}
+
+// Regression: RecordStall must not write fake 3000ms samples into probeHistory (MaxProbeRTT),
+// and single-domain stalls must not charge global failures.
+func TestTracker_RecordStallDoesNotPolluteProbeHistory(t *testing.T) {
+	tr := NewTracker()
+	node := "node-stall"
+
+	if penalized := tr.RecordStall(node, "cold-site.org"); penalized {
+		t.Fatalf("expected single-domain stall not to charge global failure metrics")
+	}
+	sc := tr.GetScore(node)
+	if sc.MaxProbeRTT != 0 || sc.ConsecutiveFailures != 0 {
+		t.Fatalf("expected MaxProbeRTT=0 and ConsecutiveFailures=0 after single-domain RecordStall, got %+v", sc)
+	}
+
+	if penalized := tr.RecordStall(node, "second-site.org"); !penalized {
+		t.Fatalf("expected multi-domain stall within 5s window to charge global failure metrics")
+	}
+	sc2 := tr.GetScore(node)
+	if sc2.ConsecutiveFailures != 1 || sc2.MaxProbeRTT != 0 {
+		t.Fatalf("expected ConsecutiveFailures=1 and MaxProbeRTT=0, got %+v", sc2)
+	}
+}
+
+// Regression: NXDOMAIN / no DNS records must be treated as site faults rather than node failures.
+func TestTracker_IsSiteFaultIsolatesNoDNSRecords(t *testing.T) {
+	tr := NewTracker()
+	node := "node-dns"
+	for i := 0; i < 4; i++ {
+		tr.RecordDial(node, "nonexistent.invalid", 0, errors.New("warp dns lookup failed: no dns records"))
+	}
+	if tr.IsBroken(node) || tr.GetScore(node).ConsecutiveFailures != 0 {
+		t.Fatalf("expected no dns records errors not to penalize node or trip circuit breaker")
+	}
+}
+

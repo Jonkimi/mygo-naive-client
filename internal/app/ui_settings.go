@@ -697,6 +697,9 @@ func (a *app) renderSettingsTelemetryTab(c *ui.Context, p palette) {
 		ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
 
 		if switchRow(c, p, "page-set-auto-probe-periodic", cat.AutoProbePeriodic(), &a.state.AutoProbePeriodic) {
+			if a.tracker != nil {
+				a.tracker.SetActiveRecoveryProbe(!a.headless && a.state.AutoProbePeriodic)
+			}
 			a.saveState()
 		}
 		if a.state.AutoProbePeriodic {

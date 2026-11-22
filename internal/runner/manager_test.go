@@ -574,5 +574,99 @@ func TestResolveProbeEndpoint_AutoLoopbackFallback(t *testing.T) {
 	}
 }
 
+// Regression: when a parent context times out (DeadlineExceeded), ProbeServiceCtx must record a probe
+// failure and invoke OnProbeFailure rather than treating timeout as cancellation and wiping ProbeError.
+func TestManager_ProbeParentDeadlineNotTreatedAsCancelAndPreservesErrorWhileProbing(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	mgr := NewManager("", t.TempDir(), nil)
+	svc := config.Service{
+		ID:       "singbox-timeout-svc",
+		Name:     "Timeout Node",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "127.0.0.1",
+	}
+
+	probeStarted := make(chan struct{})
+	var sawProbeErrorWhileProbing bool
+	mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		// Verify existing ProbeError is not wiped to empty while Probing == true
+		if mgr.StatusOf(s.ID).ProbeError == "previous failure" {
+			sawProbeErrorWhileProbing = true
+		}
+		select {
+		case <-probeStarted:
+		default:
+			close(probeStarted)
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	var failedCount int
+	mgr.OnProbeFailure = func(id string, e error) {
+		failedCount++
+	}
+
+	mgr.SetStatusForTest(svc.ID, Status{
+		State:      StateRunning,
+		Latency:    42 * time.Millisecond,
+		ProbeError: "previous failure",
+	})
+
+	parentCtx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	_, probeErr := mgr.ProbeServiceCtx(parentCtx, svc, "https://cp.cloudflare.com/generate_204")
+	if probeErr == nil {
+		t.Fatalf("expected probe error on parent deadline exceeded")
+	}
+	if !sawProbeErrorWhileProbing {
+		t.Errorf("expected previous ProbeError to remain visible while probing to prevent UI flicker")
+	}
+	st := mgr.StatusOf(svc.ID)
+	if st.ProbeError == "" || st.Latency != 0 || failedCount != 1 {
+		t.Fatalf("expected ProbeError set, Latency=0, and OnProbeFailure=1 on deadline timeout, got st=%+v failedCount=%d", st, failedCount)
+	}
+}
+
+// Regression: download bandwidth test failure must record SpeedError without invoking OnProbeFailure
+// or contaminating connectivity circuit breaker metrics.
+func TestManager_DownloadTestFailureDecoupledFromProbeFailure(t *testing.T) {
+	mgr := NewManager("", t.TempDir(), nil)
+	svc := config.Service{
+		ID:       "singbox-dl-svc",
+		Name:     "Download Node",
+		Protocol: config.ProtoVLESS,
+		Engine:   config.EngineSingBox,
+		Server:   "127.0.0.1",
+	}
+	mgr.SetStatusForTest(svc.ID, Status{State: StateRunning})
+	mgr.ServiceDialer = func(ctx context.Context, s config.Service, network, addr string) (net.Conn, error) {
+		return nil, errors.New("speed endpoint throttled")
+	}
+
+	var probeFailures int
+	mgr.OnProbeFailure = func(id string, err error) {
+		probeFailures++
+	}
+
+	_, err := mgr.DownloadTestServiceCtx(context.Background(), svc, "https://speed.cloudflare.com/__down?bytes=1000")
+	if err == nil {
+		t.Fatalf("expected download test error")
+	}
+	if probeFailures != 0 {
+		t.Fatalf("expected download failure NOT to fire OnProbeFailure, got %d", probeFailures)
+	}
+	if st := mgr.StatusOf(svc.ID); st.SpeedError == "" {
+		t.Fatalf("expected SpeedError populated on download test failure")
+	}
+}
+
 
 
