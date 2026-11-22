@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -179,7 +181,7 @@ func (a *app) attachedWarpNodeMeta(svc config.Service) string {
 			epLabel = strings.TrimSpace(svc.WARPConfig.Endpoint)
 		} else if ip := strings.TrimSpace(a.state.Cloudflare.CleanIP); ip != "" {
 			if a.state.Cloudflare.CleanPort > 0 {
-				epLabel = fmt.Sprintf("%s:%d", ip, a.state.Cloudflare.CleanPort)
+				epLabel = net.JoinHostPort(ip, strconv.Itoa(a.state.Cloudflare.CleanPort))
 			} else {
 				epLabel = ip
 			}

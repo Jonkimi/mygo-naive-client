@@ -43,7 +43,8 @@ func (d *defaultDialer) DialContext(ctx context.Context, network, addr string) (
 
 func (d *defaultDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
 	var lc net.ListenConfig
-	return lc.ListenPacket(ctx, network, "0.0.0.0:0")
+	listenNet, listenAddr := packetListenTarget(network, addr, nil)
+	return lc.ListenPacket(ctx, listenNet, listenAddr)
 }
 
 type closerFunc func() error
@@ -197,8 +198,9 @@ func ConnectMASQUEWithOptions(ctx context.Context, dialer Dialer, endpoint strin
 
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 
-	// If forced to H2 or underlying transport is TCP-only, connect over HTTP/2 directly
-	if opts.TCPOnly || opts.ForceH2 {
+	// If forced to H2, underlying transport is TCP-only, or the endpoint is a known H2-only
+	// MASQUE Anycast address (non-::1/::2), connect over HTTP/2 directly without falling back to QUIC.
+	if opts.TCPOnly || opts.ForceH2 || isKnownMASQUEH2OnlyEndpoint(endpoint) {
 		h2DialCtx, h2Cancel := context.WithTimeout(ctx, h2Timeout)
 		tun, err := dialMASQUEH2(h2DialCtx, dialer, endpoint, tlsCfg, ns, tunnelCtx, cancel)
 		h2Cancel()
@@ -391,6 +393,9 @@ func dialMASQUEH3(ctx context.Context, dialer Dialer, endpoint string, baseTLS *
 		_ = qTransport.Close()
 		closePacketConn(pConn)
 		listenCancel()
+		if dialErr := ctx.Err(); dialErr != nil && errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("connect-ip HTTP/3 dial failed: %w", dialErr)
+		}
 		return nil, fmt.Errorf("connect-ip HTTP/3 dial failed: %w", err)
 	}
 	if rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
@@ -529,14 +534,20 @@ func dialMASQUEH2(dialCtx context.Context, dialer Dialer, endpoint string, baseT
 	if err == nil && (!stopped || reqCtx.Err() != nil) {
 		_ = ipConn.Close()
 		closeTransport()
+		if dialErr := dialCtx.Err(); dialErr != nil {
+			return nil, fmt.Errorf("connect-ip HTTP/2 dial aborted: %w", dialErr)
+		}
 		if reqErr := reqCtx.Err(); reqErr != nil {
 			return nil, fmt.Errorf("connect-ip HTTP/2 dial aborted: %w", reqErr)
 		}
-		return nil, fmt.Errorf("connect-ip HTTP/2 dial aborted: %w", dialCtx.Err())
+		return nil, fmt.Errorf("connect-ip HTTP/2 dial aborted: %w", context.Canceled)
 	}
 
 	if err != nil {
 		closeTransport()
+		if dialErr := dialCtx.Err(); dialErr != nil && errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("connect-ip HTTP/2 dial failed: %w", dialErr)
+		}
 		return nil, fmt.Errorf("connect-ip HTTP/2 dial failed: %w", err)
 	}
 	if rsp.StatusCode < 200 || rsp.StatusCode >= 300 {

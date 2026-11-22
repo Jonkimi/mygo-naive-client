@@ -2,16 +2,26 @@ package warp
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"math/big"
 	"net"
+	"net/http"
+	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 func TestEndpointSelector_SelectLowestRTTAndCache(t *testing.T) {
@@ -400,4 +410,327 @@ func (d *switchingCancelDialer) DialContext(ctx context.Context, network, addr s
 
 func (d *switchingCancelDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
 	return nil, errors.New("unused")
+}
+
+func TestMASQUEPoolsAndKnownH2OnlyClassifier(t *testing.T) {
+	wantPorts := []int{443, 500, 1701, 4500, 4443, 8443, 8095}
+	if !slices.Equal(MASQUEPorts, wantPorts) {
+		t.Fatalf("MASQUEPorts = %v, want %v", MASQUEPorts, wantPorts)
+	}
+	if !slices.Contains(MASQUEAnycastCIDRs, "162.159.198.0/24") || !slices.Contains(MASQUEAnycastCIDRs, "162.159.199.0/24") {
+		t.Fatalf("MASQUEAnycastCIDRs missing expected subnets: %v", MASQUEAnycastCIDRs)
+	}
+
+	quicCapable := []string{
+		"162.159.198.1:443",
+		"162.159.198.2:8095",
+		"[2606:4700:103::1]:443",
+		"[2606:4700:103::2]:4500",
+		"[2606:4700:104::1]:500",
+		"[2606:4700:104::2]:8443",
+		"127.0.0.1:443",
+		"engage.cloudflareclient.com:443",
+	}
+	for _, ep := range quicCapable {
+		if isKnownMASQUEH2OnlyEndpoint(ep) {
+			t.Errorf("isKnownMASQUEH2OnlyEndpoint(%q) = true, want false", ep)
+		}
+	}
+
+	h2Only := []string{
+		"162.159.198.3:443",
+		"162.159.198.250:8443",
+		"162.159.199.1:443",
+		"162.159.199.42:8095",
+		"[2606:4700:103::5]:443",
+		"[2606:4700:104::beef]:4443",
+	}
+	for _, ep := range h2Only {
+		if !isKnownMASQUEH2OnlyEndpoint(ep) {
+			t.Errorf("isKnownMASQUEH2OnlyEndpoint(%q) = false, want true", ep)
+		}
+	}
+
+	quicV4 := sampleMASQUEQUICCandidates(64, false)
+	if len(quicV4) != len(MASQUEQUICAnycastCIDRs)*len(MASQUEPorts) {
+		t.Fatalf("expected %d IPv4 QUIC endpoints, got %d", len(MASQUEQUICAnycastCIDRs)*len(MASQUEPorts), len(quicV4))
+	}
+	for _, ep := range quicV4 {
+		if isKnownMASQUEH2OnlyEndpoint(ep) {
+			t.Errorf("QUIC candidate %q should not be classified H2-only", ep)
+		}
+	}
+
+	quicDual := sampleMASQUEQUICCandidates(64, true)
+	wantDual := (len(MASQUEQUICAnycastCIDRs) + len(MASQUEQUICAnycastCIDRsV6)) * len(MASQUEPorts)
+	if len(quicDual) != wantDual {
+		t.Fatalf("expected %d dual-stack QUIC endpoints, got %d", wantDual, len(quicDual))
+	}
+
+	h2Dual := sampleMASQUEH2Candidates(32, true)
+	if len(h2Dual) != 32 {
+		t.Fatalf("expected 32 H2 dual-stack candidates, got %d", len(h2Dual))
+	}
+	has199, hasV6 := false, false
+	for _, ep := range h2Dual {
+		ap, err := netip.ParseAddrPort(ep)
+		if err != nil {
+			t.Fatalf("invalid H2 candidate %q: %v", ep, err)
+		}
+		if masqueH2Subnet199.Contains(ap.Addr()) {
+			has199 = true
+		}
+		if ap.Addr().Is6() {
+			hasV6 = true
+		}
+	}
+	if !has199 || !hasV6 {
+		t.Fatalf("expected H2 dual-stack candidates to cover 162.159.199.0/24 (has199=%v) and IPv6 (hasV6=%v)", has199, hasV6)
+	}
+}
+
+func TestScanBestEndpoints_MASQUEQUICTier1AndH2Tier2Fallback(t *testing.T) {
+	noV6 := false
+
+	// Case 1: QUIC-first scan where .1/.2 responds on H3 -> stops at Tier 1 without sweeping .199.x
+	var tier1Probed []string
+	var mu sync.Mutex
+	resH3, err := scanBestEndpointsWithProbers(context.Background(), ScanOptions{
+		Mode:        ModeMASQUE,
+		IncludeIPv6: &noV6,
+		SampleCount: 64,
+		ProbeRounds: 2,
+		TopN:        4,
+	}, func(ctx context.Context, dialer Dialer, endpoint string, acc *Account, mOpts MASQUEOptions) (string, time.Duration, error) {
+		mu.Lock()
+		tier1Probed = append(tier1Probed, endpoint)
+		mu.Unlock()
+		if endpoint == "162.159.198.2:4500" {
+			return "h3", 12 * time.Millisecond, nil
+		}
+		if endpoint == "162.159.198.1:443" {
+			return "h3", 25 * time.Millisecond, nil
+		}
+		return "", 0, errors.New("unreachable")
+	}, nil)
+	if err != nil {
+		t.Fatalf("Tier 1 QUIC scan failed: %v", err)
+	}
+	if len(resH3) != 2 || resH3[0].Endpoint != "162.159.198.2:4500" || resH3[0].Protocol != "h3" {
+		t.Fatalf("unexpected Tier 1 QUIC results: %+v", resH3)
+	}
+	for _, ep := range tier1Probed {
+		if isKnownMASQUEH2OnlyEndpoint(ep) {
+			t.Fatalf("Tier 1 QUIC scan should not probe H2-only endpoint %q when H3 succeeded", ep)
+		}
+	}
+
+	// Case 2: UDP/QUIC blocked (0 H3 hits on Tier 1) -> expands to Tier 2 H2 subnets with ForceH2=true
+	var tier2ForceH2Seen atomic.Bool
+	resH2, err := scanBestEndpointsWithProbers(context.Background(), ScanOptions{
+		Mode:        ModeMASQUE,
+		IncludeIPv6: &noV6,
+		SampleCount: 32,
+		ProbeRounds: 2,
+		TopN:        4,
+	}, func(ctx context.Context, dialer Dialer, endpoint string, acc *Account, mOpts MASQUEOptions) (string, time.Duration, error) {
+		if mOpts.ForceH2 {
+			tier2ForceH2Seen.Store(true)
+		}
+		if strings.HasPrefix(endpoint, "162.159.199.") && mOpts.ForceH2 {
+			return "h2", 15 * time.Millisecond, nil
+		}
+		return "", 0, errors.New("udp blocked")
+	}, nil)
+	if err != nil {
+		t.Fatalf("Tier 2 H2 fallback scan failed: %v", err)
+	}
+	if !tier2ForceH2Seen.Load() {
+		t.Fatalf("expected Tier 2 fallback to invoke probe with ForceH2=true")
+	}
+	if len(resH2) == 0 || resH2[0].Protocol != "h2" {
+		t.Fatalf("expected Tier 2 H2 fallback results, got %+v", resH2)
+	}
+}
+
+type h2FallbackTestDialer struct {
+	tlsAddr      string
+	udpCalls     atomic.Int32
+	tcpCalls     atomic.Int32
+	stallUDP     bool
+}
+
+func (d *h2FallbackTestDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	d.tcpCalls.Add(1)
+	var nd net.Dialer
+	return nd.DialContext(ctx, network, d.tlsAddr)
+}
+
+func (d *h2FallbackTestDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
+	d.udpCalls.Add(1)
+	if d.stallUDP {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return nil, errors.New("udp unexpected")
+}
+
+func TestProbeMASQUEEndpoint_SubTimeoutFallbackAndH2OnlySkip(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{DefaultMASQUESNI},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		NextProtos:   []string{"h2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				if tc, ok := conn.(*tls.Conn); ok {
+					_ = tc.Handshake()
+				}
+			}(c)
+		}
+	}()
+
+	// 1. Stalled UDP (blackholed) on a QUIC-capable endpoint must still leave time for H2 fallback.
+	dStall := &h2FallbackTestDialer{tlsAddr: ln.Addr().String(), stallUDP: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	proto, _, err := probeMASQUEEndpoint(ctx, dStall, "162.159.198.1:443", nil, MASQUEOptions{})
+	if err != nil {
+		t.Fatalf("expected H2 fallback to succeed after bounded H3 sub-timeout, got %v", err)
+	}
+	if proto != "h2" {
+		t.Fatalf("expected protocol h2, got %q", proto)
+	}
+	if dStall.udpCalls.Load() == 0 || dStall.tcpCalls.Load() == 0 {
+		t.Fatalf("expected both UDP attempt and TCP fallback, got udp=%d tcp=%d", dStall.udpCalls.Load(), dStall.tcpCalls.Load())
+	}
+
+	// 2. Known H2-only endpoint (162.159.199.5:443) skips ListenPacket (QUIC) completely.
+	dSkip := &h2FallbackTestDialer{tlsAddr: ln.Addr().String(), stallUDP: true}
+	proto2, _, err := probeMASQUEEndpoint(context.Background(), dSkip, "162.159.199.5:443", nil, MASQUEOptions{})
+	if err != nil {
+		t.Fatalf("H2-only probe failed: %v", err)
+	}
+	if proto2 != "h2" {
+		t.Fatalf("expected protocol h2, got %q", proto2)
+	}
+	if dSkip.udpCalls.Load() != 0 {
+		t.Fatalf("expected 0 UDP ListenPacket calls for H2-only endpoint, got %d", dSkip.udpCalls.Load())
+	}
+}
+
+// Regression: when MASQUE account credentials are enrolled, probeMASQUEEndpoint must verify
+// real cf-connect-ip HTTP/2 CONNECT-IP (not just TLS handshake) to reject DPI/blackhole false positives.
+func TestProbeMASQUEEndpoint_EnrolledAccountVerifiesConnectIP(t *testing.T) {
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{DefaultMASQUESNI},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srvTLS := &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		NextProtos:   []string{"h2"},
+	}
+
+	// 1. Server accepts TLS H2 handshake but stalls cf-connect-ip CONNECT -> must fail probe.
+	stallLn, err := tls.Listen("tcp", "127.0.0.1:0", srvTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stallLn.Close()
+	stallSrv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+		}),
+	}
+	_ = http2.ConfigureServer(stallSrv, &http2.Server{})
+	go func() { _ = stallSrv.Serve(stallLn) }()
+	defer stallSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if _, _, pErr := probeMASQUEEndpoint(ctx, nil, stallLn.Addr().String(), acc, MASQUEOptions{ForceH2: true}); pErr == nil {
+		t.Fatalf("expected enrolled H2 probe to fail when server stalls cf-connect-ip CONNECT")
+	}
+
+	// 2. Server handles cf-connect-ip CONNECT with 200 OK -> must succeed with protocol "h2".
+	okLn, err := tls.Listen("tcp", "127.0.0.1:0", srvTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer okLn.Close()
+	var sawConnectProto atomic.Bool
+	okSrv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodConnect && r.Header.Get("cf-connect-proto") == "cf-connect-ip" {
+				sawConnectProto.Store(true)
+				w.WriteHeader(http.StatusOK)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				<-r.Context().Done()
+				return
+			}
+			http.Error(w, "bad request", http.StatusBadRequest)
+		}),
+	}
+	_ = http2.ConfigureServer(okSrv, &http2.Server{})
+	go func() { _ = okSrv.Serve(okLn) }()
+	defer okSrv.Close()
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	proto, _, okErr := probeMASQUEEndpoint(ctx2, nil, okLn.Addr().String(), acc, MASQUEOptions{ForceH2: true})
+	if okErr != nil {
+		t.Fatalf("expected enrolled H2 probe to succeed on 200 OK cf-connect-ip, got %v", okErr)
+	}
+	if proto != "h2" {
+		t.Fatalf("expected protocol h2, got %q", proto)
+	}
+	if !sawConnectProto.Load() {
+		t.Fatalf("expected server to receive cf-connect-proto: cf-connect-ip header")
+	}
 }

@@ -10,19 +10,25 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/http"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	connectip "github.com/Diniboy1123/connect-ip-go"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/wireguard-go/tai64n"
+	"github.com/yosida95/uritemplate/v3"
 	"golang.org/x/crypto/blake2s"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
+	"golang.org/x/net/http2"
 )
 
 const (
@@ -33,18 +39,40 @@ const (
 	defaultRuntimeBatch     = 8
 	defaultScanSamples      = 64
 	defaultScanConcurrency  = 24
-	defaultScanProbeTimeout = 1500 * time.Millisecond
+	defaultScanProbeTimeout = 2500 * time.Millisecond
 	defaultScanProbeRounds  = 3
 )
 
 var (
-	// MASQUEAnycastCIDRs lists Cloudflare Consumer MASQUE Anycast IPv4 subnets.
-	MASQUEAnycastCIDRs = []string{
-		"162.159.198.0/24",
+	// MASQUEQUICAnycastCIDRs lists Cloudflare Consumer MASQUE QUIC (H3) Anycast IPv4 addresses.
+	// Only .1 and .2 serve QUIC+TLS handshakes; other addresses in the /24 reject TLS over QUIC.
+	MASQUEQUICAnycastCIDRs = []string{
+		"162.159.198.1/32",
+		"162.159.198.2/32",
 	}
 
-	// MASQUEPorts lists candidate ports for Cloudflare MASQUE connections.
-	MASQUEPorts = []int{443, 8443, 2053, 2083, 2087, 2096}
+	// MASQUEQUICAnycastCIDRsV6 lists Cloudflare Consumer MASQUE QUIC (H3) Anycast IPv6 addresses.
+	MASQUEQUICAnycastCIDRsV6 = []string{
+		"2606:4700:103::1/128",
+		"2606:4700:103::2/128",
+		"2606:4700:104::1/128",
+		"2606:4700:104::2/128",
+	}
+
+	// MASQUEAnycastCIDRs lists Cloudflare Consumer MASQUE HTTP/2 (TCP) Anycast IPv4 subnets.
+	MASQUEAnycastCIDRs = []string{
+		"162.159.198.0/24",
+		"162.159.199.0/24",
+	}
+
+	// MASQUEAnycastCIDRsV6 lists Cloudflare Consumer MASQUE HTTP/2 (TCP) Anycast IPv6 subnets.
+	MASQUEAnycastCIDRsV6 = []string{
+		"2606:4700:103::/48",
+		"2606:4700:104::/48",
+	}
+
+	// MASQUEPorts lists Cloudflare's official WARP MASQUE endpoint ports returned by the device API.
+	MASQUEPorts = []int{443, 500, 1701, 4500, 4443, 8443, 8095}
 
 	// WireGuardAnycastCIDRs lists Cloudflare WARP WireGuard Anycast IPv4 subnets.
 	WireGuardAnycastCIDRs = []string{
@@ -57,6 +85,12 @@ var (
 		"188.114.99.0/24",
 	}
 
+	// WireGuardAnycastCIDRsV6 lists Cloudflare WARP WireGuard Anycast IPv6 subnets.
+	WireGuardAnycastCIDRsV6 = []string{
+		"2606:4700:d0::/48",
+		"2606:4700:d1::/48",
+	}
+
 	// WireGuardPorts lists Cloudflare's official WARP WireGuard UDP ports (including anti-QoS ports).
 	WireGuardPorts = []int{
 		2408, 500, 1701, 4500,
@@ -67,16 +101,29 @@ var (
 		7103, 7152, 7156, 7281, 7559, 8319, 8742, 8854, 8886,
 	}
 
-	// DefaultMASQUERuntimeCandidates provides a diverse cross-port/cross-IP starter pool.
+	// DefaultMASQUERuntimeCandidates provides a starter pool of QUIC+H2-capable Anycast endpoints
+	// across official MASQUE ports.
 	DefaultMASQUERuntimeCandidates = []string{
 		"162.159.198.1:443",
 		"162.159.198.2:443",
 		"162.159.198.1:8443",
-		"162.159.198.2:2053",
-		"162.159.198.3:443",
-		"162.159.198.4:2083",
-		"162.159.198.5:2087",
-		"162.159.198.6:2096",
+		"162.159.198.2:4443",
+		"162.159.198.1:500",
+		"162.159.198.2:4500",
+		"162.159.198.1:1701",
+		"162.159.198.2:8095",
+	}
+
+	// DefaultMASQUEH2RuntimeCandidates provides a diverse starter pool across both HTTP/2 MASQUE subnets.
+	DefaultMASQUEH2RuntimeCandidates = []string{
+		"162.159.198.1:443",
+		"162.159.199.1:443",
+		"162.159.198.2:8443",
+		"162.159.199.2:4443",
+		"162.159.198.1:500",
+		"162.159.199.1:4500",
+		"162.159.198.2:1701",
+		"162.159.199.2:8095",
 	}
 
 	// DefaultWireGuardRuntimeCandidates provides a diverse cross-subnet/cross-port starter pool.
@@ -90,7 +137,42 @@ var (
 		"188.114.99.1:894",
 		"162.159.195.2:7103",
 	}
+
+	masqueH2Subnet198 = netip.MustParsePrefix("162.159.198.0/24")
+	masqueH2Subnet199 = netip.MustParsePrefix("162.159.199.0/24")
+	masqueH2SubnetV6A = netip.MustParsePrefix("2606:4700:103::/48")
+	masqueH2SubnetV6B = netip.MustParsePrefix("2606:4700:104::/48")
+	masqueQUICHostSet = map[netip.Addr]bool{
+		netip.MustParseAddr("162.159.198.1"):  true,
+		netip.MustParseAddr("162.159.198.2"):  true,
+		netip.MustParseAddr("2606:4700:103::1"): true,
+		netip.MustParseAddr("2606:4700:103::2"): true,
+		netip.MustParseAddr("2606:4700:104::1"): true,
+		netip.MustParseAddr("2606:4700:104::2"): true,
+	}
 )
+
+// isKnownMASQUEH2OnlyEndpoint reports whether endpoint's IP belongs to Cloudflare's MASQUE Anycast
+// blocks yet is not one of the dedicated ::1/::2 addresses that accept QUIC+TLS handshakes.
+func isKnownMASQUEH2OnlyEndpoint(endpoint string) bool {
+	host := strings.TrimSpace(endpoint)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	if masqueQUICHostSet[addr] {
+		return false
+	}
+	return masqueH2Subnet198.Contains(addr) ||
+		masqueH2Subnet199.Contains(addr) ||
+		masqueH2SubnetV6A.Contains(addr) ||
+		masqueH2SubnetV6B.Contains(addr)
+}
 
 // EndpointCacheKey isolates cached optimal endpoints per egress node scope and transport mode.
 type EndpointCacheKey struct {
@@ -119,13 +201,14 @@ type ScanOptions struct {
 	Mode           Mode
 	PreferH2       bool
 	TCPOnly        bool
+	IncludeIPv6    *bool // nil = auto-detect global IPv6 connectivity; non-nil forces on/off
 	Dialer         Dialer
 	Account        *Account
 	Candidates     []string      // optional explicit candidate override (useful in tests)
 	SampleCount    int           // defaults to 64 when Candidates is empty
 	Concurrency    int           // defaults to 24
 	ProbeRounds    int           // defaults to 3; number of probe rounds for packet-loss measurement
-	PerProbeTimout time.Duration // defaults to 1500ms
+	PerProbeTimout time.Duration // defaults to 2500ms
 	TopN           int           // defaults to 8 (<=0 returns all)
 }
 
@@ -326,7 +409,11 @@ func (s *EndpointSelector) SelectMASQUEEndpoint(ctx context.Context, scopeKey st
 		}, nil
 	}
 
-	candidates := s.activeCandidates(key, s.masqueCandidates)
+	baseCandidates := s.masqueCandidates
+	if (opts.TCPOnly || opts.ForceH2 || opts.PreferH2) && slices.Equal(s.masqueCandidates, DefaultMASQUERuntimeCandidates) {
+		baseCandidates = DefaultMASQUEH2RuntimeCandidates
+	}
+	candidates := s.activeCandidates(key, baseCandidates)
 	if scopeKey != "direct" && !opts.TCPOnly && !opts.ForceH2 {
 		// Chained remote nodes can resolve Cloudflare's Anycast hostname remotely if IPs fail.
 		const domainCandidate = "engage.cloudflareclient.com:443"
@@ -608,6 +695,12 @@ func ScanBestEndpoints(ctx context.Context, opts ScanOptions) ([]EndpointCandida
 	return scanBestEndpointsWithProbers(ctx, opts, probeMASQUEEndpoint, probeWireGuardEndpoint)
 }
 
+type scanInitialHit struct {
+	endpoint string
+	protocol string
+	rtt      time.Duration
+}
+
 func scanBestEndpointsWithProbers(
 	ctx context.Context,
 	opts ScanOptions,
@@ -638,77 +731,70 @@ func scanBestEndpointsWithProbers(
 		mode = ModeMASQUE
 	}
 
-	candidates := opts.Candidates
-	if len(candidates) == 0 {
-		if mode == ModeWireGuard {
-			candidates = sampleWireGuardCandidates(opts.SampleCount)
-		} else {
-			candidates = sampleMASQUECandidates(opts.SampleCount)
+	includeIPv6 := false
+	if opts.IncludeIPv6 != nil {
+		includeIPv6 = *opts.IncludeIPv6
+	} else if len(opts.Candidates) == 0 {
+		includeIPv6 = hasGlobalIPv6()
+	}
+
+	var hits []scanInitialHit
+	var lastErr error
+	stage2ForceH2 := false
+
+	if len(opts.Candidates) > 0 {
+		hits, lastErr = sweepInitialCandidates(ctx, opts.Candidates, mode, MASQUEOptions{
+			TCPOnly:  opts.TCPOnly,
+			PreferH2: opts.PreferH2,
+		}, opts, masqueProbe, wgProbe)
+	} else if mode == ModeWireGuard {
+		candidates := sampleWireGuardCandidatesWithIPv6(opts.SampleCount, includeIPv6)
+		if len(candidates) == 0 {
+			return nil, errors.New("no scan candidates generated")
 		}
-	}
-	if len(candidates) == 0 {
-		return nil, errors.New("no scan candidates generated")
-	}
-
-	var (
-		mu      sync.Mutex
-		results []EndpointCandidateResult
-		lastErr error
-	)
-
-	// Stage 1: Fast initial sweep (1 probe per candidate) to filter reachable endpoints.
-	type initialHit struct {
-		endpoint string
-		protocol string
-		rtt      time.Duration
-	}
-	var hits []initialHit
-
-	sem := make(chan struct{}, opts.Concurrency)
-	var wg sync.WaitGroup
-	for _, ep := range candidates {
-		if ctx.Err() != nil {
-			break
+		hits, lastErr = sweepInitialCandidates(ctx, candidates, mode, MASQUEOptions{}, opts, masqueProbe, wgProbe)
+	} else if opts.TCPOnly || opts.PreferH2 {
+		candidates := sampleMASQUEH2Candidates(opts.SampleCount, includeIPv6)
+		if len(candidates) == 0 {
+			return nil, errors.New("no scan candidates generated")
 		}
-		wg.Add(1)
-		go func(endpoint string) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return
+		hits, lastErr = sweepInitialCandidates(ctx, candidates, mode, MASQUEOptions{
+			TCPOnly:  opts.TCPOnly,
+			PreferH2: opts.PreferH2,
+		}, opts, masqueProbe, wgProbe)
+	} else {
+		// QUIC-first MASQUE mode: Tier 1 tests dedicated ::1/::2 QUIC Anycast endpoints across all official ports.
+		quicCandidates := sampleMASQUEQUICCandidates(opts.SampleCount, includeIPv6)
+		if len(quicCandidates) == 0 {
+			return nil, errors.New("no scan candidates generated")
+		}
+		hits, lastErr = sweepInitialCandidates(ctx, quicCandidates, mode, MASQUEOptions{}, opts, masqueProbe, wgProbe)
+
+		hasH3 := slices.ContainsFunc(hits, func(h scanInitialHit) bool {
+			return h.protocol == "h3"
+		})
+		if !hasH3 && ctx.Err() == nil {
+			// UDP/QUIC produced no H3 hits; expand to Tier 2 full HTTP/2 subnets directly.
+			stage2ForceH2 = true
+			seen := make(map[string]bool, len(quicCandidates))
+			for _, ep := range quicCandidates {
+				seen[ep] = true
 			}
-
-			pCtx, pCancel := context.WithTimeout(ctx, opts.PerProbeTimout)
-			defer pCancel()
-
-			if mode == ModeWireGuard {
-				rtt, err := wgProbe(pCtx, opts.Dialer, endpoint, opts.Account)
-				mu.Lock()
-				if err != nil {
-					lastErr = err
-				} else {
-					hits = append(hits, initialHit{endpoint: endpoint, protocol: "wireguard", rtt: rtt})
+			var h2Candidates []string
+			for _, ep := range sampleMASQUEH2Candidates(opts.SampleCount, includeIPv6) {
+				if !seen[ep] {
+					h2Candidates = append(h2Candidates, ep)
 				}
-				mu.Unlock()
-				return
 			}
-
-			proto, rtt, err := masqueProbe(pCtx, opts.Dialer, endpoint, opts.Account, MASQUEOptions{
-				TCPOnly:  opts.TCPOnly,
-				PreferH2: opts.PreferH2,
-			})
-			mu.Lock()
-			if err != nil {
-				lastErr = err
-			} else {
-				hits = append(hits, initialHit{endpoint: endpoint, protocol: proto, rtt: rtt})
+			if len(h2Candidates) > 0 {
+				h2Hits, h2Err := sweepInitialCandidates(ctx, h2Candidates, mode, MASQUEOptions{ForceH2: true}, opts, masqueProbe, wgProbe)
+				hits = append(hits, h2Hits...)
+				if h2Err != nil {
+					lastErr = h2Err
+				}
 			}
-			mu.Unlock()
-		}(ep)
+		}
 	}
-	wg.Wait()
 
 	if len(hits) == 0 {
 		if lastErr != nil {
@@ -727,10 +813,15 @@ func scanBestEndpointsWithProbers(
 	}
 	verifyHits := hits[:verifyLimit]
 
-	var wg2 sync.WaitGroup
+	var (
+		mu      sync.Mutex
+		results []EndpointCandidateResult
+		sem     = make(chan struct{}, opts.Concurrency)
+		wg2     sync.WaitGroup
+	)
 	for _, h := range verifyHits {
 		wg2.Add(1)
-		go func(hit initialHit) {
+		go func(hit scanInitialHit) {
 			defer wg2.Done()
 			sent := 1
 			received := 1
@@ -758,6 +849,7 @@ func scanBestEndpointsWithProbers(
 				} else {
 					p, rtt, err := masqueProbe(pCtx, opts.Dialer, hit.endpoint, opts.Account, MASQUEOptions{
 						TCPOnly:  opts.TCPOnly,
+						ForceH2:  stage2ForceH2,
 						PreferH2: opts.PreferH2,
 					})
 					if err == nil {
@@ -805,12 +897,131 @@ func scanBestEndpointsWithProbers(
 	return results, nil
 }
 
+func sweepInitialCandidates(
+	ctx context.Context,
+	candidates []string,
+	mode Mode,
+	mOpts MASQUEOptions,
+	opts ScanOptions,
+	masqueProbe func(ctx context.Context, dialer Dialer, endpoint string, acc *Account, mOpts MASQUEOptions) (string, time.Duration, error),
+	wgProbe func(ctx context.Context, dialer Dialer, endpoint string, acc *Account) (time.Duration, error),
+) ([]scanInitialHit, error) {
+	var (
+		mu      sync.Mutex
+		hits    []scanInitialHit
+		lastErr error
+	)
+	sem := make(chan struct{}, opts.Concurrency)
+	var wg sync.WaitGroup
+	for _, ep := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func(endpoint string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+
+			pCtx, pCancel := context.WithTimeout(ctx, opts.PerProbeTimout)
+			defer pCancel()
+
+			if mode == ModeWireGuard {
+				rtt, err := wgProbe(pCtx, opts.Dialer, endpoint, opts.Account)
+				mu.Lock()
+				if err != nil {
+					lastErr = err
+				} else {
+					hits = append(hits, scanInitialHit{endpoint: endpoint, protocol: "wireguard", rtt: rtt})
+				}
+				mu.Unlock()
+				return
+			}
+
+			proto, rtt, err := masqueProbe(pCtx, opts.Dialer, endpoint, opts.Account, mOpts)
+			mu.Lock()
+			if err != nil {
+				lastErr = err
+			} else {
+				hits = append(hits, scanInitialHit{endpoint: endpoint, protocol: proto, rtt: rtt})
+			}
+			mu.Unlock()
+		}(ep)
+	}
+	wg.Wait()
+	return hits, lastErr
+}
+
 func sampleMASQUECandidates(count int) []string {
 	return sampleCIDRPorts(MASQUEAnycastCIDRs, MASQUEPorts, count)
 }
 
+func sampleMASQUEQUICCandidates(count int, includeIPv6 bool) []string {
+	if count <= 0 {
+		return nil
+	}
+	v4 := enumerateHostPrefixesPorts(MASQUEQUICAnycastCIDRs, MASQUEPorts, count)
+	if !includeIPv6 || len(v4) >= count {
+		return v4
+	}
+	v6 := enumerateHostPrefixesPorts(MASQUEQUICAnycastCIDRsV6, MASQUEPorts, count-len(v4))
+	return append(v4, v6...)
+}
+
+func sampleMASQUEH2Candidates(count int, includeIPv6 bool) []string {
+	return sampleWithOptionalIPv6(MASQUEAnycastCIDRs, MASQUEAnycastCIDRsV6, MASQUEPorts, count, includeIPv6)
+}
+
 func sampleWireGuardCandidates(count int) []string {
 	return sampleCIDRPorts(WireGuardAnycastCIDRs, WireGuardPorts, count)
+}
+
+func sampleWireGuardCandidatesWithIPv6(count int, includeIPv6 bool) []string {
+	return sampleWithOptionalIPv6(WireGuardAnycastCIDRs, WireGuardAnycastCIDRsV6, WireGuardPorts, count, includeIPv6)
+}
+
+func sampleWithOptionalIPv6(v4CIDRs, v6CIDRs []string, ports []int, count int, includeIPv6 bool) []string {
+	if count <= 0 {
+		return nil
+	}
+	if !includeIPv6 || len(v6CIDRs) == 0 || count < 4 {
+		return sampleCIDRPorts(v4CIDRs, ports, count)
+	}
+	v6Quota := min(count/4, 16)
+	v4 := sampleCIDRPorts(v4CIDRs, ports, count-v6Quota)
+	v6 := sampleCIDRPorts(v6CIDRs, ports, count-len(v4))
+	return append(v4, v6...)
+}
+
+func enumerateHostPrefixesPorts(cidrs []string, ports []int, maxCount int) []string {
+	if len(cidrs) == 0 || len(ports) == 0 || maxCount <= 0 {
+		return nil
+	}
+	var addrs []netip.Addr
+	for _, raw := range cidrs {
+		if p, err := netip.ParsePrefix(raw); err == nil {
+			addrs = append(addrs, p.Addr())
+		}
+	}
+	if len(addrs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(addrs)*len(ports), maxCount))
+	// Iterate ports outer, addresses inner so primary ports across all Anycast IPs appear first.
+	for _, port := range ports {
+		portStr := strconv.Itoa(port)
+		for _, addr := range addrs {
+			out = append(out, net.JoinHostPort(addr.String(), portStr))
+			if len(out) >= maxCount {
+				return out
+			}
+		}
+	}
+	return out
 }
 
 func sampleCIDRPorts(cidrs []string, ports []int, count int) []string {
@@ -819,7 +1030,7 @@ func sampleCIDRPorts(cidrs []string, ports []int, count int) []string {
 	}
 	var prefixes []netip.Prefix
 	for _, raw := range cidrs {
-		if p, err := netip.ParsePrefix(raw); err == nil && p.Addr().Is4() {
+		if p, err := netip.ParsePrefix(raw); err == nil {
 			prefixes = append(prefixes, p)
 		}
 	}
@@ -830,12 +1041,10 @@ func sampleCIDRPorts(cidrs []string, ports []int, count int) []string {
 	seen := make(map[string]bool, count)
 	out := make([]string, 0, count)
 
-	// Seed with .1 and .2 on primary port for each subnet so well-known Anycast IPs are always covered.
+	// Seed with .1 and .2 (or ::1 and ::2 for IPv6) on primary port for each subnet so well-known Anycast IPs are always covered.
 	for _, p := range prefixes {
-		addr4 := p.Addr().As4()
 		for _, hostOctet := range []byte{1, 2} {
-			ip := netip.AddrFrom4([4]byte{addr4[0], addr4[1], addr4[2], hostOctet})
-			if p.Contains(ip) {
+			if ip, ok := seedPrefixHost(p, hostOctet); ok {
 				ep := net.JoinHostPort(ip.String(), strconv.Itoa(ports[0]))
 				if !seen[ep] {
 					seen[ep] = true
@@ -851,7 +1060,7 @@ func sampleCIDRPorts(cidrs []string, ports []int, count int) []string {
 	attempts := count * 6
 	for i := 0; i < attempts && len(out) < count; i++ {
 		p := prefixes[i%len(prefixes)]
-		ip := randomIPv4InPrefix(p)
+		ip := randomIPInPrefix(p)
 		port := ports[cryptoRandInt(len(ports))]
 		ep := net.JoinHostPort(ip.String(), strconv.Itoa(port))
 		if !seen[ep] {
@@ -860,6 +1069,28 @@ func sampleCIDRPorts(cidrs []string, ports []int, count int) []string {
 		}
 	}
 	return out
+}
+
+func seedPrefixHost(p netip.Prefix, hostOctet byte) (netip.Addr, bool) {
+	if p.Addr().Is4() {
+		addr4 := p.Addr().As4()
+		ip := netip.AddrFrom4([4]byte{addr4[0], addr4[1], addr4[2], hostOctet})
+		return ip, p.Contains(ip)
+	}
+	if p.Addr().Is6() {
+		addr16 := p.Masked().Addr().As16()
+		addr16[15] = hostOctet
+		ip := netip.AddrFrom16(addr16)
+		return ip, p.Contains(ip)
+	}
+	return netip.Addr{}, false
+}
+
+func randomIPInPrefix(p netip.Prefix) netip.Addr {
+	if p.Addr().Is4() {
+		return randomIPv4InPrefix(p)
+	}
+	return randomIPv6InPrefix(p)
 }
 
 func randomIPv4InPrefix(p netip.Prefix) netip.Addr {
@@ -883,6 +1114,35 @@ func randomIPv4InPrefix(p netip.Prefix) netip.Addr {
 	return netip.AddrFrom4(out)
 }
 
+func randomIPv6InPrefix(p netip.Prefix) netip.Addr {
+	masked := p.Masked()
+	bits := masked.Bits()
+	if bits >= 127 {
+		return masked.Addr()
+	}
+	addr16 := masked.Addr().As16()
+	var randBytes [16]byte
+	if _, err := rand.Read(randBytes[:]); err != nil {
+		return masked.Addr()
+	}
+	// Preserve prefix bits and randomize host bits.
+	for bit := bits; bit < 128; bit++ {
+		byteIdx := bit / 8
+		bitMask := byte(1 << (7 - (bit % 8)))
+		if randBytes[byteIdx]&bitMask != 0 {
+			addr16[byteIdx] |= bitMask
+		} else {
+			addr16[byteIdx] &^= bitMask
+		}
+	}
+	ip := netip.AddrFrom16(addr16)
+	if ip == masked.Addr() {
+		addr16[15] |= 1
+		ip = netip.AddrFrom16(addr16)
+	}
+	return ip
+}
+
 func cryptoRandInt(n int) int {
 	if n <= 1 {
 		return 0
@@ -892,6 +1152,22 @@ func cryptoRandInt(n int) int {
 		return 0
 	}
 	return int(v.Int64())
+}
+
+func subProbeContext(ctx context.Context, primaryFraction float64) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, func() {}
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 200*time.Millisecond {
+		return ctx, func() {}
+	}
+	budget := time.Duration(float64(remaining) * primaryFraction)
+	if budget < 200*time.Millisecond {
+		budget = 200 * time.Millisecond
+	}
+	return context.WithTimeout(ctx, budget)
 }
 
 // probeMASQUEEndpoint measures protocol-level MASQUE handshake RTT (TLS H2 or QUIC H3) to endpoint.
@@ -909,9 +1185,9 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 		}
 	}
 
-	probeH2 := func() (time.Duration, error) {
+	probeH2 := func(pCtx context.Context) (time.Duration, error) {
 		start := time.Now()
-		rawConn, err := dialer.DialContext(ctx, "tcp", endpoint)
+		rawConn, err := dialer.DialContext(pCtx, "tcp", endpoint)
 		if err != nil {
 			return 0, err
 		}
@@ -922,19 +1198,67 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 			})
 		}
 		defer closeRaw()
-		stopWatch := context.AfterFunc(ctx, closeRaw)
+		stopWatch := context.AfterFunc(pCtx, closeRaw)
 		defer stopWatch()
 		tlsCfg := baseTLS.Clone()
 		tlsCfg.NextProtos = []string{"h2"}
 		tlsConn := tls.Client(rawConn, tlsCfg)
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
+		if err := tlsConn.HandshakeContext(pCtx); err != nil {
 			return 0, err
+		}
+		if len(baseTLS.Certificates) == 0 {
+			return time.Since(start), nil
+		}
+
+		// Account credentials are enrolled: verify full HTTP/2 CONNECT-IP (cf-connect-ip)
+		// instead of stopping at TLS handshake so DPI/blackhole endpoints are rejected.
+		tmpl, err := uritemplate.New(DefaultMASQUEConnectURI)
+		if err != nil {
+			return 0, err
+		}
+		var usedFirstConn atomic.Bool
+		h2Tr := &http2.Transport{
+			DisableCompression: true,
+			DialTLSContext: func(_ context.Context, _ string, _ string, _ *tls.Config) (net.Conn, error) {
+				if usedFirstConn.CompareAndSwap(false, true) {
+					return tlsConn, nil
+				}
+				rc, dErr := dialer.DialContext(pCtx, "tcp", endpoint)
+				if dErr != nil {
+					return nil, dErr
+				}
+				tc := tls.Client(rc, tlsCfg)
+				if hErr := tc.HandshakeContext(pCtx); hErr != nil {
+					_ = rc.Close()
+					return nil, hErr
+				}
+				return tc, nil
+			},
+		}
+		defer h2Tr.CloseIdleConnections()
+
+		h2Headers := http.Header{
+			"User-Agent":       []string{""},
+			"cf-connect-proto": []string{"cf-connect-ip"},
+			"pq-enabled":       []string{"false"},
+		}
+		ipConn, rsp, err := connectip.DialH2(pCtx, &http.Client{Transport: h2Tr}, tmpl, h2Headers)
+		if err != nil {
+			return 0, err
+		}
+		_ = ipConn.Close()
+		if rsp == nil || rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
+			status := "nil"
+			if rsp != nil {
+				status = rsp.Status
+			}
+			return 0, fmt.Errorf("HTTP/2 CONNECT rejected: %s", status)
 		}
 		return time.Since(start), nil
 	}
 
-	probeH3 := func() (time.Duration, error) {
-		pConn, err := dialer.ListenPacket(ctx, "udp", endpoint)
+	probeH3 := func(pCtx context.Context) (time.Duration, error) {
+		pConn, err := dialer.ListenPacket(pCtx, "udp", endpoint)
 		if err != nil {
 			return 0, err
 		}
@@ -945,10 +1269,10 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 			})
 		}
 		defer closePConn()
-		stopWatch := context.AfterFunc(ctx, closePConn)
+		stopWatch := context.AfterFunc(pCtx, closePConn)
 		defer stopWatch()
 
-		rAddr, err := resolveMASQUEUDPAddr(ctx, dialer, pConn, endpoint)
+		rAddr, err := resolveMASQUEUDPAddr(pCtx, dialer, pConn, endpoint)
 		if err != nil {
 			return 0, err
 		}
@@ -962,39 +1286,79 @@ func probeMASQUEEndpoint(ctx context.Context, dialer Dialer, endpoint string, ac
 		tlsCfg := baseTLS.Clone()
 		tlsCfg.NextProtos = []string{http3.NextProtoH3}
 		start := time.Now()
-		qConn, err := qTr.Dial(ctx, rAddr, tlsCfg, &quic.Config{
+		qConn, err := qTr.Dial(pCtx, rAddr, tlsCfg, &quic.Config{
 			EnableDatagrams: true,
 		})
 		if err != nil {
 			return 0, err
+		}
+		if len(baseTLS.Certificates) > 0 {
+			h3Tr := &http3.Transport{
+				EnableDatagrams:    true,
+				DisableCompression: true,
+				AdditionalSettings: map[uint64]uint64{
+					0x276: 1, // SETTINGS_H3_DATAGRAM_00 required by Cloudflare
+				},
+			}
+			clientConn := h3Tr.NewClientConn(qConn)
+			tmpl, tErr := uritemplate.New(DefaultMASQUEConnectURI)
+			if tErr != nil {
+				_ = h3Tr.Close()
+				_ = qConn.CloseWithError(0, "")
+				return 0, tErr
+			}
+			ipConn, rsp, cErr := connectip.Dial(pCtx, clientConn, tmpl, "cf-connect-ip", http.Header{
+				"User-Agent": []string{""},
+			}, true)
+			if cErr != nil {
+				_ = h3Tr.Close()
+				_ = qConn.CloseWithError(0, "")
+				return 0, cErr
+			}
+			_ = ipConn.Close()
+			_ = h3Tr.Close()
+			if rsp == nil || rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
+				status := "nil"
+				if rsp != nil {
+					status = rsp.Status
+				}
+				_ = qConn.CloseWithError(0, "")
+				return 0, fmt.Errorf("HTTP/3 CONNECT rejected: %s", status)
+			}
 		}
 		rtt := time.Since(start)
 		_ = qConn.CloseWithError(0, "")
 		return rtt, nil
 	}
 
-	if opts.TCPOnly || opts.ForceH2 {
-		rtt, err := probeH2()
+	if opts.TCPOnly || opts.ForceH2 || isKnownMASQUEH2OnlyEndpoint(endpoint) {
+		rtt, err := probeH2(ctx)
 		return "h2", rtt, err
 	}
 	if opts.PreferH2 {
-		if rtt, err := probeH2(); err == nil {
+		h2Ctx, h2Cancel := subProbeContext(ctx, 0.65)
+		rtt, h2Err := probeH2(h2Ctx)
+		h2Cancel()
+		if h2Err == nil {
 			return "h2", rtt, nil
 		}
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
 		}
-		rtt, err := probeH3()
+		rtt, err := probeH3(ctx)
 		return "h3", rtt, err
 	}
 
-	if rtt, err := probeH3(); err == nil {
+	h3Ctx, h3Cancel := subProbeContext(ctx, 0.6)
+	rtt, h3Err := probeH3(h3Ctx)
+	h3Cancel()
+	if h3Err == nil {
 		return "h3", rtt, nil
 	}
 	if ctx.Err() != nil {
 		return "", 0, ctx.Err()
 	}
-	rtt, err := probeH2()
+	rtt, err := probeH2(ctx)
 	return "h2", rtt, err
 }
 

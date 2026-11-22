@@ -44,13 +44,57 @@ func (d *bypassTUNDialer) ListenPacket(ctx context.Context, network, addr string
 			return bindSocketToInterface(network, d.ifIndex, c)
 		},
 	}
+	listenNet, listenAddr := packetListenTarget(network, addr, d.localIP)
+	return lc.ListenPacket(ctx, listenNet, listenAddr)
+}
+
+func packetListenTarget(network, addr string, localIPv4 net.IP) (string, string) {
+	if !isIPv4NetworkOrAddr(network, addr) {
+		listenNet := network
+		if network == "udp" {
+			listenNet = "udp6"
+		}
+		return listenNet, "[::]:0"
+	}
 	listenAddr := "0.0.0.0:0"
-	if d.localIP != nil && (strings.HasPrefix(network, "udp") || network == "ip") {
-		if ip4 := d.localIP.To4(); ip4 != nil {
+	if localIPv4 != nil && (strings.HasPrefix(network, "udp") || network == "ip") {
+		if ip4 := localIPv4.To4(); ip4 != nil {
 			listenAddr = net.JoinHostPort(ip4.String(), "0")
 		}
 	}
-	return lc.ListenPacket(ctx, network, listenAddr)
+	return network, listenAddr
+}
+
+func hasGlobalIPv6() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isVirtualTunInterface(iface.Name) {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && ip.To4() == nil && ip.IsGlobalUnicast() && !ip.IsPrivate() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isIPv4NetworkOrAddr(network, addr string) bool {

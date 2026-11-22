@@ -1976,7 +1976,7 @@ func (a *app) triggerWarpEndpointScan() {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		results, err := scanner(ctx, warp.ScanOptions{
 			Mode:           mode,
@@ -1987,7 +1987,7 @@ func (a *app) triggerWarpEndpointScan() {
 			SampleCount:    64,
 			Concurrency:    24,
 			ProbeRounds:    3,
-			PerProbeTimout: 1500 * time.Millisecond,
+			PerProbeTimout: 2500 * time.Millisecond,
 		})
 		a.dispatchUI(func() {
 			a.warpScanning = false
@@ -4134,7 +4134,7 @@ func (a *app) syncBuiltinWarpService() {
 
 		cleanIP := a.state.Cloudflare.CleanIP
 		if a.state.Cloudflare.CleanPort > 0 && cleanIP != "" {
-			cleanIP = fmt.Sprintf("%s:%d", cleanIP, a.state.Cloudflare.CleanPort)
+			cleanIP = net.JoinHostPort(cleanIP, strconv.Itoa(a.state.Cloudflare.CleanPort))
 		}
 
 		warpTransport := config.WarpTransportMasque

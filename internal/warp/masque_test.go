@@ -504,3 +504,108 @@ func TestResolveDNSOverTunnel_ErrorClassificationAndTCPFallback(t *testing.T) {
 	}
 }
 
+type failTCPTrackingDialer struct {
+	tcpCalls int
+	udpCalls int
+}
+
+func (d *failTCPTrackingDialer) DialContext(_ context.Context, _ string, _ string) (net.Conn, error) {
+	d.tcpCalls++
+	return nil, errors.New("tcp failed")
+}
+
+func (d *failTCPTrackingDialer) ListenPacket(_ context.Context, _ string, _ string) (net.PacketConn, error) {
+	d.udpCalls++
+	return nil, errors.New("udp should not be called")
+}
+
+// Regression: PreferH2=true on a known H2-only endpoint (e.g. 162.159.199.161:443) must not
+// fall back to HTTP/3 QUIC (which always fails with tls handshake failure on non-.1/.2 IPs).
+func TestConnectMASQUEWithOptions_H2OnlySkipsH3EvenWhenPreferH2(t *testing.T) {
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+	d := &failTCPTrackingDialer{}
+	_, connErr := ConnectMASQUEWithOptions(context.Background(), d, "162.159.199.161:443", acc, MASQUEOptions{PreferH2: true})
+	if connErr == nil {
+		t.Fatalf("expected error from failing TCP dial")
+	}
+	if d.tcpCalls != 1 {
+		t.Fatalf("expected 1 TCP call, got %d", d.tcpCalls)
+	}
+	if d.udpCalls != 0 {
+		t.Fatalf("expected 0 UDP ListenPacket calls for H2-only endpoint with PreferH2=true, got %d", d.udpCalls)
+	}
+}
+
+// Regression: when dialCtx expires while connectip.DialH2 is awaiting response headers,
+// dialMASQUEH2 must surface context.DeadlineExceeded rather than context.Canceled so
+// cooldowns and fallback triggers treat it as a timeout, not caller cancellation.
+func TestDialMASQUEH2_TimeoutReturnsDeadlineExceededNotCanceled(t *testing.T) {
+	srvCert := generateTestServerCert(t)
+	rawLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer rawLn.Close()
+
+	tlsLn := tls.NewListener(rawLn, &tls.Config{
+		Certificates: []tls.Certificate{srvCert},
+		NextProtos:   []string{"h2"},
+	})
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Accept TLS+H2 connection and stall HTTP/2 CONNECT response until client disconnects.
+			<-r.Context().Done()
+		}),
+	}
+	_ = http2.ConfigureServer(srv, &http2.Server{})
+	go func() { _ = srv.Serve(tlsLn) }()
+	defer srv.Close()
+
+	priv, _, certPEM, err := GenerateMASQUEKeypair()
+	if err != nil {
+		t.Fatalf("GenerateMASQUEKeypair: %v", err)
+	}
+	acc := &Account{
+		MASQUEPrivateKey: priv,
+		MASQUECertPEM:    certPEM,
+		MASQUEIPv4:       "172.16.0.2",
+	}
+	cert, err := ParseMASQUETLSCertificate(acc.MASQUECertPEM, acc.MASQUEPrivateKey)
+	if err != nil {
+		t.Fatalf("ParseMASQUETLSCertificate: %v", err)
+	}
+	ns, err := NewNetstack(acc.MASQUEIPv4, DefaultIPv6)
+	if err != nil {
+		t.Fatalf("NewNetstack: %v", err)
+	}
+	defer ns.Close()
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer dialCancel()
+	tunnelCtx, tunnelCancel := context.WithCancel(context.Background())
+	defer tunnelCancel()
+
+	_, dialErr := dialMASQUEH2(dialCtx, &defaultDialer{}, rawLn.Addr().String(), &tls.Config{
+		ServerName:         DefaultMASQUESNI,
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true,
+	}, ns, tunnelCtx, tunnelCancel)
+	if dialErr == nil {
+		t.Fatalf("expected timeout error from stalled H2 CONNECT")
+	}
+	if !errors.Is(dialErr, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", dialErr)
+	}
+	if errors.Is(dialErr, context.Canceled) {
+		t.Fatalf("timeout must not be wrapped as context.Canceled: %v", dialErr)
+	}
+}
+
