@@ -108,15 +108,16 @@ func TestBuildNativeOutbound_VMessWebSocketTLS(t *testing.T) {
 		Network:     "ws",
 		Path:        "/ws?ed=2048",
 		Host:        "cdn.example.com",
-		Method:      "2022-blake3-aes-128-gcm", // invalid for VMess; must fall back to "auto"
+		Method:      "2022-blake3-aes-128-gcm", // invalid for VMess; falls back to "auto" -> AEAD under TLS
 	}
 
 	ob := buildNativeOutbound(svc)
 	if ob["type"] != "vmess" {
 		t.Fatalf("expected type=vmess, got %v", ob["type"])
 	}
-	if ob["security"] != "auto" {
-		t.Errorf("expected security=auto fallback, got %v", ob["security"])
+	wantSec := effectiveNativeVMessSecurity("auto", true)
+	if ob["security"] != wantSec || (wantSec != "aes-128-gcm" && wantSec != "chacha20-poly1305") {
+		t.Errorf("expected AEAD security %q under TLS, got %v", wantSec, ob["security"])
 	}
 
 	tlsMap, ok := ob["tls"].(map[string]any)
@@ -355,5 +356,18 @@ func TestBuildNativeOutbound_VMessVariants(t *testing.T) {
 	headers, ok := trMap["headers"].(map[string]string)
 	if !ok || headers["Host"] != "v.example.com" {
 		t.Errorf("expected default WS Host 'v.example.com', got %#v", trMap["headers"])
+	}
+
+	// Explicit "zero" under TLS must stay "zero"; "auto" without TLS must stay "auto".
+	explicitZero := wsNoHostNoSlash
+	explicitZero.Method = "zero"
+	if got := buildNativeOutbound(explicitZero)["security"]; got != "zero" {
+		t.Errorf("expected explicit zero under TLS to stay 'zero', got %v", got)
+	}
+	plainAuto := wsNoHostNoSlash
+	plainAuto.Security = "none"
+	plainAuto.Method = "auto"
+	if got := buildNativeOutbound(plainAuto)["security"]; got != "auto" {
+		t.Errorf("expected auto without TLS to stay 'auto', got %v", got)
 	}
 }

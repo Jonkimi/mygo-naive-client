@@ -4084,16 +4084,6 @@ func (msgs Messages) VmessMethodLabel() string {
 	return Catalog.Format(msgs.locale, "vmessMethodLabel", nil)
 }
 
-// VmessAutoTlsHint says "Sing-Box downgrades \"auto\" to \"zero\" over TLS; select aes-128-gcm or chacha20-poly1305 if your Xray server rejects it."
-// in the language the app shows.
-func VmessAutoTlsHint() string { return In(i18n.Locale()).VmessAutoTlsHint() }
-
-// VmessAutoTlsHint says "Sing-Box downgrades \"auto\" to \"zero\" over TLS; select aes-128-gcm or chacha20-poly1305 if your Xray server rejects it."
-// in the language of msgs.
-func (msgs Messages) VmessAutoTlsHint() string {
-	return Catalog.Format(msgs.locale, "vmessAutoTlsHint", nil)
-}
-
 // CongestionCtlLabel says "Congestion Control"
 // in the language the app shows.
 func CongestionCtlLabel() string { return In(i18n.Locale()).CongestionCtlLabel() }

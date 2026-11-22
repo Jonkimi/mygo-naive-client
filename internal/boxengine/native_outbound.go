@@ -3,6 +3,7 @@ package boxengine
 import (
 	"net"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -134,15 +135,16 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 		return ob
 
 	case config.ProtoVMess:
+		tlsMap := buildNativeTLS(svc, false)
 		ob := map[string]any{
 			"type":        "vmess",
 			"tag":         tag,
 			"server":      svc.Server,
 			"server_port": svc.ServerPort,
 			"uuid":        svc.UUID,
-			"security":    config.VMessSecurityOrAuto(svc.Method),
+			"security":    effectiveNativeVMessSecurity(svc.Method, tlsMap != nil),
 		}
-		if tlsMap := buildNativeTLS(svc, false); tlsMap != nil {
+		if tlsMap != nil {
 			ob["tls"] = tlsMap
 		}
 		if transport := buildNativeTransport(svc); transport != nil {
@@ -393,4 +395,20 @@ func splitWSEarlyDataPath(rawPath string) (string, uint32) {
 		clean = "/"
 	}
 	return clean, uint32(ed)
+}
+
+// effectiveNativeVMessSecurity resolves the VMess payload cipher for sing-box.
+// sing-box silently downgrades "auto" to "zero" whenever TLS is configured, which
+// Xray servers with disableInsecureEncryption reject. Mapping "auto"+TLS to the
+// architecture's AEAD cipher keeps "auto" compatible with Xray while preserving
+// explicit "zero"/"none" selections.
+func effectiveNativeVMessSecurity(method string, hasTLS bool) string {
+	sec := config.VMessSecurityOrAuto(method)
+	if sec == "auto" && hasTLS {
+		if runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64" || runtime.GOARCH == "s390x" {
+			return "aes-128-gcm"
+		}
+		return "chacha20-poly1305"
+	}
+	return sec
 }

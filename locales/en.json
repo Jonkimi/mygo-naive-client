@@ -425,7 +425,6 @@
   "serviceNameLabel": "gRPC Service Name",
   "ssMethodLabel": "Cipher Method",
   "vmessMethodLabel": "Encryption Method",
-  "vmessAutoTlsHint": "Sing-Box downgrades \"auto\" to \"zero\" over TLS; select aes-128-gcm or chacha20-poly1305 if your Xray server rejects it.",
   "congestionCtlLabel": "Congestion Control",
   "zeroRTTLabel": "0-RTT Handshake",
   "triCoreSectionTitle": "Core Engines & Geodata Manager",

@@ -409,7 +409,6 @@
   "serviceNameLabel": "gRPC 服务名",
   "ssMethodLabel": "加密算法 (Method)",
   "vmessMethodLabel": "加密方式 (Security)",
-  "vmessAutoTlsHint": "Sing-Box 在 TLS 下会将 auto 降级为 zero；若 Xray 服务端拒绝，请改选 aes-128-gcm 或 chacha20-poly1305。",
   "congestionCtlLabel": "拥塞控制算法",
   "zeroRTTLabel": "0-RTT 握手",
   "triCoreSectionTitle": "核心引擎与规则库管理",

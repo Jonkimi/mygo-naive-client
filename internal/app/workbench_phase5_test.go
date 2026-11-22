@@ -608,17 +608,14 @@ func TestEditor_VMessCipherSelectionAndSave(t *testing.T) {
 	}
 	a.state.Services = []config.Service{vmessSvc}
 
-	// 1. Opening VMess node with empty Method shows "auto" and Sing-Box+TLS auto hint
+	// 1. Opening VMess node with empty Method shows "auto"
 	a.openEditServiceDialog(vmessSvc)
 	tt.Frame()
 	if a.editor.vmessMethod != "auto" {
 		t.Fatalf("expected default vmessMethod='auto', got %q", a.editor.vmessMethod)
 	}
-	if !tt.HasText(cat.VmessAutoTlsHint()) {
-		t.Fatalf("expected auto+TLS hint when Engine=SingBox, Security=TLS, Method=auto")
-	}
 
-	// 2. Selecting "aes-128-gcm" from the UI dropdown updates vmessMethod, hides hint, and persists on save
+	// 2. Selecting "aes-128-gcm" from the UI dropdown updates vmessMethod and persists on save
 	if err := tt.Click("auto"); err != nil {
 		t.Fatalf("open VMess cipher dropdown: %v", err)
 	}
@@ -629,9 +626,6 @@ func TestEditor_VMessCipherSelectionAndSave(t *testing.T) {
 	tt.Frame()
 	if a.editor.vmessMethod != "aes-128-gcm" {
 		t.Fatalf("expected vmessMethod='aes-128-gcm', got %q", a.editor.vmessMethod)
-	}
-	if tt.HasText(cat.VmessAutoTlsHint()) {
-		t.Fatalf("expected auto+TLS hint hidden after selecting explicit aes-128-gcm")
 	}
 
 	if err := tt.Click(cat.EditorSaveEdit()); err != nil {

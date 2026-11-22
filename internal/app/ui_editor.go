@@ -974,15 +974,10 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 		case config.ProtoVMess:
 			a.renderEditorServerPortRow(c, p, "vmess", "443")
 			labeledInput(c, p, "inp-vmess-uuid", cat.UuidLabel(), &a.editor.uuid, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
-					ui.Text(c, cat.VmessMethodLabel()).FontSize(12).FontWeight(500).TextColor(p.text).NoWrap()
-					ui.Select(c.Key("inp-vmess-method"), &a.editor.vmessMethod, vmessCipherOptions).
-						Label(cat.VmessMethodLabel()).Width(220)
-				})
-				if a.editor.engineIndex == 0 && a.editor.vmessSecIndex == 0 && config.VMessSecurityOrAuto(a.editor.vmessMethod) == "auto" {
-					ui.Text(c, cat.VmessAutoTlsHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
-				}
+			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+				ui.Text(c, cat.VmessMethodLabel()).FontSize(12).FontWeight(500).TextColor(p.text).NoWrap()
+				ui.Select(c.Key("inp-vmess-method"), &a.editor.vmessMethod, vmessCipherOptions).
+					Label(cat.VmessMethodLabel()).Width(220)
 			})
 
 			ui.Column(c).Gap(8).Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(p.borderSubtle).Children(func() {
