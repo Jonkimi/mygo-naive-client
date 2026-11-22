@@ -245,3 +245,66 @@ func TestManagerDualSidecarSelection(t *testing.T) {
 		t.Errorf("expected logs to contain 'xray started', got: %v", logs)
 	}
 }
+
+// Regression: sidecar subprocesses (xray/naive) previously inherited HTTP_PROXY/HTTPS_PROXY/ALL_PROXY
+// from the parent process, allowing Xray transports to loop back into the local gateway (:10809)
+// and pollute Insights logs.
+func TestManagerSidecarSanitizesProxyEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix only")
+	}
+	dir := t.TempDir()
+	xrayBin := filepath.Join(dir, "xray")
+	script := "#!/bin/sh\necho \"ENV_HTTP_PROXY=${HTTP_PROXY:-unset}\"\necho \"ENV_http_proxy=${http_proxy:-unset}\"\necho \"ENV_HTTPS_PROXY=${HTTPS_PROXY:-unset}\"\necho \"ENV_ALL_PROXY=${ALL_PROXY:-unset}\"\necho \"ENV_NO_PROXY=${NO_PROXY:-unset}\"\necho \"ENV_KEEP=${KEEP_ME_SIDECAR:-unset}\"\ntrap 'exit 0' INT TERM\nwhile true; do sleep 0.1; done\n"
+	if err := os.WriteFile(xrayBin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake xray script: %v", err)
+	}
+
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:10809")
+	t.Setenv("http_proxy", "http://127.0.0.1:10809")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:10809")
+	t.Setenv("ALL_PROXY", "socks5://127.0.0.1:10809")
+	t.Setenv("NO_PROXY", "localhost")
+	t.Setenv("KEEP_ME_SIDECAR", "preserved")
+
+	mgr := NewManager("", dir, nil)
+	mgr.SetXrayBinaryPath(xrayBin)
+	svc := config.Service{
+		ID:         "vless-env-test",
+		Name:       "VLESS Env",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSidecar,
+		Server:     "vless.example.com",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Listens:    []string{"socks://127.0.0.1:0"},
+	}
+
+	if err := mgr.Start(svc); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer mgr.Stop(svc.ID)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var joined string
+	for time.Now().Before(deadline) {
+		joined = strings.Join(mgr.LogsOf(svc.ID).Lines(), "\n")
+		if strings.Contains(joined, "ENV_KEEP=") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	for _, want := range []string{
+		"ENV_HTTP_PROXY=unset",
+		"ENV_http_proxy=unset",
+		"ENV_HTTPS_PROXY=unset",
+		"ENV_ALL_PROXY=unset",
+		"ENV_NO_PROXY=unset",
+		"ENV_KEEP=preserved",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in sidecar logs, got:\n%s", want, joined)
+		}
+	}
+}

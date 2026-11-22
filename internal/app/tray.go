@@ -116,7 +116,8 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 			rt := a.mgr.StatusOf(svcCopy.ID)
 			statusTag := rt.State.Label()
 			checked := rt.State == runner.StateRunning || rt.State == runner.StateStarting
-			label := fmt.Sprintf("%s  [%s · %s]", svcCopy.Name, statusTag, svcCopy.PrimaryListen())
+			displaySvc := resolveRuntimeService(svcCopy, rt)
+			label := fmt.Sprintf("%s  [%s · %s]", svcCopy.Name, statusTag, displaySvc.PrimaryListen())
 			items = append(items, &mygo.MenuItem{
 				Label:   label,
 				Type:    mygo.MenuItemType("checkbox"),

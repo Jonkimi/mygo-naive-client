@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"naive-client/internal/boxengine"
 	"naive-client/internal/config"
+	"naive-client/internal/runner"
 )
 
 // Tests creating and editing multi-protocol services with execution engine toggles (SingBox vs Sidecar).
@@ -226,6 +228,70 @@ func TestServiceCard_ProtocolAndEngineCapsule(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText("NAIVE · SIDECAR") || !tt.HasText("Auto Loopback (:0)") {
 		t.Fatalf("expected node drawer to show NAIVE · SIDECAR and Auto Loopback (:0)")
+	}
+}
+
+// Regression: running :0 (auto-loopback) xray and naive sidecars previously omitted the
+// dynamically allocated port from node cards and showed :0 / fallback 1080 in the details drawer.
+func TestNodes_AutoLoopbackSidecarDisplaysAllocatedPort(t *testing.T) {
+	xraySvc := config.Service{
+		ID:         "xray-auto-01",
+		Name:       "JP-VLESS-Sidecar",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSidecar,
+		Server:     "jp.example.com",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+		Listens:    []string{"socks://127.0.0.1:0"},
+	}
+	naiveSvc := config.Service{
+		ID:       "naive-auto-01",
+		Name:     "HK-Naive-Sidecar",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSidecar,
+		Listens:  []string{"socks://127.0.0.1:0"},
+		Proxies:  []string{"https://user:pass@hk.example.com:443"},
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{xraySvc, naiveSvc})
+	xrayPort := freeLocalPort(t)
+	naivePort := freeLocalPort(t)
+	a.mgr.SetStatusForTest(xraySvc.ID, runner.Status{State: runner.StateRunning, PID: 2001, AllocatedPort: xrayPort})
+	a.mgr.SetStatusForTest(naiveSvc.ID, runner.Status{State: runner.StateRunning, PID: 2002, AllocatedPort: naivePort})
+
+	a.activeTab = TabNodes
+	tt.Frame()
+
+	wantXrayMeta := fmt.Sprintf("VLESS · Sidecar (:%d)", xrayPort)
+	wantNaiveMeta := fmt.Sprintf("Naive · Sidecar (:%d)", naivePort)
+	if !tt.HasText(wantXrayMeta) {
+		t.Fatalf("expected xray card meta %q, got texts: %v", wantXrayMeta, tt.Texts())
+	}
+	if !tt.HasText(wantNaiveMeta) {
+		t.Fatalf("expected naive card meta %q, got texts: %v", wantNaiveMeta, tt.Texts())
+	}
+
+	if err := tt.Click("JP-VLESS-Sidecar"); err != nil {
+		t.Fatalf("click JP-VLESS-Sidecar: %v", err)
+	}
+	tt.Frame()
+	wantXrayListen := fmt.Sprintf("socks://127.0.0.1:%d", xrayPort)
+	if !tt.HasText(wantXrayListen) {
+		t.Fatalf("expected xray drawer to show %q, got texts: %v", wantXrayListen, tt.Texts())
+	}
+	if tt.HasText("Auto Loopback (:0)") {
+		t.Fatalf("did not expect Auto Loopback (:0) for running xray sidecar")
+	}
+
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if err := tt.Click("HK-Naive-Sidecar"); err != nil {
+		t.Fatalf("click HK-Naive-Sidecar: %v", err)
+	}
+	tt.Frame()
+	wantNaiveListen := fmt.Sprintf("socks://127.0.0.1:%d", naivePort)
+	if !tt.HasText(wantNaiveListen) {
+		t.Fatalf("expected naive drawer to show %q, got texts: %v", wantNaiveListen, tt.Texts())
 	}
 }
 

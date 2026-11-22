@@ -36,6 +36,7 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 	}
 
 	rt := a.mgr.StatusOf(svc.ID)
+	displaySvc := resolveRuntimeService(svc, rt)
 	unhealthy := a.isNodeUnhealthy(svc, rt)
 
 	dsDrawerShell(c, p, dsDrawerSpec{
@@ -51,8 +52,8 @@ func (a *app) renderNodeDrawer(c *ui.Context, p palette) {
 		dsDetailBody(c, p, "node-drawer-scroll", nil, func() {
 			a.renderNodeDrawerDiagnosticBanner(c, p, svc, rt, unhealthy)
 			a.renderNodeDrawerTelemetryCard(c, p, svc, rt, unhealthy)
-			a.renderNodeDrawerParamsCard(c, p, svc, rt)
-			a.renderNodeDrawerConfigCard(c, p, svc)
+			a.renderNodeDrawerParamsCard(c, p, displaySvc, rt)
+			a.renderNodeDrawerConfigCard(c, p, displaySvc)
 		})
 	})
 }
@@ -596,7 +597,11 @@ func buildNodeCoreConfigJSON(cat locales.Messages, svc config.Service) (rawJSON,
 		return string(b), cat.CopiedConfigJSON()
 	}
 	if svc.EffectiveEngine() == config.EngineSidecar {
-		b, _ := runner.GenerateXrayConfig(svc, 1080)
+		port := 1080
+		if ep, err := config.ParseListenURI(svc.PrimaryListen()); err == nil && ep.Port > 0 {
+			port = ep.Port
+		}
+		b, _ := runner.GenerateXrayConfig(svc, port)
 		return string(b), cat.CopiedXrayJSON()
 	}
 	obMap := boxengine.BuildNativeOutbound(svc)

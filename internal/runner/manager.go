@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -530,6 +531,25 @@ func (m *Manager) setError(id, msg string) {
 	m.onChange()
 }
 
+// sanitizedSidecarEnv returns a copy of environ with proxy environment variables
+// removed so managed sidecar processes dial remote servers directly instead of
+// looping back into the local gateway.
+func sanitizedSidecarEnv(environ []string) []string {
+	filtered := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch strings.ToUpper(key) {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
 func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, args []string, done chan struct{}) {
 	defer close(done)
 
@@ -540,6 +560,7 @@ func (m *Manager) supervise(ctx context.Context, inst *instance, bin string, arg
 		}
 
 		cmd := exec.Command(bin, args...)
+		cmd.Env = sanitizedSidecarEnv(os.Environ())
 		cmd.Stdout = inst.logs
 		cmd.Stderr = inst.logs
 		prepareProcess(cmd)

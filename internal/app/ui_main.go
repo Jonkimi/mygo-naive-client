@@ -2,6 +2,9 @@ package app
 
 import (
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -250,7 +253,7 @@ func (a *app) filteredServices() []config.Service {
 		if a.onlyRunningFilter && !a.isServiceActive(svc.ID) {
 			continue
 		}
-		if q != "" && !serviceMatchesQuery(svc, q) {
+		if q != "" && !serviceMatchesQuery(a.resolveDisplayService(svc), q) {
 			continue
 		}
 		filtered = append(filtered, svc)
@@ -459,8 +462,9 @@ func (a *app) renderServiceCard(c *ui.Context, p palette, svc config.Service) {
 				})
 
 				// Line 2: Clean Metadata (Protocol · Engine · compact endpoint)
+				displaySvc := resolveRuntimeService(svc, rt)
 				ui.Row(c).AlignItems(ui.Center).Gap(5).Padding(0, 0, 0, 15).MinWidth(0).Children(func() {
-					ui.Text(c, nodeCompactMeta(svc)).FontSize(12).FontWeight(500).TextColor(p.textMuted).NoWrap().Shrink(0)
+					ui.Text(c, nodeCompactMeta(displaySvc)).FontSize(12).FontWeight(500).TextColor(p.textMuted).NoWrap().Shrink(0)
 					if compactRemote := stripEndpointSchemes(svc.CompactRemoteEndpoint()); compactRemote != "" {
 						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap().Shrink(0)
 						ui.Text(c, compactRemote).Font("monospace").FontSize(11).TextColor(p.textDim).
@@ -737,10 +741,11 @@ func (a *app) renderNodeOverflowMenu(c *ui.Context, panel, anchor ui.Element, p 
 		}
 
 		if svc.EffectiveEngine() == config.EngineSidecar {
-			localLink := svc.V2rayNSocksURI()
+			displaySvc := resolveRuntimeService(svc, rt)
+			localLink := displaySvc.V2rayNSocksURI()
 			if popoverMenuItem(c.Key("menu-copy-local"), p, cat.ActionCopyV2rayN(), p.text, false, false).Tooltip(localLink).Clicked() {
 				a.openNodeMenuID = ""
-				a.copyV2rayNLink(svc)
+				a.copyV2rayNLink(displaySvc)
 			}
 		}
 
@@ -943,6 +948,58 @@ func nodeProtocolDisplayName(p config.Protocol) string {
 	default:
 		return strings.ToUpper(string(p))
 	}
+}
+
+// resolveRuntimeService substitutes an active sidecar's auto-allocated loopback
+// port (:0 or empty listen) with rt.AllocatedPort for UI display and link copy.
+func resolveRuntimeService(svc config.Service, rt runner.Status) config.Service {
+	if svc.EffectiveEngine() != config.EngineSidecar {
+		return svc
+	}
+	isActive := rt.State == runner.StateRunning || rt.State == runner.StateStarting
+	if !isActive || rt.AllocatedPort <= 0 {
+		return svc
+	}
+	primary := svc.PrimaryListen()
+	ep, parseErr := config.ParseListenURI(primary)
+	if parseErr == nil && ep.Port > 0 {
+		return svc
+	}
+	proto := "socks"
+	host := "127.0.0.1"
+	auth := ""
+	if parseErr == nil {
+		if ep.Proto != "" {
+			proto = ep.Proto
+		}
+		if ep.Addr != "" && ep.Addr != "0.0.0.0" && ep.Addr != "::" {
+			host = ep.Addr
+		}
+		if ep.User != "" || ep.Pass != "" {
+			if ep.Pass != "" {
+				auth = url.UserPassword(ep.User, ep.Pass).String() + "@"
+			} else {
+				auth = url.PathEscape(ep.User) + "@"
+			}
+		}
+	}
+	resolved := fmt.Sprintf("%s://%s%s", proto, auth, net.JoinHostPort(host, strconv.Itoa(rt.AllocatedPort)))
+	if len(svc.Listens) == 0 {
+		svc.Listens = []string{resolved}
+	} else {
+		listens := make([]string, len(svc.Listens))
+		copy(listens, svc.Listens)
+		listens[0] = resolved
+		svc.Listens = listens
+	}
+	return svc
+}
+
+func (a *app) resolveDisplayService(svc config.Service) config.Service {
+	if a == nil || a.mgr == nil {
+		return svc
+	}
+	return resolveRuntimeService(svc, a.mgr.StatusOf(svc.ID))
 }
 
 func nodeCompactMeta(svc config.Service) string {

@@ -336,7 +336,7 @@ func (a *app) renderNodeLogSelect(c *ui.Context, p palette) {
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 				statusDot(c, selDotCol)
 				ui.Text(c, selName).FontSize(11).FontWeight(600).TextColor(p.text).SingleLine().Ellipsis("…").MaxWidth(150)
-				ui.Text(c, nodeCompactMeta(selSvc)).FontSize(11).FontFeatures("tnum").TextColor(p.textDim).NoWrap()
+				ui.Text(c, nodeCompactMeta(a.resolveDisplayService(selSvc))).FontSize(11).FontFeatures("tnum").TextColor(p.textDim).NoWrap()
 				ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(p.textMuted)
 			})
 		})
@@ -374,7 +374,7 @@ func (a *app) renderNodeLogSelect(c *ui.Context, p palette) {
 					}
 					ui.Text(c, svcName).FontSize(12).FontWeight(500).TextColor(fg).SingleLine().Ellipsis("…")
 				})
-				ui.Text(c, nodeCompactMeta(svc)).FontSize(11).FontFeatures("tnum").TextColor(p.textDim).NoWrap().Shrink(0)
+				ui.Text(c, nodeCompactMeta(a.resolveDisplayService(svc))).FontSize(11).FontFeatures("tnum").TextColor(p.textDim).NoWrap().Shrink(0)
 			})
 		}
 	})
