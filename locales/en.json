@@ -97,6 +97,12 @@
   "nodeDrawerCircuitDesc": "Trips after 3 consecutive failures, imposing a 10s score penalty for 60s before half-open recovery probing",
   "nodeDrawerCircuitNormal": "Healthy",
   "nodeDrawerCircuitTripped": "Tripped (+10000ms)",
+  "nodeDrawerCircuitTrippedCooldown": "Tripped (+10000ms · {seconds}s)",
+  "@nodeDrawerCircuitTrippedCooldown": {
+    "placeholders": {
+      "seconds": { "type": "int" }
+    }
+  },
   "nodeDrawerCircuitHalfOpen": "Half-Open (Probing)",
   "nodeDrawerFinalScore": "Adaptive Quality Score",
   "nodeDrawerFinalScoreDesc": "Calculated as EWMA / SuccessRate² + Penalty. Lower score gets higher routing priority.",

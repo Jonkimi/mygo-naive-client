@@ -97,6 +97,12 @@
   "nodeDrawerCircuitDesc": "连续失败达 3 次触发 60 秒熔断保护，追加 10 秒劣质惩罚并在冷却后进入半开试探",
   "nodeDrawerCircuitNormal": "正常",
   "nodeDrawerCircuitTripped": "已熔断 (+10000ms)",
+  "nodeDrawerCircuitTrippedCooldown": "已熔断 (+10000ms · 剩余 {seconds}s)",
+  "@nodeDrawerCircuitTrippedCooldown": {
+    "placeholders": {
+      "seconds": { "type": "int" }
+    }
+  },
   "nodeDrawerCircuitHalfOpen": "半开试探",
   "nodeDrawerFinalScore": "自适应调度评分",
   "nodeDrawerFinalScoreDesc": "综合公式：EWMA / 成功率² + 熔断惩罚。分数越低越优先路由。",

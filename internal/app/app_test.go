@@ -4234,3 +4234,94 @@ func TestNodeHealth_HalfOpenExpeditedProbeRecovery(t *testing.T) {
 	}
 }
 
+// Regression: WARP tunnel SpeedError clears on real traffic recovery (3 consecutive RecordDial successes),
+// non-WARP SpeedError is preserved for telemetry while ProbeError clears, Node Drawer renders remaining
+// cooldown seconds, cooldown wakeup notifies UI even when AutoProbePeriodic=false, and resetting WARP
+// ProbeURL clears stale unhealthy state.
+func TestNodeHealth_WarmTrafficClearsWarpSpeedErrorAndCooldownUI(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+	a.warpRegistering = true
+	a.setCnDirectWarpEnabled(true)
+	a.state.AutoProbePeriodic = false
+	a.state.Cloudflare.ProbeURL = "https://custom-probe.example/204"
+	a.saveState()
+	tt.Frame()
+
+	var warpSvc *config.Service
+	for i := range a.state.Services {
+		if a.state.Services[i].IsBuiltinWarp() {
+			warpSvc = &a.state.Services[i]
+			break
+		}
+	}
+	if warpSvc == nil {
+		t.Fatalf("expected builtin-warp service")
+	}
+
+	// 1. Trip WARP node and inject WARP tunnel SpeedError
+	a.mgr.SetStatusForTest(warpSvc.ID, runner.Status{
+		State:      runner.StateRunning,
+		SpeedError: "warp server (162.159.198.2:443) connection failed: i/o timeout",
+	})
+	for i := 0; i < 3; i++ {
+		a.tracker.RecordDial(warpSvc.ID, "example.com", 0, errors.New("warp server timeout"))
+	}
+	if !a.isNodeUnhealthy(*warpSvc, a.mgr.StatusOf(warpSvc.ID)) {
+		t.Fatalf("expected WARP node unhealthy with tunnel SpeedError and tripped circuit")
+	}
+
+	// Verify Node Drawer renders remaining cooldown seconds
+	a.activeNodeDrawerID = warpSvc.ID
+	tt.Frame()
+	sc := a.tracker.GetScore(warpSvc.ID)
+	wantCooldown := circuitLabelForScore(a.catalog(), sc)
+	if !tt.HasText(wantCooldown) {
+		t.Fatalf("expected drawer to render cooldown label %q, got texts: %v", wantCooldown, tt.Texts())
+	}
+	a.activeNodeDrawerID = ""
+
+	// 2. Real traffic recovery (3 consecutive successes) clears WARP tunnel SpeedError too
+	for i := 0; i < 3; i++ {
+		a.tracker.RecordDial(warpSvc.ID, "example.com", 35*time.Millisecond, nil)
+	}
+	tt.Frame()
+	rtAfter := a.mgr.StatusOf(warpSvc.ID)
+	if rtAfter.SpeedError != "" || a.isNodeUnhealthy(*warpSvc, rtAfter) {
+		t.Fatalf("expected real traffic recovery to clear WARP tunnel SpeedError and exit unhealthy, got rt=%+v", rtAfter)
+	}
+
+	// 3. Cooldown wakeup schedules UI invalidation even with AutoProbePeriodic=false
+	a.telemetryUIMu.Lock()
+	a.lastTelemetryUI = time.Now().Add(-2 * time.Second)
+	a.telemetryUIMu.Unlock()
+	a.scheduleCooldownWakeup(warpSvc.ID, 15*time.Millisecond)
+	if !waitForUI(t, a, tt, time.Second, func() bool {
+		a.recoveryProbeMu.Lock()
+		_, pending := a.cooldownTimers[warpSvc.ID]
+		a.recoveryProbeMu.Unlock()
+		return !pending
+	}) {
+		t.Fatalf("expected cooldown wakeup timer to fire and clear entry")
+	}
+
+	// 4. Resetting WARP ProbeURL on Cloudflare advanced card clears stale unhealthy state
+	a.mgr.SetStatusForTest(warpSvc.ID, runner.Status{
+		State:      runner.StateRunning,
+		ProbeError: "warp server (162.159.198.2:443) connection failed: i/o timeout",
+	})
+	tt.SetSize(960, 900)
+	a.activeTab = TabCloudflare
+	a.warpShowAdvanced = true
+	tt.Frame()
+	if err := tt.Click(a.catalog().CloudflareWarpResetDefaultBtn()); err != nil {
+		t.Fatalf("click reset warp probe url: %v", err)
+	}
+	tt.Frame()
+	if a.state.Cloudflare.ProbeURL != "" {
+		t.Fatalf("expected ProbeURL reset to empty, got %q", a.state.Cloudflare.ProbeURL)
+	}
+	if a.isNodeUnhealthy(*warpSvc, a.mgr.StatusOf(warpSvc.ID)) {
+		t.Fatalf("expected WARP node healthy after ProbeURL reset")
+	}
+}
+

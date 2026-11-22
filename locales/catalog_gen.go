@@ -1008,6 +1008,18 @@ func (msgs Messages) NodeDrawerCircuitTripped() string {
 	return Catalog.Format(msgs.locale, "nodeDrawerCircuitTripped", nil)
 }
 
+// NodeDrawerCircuitTrippedCooldown says "Tripped (+10000ms · {seconds}s)"
+// in the language the app shows.
+func NodeDrawerCircuitTrippedCooldown(seconds int) string {
+	return In(i18n.Locale()).NodeDrawerCircuitTrippedCooldown(seconds)
+}
+
+// NodeDrawerCircuitTrippedCooldown says "Tripped (+10000ms · {seconds}s)"
+// in the language of msgs.
+func (msgs Messages) NodeDrawerCircuitTrippedCooldown(seconds int) string {
+	return Catalog.Format(msgs.locale, "nodeDrawerCircuitTrippedCooldown", map[string]any{"seconds": seconds})
+}
+
 // NodeDrawerCircuitHalfOpen says "Half-Open (Probing)"
 // in the language the app shows.
 func NodeDrawerCircuitHalfOpen() string { return In(i18n.Locale()).NodeDrawerCircuitHalfOpen() }

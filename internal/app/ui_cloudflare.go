@@ -750,11 +750,13 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 							Grow(1)
 						if probeInp.Changed() {
 							a.saveState()
+							a.resetWarpNodesHealth(false)
 						}
 						if hasCustomProbe {
 							if subtleActionChip(c.Key("btn-reset-warp-probe-url"), p, nil, cat.CloudflareWarpResetDefaultBtn(), false).Clicked() {
 								a.state.Cloudflare.ProbeURL = ""
 								a.saveState()
+								a.resetWarpNodesHealth(true)
 							}
 						}
 					})

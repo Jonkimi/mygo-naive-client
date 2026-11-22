@@ -297,9 +297,9 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 					sc := a.tracker.GetScore(svc.ID)
 					switch {
 					case sc.CircuitState == telemetry.CircuitHalfOpen:
-						circuitText, circuitColor = cat.NodeDrawerCircuitHalfOpen(), p.amber
+						circuitText, circuitColor = circuitLabelForScore(cat, sc), p.amber
 					case sc.IsBroken || sc.CircuitState == telemetry.CircuitOpen:
-						circuitText, circuitColor = cat.NodeDrawerCircuitTripped(), p.red
+						circuitText, circuitColor = circuitLabelForScore(cat, sc), p.red
 					case sc.ConsecutiveFailures > 0:
 						circuitText, circuitColor = fmt.Sprintf("%d", sc.ConsecutiveFailures), p.amber
 					case unhealthy:

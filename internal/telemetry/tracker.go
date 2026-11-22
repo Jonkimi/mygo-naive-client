@@ -408,6 +408,13 @@ func (t *Tracker) SetActiveRecoveryProbe(enabled bool) {
 	t.activeRecoveryProbe = enabled
 }
 
+// ActiveRecoveryProbe reports whether active half-open probing is enabled.
+func (t *Tracker) ActiveRecoveryProbe() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.activeRecoveryProbe
+}
+
 // SetOnHealthChange registers a callback invoked (outside locks) when a node trips or recovers.
 func (t *Tracker) SetOnHealthChange(fn func(nodeID string, recovered bool)) {
 	t.mu.Lock()

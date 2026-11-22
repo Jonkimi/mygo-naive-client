@@ -766,28 +766,28 @@ func resolveProbeEndpoint(svc config.Service, allocPort int) (config.ListenEndpo
 
 // ClearProbeError clears any stale probe error on a running/registered service without resetting latency.
 func (m *Manager) ClearProbeError(id string) {
-	m.mu.Lock()
-	inst, ok := m.instances[id]
-	changed := false
-	if ok && inst.status.ProbeError != "" {
-		inst.status.ProbeError = ""
-		changed = true
-	}
-	m.mu.Unlock()
-	if changed {
-		m.onChange()
-	}
+	m.ClearRecoveredErrors(id, nil)
 }
 
 // ClearErrors clears stale probe and download speed errors for service id.
 func (m *Manager) ClearErrors(id string) {
+	m.ClearRecoveredErrors(id, func(string) bool { return true })
+}
+
+// ClearRecoveredErrors clears ProbeError and optionally clears SpeedError when clearSpeedIf returns true.
+func (m *Manager) ClearRecoveredErrors(id string, clearSpeedIf func(string) bool) {
 	m.mu.Lock()
 	inst, ok := m.instances[id]
 	changed := false
-	if ok && (inst.status.ProbeError != "" || inst.status.SpeedError != "") {
-		inst.status.ProbeError = ""
-		inst.status.SpeedError = ""
-		changed = true
+	if ok {
+		if inst.status.ProbeError != "" {
+			inst.status.ProbeError = ""
+			changed = true
+		}
+		if clearSpeedIf != nil && inst.status.SpeedError != "" && clearSpeedIf(inst.status.SpeedError) {
+			inst.status.SpeedError = ""
+			changed = true
+		}
 	}
 	m.mu.Unlock()
 	if changed {

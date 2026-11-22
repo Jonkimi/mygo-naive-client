@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -180,6 +181,7 @@ type app struct {
 	telemetryPending       bool
 	recoveryProbeMu        sync.Mutex
 	lastRecoveryProbeAt    map[string]time.Time
+	cooldownTimers         map[string]*time.Timer
 
 	activeTab              TabID
 	activeLogDrawerID      string
@@ -369,6 +371,7 @@ func Run() error {
 		if a.batchCancel != nil {
 			a.batchCancel()
 		}
+		a.cancelAllCooldownWakeups()
 		a.tailnetSyncMu.Lock()
 		if a.tailnetSyncTimer != nil {
 			a.tailnetSyncTimer.Stop()
@@ -504,8 +507,23 @@ func (a *app) initSubsystems() {
 		}
 		a.tracker.SetActiveRecoveryProbe(!a.headless && a.state.AutoProbePeriodic)
 		a.tracker.SetOnHealthChange(func(nodeID string, recovered bool) {
-			if recovered && a.mgr != nil {
-				a.mgr.ClearProbeError(nodeID)
+			if recovered {
+				a.cancelCooldownWakeup(nodeID)
+				if a.mgr != nil {
+					var clearSpeedIf func(string) bool
+					for _, svc := range a.snapshotServices() {
+						if svc.ID == nodeID && (svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP) {
+							clearSpeedIf = isWarpTunnelError
+							break
+						}
+					}
+					a.mgr.ClearRecoveredErrors(nodeID, clearSpeedIf)
+				}
+			} else {
+				sc := a.tracker.GetScore(nodeID)
+				if sc.CircuitState == telemetry.CircuitOpen && sc.CircuitCooldownRemaining > 0 {
+					a.scheduleCooldownWakeup(nodeID, sc.CircuitCooldownRemaining)
+				}
 			}
 			a.notifyTelemetryUI()
 		})
@@ -584,6 +602,7 @@ func (a *app) initSubsystems() {
 		}
 	}
 	a.mgr.OnServiceStarted = func(svc config.Service) {
+		a.cancelCooldownWakeup(svc.ID)
 		if a.tracker != nil {
 			a.tracker.ResetNode(svc.ID)
 		}
@@ -872,6 +891,59 @@ func (a *app) probeServicesListSilent(targets []config.Service) {
 	}()
 }
 
+func (a *app) cancelCooldownWakeup(nodeID string) {
+	a.recoveryProbeMu.Lock()
+	if t, ok := a.cooldownTimers[nodeID]; ok && t != nil {
+		t.Stop()
+		delete(a.cooldownTimers, nodeID)
+	}
+	a.recoveryProbeMu.Unlock()
+}
+
+func (a *app) cancelAllCooldownWakeups() {
+	a.recoveryProbeMu.Lock()
+	for id, t := range a.cooldownTimers {
+		if t != nil {
+			t.Stop()
+		}
+		delete(a.cooldownTimers, id)
+	}
+	a.recoveryProbeMu.Unlock()
+}
+
+func (a *app) scheduleCooldownWakeup(nodeID string, delay time.Duration) {
+	if delay <= 0 {
+		return
+	}
+	a.recoveryProbeMu.Lock()
+	if a.cooldownTimers == nil {
+		a.cooldownTimers = make(map[string]*time.Timer)
+	}
+	if old, ok := a.cooldownTimers[nodeID]; ok && old != nil {
+		old.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(delay+25*time.Millisecond, func() {
+		a.recoveryProbeMu.Lock()
+		if a.cooldownTimers[nodeID] == timer {
+			delete(a.cooldownTimers, nodeID)
+		}
+		a.recoveryProbeMu.Unlock()
+
+		select {
+		case <-a.quitCh:
+			return
+		default:
+		}
+		if a.tracker != nil && a.tracker.ActiveRecoveryProbe() {
+			a.probeDegradedServicesSilent()
+		}
+		a.notifyTelemetryUI()
+	})
+	a.cooldownTimers[nodeID] = timer
+	a.recoveryProbeMu.Unlock()
+}
+
 // notifyTelemetryUI triggers a rate-limited UI re-render when business traffic records real RTT samples.
 func (a *app) notifyTelemetryUI() {
 	a.telemetryUIMu.Lock()
@@ -1147,16 +1219,24 @@ func (a *app) diagnoseNodeUnhealthy(svc config.Service, rt runner.Status) (hint 
 	}
 	if a.tracker != nil {
 		sc := a.tracker.GetScore(svc.ID)
-		label := cat.NodeDrawerCircuitTripped()
-		if sc.CircuitState == telemetry.CircuitHalfOpen {
-			label = cat.NodeDrawerCircuitHalfOpen()
-		}
+		label := circuitLabelForScore(cat, sc)
 		if sc.LastFailureReason != "" {
 			return label + " · " + sc.LastFailureReason, false, false
 		}
 		return label, false, false
 	}
 	return cat.NodeDrawerCircuitTripped(), false, false
+}
+
+func circuitLabelForScore(cat locales.Messages, sc telemetry.QualityScore) string {
+	if sc.CircuitState == telemetry.CircuitHalfOpen {
+		return cat.NodeDrawerCircuitHalfOpen()
+	}
+	if sc.CircuitCooldownRemaining > 0 {
+		secs := max(1, int(math.Ceil(sc.CircuitCooldownRemaining.Seconds())))
+		return cat.NodeDrawerCircuitTrippedCooldown(secs)
+	}
+	return cat.NodeDrawerCircuitTripped()
 }
 
 func extractWarpServerEndpoint(errText string) string {
@@ -1737,6 +1817,7 @@ func (a *app) resetWarpNodesHealth(reprobe bool) {
 		if svc.EffectiveProtocol() != config.ProtoWARP && !svc.EnableWARP {
 			continue
 		}
+		a.cancelCooldownWakeup(svc.ID)
 		if a.tracker != nil {
 			a.tracker.ResetNode(svc.ID)
 		}
