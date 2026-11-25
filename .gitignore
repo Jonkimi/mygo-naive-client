@@ -32,4 +32,11 @@ docs
 .mygo/
 network-recovery.json
 
+
+.claude
+.codex
+.github
+.impeccable
+DESIGN.md
+PRODUCT.md
 # End of https://www.toptal.com/developers/gitignore/api/go
