@@ -1434,7 +1434,7 @@ func (a *app) renderDeleteDialog(c *ui.Context, p palette) {
 			if quietToolbarButton(c.Key("delete-cancel"), p, nil, cat.Cancel(), false).Clicked() {
 				a.deleteDlg.open = false
 			}
-			if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete(), p.red, false).Clicked() {
+			if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete(), p.redFill, false).Clicked() {
 				a.confirmDeleteService()
 			}
 		})

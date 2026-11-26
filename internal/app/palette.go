@@ -41,6 +41,7 @@ type palette struct {
 	red       ui.Color
 	redBg     ui.Color
 	redText   ui.Color
+	redFill   ui.Color
 }
 
 var lightPalette = palette{
@@ -65,14 +66,15 @@ var lightPalette = palette{
 	accentBg:      ui.RGB(239, 246, 255),
 	accentText:    ui.RGB(29, 78, 216),
 	green:         ui.RGB(22, 163, 74),
-	greenBg:       ui.RGB(220, 252, 231),
+	greenBg:       ui.RGB(240, 253, 244),
 	greenText:     ui.RGB(21, 128, 61),
 	amber:         ui.RGB(217, 119, 6),
-	amberBg:       ui.RGB(254, 243, 199),
-	amberText:     ui.RGB(161, 75, 4),
+	amberBg:       ui.RGB(255, 251, 235),
+	amberText:     ui.RGB(180, 83, 9),
 	red:           ui.RGB(220, 38, 38),
-	redBg:         ui.RGB(254, 226, 226),
-	redText:       ui.RGB(185, 28, 28),
+	redBg:         ui.RGB(254, 245, 245),
+	redText:       ui.RGB(220, 38, 38),
+	redFill:       ui.RGB(220, 38, 38),
 }
 
 var darkPalette = palette{
@@ -98,13 +100,14 @@ var darkPalette = palette{
 	accentText:    ui.RGB(147, 197, 253),
 	green:         ui.RGB(34, 197, 94),
 	greenBg:       ui.RGBA(34, 197, 94, 0.16),
-	greenText:     ui.RGB(74, 222, 128),
+	greenText:     ui.RGB(34, 197, 94),
 	amber:         ui.RGB(245, 158, 11),
 	amberBg:       ui.RGBA(245, 158, 11, 0.16),
-	amberText:     ui.RGB(251, 191, 36),
-	red:           ui.RGB(220, 38, 38),
+	amberText:     ui.RGB(245, 158, 11),
+	red:           ui.RGB(248, 113, 113),
 	redBg:         ui.RGBA(239, 68, 68, 0.16),
 	redText:       ui.RGB(248, 113, 113),
+	redFill:       ui.RGB(220, 38, 38),
 }
 
 func paletteFor(t *ui.Theme) palette {
@@ -129,7 +132,7 @@ func (p palette) applyToTheme(t *ui.Theme) {
 	t.AccentHover = p.accentHover
 	t.AccentPressed = p.accentPressed
 	t.AccentText = ui.RGB(255, 255, 255)
-	t.Danger = p.red
+	t.Danger = p.redFill
 	t.Warning = p.amber
 	t.Success = p.green
 	if p.dark {
@@ -327,6 +330,35 @@ func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, 
 				ui.Icon(c, iconSVG).Size(14, 14)
 			}
 			ui.Text(c, label).FontSize(dsFontBody).FontWeight(600)
+		})
+	})
+}
+
+func amberOutlineButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
+	fg := p.amberText
+	borderCol := p.amber.Alpha(0.45)
+	bg := p.card
+	if disabled {
+		fg = p.amberText.Alpha(0.5)
+		borderCol = p.amber.Alpha(0.25)
+	}
+	btn := ui.ButtonBase(c).
+		Height(dsHeightControl).PaddingX(dsSpaceLG).Radius(dsRadiusMD).
+		Background(bg).Border(1, borderCol).
+		Disabled(disabled).DimDisabled(false)
+	if !disabled {
+		if btn.Pressed() {
+			btn.Background(p.amber.Alpha(0.18))
+		} else if btn.Hovered() {
+			btn.Background(p.amberBg).Border(1, p.amber.Alpha(0.65))
+		}
+	}
+	return btn.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).TextColor(fg).Children(func() {
+			if iconSVG != nil {
+				ui.Icon(c, iconSVG).Size(14, 14)
+			}
+			ui.Text(c, label).FontSize(dsFontBody).FontWeight(600).NoWrap()
 		})
 	})
 }

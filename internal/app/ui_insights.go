@@ -653,7 +653,7 @@ func (a *app) renderInsightsManageRulesDrawer(c *ui.Context, p palette) {
 								Placeholder(cat.InsightsDenylistPlaceholder()).
 								FontSize(12).Grow(1)
 
-							denyClicked := primaryPillButton(c.Key("btn-add-denylist"), p, nil, cat.InsightsActionDenylist(), p.red, false).
+							denyClicked := primaryPillButton(c.Key("btn-add-denylist"), p, nil, cat.InsightsActionDenylist(), p.redFill, false).
 								Label("btn-add-denylist").Height(30).Clicked()
 							if denyClicked || denyInp.Submitted() {
 								if d := strings.TrimSpace(a.blockerDenylistInput); d != "" {

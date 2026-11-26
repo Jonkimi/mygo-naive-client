@@ -1537,7 +1537,7 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 							if a.updatingGeoData {
 								btnText = cat.Updating()
 							}
-							if primaryPillButton(c.Key("btn-banner-download-geodata"), p, iconDownload, btnText, p.amber, a.updatingGeoData).Shrink(0).Clicked() {
+							if amberOutlineButton(c.Key("btn-banner-download-geodata"), p, iconDownload, btnText, a.updatingGeoData).Shrink(0).Clicked() {
 								a.triggerUpdateGeoData()
 							}
 						})

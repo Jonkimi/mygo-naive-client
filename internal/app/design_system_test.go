@@ -58,6 +58,17 @@ func TestDesignSystem_WCAGContrastAA(t *testing.T) {
 
 	for _, tc := range palettes {
 		p := tc.p
+		if p.red != p.redText {
+			t.Errorf("%s palette red (%v) != redText (%v); blocked dots, bars, and labels must share one red hue", tc.name, p.red, p.redText)
+		}
+		if p.dark {
+			if p.green != p.greenText {
+				t.Errorf("dark palette green (%v) != greenText (%v)", p.green, p.greenText)
+			}
+			if p.amber != p.amberText {
+				t.Errorf("dark palette amber (%v) != amberText (%v)", p.amber, p.amberText)
+			}
+		}
 		pairs := []struct {
 			label string
 			fg    ui.Color
@@ -73,7 +84,7 @@ func TestDesignSystem_WCAGContrastAA(t *testing.T) {
 			{"textDim on elevated", p.textDim, p.elevated},
 			{"textDim on sidebarBg", p.textDim, p.sidebarBg},
 			{"white on accent", white, p.accent},
-			{"white on red", white, p.red},
+			{"white on redFill", white, p.redFill},
 			{"accentText on accentBg(card)", p.accentText, blendOverOpaque(p.accentBg, p.card)},
 			{"accentText on elevated", p.accentText, p.elevated},
 			{"greenText on card", p.greenText, p.card},
