@@ -30,6 +30,7 @@
   "routingDirect": "Direct",
   "routingBlock": "Block",
   "routingProxyPool": "Active Proxy Pool",
+  "routingOnlineCount": "{count} online",
   "newRule": "New Rule",
   "editRule": "Edit Rule",
   "editFinalRule": "Edit Fallback Policy",

@@ -1210,7 +1210,7 @@ func (a *app) renderEditorPreviewTab(c *ui.Context, p palette) {
 	svc, err := a.buildServiceFromEditor()
 	if err != nil {
 		ui.Row(c).PaddingX(12).PaddingY(10).Radius(8).Background(p.redBg).Border(1, p.red.Alpha(0.24)).Children(func() {
-			ui.Text(c, cat.ConfigValidationFailed(err.Error())).FontSize(12).TextColor(p.red)
+			ui.Text(c, cat.ConfigValidationFailed(err.Error())).FontSize(12).TextColor(p.redText)
 		})
 		return
 	}
@@ -1313,61 +1313,55 @@ func (a *app) openImportDialog() {
 
 func (a *app) renderImportDialog(c *ui.Context, p palette) {
 	cat := a.catalog()
-	ui.DialogBase(c.Key("import-dialog"), &a.importDlg.open, func(backdrop, panel ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
-		panel.Column().
-			Width(540).
-			Padding(20).Gap(14).
-			Radius(14).Background(p.card).Border(1, p.border).
-			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
-			Children(func() {
-				ui.Text(c, cat.ImportTitle()).FontSize(16).FontWeight(700).TextColor(p.text)
-				ui.Text(c, cat.ImportDesc()).FontSize(12).TextColor(p.textMuted)
+	dsModalDialog(c, p, "import-dialog", &a.importDlg.open, 540, func() {
+		ui.Text(c, cat.ImportTitle()).FontSize(dsFontDialogTitle).FontWeight(700).TextColor(p.text)
+		ui.Text(c, cat.ImportDesc()).FontSize(dsFontBody).TextColor(p.textMuted)
 
-				if a.importDlg.errText != "" {
-					ui.Row(c.Key("import-error-row")).
-						AlignItems(ui.Center).Justify(ui.SpaceBetween).
-						PaddingX(12).PaddingY(8).Radius(8).Background(p.redBg).Children(func() {
-							ui.Text(c, a.importDlg.errText).FontSize(12).TextColor(p.red).Grow(1)
-							btnCopy := ui.ButtonBase(c.Key("btn-copy-import-error")).
-								Label("btn-copy-import-error").
-								Padding(2, 6, 2, 6).Radius(4).
-								Background(p.card).Border(1, p.borderSubtle).
-								Tooltip(cat.ActionCopyError()).
-								Children(func() {
-									ui.Text(c, cat.BtnCopy()).FontSize(10).TextColor(p.textDim)
-								})
-							if btnCopy.Clicked() {
-								a.writeClipboard(a.importDlg.errText, cat.ToastErrorCopied())
-							}
+		if a.importDlg.errText != "" {
+			ui.Row(c.Key("import-error-row")).
+				AlignItems(ui.Center).Justify(ui.SpaceBetween).
+				PaddingX(dsSpaceLG).PaddingY(dsSpaceMD).Radius(dsRadiusMD).
+				Background(p.redBg).Border(1, p.red.Alpha(0.24)).
+				Children(func() {
+					ui.Text(c, a.importDlg.errText).FontSize(dsFontBody).TextColor(p.redText).Grow(1)
+					btnCopy := ui.ButtonBase(c.Key("btn-copy-import-error")).
+						Label("btn-copy-import-error").
+						Padding(2, 6, 2, 6).Radius(dsRadiusXS).
+						Background(p.card).Border(1, p.borderSubtle).
+						Tooltip(cat.ActionCopyError()).
+						Children(func() {
+							ui.Text(c, cat.BtnCopy()).FontSize(dsFontMicro).TextColor(p.textDim)
 						})
-				}
-
-				labeledTextArea(
-					c, p,
-					"import-raw-input",
-					cat.ImportTitle(),
-					&a.importDlg.rawInput,
-					"https://user:pass@example.com#Node-1\nnaive+https://user:pass@example.com:443?security=tls&sni=sni.example.com#Node-2\nsocks5://1.2.3.4:1080",
-					5, 10,
-				)
-
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(6, 0, 0, 0).Children(func() {
-					if actionChip(c.Key("import-read-clip"), p, iconPaste, cat.ImportClipboard(), false).Clicked() {
-						a.importDlg.rawInput = strings.TrimSpace(a.readClipboard())
+					if btnCopy.Clicked() {
+						a.writeClipboard(a.importDlg.errText, cat.ToastErrorCopied())
 					}
-
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						if ui.Button(c.Key("import-cancel"), cat.Cancel()).Clicked() {
-							a.importDlg.open = false
-							a.importDlg.errText = ""
-						}
-						if ui.PrimaryButton(c.Key("import-confirm"), cat.ImportBtn()).Clicked() {
-							a.confirmImportDialog()
-						}
-					})
 				})
+		}
+
+		labeledTextArea(
+			c, p,
+			"import-raw-input",
+			cat.ImportTitle(),
+			&a.importDlg.rawInput,
+			"https://user:pass@example.com#Node-1\nnaive+https://user:pass@example.com:443?security=tls&sni=sni.example.com#Node-2\nsocks5://1.2.3.4:1080",
+			5, 10,
+		)
+
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Padding(6, 0, 0, 0).Children(func() {
+			if actionChip(c.Key("import-read-clip"), p, iconPaste, cat.ImportClipboard(), false).Clicked() {
+				a.importDlg.rawInput = strings.TrimSpace(a.readClipboard())
+			}
+
+			ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceMD).Children(func() {
+				if quietToolbarButton(c.Key("import-cancel"), p, nil, cat.Cancel(), false).Clicked() {
+					a.importDlg.open = false
+					a.importDlg.errText = ""
+				}
+				if primaryPillButton(c.Key("import-confirm"), p, nil, cat.ImportBtn(), p.accent, false).Clicked() {
+					a.confirmImportDialog()
+				}
 			})
+		})
 	})
 }
 
@@ -1428,30 +1422,22 @@ func (a *app) openDeleteServiceDialog(svc config.Service) {
 
 func (a *app) renderDeleteDialog(c *ui.Context, p palette) {
 	cat := a.catalog()
-	ui.DialogBase(c.Key("delete-dialog"), &a.deleteDlg.open, func(backdrop, panel ui.Element) {
-		backdrop.Background(ui.RGBA(0, 0, 0, 0.5))
-		panel.Column().
-			Width(400).
-			Padding(20).Gap(14).
-			Radius(14).Background(p.card).Border(1, p.border).
-			Shadow(0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.3)).
-			Children(func() {
-				ui.Text(c, cat.DeleteTitle()).FontSize(16).FontWeight(700).TextColor(p.text)
-				prompt := cat.DeleteConfirmMsg()
-				if a.deleteDlg.svcName != "" {
-					prompt = fmt.Sprintf("「%s」: %s", a.deleteDlg.svcName, cat.DeleteConfirmMsg())
-				}
-				ui.Text(c, prompt).FontSize(13).TextColor(p.textMuted)
+	dsModalDialog(c, p, "delete-dialog", &a.deleteDlg.open, 400, func() {
+		ui.Text(c, cat.DeleteTitle()).FontSize(dsFontDialogTitle).FontWeight(700).TextColor(p.text)
+		prompt := cat.DeleteConfirmMsg()
+		if a.deleteDlg.svcName != "" {
+			prompt = fmt.Sprintf("「%s」: %s", a.deleteDlg.svcName, cat.DeleteConfirmMsg())
+		}
+		ui.Text(c, prompt).FontSize(dsFontSectionTitle).TextColor(p.textMuted)
 
-				ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Gap(8).Padding(6, 0, 0, 0).Children(func() {
-					if ui.Button(c.Key("delete-cancel"), cat.Cancel()).Clicked() {
-						a.deleteDlg.open = false
-					}
-					if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete(), p.red, false).Clicked() {
-						a.confirmDeleteService()
-					}
-				})
-			})
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Gap(dsSpaceMD).Padding(6, 0, 0, 0).Children(func() {
+			if quietToolbarButton(c.Key("delete-cancel"), p, nil, cat.Cancel(), false).Clicked() {
+				a.deleteDlg.open = false
+			}
+			if primaryPillButton(c.Key("delete-confirm"), p, iconTrash, cat.ActionDelete(), p.red, false).Clicked() {
+				a.confirmDeleteService()
+			}
+		})
 	})
 }
 

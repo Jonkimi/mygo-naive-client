@@ -29,102 +29,97 @@ func (a *app) renderTailnetPage(c *ui.Context, p palette) {
 
 	ui.Column(c.Key("tailnet-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// 1. Fixed Header with quiet dot status summary & Segmented mode switch
-		ui.Row(c.Key("tailnet-header")).
-			Padding(12, 18, 12, 18).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().
-			Background(p.surface).
-			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-			Children(func() {
-				ui.Column(c).MinWidth(0).Shrink(1).Gap(2).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().Children(func() {
-						ui.Text(c, cat.TailnetTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+		dsPageHeader(c, p, "tailnet-header", true, func() {
+			ui.Column(c).MinWidth(0).Shrink(1).Gap(2).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().Children(func() {
+					dsPageTitle(c, p, cat.TailnetTitle())
 
-						ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-							if !a.state.TailnetEnabled || a.state.TailnetMode == string(tailnet.ModeOff) {
-								hollowStatusDot(c, p.textDim.Alpha(0.5))
-								ui.Text(c, cat.TailnetModeOff()).FontSize(12).TextColor(p.textMuted).NoWrap()
-							} else {
-								switch st.BackendState {
-								case "Running":
-									statusDot(c, p.green)
-								case "NeedsLogin", "Starting":
-									statusDot(c, p.amber)
-								default:
-									statusDot(c, p.textDim)
-								}
-								modeLabel := cat.TailnetModeAuto()
-								if st.ActiveMode == tailnet.ModeHost {
-									modeLabel = cat.TailnetModeHost()
-								} else if st.ActiveMode == tailnet.ModeEmbedded {
-									modeLabel = cat.TailnetModeEmbedded()
-								} else {
-									switch tailnet.Mode(a.state.TailnetMode) {
-									case tailnet.ModeHost:
-										modeLabel = cat.TailnetModeHost()
-									case tailnet.ModeEmbedded:
-										modeLabel = cat.TailnetModeEmbedded()
-									}
-								}
-								ui.Text(c, modeLabel).FontSize(12).TextColor(p.textMuted).NoWrap()
-								ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap()
-								ui.Text(c, cat.TailnetOnlinePeersSummary(onlineCount, len(st.Peers))).
-									FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
+					ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+						if !a.state.TailnetEnabled || a.state.TailnetMode == string(tailnet.ModeOff) {
+							hollowStatusDot(c, p.textDim.Alpha(0.5))
+							ui.Text(c, cat.TailnetModeOff()).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
+						} else {
+							switch st.BackendState {
+							case "Running":
+								statusDot(c, p.green)
+							case "NeedsLogin", "Starting":
+								statusDot(c, p.amber)
+							default:
+								statusDot(c, p.textDim)
 							}
-						})
+							modeLabel := cat.TailnetModeAuto()
+							if st.ActiveMode == tailnet.ModeHost {
+								modeLabel = cat.TailnetModeHost()
+							} else if st.ActiveMode == tailnet.ModeEmbedded {
+								modeLabel = cat.TailnetModeEmbedded()
+							} else {
+								switch tailnet.Mode(a.state.TailnetMode) {
+								case tailnet.ModeHost:
+									modeLabel = cat.TailnetModeHost()
+								case tailnet.ModeEmbedded:
+									modeLabel = cat.TailnetModeEmbedded()
+								}
+							}
+							ui.Text(c, modeLabel).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
+							ui.Text(c, "·").FontSize(dsFontBody).TextColor(p.textDim).NoWrap()
+							ui.Text(c, cat.TailnetOnlinePeersSummary(onlineCount, len(st.Peers))).
+								FontSize(dsFontBody).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
+						}
 					})
-					ui.Text(c, cat.TailnetSubtitle()).FontSize(11).TextColor(p.textDim).SingleLine().Ellipsis("…")
 				})
-
-				// Mode selector segmented control
-				modeIdx := 0
-				switch tailnet.Mode(a.state.TailnetMode) {
-				case tailnet.ModeAuto:
-					modeIdx = 0
-				case tailnet.ModeHost:
-					modeIdx = 1
-				case tailnet.ModeEmbedded:
-					modeIdx = 2
-				case tailnet.ModeOff:
-					modeIdx = 3
-				}
-				if !a.state.TailnetEnabled {
-					modeIdx = 3
-				}
-
-				modeLabels := []string{
-					cat.TailnetModeAuto(),
-					cat.TailnetModeHost(),
-					cat.TailnetModeEmbedded(),
-					cat.TailnetModeOff(),
-				}
-
-				ui.Row(c).Shrink(0).Children(func() {
-					if segmentedControl(c.Key("tailnet-mode-switch"), p, &modeIdx, modeLabels) {
-						var newMode tailnet.Mode
-						switch modeIdx {
-						case 0:
-							newMode = tailnet.ModeAuto
-							a.state.TailnetEnabled = true
-						case 1:
-							newMode = tailnet.ModeHost
-							a.state.TailnetEnabled = true
-						case 2:
-							newMode = tailnet.ModeEmbedded
-							a.state.TailnetEnabled = true
-						case 3:
-							newMode = tailnet.ModeOff
-							a.state.TailnetEnabled = false
-						}
-						a.state.TailnetMode = string(newMode)
-						a.saveState()
-						if a.tailnetMgr != nil {
-							a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
-							a.tailnetMgr.Refresh(context.Background())
-						}
-						a.restartGatewayIfRunning()
-					}
-				})
+				ui.Text(c, cat.TailnetSubtitle()).FontSize(dsFontCaption).TextColor(p.textDim).SingleLine().Ellipsis("…")
 			})
+		}, func() {
+			// Mode selector segmented control
+			modeIdx := 0
+			switch tailnet.Mode(a.state.TailnetMode) {
+			case tailnet.ModeAuto:
+				modeIdx = 0
+			case tailnet.ModeHost:
+				modeIdx = 1
+			case tailnet.ModeEmbedded:
+				modeIdx = 2
+			case tailnet.ModeOff:
+				modeIdx = 3
+			}
+			if !a.state.TailnetEnabled {
+				modeIdx = 3
+			}
+
+			modeLabels := []string{
+				cat.TailnetModeAuto(),
+				cat.TailnetModeHost(),
+				cat.TailnetModeEmbedded(),
+				cat.TailnetModeOff(),
+			}
+
+			ui.Row(c).Shrink(0).Children(func() {
+				if segmentedControl(c.Key("tailnet-mode-switch"), p, &modeIdx, modeLabels) {
+					var newMode tailnet.Mode
+					switch modeIdx {
+					case 0:
+						newMode = tailnet.ModeAuto
+						a.state.TailnetEnabled = true
+					case 1:
+						newMode = tailnet.ModeHost
+						a.state.TailnetEnabled = true
+					case 2:
+						newMode = tailnet.ModeEmbedded
+						a.state.TailnetEnabled = true
+					case 3:
+						newMode = tailnet.ModeOff
+						a.state.TailnetEnabled = false
+					}
+					a.state.TailnetMode = string(newMode)
+					a.saveState()
+					if a.tailnetMgr != nil {
+						a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+						a.tailnetMgr.Refresh(context.Background())
+					}
+					a.restartGatewayIfRunning()
+				}
+			})
+		})
 
 		// 2. Scrollable Body (full width preserved so Sharing switches remain aligned)
 		ui.Scroll(c.Key("tailnet-scroll")).Grow(1).Fill().Children(func() {
@@ -203,8 +198,8 @@ func (a *app) renderTailnetErrorBanner(c *ui.Context, p palette, errText string)
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Wrap().
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).Shrink(1).MinWidth(0).Children(func() {
-				ui.Icon(c, iconAlert).Size(15, 15).TextColor(p.red).Shrink(0)
-				ui.Text(c, errText).FontSize(12).TextColor(p.red).Grow(1).Shrink(1).MinWidth(0)
+				ui.Icon(c, iconAlert).Size(15, 15).TextColor(p.redText).Shrink(0)
+				ui.Text(c, errText).FontSize(12).TextColor(p.redText).Grow(1).Shrink(1).MinWidth(0)
 			})
 
 			btnCopy := compactStripButton(c.Key("btn-copy-tailnet-error"), p, "btn-copy-tailnet-error", cat.BtnCopy(), p.textMuted).
@@ -236,10 +231,10 @@ func (a *app) renderTailnetNodeCard(c *ui.Context, p palette, st tailnet.Status)
 						switch st.BackendState {
 						case "Running":
 							statusDot(c, p.green)
-							ui.Text(c, cat.TailnetStatusConnected()).FontSize(12).FontWeight(500).TextColor(p.green).NoWrap()
+							ui.Text(c, cat.TailnetStatusConnected()).FontSize(12).FontWeight(500).TextColor(p.greenText).NoWrap()
 						case "NeedsLogin":
 							statusDot(c, p.amber)
-							ui.Text(c, cat.TailnetStatusNeedsLogin()).FontSize(12).FontWeight(500).TextColor(p.amber).NoWrap()
+							ui.Text(c, cat.TailnetStatusNeedsLogin()).FontSize(12).FontWeight(500).TextColor(p.amberText).NoWrap()
 						case "Starting":
 							statusDot(c, p.amber)
 							ui.Text(c, cat.TailnetStarting()).FontSize(12).TextColor(p.textMuted).NoWrap()
@@ -254,7 +249,7 @@ func (a *app) renderTailnetNodeCard(c *ui.Context, p palette, st tailnet.Status)
 				btnCopyAddr := quietToolbarButton(c.Key("btn-copy-tailnet-addr"), p, iconCopy, cat.TailnetCopyAddress(), copyDisabled).
 					Label("btn-copy-tailnet-addr").
 					Height(28).
-					Disabled(copyDisabled)
+					Disabled(copyDisabled).DimDisabled(false)
 				if !copyDisabled && btnCopyAddr.Clicked() {
 					a.writeClipboard(copyAddr, cat.TailnetAddressCopied())
 				}

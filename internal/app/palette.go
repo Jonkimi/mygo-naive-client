@@ -26,70 +26,85 @@ type palette struct {
 	textMuted ui.Color
 	textDim   ui.Color
 
-	accent     ui.Color
-	accentBg   ui.Color
-	accentText ui.Color
+	accent        ui.Color
+	accentHover   ui.Color
+	accentPressed ui.Color
+	accentBg      ui.Color
+	accentText    ui.Color
 
-	green   ui.Color
-	greenBg ui.Color
-	amber   ui.Color
-	amberBg ui.Color
-	red     ui.Color
-	redBg   ui.Color
+	green     ui.Color
+	greenBg   ui.Color
+	greenText ui.Color
+	amber     ui.Color
+	amberBg   ui.Color
+	amberText ui.Color
+	red       ui.Color
+	redBg     ui.Color
+	redText   ui.Color
 }
 
 var lightPalette = palette{
-	dark:         false,
-	bg:           ui.RGB(242, 244, 248),
-	sidebarBg:    ui.RGB(242, 244, 248),
-	surface:      ui.RGB(248, 250, 252),
-	card:         ui.RGB(255, 255, 255),
-	cardHover:    ui.RGB(245, 247, 250),
-	elevated:     ui.RGB(241, 243, 247),
-	drawerBg:     ui.RGB(255, 255, 255),
-	codeBg:       ui.RGB(242, 244, 248),
-	border:       ui.RGB(224, 228, 235),
-	borderSubtle: ui.RGB(235, 238, 244),
-	switchOff:    ui.RGB(209, 213, 219),
-	text:         ui.RGB(20, 24, 33),
-	textMuted:    ui.RGB(94, 102, 117),
-	textDim:      ui.RGB(145, 153, 168),
-	accent:       ui.RGB(37, 99, 235),
-	accentBg:     ui.RGB(239, 246, 255),
-	accentText:   ui.RGB(29, 78, 216),
-	green:        ui.RGB(22, 163, 74),
-	greenBg:      ui.RGB(220, 252, 231),
-	amber:        ui.RGB(217, 119, 6),
-	amberBg:      ui.RGB(254, 243, 199),
-	red:          ui.RGB(220, 38, 38),
-	redBg:        ui.RGB(254, 226, 226),
+	dark:          false,
+	bg:            ui.RGB(242, 244, 248),
+	sidebarBg:     ui.RGB(242, 244, 248),
+	surface:       ui.RGB(248, 250, 252),
+	card:          ui.RGB(255, 255, 255),
+	cardHover:     ui.RGB(245, 247, 250),
+	elevated:      ui.RGB(241, 243, 247),
+	drawerBg:      ui.RGB(255, 255, 255),
+	codeBg:        ui.RGB(242, 244, 248),
+	border:        ui.RGB(209, 215, 224),
+	borderSubtle:  ui.RGB(229, 233, 240),
+	switchOff:     ui.RGB(184, 191, 204),
+	text:          ui.RGB(20, 24, 33),
+	textMuted:     ui.RGB(76, 85, 101),
+	textDim:       ui.RGB(100, 109, 124),
+	accent:        ui.RGB(37, 99, 235),
+	accentHover:   ui.RGB(29, 78, 216),
+	accentPressed: ui.RGB(30, 64, 175),
+	accentBg:      ui.RGB(239, 246, 255),
+	accentText:    ui.RGB(29, 78, 216),
+	green:         ui.RGB(22, 163, 74),
+	greenBg:       ui.RGB(220, 252, 231),
+	greenText:     ui.RGB(21, 128, 61),
+	amber:         ui.RGB(217, 119, 6),
+	amberBg:       ui.RGB(254, 243, 199),
+	amberText:     ui.RGB(161, 75, 4),
+	red:           ui.RGB(220, 38, 38),
+	redBg:         ui.RGB(254, 226, 226),
+	redText:       ui.RGB(185, 28, 28),
 }
 
 var darkPalette = palette{
-	dark:         true,
-	bg:           ui.RGB(11, 13, 19),
-	sidebarBg:    ui.RGB(11, 13, 19),
-	surface:      ui.RGB(17, 20, 29),
-	card:         ui.RGB(24, 28, 40),
-	cardHover:    ui.RGB(32, 38, 54),
-	elevated:     ui.RGB(30, 35, 50),
-	drawerBg:     ui.RGB(26, 31, 44),
-	codeBg:       ui.RGB(14, 16, 24),
-	border:       ui.RGB(38, 44, 62),
-	borderSubtle: ui.RGB(28, 33, 47),
-	switchOff:    ui.RGB(51, 65, 85),
-	text:         ui.RGB(241, 245, 249),
-	textMuted:    ui.RGB(148, 163, 184),
-	textDim:      ui.RGB(100, 116, 139),
-	accent:       ui.RGB(59, 130, 246),
-	accentBg:     ui.RGBA(59, 130, 246, 0.15),
-	accentText:   ui.RGB(147, 197, 253),
-	green:        ui.RGB(34, 197, 94),
-	greenBg:      ui.RGBA(34, 197, 94, 0.15),
-	amber:        ui.RGB(245, 158, 11),
-	amberBg:      ui.RGBA(245, 158, 11, 0.15),
-	red:          ui.RGB(239, 68, 68),
-	redBg:        ui.RGBA(239, 68, 68, 0.15),
+	dark:          true,
+	bg:            ui.RGB(11, 13, 19),
+	sidebarBg:     ui.RGB(11, 13, 19),
+	surface:       ui.RGB(17, 20, 29),
+	card:          ui.RGB(24, 28, 40),
+	cardHover:     ui.RGB(32, 38, 54),
+	elevated:      ui.RGB(30, 35, 50),
+	drawerBg:      ui.RGB(26, 31, 44),
+	codeBg:        ui.RGB(14, 16, 24),
+	border:        ui.RGB(48, 56, 78),
+	borderSubtle:  ui.RGB(36, 42, 60),
+	switchOff:     ui.RGB(64, 78, 102),
+	text:          ui.RGB(241, 245, 249),
+	textMuted:     ui.RGB(158, 172, 193),
+	textDim:       ui.RGB(132, 146, 169),
+	accent:        ui.RGB(37, 99, 235),
+	accentHover:   ui.RGB(59, 130, 246),
+	accentPressed: ui.RGB(29, 78, 216),
+	accentBg:      ui.RGBA(59, 130, 246, 0.16),
+	accentText:    ui.RGB(147, 197, 253),
+	green:         ui.RGB(34, 197, 94),
+	greenBg:       ui.RGBA(34, 197, 94, 0.16),
+	greenText:     ui.RGB(74, 222, 128),
+	amber:         ui.RGB(245, 158, 11),
+	amberBg:       ui.RGBA(245, 158, 11, 0.16),
+	amberText:     ui.RGB(251, 191, 36),
+	red:           ui.RGB(220, 38, 38),
+	redBg:         ui.RGBA(239, 68, 68, 0.16),
+	redText:       ui.RGB(248, 113, 113),
 }
 
 func paletteFor(t *ui.Theme) palette {
@@ -106,14 +121,31 @@ func (p palette) applyToTheme(t *ui.Theme) {
 	t.Background = p.card
 	t.Surface = p.surface
 	t.SurfaceHover = p.cardHover
-	t.SurfacePressed = p.switchOff
+	t.SurfacePressed = p.elevated
 	t.Border = p.border
 	t.Text = p.text
 	t.TextMuted = p.textMuted
 	t.Accent = p.accent
+	t.AccentHover = p.accentHover
+	t.AccentPressed = p.accentPressed
+	t.AccentText = ui.RGB(255, 255, 255)
 	t.Danger = p.red
 	t.Warning = p.amber
 	t.Success = p.green
+	if p.dark {
+		t.Focus = p.accentHover.Alpha(0.65)
+		t.Selection = p.accentHover.Alpha(0.35)
+		t.Inverse = lightPalette.card
+		t.InverseText = lightPalette.text
+	} else {
+		t.Focus = p.accent.Alpha(0.55)
+		t.Selection = p.accent.Alpha(0.22)
+		t.Inverse = darkPalette.card
+		t.InverseText = darkPalette.text
+	}
+	t.Radius = dsRadiusMD
+	t.Spacing = dsSpaceXS
+	t.FontSize = dsFontBody
 }
 
 func (p palette) navActiveColor() ui.Color {
@@ -123,20 +155,59 @@ func (p palette) navActiveColor() ui.Color {
 	return p.accentText
 }
 
-func statusBadge(c *ui.Context, label string, fg, bg ui.Color) {
-	ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).
-		PaddingX(9).PaddingY(4).Radius(999).Background(bg).
-		Children(func() {
-			ui.Box(c).Size(7, 7).Radius(999).Background(fg)
-			ui.Text(c, label).FontSize(11).FontWeight(600).TextColor(fg)
-		})
+func (p palette) popoverShadow() (float32, float32, float32, float32, ui.Color) {
+	if p.dark {
+		return 0, 12, 32, 0, ui.RGBA(0, 0, 0, 0.52)
+	}
+	return 0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18)
+}
+
+func (p palette) dropdownShadow() (float32, float32, float32, float32, ui.Color) {
+	if p.dark {
+		return 0, 8, 24, 0, ui.RGBA(0, 0, 0, 0.48)
+	}
+	return 0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.16)
+}
+
+func (p palette) modalShadow() (float32, float32, float32, float32, ui.Color) {
+	if p.dark {
+		return 0, 16, 44, 0, ui.RGBA(0, 0, 0, 0.62)
+	}
+	return 0, 12, 36, 0, ui.RGBA(0, 0, 0, 0.28)
+}
+
+func (p palette) drawerShadow() (float32, float32, float32, float32, ui.Color) {
+	if p.dark {
+		return 0, 8, 40, 0, ui.RGBA(0, 0, 0, 0.58)
+	}
+	return 0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.30)
+}
+
+func (p palette) modalBackdrop() ui.Color {
+	if p.dark {
+		return ui.RGBA(0, 0, 0, 0.60)
+	}
+	return ui.RGBA(0, 0, 0, 0.42)
+}
+
+func (p palette) drawerBackdrop(modal bool) ui.Color {
+	if p.dark {
+		if modal {
+			return ui.RGBA(0, 0, 0, 0.55)
+		}
+		return ui.RGBA(0, 0, 0, 0.45)
+	}
+	if modal {
+		return ui.RGBA(0, 0, 0, 0.34)
+	}
+	return ui.RGBA(0, 0, 0, 0.26)
 }
 
 func tagPill(c *ui.Context, label string, fg, bg ui.Color) {
 	ui.Row(c).AlignItems(ui.Center).Shrink(0).
-		PaddingX(8).PaddingY(3).Radius(6).Background(bg).
+		PaddingX(dsSpaceMD).PaddingY(3).Radius(dsRadiusSM).Background(bg).
 		Children(func() {
-			ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(fg)
+			ui.Text(c, label).FontSize(dsFontCaption).FontWeight(500).TextColor(fg)
 		})
 }
 
@@ -150,9 +221,14 @@ func actionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disable
 	btn := ui.ButtonBase(c).
 		Height(dsHeightRowAction).PaddingX(10).Radius(dsRadiusSM).
 		Background(bg).
-		Border(1, p.borderSubtle)
-	if !disabled && btn.Hovered() {
-		btn.Background(p.cardHover)
+		Border(1, p.borderSubtle).
+		Disabled(disabled).DimDisabled(false)
+	if !disabled {
+		if btn.Pressed() {
+			btn.Background(p.borderSubtle)
+		} else if btn.Hovered() {
+			btn.Background(p.cardHover)
+		}
 	}
 	return btn.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
@@ -183,10 +259,15 @@ func styledActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, f
 	btn := ui.ButtonBase(c).
 		Height(height).PaddingX(padX).Radius(dsRadiusSM).
 		Background(bg).
-		Disabled(disabled)
-	if !disabled && btn.Hovered() {
-		fg = hoverFg
-		btn.Background(hoverBg)
+		Disabled(disabled).DimDisabled(false)
+	if !disabled {
+		if btn.Pressed() {
+			fg = hoverFg
+			btn.Background(p.borderSubtle)
+		} else if btn.Hovered() {
+			fg = hoverFg
+			btn.Background(hoverBg)
+		}
 	}
 	return btn.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(gap).TextColor(fg).Children(func() {
@@ -207,11 +288,11 @@ func compactSubtleActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label st
 }
 
 func compactDangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string) ui.Element {
-	return styledActionChip(c, p, iconSVG, label, p.red, p.redBg, p.red, p.red.Alpha(0.22), false, true)
+	return styledActionChip(c, p, iconSVG, label, p.redText, p.redBg, p.redText, p.red.Alpha(0.22), false, true)
 }
 
 func dangerActionChip(c *ui.Context, p palette, iconSVG *ui.SVG, label string, disabled bool) ui.Element {
-	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.red, p.redBg, disabled, false)
+	return styledActionChip(c, p, iconSVG, label, p.textMuted, ui.Transparent, p.redText, p.redBg, disabled, false)
 }
 
 func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, bg ui.Color, disabled bool) ui.Element {
@@ -224,9 +305,21 @@ func primaryPillButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string, 
 	btn := ui.ButtonBase(c).
 		Height(dsHeightControl).PaddingX(13).Radius(dsRadiusMD).
 		Background(fillBg).
-		Disabled(disabled)
-	if !disabled && btn.Hovered() {
-		btn.Background(bg.Alpha(0.88))
+		Disabled(disabled).DimDisabled(false)
+	if !disabled {
+		if btn.Pressed() {
+			if bg == p.accent {
+				btn.Background(p.accentPressed)
+			} else {
+				btn.Background(bg.Alpha(0.76))
+			}
+		} else if btn.Hovered() {
+			if bg == p.accent {
+				btn.Background(p.accentHover)
+			} else {
+				btn.Background(bg.Alpha(0.88))
+			}
+		}
 	}
 	return btn.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).TextColor(fg).Children(func() {
@@ -321,6 +414,9 @@ func renderSegmentedTrack(c *ui.Context, p palette, selected *int, opts []segmen
 					seg.Background(p.card).
 						Shadow(0, 1, shBlur, 0, ui.RGBA(0, 0, 0, shAlpha))
 				}
+			} else if seg.Pressed() {
+				fg = p.text
+				seg.Background(p.borderSubtle)
 			} else if seg.Hovered() {
 				fg = p.text
 				if p.dark {
@@ -437,7 +533,7 @@ func comboboxField(c *ui.Context, p palette, key, label, toggleLabel string, val
 				Radius(t.Radius+2).
 				Background(p.card).
 				Border(1, p.border).
-				Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18)).
+				Shadow(p.dropdownShadow()).
 				Children(func() {
 					cur := strings.TrimSpace(*value)
 					for _, opt := range shown {
@@ -562,9 +658,14 @@ func quietToolbarButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string,
 	}
 	btn := ui.ButtonBase(c).
 		Height(dsHeightControl).PaddingX(10).Radius(dsRadiusMD).
-		Background(p.card).Border(1, p.border)
-	if !dimmed && btn.Hovered() {
-		btn.Background(p.cardHover)
+		Background(p.card).Border(1, p.border).
+		AccessDisabled(dimmed)
+	if !dimmed {
+		if btn.Pressed() {
+			btn.Background(p.elevated)
+		} else if btn.Hovered() {
+			btn.Background(p.cardHover)
+		}
 	}
 	return btn.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(5).TextColor(fg).Children(func() {
@@ -591,7 +692,10 @@ func quietToolbarIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label str
 		Label(label).
 		Size(dsHeightControl, dsHeightControl).Radius(dsRadiusMD).
 		Background(bg).Border(1, p.border)
-	if btn.Hovered() {
+	if btn.Pressed() {
+		btn.Background(p.elevated)
+		fg = p.text
+	} else if btn.Hovered() {
 		btn.Background(p.cardHover)
 		fg = p.text
 	}
@@ -612,10 +716,16 @@ func quietRowIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string,
 	btn := ui.ButtonBase(c).
 		Label(label).
 		Size(dsHeightRowAction, dsHeightRowAction).Radius(dsRadiusSM).
-		Background(bg)
-	if !dimmed && btn.Hovered() {
-		fg = p.text
-		btn.Background(p.elevated)
+		Background(bg).
+		AccessDisabled(dimmed)
+	if !dimmed {
+		if btn.Pressed() {
+			fg = p.text
+			btn.Background(p.borderSubtle)
+		} else if btn.Hovered() {
+			fg = p.text
+			btn.Background(p.elevated)
+		}
 	}
 	return btn.Children(func() {
 		ui.Icon(c, iconSVG).Size(14, 14).TextColor(fg)
@@ -624,26 +734,28 @@ func quietRowIconButton(c *ui.Context, p palette, iconSVG *ui.SVG, label string,
 
 func compactStripButton(c *ui.Context, p palette, a11yLabel, text string, fg ui.Color) ui.Element {
 	btn := ui.ButtonBase(c).
-		Padding(4, 8, 4, 8).Radius(6).
+		Padding(4, 8, 4, 8).Radius(dsRadiusSM).
 		Background(p.elevated)
 	if a11yLabel != "" {
 		btn.Label(a11yLabel)
 	}
-	if btn.Hovered() {
+	if btn.Pressed() {
+		btn.Background(p.borderSubtle)
+	} else if btn.Hovered() {
 		btn.Background(p.cardHover)
 	}
 	return btn.Children(func() {
-		ui.Text(c, text).FontSize(11).FontWeight(500).TextColor(fg).NoWrap()
+		ui.Text(c, text).FontSize(dsFontCaption).FontWeight(500).TextColor(fg).NoWrap()
 	})
 }
 
 func styleMenuPopoverPanel(panel, anchor ui.Element, p palette, width float32) {
 	panel.Column().
 		AttachTo(anchor, ui.AnchorBottomEnd, ui.AnchorTopEnd).
-		Margin(4, 0, 0, 0).
-		Width(width).Padding(4).Radius(10).
+		Margin(dsSpaceXS, 0, 0, 0).
+		Width(width).Padding(dsSpaceXS).Radius(dsRadiusLG).
 		Background(p.card).Border(1, p.border).
-		Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+		Shadow(p.popoverShadow())
 }
 
 func popoverMenuItem(c *ui.Context, p palette, label string, fg ui.Color, dimmed, danger bool) ui.Element {
@@ -652,21 +764,31 @@ func popoverMenuItem(c *ui.Context, p palette, label string, fg ui.Color, dimmed
 		textCol = p.textDim.Alpha(0.5)
 	}
 	btn := ui.ButtonBase(c).
-		FillWidth().Height(30).PaddingX(10).Radius(6).
+		FillWidth().Height(30).PaddingX(10).Radius(dsRadiusSM).
 		Justify(ui.Start).AlignItems(ui.Center).
 		Background(ui.Transparent)
 	if danger && dimmed {
-		btn.Disabled(true)
+		btn.Disabled(true).DimDisabled(false)
+	} else if dimmed {
+		btn.AccessDisabled(true)
 	}
-	if !dimmed && btn.Hovered() {
-		if danger {
-			btn.Background(p.redBg)
-		} else {
-			btn.Background(p.elevated)
+	if !dimmed {
+		if btn.Pressed() {
+			if danger {
+				btn.Background(p.red.Alpha(0.24))
+			} else {
+				btn.Background(p.borderSubtle)
+			}
+		} else if btn.Hovered() {
+			if danger {
+				btn.Background(p.redBg)
+			} else {
+				btn.Background(p.elevated)
+			}
 		}
 	}
 	return btn.Children(func() {
-		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(textCol).NoWrap()
+		ui.Text(c, label).FontSize(dsFontBody).FontWeight(500).TextColor(textCol).NoWrap()
 	})
 }
 

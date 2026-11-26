@@ -30,6 +30,7 @@
   "routingDirect": "直连",
   "routingBlock": "拦截阻断",
   "routingProxyPool": "全局活跃代理池",
+  "routingOnlineCount": "{count} 在线",
   "newRule": "新建规则",
   "editRule": "编辑规则",
   "editFinalRule": "编辑兜底出站策略",

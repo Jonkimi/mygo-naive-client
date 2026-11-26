@@ -182,17 +182,9 @@ func renderSettingsHelpButtonWithPopover(c *ui.Context, p palette, btnKey, btnLa
 			onToggle()
 		}
 	}
-	ui.PopoverBase(c, helpBtn, open, func(panel ui.Element) {
-		panel.Column().
-			AttachTo(helpBtn, ui.AnchorBottomStart, ui.AnchorTopStart).
-			Margin(6, 0, 0, 0).
-			Width(320).Padding(12).Gap(6).Radius(10).
-			Background(p.card).Border(1, p.border).
-			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.22)).
-			Children(func() {
-				ui.Text(c, popTitle).FontSize(12).FontWeight(700).TextColor(p.text)
-				ui.Text(c, popDesc).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-			})
+	dsHelpPopover(c, p, helpBtn, open, 320, ui.AnchorBottomStart, ui.AnchorTopStart, func() {
+		ui.Text(c, popTitle).FontSize(dsFontBody).FontWeight(700).TextColor(p.text)
+		ui.Text(c, popDesc).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(1.4)
 	})
 }
 
@@ -209,24 +201,19 @@ func (a *app) renderSettingsPage(c *ui.Context, p palette) {
 
 	ui.Column(c.Key("settings-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// 1. Fixed Top Header with 4-Tab Segmented Navigation
-		ui.Row(c.Key("settings-header")).
-			Padding(12, 20, 12, 20).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().
-			Background(p.surface).
-			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-			Children(func() {
-				ui.Text(c, cat.SettingsTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
-
-				tabLabels := []string{
-					cat.SettingsTabGeneral(),
-					cat.SettingsTabGateway(),
-					cat.SettingsTabCore(),
-					cat.SettingsTabTelemetry(),
-				}
-				ui.Row(c).Shrink(0).MaxWidthPercent(100).Children(func() {
-					segmentedControl(c.Key("settings-subtab-ctrl"), p, &a.settingsSubTab, tabLabels)
-				})
+		dsPageHeader(c, p, "settings-header", true, func() {
+			dsPageTitle(c, p, cat.SettingsTitle())
+		}, func() {
+			tabLabels := []string{
+				cat.SettingsTabGeneral(),
+				cat.SettingsTabGateway(),
+				cat.SettingsTabCore(),
+				cat.SettingsTabTelemetry(),
+			}
+			ui.Row(c).Shrink(0).MaxWidthPercent(100).Children(func() {
+				segmentedControl(c.Key("settings-subtab-ctrl"), p, &a.settingsSubTab, tabLabels)
 			})
+		})
 
 		// 2. Scrollable Centered Content Column (MaxWidth 700)
 		ui.Scroll(c.Key("settings-page-scroll")).
@@ -327,10 +314,10 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 				if gw != nil && a.state.GatewayEnabled {
 					statusDot(c, p.green)
 					ui.Text(c, "Running :"+fmt.Sprint(a.state.GatewayPort)).
-						FontSize(12).FontWeight(500).FontFeatures("tnum").TextColor(p.green).NoWrap()
+						FontSize(12).FontWeight(500).FontFeatures("tnum").TextColor(p.greenText).NoWrap()
 				} else if a.state.GatewayEnabled && gwErr != nil {
 					statusDot(c, p.red)
-					ui.Text(c, cat.StatusError()).FontSize(12).FontWeight(500).TextColor(p.red).NoWrap()
+					ui.Text(c, cat.StatusError()).FontSize(12).FontWeight(500).TextColor(p.redText).NoWrap()
 				} else {
 					hollowStatusDot(c, p.textDim.Alpha(0.5))
 					ui.Text(c, cat.StatusStopped()).FontSize(12).TextColor(p.textDim).NoWrap()
@@ -353,7 +340,7 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Wrap().
 				Padding(8, 10, 8, 10).Radius(6).
 				Background(p.redBg).Border(1, p.red.Alpha(0.25)).Children(func() {
-				ui.Text(c, cat.ErrorPrefix()+gwErr.Error()).FontSize(11).TextColor(p.red).Grow(1).Shrink(1).MinWidth(0)
+				ui.Text(c, cat.ErrorPrefix()+gwErr.Error()).FontSize(11).TextColor(p.redText).Grow(1).Shrink(1).MinWidth(0)
 				btnRetry := quietToolbarButton(c.Key("page-btn-retry-gw"), p, iconRefresh, cat.ActionRetry(), false).
 					Label(cat.ActionRetry()).Height(28)
 				if btnRetry.Clicked() {
@@ -488,7 +475,7 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 		ui.Row(c).Padding(0, 0, 12, 0).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
 			ui.Text(c, cat.TriCoreSectionTitle()).FontSize(14).FontWeight(600).TextColor(p.text)
 			btnCheck := quietToolbarButton(c.Key("page-btn-check-core"), p, iconRefresh, cat.CheckUpdates(), busy).
-				Label(cat.CheckUpdates()).Height(28).Disabled(busy)
+				Label(cat.CheckUpdates()).Height(28).Disabled(busy).DimDisabled(false)
 			if !busy && btnCheck.Clicked() {
 				a.triggerCheckUpdate(true)
 			}
@@ -503,7 +490,7 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 				ui.Column(c).Gap(2).Grow(1).Shrink(1).MinWidth(0).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Wrap().Children(func() {
 						ui.Text(c, "sing-box "+sbVer).Font("monospace").FontSize(13).FontWeight(600).FontFeatures("tnum").TextColor(p.text)
-						ui.Text(c, cat.CoreSingBoxStatus()).FontSize(11).FontWeight(500).TextColor(p.green).NoWrap()
+						ui.Text(c, cat.CoreSingBoxStatus()).FontSize(11).FontWeight(500).TextColor(p.greenText).NoWrap()
 					})
 					ui.Text(c, cat.CoreSingBoxDesc()).FontSize(11).TextColor(p.textDim)
 				})
@@ -526,12 +513,12 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Wrap().Children(func() {
 							ui.Text(c, cat.CoreNaiveTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
 							if a.localVersion == "" {
-								ui.Text(c, cat.CoreNotInstalled()).FontSize(11).FontWeight(500).TextColor(p.amber).NoWrap()
+								ui.Text(c, cat.CoreNotInstalled()).FontSize(11).FontWeight(500).TextColor(p.amberText).NoWrap()
 							} else {
-								ui.Text(c, cat.CoreLocal()+a.localVersion).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(p.green).NoWrap()
+								ui.Text(c, cat.CoreLocal()+a.localVersion).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(p.greenText).NoWrap()
 							}
 							if a.hasUpdate && a.latestRelease != nil {
-								ui.Text(c, cat.CoreNewVersion(a.latestRelease.TagName)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.amber).NoWrap()
+								ui.Text(c, cat.CoreNewVersion(a.latestRelease.TagName)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.amberText).NoWrap()
 							}
 						})
 						ui.Text(c, cat.CoreNaiveDesc()).FontSize(11).TextColor(p.textDim)
@@ -599,12 +586,12 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Wrap().Children(func() {
 							ui.Text(c, cat.CoreXrayTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
 							if a.localXrayVersion == "" {
-								ui.Text(c, cat.XrayNotInstalled()).FontSize(11).FontWeight(500).TextColor(p.amber).NoWrap()
+								ui.Text(c, cat.XrayNotInstalled()).FontSize(11).FontWeight(500).TextColor(p.amberText).NoWrap()
 							} else {
-								ui.Text(c, cat.XrayLocal()+a.localXrayVersion).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(p.green).NoWrap()
+								ui.Text(c, cat.XrayLocal()+a.localXrayVersion).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(p.greenText).NoWrap()
 							}
 							if a.hasXrayUpdate && a.latestXrayRelease != nil {
-								ui.Text(c, cat.CoreNewVersion(a.latestXrayRelease.TagName)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.amber).NoWrap()
+								ui.Text(c, cat.CoreNewVersion(a.latestXrayRelease.TagName)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.amberText).NoWrap()
 							}
 						})
 						ui.Text(c, cat.CoreXrayDesc()).FontSize(11).TextColor(p.textDim)
@@ -671,14 +658,14 @@ func (a *app) renderSettingsCoreTab(c *ui.Context, p palette) {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Wrap().Children(func() {
 						ui.Text(c, cat.GeodataSectionTitle()).FontSize(13).FontWeight(600).TextColor(p.text)
 						if !a.hasGeoData() {
-							ui.Text(c, cat.GeodataStatusMissing()).FontSize(11).FontWeight(500).TextColor(p.amber).NoWrap()
+							ui.Text(c, cat.GeodataStatusMissing()).FontSize(11).FontWeight(500).TextColor(p.amberText).NoWrap()
 						} else if a.localGeodataVersion != "" {
-							ui.Text(c, cat.GeodataLocal()+a.localGeodataVersion).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(p.green).NoWrap()
+							ui.Text(c, cat.GeodataLocal()+a.localGeodataVersion).Font("monospace").FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(p.greenText).NoWrap()
 						} else {
-							ui.Text(c, cat.GeodataStatusReady()).FontSize(11).FontWeight(500).TextColor(p.green).NoWrap()
+							ui.Text(c, cat.GeodataStatusReady()).FontSize(11).FontWeight(500).TextColor(p.greenText).NoWrap()
 						}
 						if a.hasGeodataUpdate && a.latestGeodataRelease != nil {
-							ui.Text(c, cat.CoreNewVersion(a.latestGeodataRelease.TagName)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.amber).NoWrap()
+							ui.Text(c, cat.CoreNewVersion(a.latestGeodataRelease.TagName)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.amberText).NoWrap()
 						}
 					})
 					ui.Text(c, cat.GeodataDesc()).FontSize(11).TextColor(p.textDim)

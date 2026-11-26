@@ -148,23 +148,18 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 	runningCount := a.activeRunningCount()
 	totalCount := len(a.state.Services)
 
-	ui.Row(c.Key("nodes-header")).
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
-		Padding(14, 18, 14, 18).
-		Background(p.surface).
-		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-		Children(func() {
-			// Left: Page title & quiet tabular running summary
-			ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
-				ui.Text(c, cat.NavNodes()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
-				if totalCount > 0 {
-					ui.Text(c, cat.NodesRunningSummary(runningCount, totalCount)).
-						FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
-				}
-			})
-
-			// Right: Search + quiet secondary actions + optional batch overflow + single primary CTA
-			ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
+	dsPageHeader(c, p, "nodes-header", false, func() {
+		// Left: Page title & quiet tabular running summary
+		ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
+			dsPageTitle(c, p, cat.NavNodes())
+			if totalCount > 0 {
+				ui.Text(c, cat.NodesRunningSummary(runningCount, totalCount)).
+					FontSize(dsFontBody).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
+			}
+		})
+	}, func() {
+		// Right: Search + quiet secondary actions + optional batch overflow + single primary CTA
+		ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Shrink(0).Children(func() {
 				if totalCount > 0 {
 					ui.SearchField(c.Key("input-nodes-search"), &a.searchQuery).
 						Placeholder(cat.SearchPlaceholder()).
@@ -231,13 +226,13 @@ func (a *app) renderToolbar(c *ui.Context, p palette) {
 					})
 				}
 
-				if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewNode(), p.accent, false).Clicked() {
-					a.openNodeMenuID = ""
-					a.openBatchMenu = false
-					a.openCreateServiceDialog()
-				}
-			})
+		if primaryPillButton(c.Key("btn-new-service"), p, iconPlus, cat.NewNode(), p.accent, false).Clicked() {
+			a.openNodeMenuID = ""
+			a.openBatchMenu = false
+			a.openCreateServiceDialog()
+		}
 		})
+	})
 }
 
 func (a *app) filteredServices() []config.Service {
@@ -626,13 +621,13 @@ func (a *app) renderServiceTelemetryColumn(c *ui.Context, p palette, svc config.
 				if rt.DownloadSpeed > 0 {
 					txt = "↓ " + runner.FormatSpeed(rt.DownloadSpeed)
 				}
-				ui.Text(c, txt).FontSize(11).FontFeatures("tnum").TextAlign(ui.End).TextColor(p.amber).NoWrap()
+				ui.Text(c, txt).FontSize(11).FontFeatures("tnum").TextAlign(ui.End).TextColor(p.amberText).NoWrap()
 			} else if rt.SpeedError != "" {
 				txt := cat.DownloadFailed()
 				if isWarpUnreachable(rt.SpeedError) {
 					txt = cat.WarpServerUnreachablePill()
 				}
-				ui.Text(c, txt).FontSize(11).TextAlign(ui.End).TextColor(p.red).NoWrap().Tooltip(rt.SpeedError)
+				ui.Text(c, txt).FontSize(11).TextAlign(ui.End).TextColor(p.redText).NoWrap().Tooltip(rt.SpeedError)
 			} else if rt.DownloadSpeed > 0 {
 				ui.Text(c, "↓ "+runner.FormatSpeed(rt.DownloadSpeed)).FontSize(11).FontFeatures("tnum").TextAlign(ui.End).TextColor(p.textDim).NoWrap()
 			}
@@ -648,14 +643,14 @@ func (a *app) serviceLatencyDisplay(p palette, svc config.Service, rt runner.Sta
 		if rt.AutoProbing {
 			return cat.AutoProbingShort(), p.textMuted, cat.AutoProbing()
 		}
-		return cat.LatencyTestingShort(), p.amber, cat.LatencyTesting()
+		return cat.LatencyTestingShort(), p.amberText, cat.LatencyTesting()
 	}
 	if rt.ProbeError != "" {
 		txt := cat.LatencyFailed()
 		if isWarpUnreachable(rt.ProbeError) {
 			txt = cat.WarpServerUnreachablePill()
 		}
-		return txt, p.red, rt.ProbeError
+		return txt, p.redText, rt.ProbeError
 	}
 
 	ms, ewmaMs, probeMs := a.nodeLatencyMs(svc.ID, rt)
@@ -679,12 +674,12 @@ func (a *app) serviceLatencyDisplay(p palette, svc config.Service, rt runner.Sta
 
 func latencyThresholdColor(p palette, ms int) ui.Color {
 	if ms >= 250 {
-		return p.red
+		return p.redText
 	}
 	if ms >= 120 {
-		return p.amber
+		return p.amberText
 	}
-	return p.green
+	return p.greenText
 }
 
 func (a *app) renderNodeOverflowMenu(c *ui.Context, panel, anchor ui.Element, p palette, svc config.Service, rt runner.Status, canTest bool) {
@@ -757,10 +752,10 @@ func (a *app) renderNodeOverflowMenu(c *ui.Context, panel, anchor ui.Element, p 
 		ui.Box(c).Height(1).Margin(4, 6, 4, 6).Background(p.borderSubtle)
 
 		if svc.IsBuiltinWarp() {
-			popoverMenuItem(c.Key("menu-delete"), p, cat.ActionDeleteNode(), p.red, true, true).
+			popoverMenuItem(c.Key("menu-delete"), p, cat.ActionDeleteNode(), p.redText, true, true).
 				Tooltip(cat.BuiltinWarpDeleteTooltip())
 		} else {
-			if popoverMenuItem(c.Key("menu-delete"), p, cat.ActionDeleteNode(), p.red, false, true).Clicked() {
+			if popoverMenuItem(c.Key("menu-delete"), p, cat.ActionDeleteNode(), p.redText, false, true).Clicked() {
 				a.openNodeMenuID = ""
 				a.openDeleteServiceDialog(svc)
 			}
@@ -799,8 +794,8 @@ func (a *app) renderServiceErrorStrip(c *ui.Context, p palette, svc config.Servi
 
 	strip.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Shrink(1).MinWidth(0).Children(func() {
-			ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.red).Shrink(0)
-			ui.Text(c, displayErr).FontSize(11).FontWeight(500).TextColor(p.red).
+			ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.redText).Shrink(0)
+			ui.Text(c, displayErr).FontSize(11).FontWeight(500).TextColor(p.redText).
 				Grow(1).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(displayErr)
 		})
 
@@ -878,10 +873,10 @@ func (a *app) renderServiceUnhealthyStrip(c *ui.Context, p palette, svc config.S
 
 	strip.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Shrink(1).MinWidth(0).Children(func() {
-			ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.amber).Shrink(0)
-			ui.Text(c, cat.StatusUnhealthy()).FontSize(11).FontWeight(700).TextColor(p.amber).NoWrap().Shrink(0)
-			ui.Text(c, "·").FontSize(11).TextColor(p.amber.Alpha(0.6)).NoWrap().Shrink(0)
-			ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(11).FontWeight(600).TextColor(p.amber).NoWrap().Shrink(0)
+			ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.amberText).Shrink(0)
+			ui.Text(c, cat.StatusUnhealthy()).FontSize(11).FontWeight(700).TextColor(p.amberText).NoWrap().Shrink(0)
+			ui.Text(c, "·").FontSize(11).TextColor(p.amberText.Alpha(0.6)).NoWrap().Shrink(0)
+			ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(11).FontWeight(600).TextColor(p.amberText).NoWrap().Shrink(0)
 			ui.Text(c, hint).FontSize(11).TextColor(p.textMuted).
 				Grow(1).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(hint)
 		})
@@ -903,24 +898,6 @@ func (a *app) renderServiceUnhealthyStrip(c *ui.Context, p palette, svc config.S
 		})
 	})
 	_ = strip.Clicked()
-}
-
-func (a *app) renderRuntimeStatusBadge(c *ui.Context, p palette, st runner.State, isUnhealthy ...bool) {
-	cat := a.catalog()
-	if len(isUnhealthy) > 0 && isUnhealthy[0] && st == runner.StateRunning {
-		statusBadge(c, cat.StatusUnhealthy(), p.amber, p.amberBg)
-		return
-	}
-	switch st {
-	case runner.StateRunning:
-		statusBadge(c, cat.StatusRunning(), p.green, p.greenBg)
-	case runner.StateStarting:
-		statusBadge(c, cat.StatusStarting(), p.amber, p.amberBg)
-	case runner.StateError:
-		statusBadge(c, cat.StatusError(), p.red, p.redBg)
-	default:
-		statusBadge(c, cat.StatusStopped(), p.textMuted, p.elevated)
-	}
 }
 
 func nodeProtocolDisplayName(p config.Protocol) string {

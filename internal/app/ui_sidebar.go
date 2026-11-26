@@ -69,7 +69,7 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	if collapsed {
 		ui.Column(c).AlignItems(ui.Center).Padding(4, 0, 6, 0).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
-				Size(collapsedTileSize, collapsedTileSize).Radius(8).Background(p.accentBg).
+				Size(collapsedTileSize, collapsedTileSize).Radius(dsRadiusMD).Background(p.accentBg).
 				Children(func() {
 					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
 				})
@@ -80,11 +80,11 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 	ui.Row(c).AlignItems(ui.Center).Padding(4, 2, 6, 2).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Justify(ui.Center).
-				Size(collapsedTileSize, collapsedTileSize).Radius(8).Background(p.accentBg).
+				Size(collapsedTileSize, collapsedTileSize).Radius(dsRadiusMD).Background(p.accentBg).
 				Children(func() {
 					ui.Image(c, iconBrandFor(p.dark)).Size(18, 18)
 				})
-			ui.Text(c, "NaiveClient").FontSize(15).FontWeight(700).TextColor(p.text).NoWrap()
+			ui.Text(c, "NaiveClient").FontSize(dsFontDrawerTitle).FontWeight(700).TextColor(p.text).NoWrap()
 		})
 	})
 }
@@ -95,14 +95,16 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 	if collapsed {
 		btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
 			Label(cat.SidebarExpand()).
-			Size(collapsedTileSize, collapsedTileSize).Radius(8).
+			Size(collapsedTileSize, collapsedTileSize).Radius(dsRadiusMD).
 			Background(ui.Transparent).
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(cat.SidebarExpand() + " (⌘B)").
 			Children(func() {
 				ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.textDim)
 			})
-		if btn.Hovered() {
+		if btn.Pressed() {
+			btn.Background(p.elevated)
+		} else if btn.Hovered() {
 			btn.Background(p.cardHover)
 		}
 		if btn.Clicked() {
@@ -111,23 +113,25 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 		return
 	}
 
-	btn := ui.Row(c.Key("btn-sidebar-toggle-bottom")).
-		Fill().
+	btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
 		Label(cat.SidebarCollapse()).
+		FillWidth().
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		Height(collapsedTileSize).PaddingX(10).Radius(8).
+		Height(collapsedTileSize).PaddingX(10).Radius(dsRadiusMD).
 		Background(ui.Transparent).
 		Tooltip(cat.SidebarCollapse() + " (⌘B)").
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
 				ui.Icon(c, iconSidebarCollapse).Size(16, 16).TextColor(p.textDim)
-				ui.Text(c, cat.SidebarCollapse()).FontSize(12).TextColor(p.textMuted).NoWrap()
+				ui.Text(c, cat.SidebarCollapse()).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
 			})
 			ui.Row(c).Width(24).Justify(ui.Start).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "⌘B").FontSize(11).TextColor(p.textDim).NoWrap()
+				ui.Text(c, "⌘B").FontSize(dsFontCaption).TextColor(p.textDim).NoWrap()
 			})
 		})
-	if btn.Hovered() {
+	if btn.Pressed() {
+		btn.Background(p.elevated)
+	} else if btn.Hovered() {
 		btn.Background(p.cardHover)
 	}
 	if btn.Clicked() {
@@ -152,7 +156,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 		tip := fmt.Sprintf("%s (%s)", label, shortcut)
 		btn := ui.ButtonBase(c.Key(key)).
 			Label(label).
-			Size(collapsedTileSize, collapsedTileSize).Radius(8).
+			Size(collapsedTileSize, collapsedTileSize).Radius(dsRadiusMD).
 			Background(bg).
 			AlignItems(ui.Center).Justify(ui.Center).
 			Tooltip(tip).
@@ -161,11 +165,15 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 					ui.Icon(c, icon).Size(16, 16).TextColor(fg)
 				}
 				if hasBadge {
-					ui.Box(c).Absolute().Top(6).Right(6).Size(6, 6).Radius(999).Background(p.amber)
+					ui.Box(c).Absolute().Top(6).Right(6).Size(6, 6).Radius(dsRadiusPill).Background(p.amber)
 				}
 			})
-		if !active && btn.Hovered() {
-			btn.Background(p.cardHover)
+		if !active {
+			if btn.Pressed() {
+				btn.Background(p.elevated)
+			} else if btn.Hovered() {
+				btn.Background(p.cardHover)
+			}
 		}
 		if btn.Clicked() {
 			a.activeTab = tab
@@ -173,28 +181,33 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 		return
 	}
 
-	btn := ui.Row(c.Key(key)).
-		Fill().
+	btn := ui.ButtonBase(c.Key(key)).
+		Label(label).
+		FillWidth().
 		AlignItems(ui.Center).Justify(ui.SpaceBetween).
-		Height(collapsedTileSize).PaddingX(10).Radius(8).
+		Height(collapsedTileSize).PaddingX(10).Radius(dsRadiusMD).
 		Background(bg).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
 				if icon != nil {
 					ui.Icon(c, icon).Size(16, 16).TextColor(fg)
 				}
-				ui.Text(c, label).FontSize(13).FontWeight(weight).TextColor(fg).NoWrap()
+				ui.Text(c, label).FontSize(dsFontSectionTitle).FontWeight(weight).TextColor(fg).NoWrap()
 				if hasBadge {
-					ui.Box(c).Size(6, 6).Radius(999).Background(p.amber)
+					ui.Box(c).Size(6, 6).Radius(dsRadiusPill).Background(p.amber)
 				}
 			})
 			ui.Row(c).Width(24).Justify(ui.Start).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, shortcut).FontSize(11).TextColor(p.textDim).NoWrap()
+				ui.Text(c, shortcut).FontSize(dsFontCaption).TextColor(p.textDim).NoWrap()
 			})
 		})
 
-	if !active && btn.Hovered() {
-		btn.Background(p.cardHover)
+	if !active {
+		if btn.Pressed() {
+			btn.Background(p.elevated)
+		} else if btn.Hovered() {
+			btn.Background(p.cardHover)
+		}
 	}
 	if btn.Clicked() {
 		a.activeTab = tab
@@ -241,7 +254,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		if a.state.GatewayEnabled && gwErr != nil {
 			gwDotColor = p.red
 			gwBadgeText = cat.StatusError()
-			gwBadgeFg = p.red
+			gwBadgeFg = p.redText
 			gwBadgeBg = p.redBg
 		} else {
 			gwBadgeText = cat.TailnetModeOff()
@@ -253,22 +266,23 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	if missingCore {
 		gwDotColor = p.amber
 		gwBadgeText = cat.EngineMissingSidecar()
-		gwBadgeFg = p.amber
+		gwBadgeFg = p.amberText
 		gwBadgeBg = p.amberBg
 	} else if hasAnyUpdate {
 		gwDotColor = p.amber
 		gwBadgeText = cat.UpdateAvailableBadge()
-		gwBadgeFg = p.amber
+		gwBadgeFg = p.amberText
 		gwBadgeBg = p.amberBg
 	}
 
+	tp := darkPalette
 	gwDetail := gwAddr
-	gwTipColor := ui.RGB(52, 211, 153) // emerald-400
+	gwTipColor := tp.greenText
 	if !gwRunning {
 		gwDetail = cat.TailnetModeOff()
-		gwTipColor = ui.RGB(148, 163, 184) // slate-400
+		gwTipColor = tp.textMuted
 	} else if missingCore || hasAnyUpdate {
-		gwTipColor = ui.RGB(251, 191, 36) // amber-400
+		gwTipColor = tp.amberText
 	}
 
 	// Tailnet status
@@ -306,7 +320,7 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		case "NeedsLogin":
 			tsDotColor = p.amber
 			tsBadgeText = cat.TailnetStatusNeedsLogin()
-			tsBadgeFg = p.amber
+			tsBadgeFg = p.amberText
 			tsBadgeBg = p.amberBg
 		case "Starting":
 			tsDotColor = p.amber
@@ -328,13 +342,13 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		tsDetail = cat.TailnetStatusConnected()
 	}
 
-	tsTipColor := ui.RGB(148, 163, 184) // slate-400 (offline / 未启用)
+	tsTipColor := tp.textMuted
 	if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) {
 		switch ts.BackendState {
 		case "Running":
-			tsTipColor = ui.RGB(52, 211, 153) // emerald-400
+			tsTipColor = tp.greenText
 		case "NeedsLogin", "Starting":
-			tsTipColor = ui.RGB(251, 191, 36) // amber-400
+			tsTipColor = tp.amberText
 		}
 	}
 
@@ -356,92 +370,92 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 	renderSidebarTooltip := func(anchor ui.Element) {
 		ui.TooltipBase(c, anchor, func(tip ui.Element) {
 			tip.AttachTo(anchor, ui.AnchorRight, ui.AnchorLeft).
-				Margin(0, 0, 0, 8).
-				Padding(10, 12, 10, 12).Radius(8).
-				Background(ui.RGB(15, 23, 42)). // slate-900
-				Border(1, ui.RGB(51, 65, 85)).   // slate-700
-				Shadow(0, 8, 20, 0, ui.RGBA(0, 0, 0, 0.35)).
+				Margin(0, 0, 0, dsSpaceMD).
+				Padding(10, 12, 10, 12).Radius(dsRadiusMD).
+				Background(tp.card).
+				Border(1, tp.border).
+				Shadow(tp.popoverShadow()).
 				Children(func() {
-					ui.Column(c).Gap(6).Width(210).Children(func() {
+					ui.Column(c).Gap(dsSpaceSM).Width(210).Children(func() {
 						// Section 1: Gateway & Working mode
-						ui.Column(c).Gap(4).Children(func() {
+						ui.Column(c).Gap(dsSpaceXS).Children(func() {
 							// Line 1: Gateway
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-									ui.Box(c).Size(6, 6).Radius(999).Background(gwDotColor)
-									ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(ui.RGB(248, 250, 252))
+								ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+									ui.Box(c).Size(6, 6).Radius(dsRadiusPill).Background(gwDotColor)
+									ui.Text(c, cat.MasterGateway()).FontSize(dsFontCaption).FontWeight(600).TextColor(tp.text)
 								})
-								ui.Text(c, gwDetail).FontSize(11).TextColor(gwTipColor)
+								ui.Text(c, gwDetail).FontSize(dsFontCaption).TextColor(gwTipColor)
 							})
 
 							// Line 1b: Working mode (belongs to Gateway)
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Text(c, cat.TrafficModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
-								ui.Text(c, activeModeLabel).FontSize(11).FontWeight(600).TextColor(ui.RGB(147, 197, 253)) // blue-300
+								ui.Text(c, cat.TrafficModeLabel()).FontSize(dsFontCaption).TextColor(tp.textMuted)
+								ui.Text(c, activeModeLabel).FontSize(dsFontCaption).FontWeight(600).TextColor(tp.accentText)
 							})
 
 							// Line 1c: Running nodes count (shown in tooltip)
 							if gwRunning {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-									ui.Text(c, cat.RuleDrawerActiveNodes()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
-									nodeColor := ui.RGB(52, 211, 153)
+									ui.Text(c, cat.RuleDrawerActiveNodes()).FontSize(dsFontCaption).TextColor(tp.textMuted)
+									nodeColor := tp.greenText
 									if runningSidecars == 0 {
-										nodeColor = ui.RGB(148, 163, 184)
+										nodeColor = tp.textMuted
 									}
-									ui.Text(c, cat.RunningCountBadge(runningSidecars)).FontSize(11).TextColor(nodeColor)
+									ui.Text(c, cat.RunningCountBadge(runningSidecars)).FontSize(dsFontCaption).TextColor(nodeColor)
 								})
 							}
 						})
 
 						// Divider 1: separates Gateway from Tailnet
-						ui.Box(c).Fill().Height(1).Background(ui.RGB(51, 65, 85))
+						ui.Box(c).Fill().Height(1).Background(tp.border)
 
 						// Section 2: Tailnet
-						ui.Column(c).Gap(4).Children(func() {
+						ui.Column(c).Gap(dsSpaceXS).Children(func() {
 							// Line 2: Tailnet
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-									ui.Box(c).Size(6, 6).Radius(999).Background(tsDotColor)
-									ui.Text(c, cat.NavTailnet()).FontSize(11).TextColor(ui.RGB(203, 213, 225))
+								ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+									ui.Box(c).Size(6, 6).Radius(dsRadiusPill).Background(tsDotColor)
+									ui.Text(c, cat.NavTailnet()).FontSize(dsFontCaption).TextColor(tp.text)
 								})
-								ui.Text(c, tsDetail).FontSize(11).TextColor(tsTipColor)
+								ui.Text(c, tsDetail).FontSize(dsFontCaption).TextColor(tsTipColor)
 							})
 
 							// Line 2b: Tailnet connection mode (shown in tooltip when connected)
 							if a.state.TailnetEnabled && a.state.TailnetMode != string(tailnet.ModeOff) && ts.BackendState == "Running" && tsModeName != "" {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-									ui.Text(c, cat.TailnetModeLabel()).FontSize(11).TextColor(ui.RGB(148, 163, 184))
-									ui.Text(c, tsModeName).FontSize(11).TextColor(ui.RGB(147, 197, 253)) // blue-300
+									ui.Text(c, cat.TailnetModeLabel()).FontSize(dsFontCaption).TextColor(tp.textMuted)
+									ui.Text(c, tsModeName).FontSize(dsFontCaption).TextColor(tp.accentText)
 								})
 							}
 						})
 
 						// Divider 2: separates Tailnet from Core versions
-						ui.Box(c).Fill().Height(1).Background(ui.RGB(51, 65, 85))
+						ui.Box(c).Fill().Height(1).Background(tp.border)
 
 						// Section 2: Core versions
 						ui.Column(c).Gap(3).Children(func() {
 							// sing-box
 							ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-								ui.Text(c, "sing-box ("+cat.TagBuiltin()+")").FontSize(11).TextColor(ui.RGB(148, 163, 184))
-								ui.Text(c, sbVer).FontSize(11).TextColor(ui.RGB(52, 211, 153))
+								ui.Text(c, "sing-box ("+cat.TagBuiltin()+")").FontSize(dsFontCaption).TextColor(tp.textMuted)
+								ui.Text(c, sbVer).FontSize(dsFontCaption).TextColor(tp.greenText)
 							})
 
 							renderCoreVersion := func(name, statusText string, installed, hasUpd bool) {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-									ui.Text(c, name).FontSize(11).TextColor(ui.RGB(148, 163, 184))
-									col := ui.RGB(226, 232, 240)
+									ui.Text(c, name).FontSize(dsFontCaption).TextColor(tp.textMuted)
+									col := tp.text
 									canUpdate := installed && hasUpd
 									if !installed || canUpdate {
-										col = ui.RGB(251, 191, 36) // amber-400
+										col = tp.amberText
 									}
 									if canUpdate {
 										ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
-											ui.Text(c, statusText).FontSize(11).TextColor(col)
+											ui.Text(c, statusText).FontSize(dsFontCaption).TextColor(col)
 											ui.Icon(c, iconArrowUp).Size(11, 11).TextColor(col)
 										})
 									} else {
-										ui.Text(c, statusText).FontSize(11).TextColor(col)
+										ui.Text(c, statusText).FontSize(dsFontCaption).TextColor(col)
 									}
 								})
 							}
@@ -454,11 +468,11 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 
 							if hasAnyUpdate {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Children(func() {
-									ui.Text(c, cat.UpdateAvailableBadge()).FontSize(10).FontWeight(600).TextColor(ui.RGB(251, 191, 36))
+									ui.Text(c, cat.UpdateAvailableBadge()).FontSize(dsFontMicro).FontWeight(600).TextColor(tp.amberText)
 								})
 							} else if missingCore {
 								ui.Row(c).AlignItems(ui.Center).Justify(ui.End).Children(func() {
-									ui.Text(c, cat.EngineMissingSidecar()).FontSize(10).FontWeight(500).TextColor(ui.RGB(251, 191, 36))
+									ui.Text(c, cat.EngineMissingSidecar()).FontSize(dsFontMicro).FontWeight(500).TextColor(tp.amberText)
 								})
 							}
 						})
@@ -471,13 +485,13 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		card := ui.Column(c.Key("sidebar-engine-pill")).
 			Label(cat.EngineStatusPillTitle()).
 			Width(collapsedTileSize).Height(91).
-			Padding(6, 2, 6, 2).Gap(4).Radius(8).
+			Padding(6, 2, 6, 2).Gap(dsSpaceXS).Radius(dsRadiusMD).
 			Background(p.card).Border(1, p.borderSubtle).
 			AlignItems(ui.Center).
 			Children(func() {
 				// Row 1: Positional 3-bar mode capsule (Left: Port, Center: SysProxy, Right: TUN)
 				ui.Row(c.Key("collapsed-mode-row")).
-					Size(32, 22).Radius(4).
+					Size(32, 22).Radius(dsRadiusXS).
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
@@ -503,7 +517,8 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 								barColor = p.navActiveColor()
 							}
 
-							btn := ui.Column(c.Key("collapsed-mode-btn-" + modeID)).
+							btn := ui.ButtonBase(c.Key("collapsed-mode-btn-" + modeID)).
+								Column().
 								Label(label).
 								Grow(1).Height(22).Radius(3).
 								Background(ui.Transparent).
@@ -512,7 +527,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 								Children(func() {
 									ui.Box(c).Width(6).Height(float32(6+tier*4)).Radius(2).Background(barColor)
 								})
-							if btn.Hovered() {
+							if btn.Pressed() {
+								btn.Background(p.elevated)
+							} else if btn.Hovered() {
 								btn.Background(p.cardHover)
 							}
 							if btn.Clicked() {
@@ -528,13 +545,15 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				// Row 2: Gateway status dot
 				gwBtn := ui.ButtonBase(c.Key("collapsed-gw-dot")).
 					Label(cat.MasterGateway()).
-					Size(28, 22).Radius(4).
+					Size(28, 22).Radius(dsRadiusXS).
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
+						ui.Box(c).Size(7, 7).Radius(dsRadiusPill).Background(gwDotColor)
 					})
-				if gwBtn.Hovered() {
+				if gwBtn.Pressed() {
+					gwBtn.Background(p.elevated)
+				} else if gwBtn.Hovered() {
 					gwBtn.Background(p.cardHover)
 				}
 				if gwBtn.Clicked() {
@@ -548,13 +567,15 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				// Row 3: Tailnet status dot
 				tsBtn := ui.ButtonBase(c.Key("collapsed-ts-dot")).
 					Label(cat.NavTailnet()).
-					Size(28, 22).Radius(4).
+					Size(28, 22).Radius(dsRadiusXS).
 					Background(ui.Transparent).
 					AlignItems(ui.Center).Justify(ui.Center).
 					Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
+						ui.Box(c).Size(7, 7).Radius(dsRadiusPill).Background(tsDotColor)
 					})
-				if tsBtn.Hovered() {
+				if tsBtn.Pressed() {
+					tsBtn.Background(p.elevated)
+				} else if tsBtn.Hovered() {
 					tsBtn.Background(p.cardHover)
 				}
 				if tsBtn.Clicked() {
@@ -565,15 +586,14 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		return
 	}
 
-	// Expanded state: unified 3-row white card
+	// Expanded state: unified 3-row card
 	card := ui.Column(c.Key("sidebar-engine-pill")).
 		Label(cat.EngineStatusPillTitle()).
 		Height(91).
-		Padding(6, 8, 6, 8).Gap(4).Radius(8).
+		Padding(6, 8, 6, 8).Gap(dsSpaceXS).Radius(dsRadiusMD).
 		Background(p.card).Border(1, p.borderSubtle).
 		Children(func() {
 			// Row 1: 3-Way Segmented Working Mode (Left: Port, Center: SysProxy, Right: TUN)
-			// White card background, selected option has a neutral gray pill background
 			ui.Row(c.Key("expanded-mode-row")).
 				Height(22).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
@@ -593,13 +613,17 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 						btn := ui.ButtonBase(c.Key("btn-mode-" + modeID)).
 							Label(label).
 							Grow(1).Justify(ui.Center).AlignItems(ui.Center).
-							Height(22).Radius(4).
+							Height(22).Radius(dsRadiusXS).
 							Background(bg).
 							Children(func() {
-								ui.Text(c, label).FontSize(10).FontWeight(weight).TextColor(fg).NoWrap()
+								ui.Text(c, label).FontSize(dsFontMicro).FontWeight(weight).TextColor(fg).NoWrap()
 							})
-						if !isSelected && btn.Hovered() {
-							btn.Background(p.cardHover)
+						if !isSelected {
+							if btn.Pressed() {
+								btn.Background(p.borderSubtle)
+							} else if btn.Hovered() {
+								btn.Background(p.cardHover)
+							}
 						}
 						if btn.Clicked() {
 							_ = a.setTrafficMode(modeID)
@@ -612,25 +636,28 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 				})
 
 			// Row 2: Gateway status + full address (127.0.0.1:10809)
-			row1 := ui.Row(c.Key("expanded-gw-row")).
+			row1 := ui.ButtonBase(c.Key("expanded-gw-row")).
 				Label(cat.MasterGateway()).
+				FillWidth().
 				Height(22).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(0, 4, 0, 4).Radius(6).
+				Padding(0, 4, 0, 4).Radius(dsRadiusSM).
 				Background(ui.Transparent).
 				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(gwDotColor)
-						ui.Text(c, cat.MasterGateway()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+					ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+						ui.Box(c).Size(7, 7).Radius(dsRadiusPill).Background(gwDotColor)
+						ui.Text(c, cat.MasterGateway()).FontSize(dsFontCaption).FontWeight(600).TextColor(p.text).NoWrap()
 					})
 
 					if gwBadgeText != "" {
 						tagPill(c, gwBadgeText, gwBadgeFg, gwBadgeBg)
 					} else {
-						ui.Text(c, gwAddr).FontSize(11).TextColor(p.textMuted).NoWrap()
+						ui.Text(c, gwAddr).FontSize(dsFontCaption).TextColor(p.textMuted).NoWrap()
 					}
 				})
-			if row1.Hovered() {
+			if row1.Pressed() {
+				row1.Background(p.elevated)
+			} else if row1.Hovered() {
 				row1.Background(p.cardHover)
 			}
 			if row1.Clicked() {
@@ -641,25 +668,28 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 			// Divider: separates Gateway and Tailnet
 			ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
 
-			// Row 3: Tailnet (组网) status
-			row2 := ui.Row(c.Key("expanded-ts-row")).
+			// Row 3: Tailnet status
+			row2 := ui.ButtonBase(c.Key("expanded-ts-row")).
 				Label(cat.NavTailnet()).
+				FillWidth().
 				Height(22).
 				AlignItems(ui.Center).Justify(ui.SpaceBetween).
-				Padding(0, 4, 0, 4).Radius(6).
+				Padding(0, 4, 0, 4).Radius(dsRadiusSM).
 				Background(ui.Transparent).
 				Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Box(c).Size(7, 7).Radius(999).Background(tsDotColor)
-						ui.Text(c, cat.NavTailnet()).FontSize(11).FontWeight(600).TextColor(p.text).NoWrap()
+					ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+						ui.Box(c).Size(7, 7).Radius(dsRadiusPill).Background(tsDotColor)
+						ui.Text(c, cat.NavTailnet()).FontSize(dsFontCaption).FontWeight(600).TextColor(p.text).NoWrap()
 					})
 					if tsIP != "" {
-						ui.Text(c, tsIP).FontSize(11).TextColor(p.textMuted).NoWrap()
+						ui.Text(c, tsIP).FontSize(dsFontCaption).TextColor(p.textMuted).NoWrap()
 					} else if tsBadgeText != "" {
 						tagPill(c, tsBadgeText, tsBadgeFg, tsBadgeBg)
 					}
 				})
-			if row2.Hovered() {
+			if row2.Pressed() {
+				row2.Background(p.elevated)
+			} else if row2.Hovered() {
 				row2.Background(p.cardHover)
 			}
 			if row2.Clicked() {

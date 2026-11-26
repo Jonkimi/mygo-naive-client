@@ -56,59 +56,54 @@ func (a *app) renderCloudflarePage(c *ui.Context, p palette) {
 
 	ui.Column(c.Key("cloudflare-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// 1. Fixed Header row (single quiet status dot + summary, Segmented subtabs)
-		ui.Row(c.Key("cloudflare-header")).
-			Padding(12, 18, 12, 18).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().
-			Background(p.surface).
-			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-			Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().MinWidth(0).Shrink(1).Children(func() {
-					ui.Text(c, cat.NavCloudflare()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+		dsPageHeader(c, p, "cloudflare-header", true, func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().MinWidth(0).Shrink(1).Children(func() {
+				dsPageTitle(c, p, cat.NavCloudflare())
 
-					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
-						if a.cloudflareSubTab == 0 {
-							acc := a.getCloudflareAccount()
-							var statusParts []string
-							switch {
-							case acc.AccountType == "unlimited":
-								statusDot(c, p.green)
-								statusParts = append(statusParts, "WARP+")
-							case acc.IsRegistered():
-								statusDot(c, p.green)
-								statusParts = append(statusParts, cat.CloudflareStatusReady())
-							default:
-								hollowStatusDot(c, p.textDim.Alpha(0.5))
-								statusParts = append(statusParts, cat.CloudflareWarpAccountNotRegistered())
-							}
-							if a.isCnDirectWarpEnabled() {
-								statusParts = append(statusParts, cat.CloudflareStatusDirectTakeover())
-							}
-							ui.Text(c, strings.Join(statusParts, " · ")).
-								FontSize(12).TextColor(p.textMuted).SingleLine().Ellipsis("…")
-						} else {
-							tunCfg := a.state.Cloudflare.Tunnel
-							var tunText string
-							switch {
-							case !tunCfg.Enabled:
-								hollowStatusDot(c, p.textDim.Alpha(0.5))
-								tunText = cat.TailnetModeOff()
-							case a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "":
-								statusDot(c, p.green)
-								tunText = cat.CloudflareTunnelConnected()
-							default:
-								statusDot(c, p.amber)
-								tunText = cat.CloudflareTunnelDisconnected()
-							}
-							ui.Text(c, tunText).FontSize(12).TextColor(p.textMuted).SingleLine().Ellipsis("…")
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).MinWidth(0).Shrink(1).Children(func() {
+					if a.cloudflareSubTab == 0 {
+						acc := a.getCloudflareAccount()
+						var statusParts []string
+						switch {
+						case acc.AccountType == "unlimited":
+							statusDot(c, p.green)
+							statusParts = append(statusParts, "WARP+")
+						case acc.IsRegistered():
+							statusDot(c, p.green)
+							statusParts = append(statusParts, cat.CloudflareStatusReady())
+						default:
+							hollowStatusDot(c, p.textDim.Alpha(0.5))
+							statusParts = append(statusParts, cat.CloudflareWarpAccountNotRegistered())
 						}
-					})
-				})
-
-				ui.Row(c).Shrink(0).Children(func() {
-					subtabLabels := []string{cat.CloudflareSubtabWarp(), cat.CloudflareSubtabTunnel()}
-					segmentedControl(c.Key("cloudflare-subtab-ctrl"), p, &a.cloudflareSubTab, subtabLabels)
+						if a.isCnDirectWarpEnabled() {
+							statusParts = append(statusParts, cat.CloudflareStatusDirectTakeover())
+						}
+						ui.Text(c, strings.Join(statusParts, " · ")).
+							FontSize(dsFontBody).TextColor(p.textMuted).SingleLine().Ellipsis("…")
+					} else {
+						tunCfg := a.state.Cloudflare.Tunnel
+						var tunText string
+						switch {
+						case !tunCfg.Enabled:
+							hollowStatusDot(c, p.textDim.Alpha(0.5))
+							tunText = cat.TailnetModeOff()
+						case a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "":
+							statusDot(c, p.green)
+							tunText = cat.CloudflareTunnelConnected()
+						default:
+							statusDot(c, p.amber)
+							tunText = cat.CloudflareTunnelDisconnected()
+						}
+						ui.Text(c, tunText).FontSize(dsFontBody).TextColor(p.textMuted).SingleLine().Ellipsis("…")
+					}
 				})
 			})
+		}, func() {
+			ui.Row(c).Shrink(0).Children(func() {
+				subtabLabels := []string{cat.CloudflareSubtabWarp(), cat.CloudflareSubtabTunnel()}
+				segmentedControl(c.Key("cloudflare-subtab-ctrl"), p, &a.cloudflareSubTab, subtabLabels)
+			})
+		})
 
 		// 2. Body scrollable view
 		ui.Scroll(c.Key("cloudflare-page-scroll")).
@@ -690,9 +685,9 @@ func (a *app) renderCloudflareWarpView(c *ui.Context, p palette) {
 
 							ui.Row(c).AlignItems(ui.Center).Gap(10).Shrink(0).Children(func() {
 								if rt.State == runner.StateRunning && unhealthy {
-									ui.Text(c, cat.StatusUnhealthy()).FontSize(11).FontWeight(600).TextColor(p.amber).NoWrap()
+									ui.Text(c, cat.StatusUnhealthy()).FontSize(11).FontWeight(600).TextColor(p.amberText).NoWrap()
 								} else if rt.State == runner.StateError {
-									ui.Text(c, cat.StatusError()).FontSize(11).FontWeight(600).TextColor(p.red).NoWrap()
+									ui.Text(c, cat.StatusError()).FontSize(11).FontWeight(600).TextColor(p.redText).NoWrap()
 								}
 								latWeight := 600
 								if latText == "—" {
@@ -795,9 +790,9 @@ func (a *app) renderCloudflareTunnelView(c *ui.Context, p palette) {
 					if !tunCfg.Enabled {
 						ui.Text(c, cat.TailnetModeOff()).FontSize(11).TextColor(p.textDim).NoWrap()
 					} else if a.getGateway() != nil && strings.TrimSpace(tunCfg.Token) != "" {
-						ui.Text(c, cat.CloudflareTunnelConnected()).FontSize(11).FontWeight(500).TextColor(p.green).NoWrap()
+						ui.Text(c, cat.CloudflareTunnelConnected()).FontSize(11).FontWeight(500).TextColor(p.greenText).NoWrap()
 					} else {
-						ui.Text(c, cat.CloudflareTunnelStatusWaiting()).FontSize(11).FontWeight(500).TextColor(p.amber).NoWrap()
+						ui.Text(c, cat.CloudflareTunnelStatusWaiting()).FontSize(11).FontWeight(500).TextColor(p.amberText).NoWrap()
 					}
 				})
 
@@ -814,8 +809,8 @@ func (a *app) renderCloudflareTunnelView(c *ui.Context, p palette) {
 					Background(p.amberBg).Border(1, p.amber.Alpha(0.25)).
 					Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).MinWidth(0).Children(func() {
-							ui.Icon(c, iconAlert).Size(15, 15).TextColor(p.amber).Shrink(0)
-							ui.Text(c, cat.CloudflareTunnelNeedGatewayHint()).FontSize(12).TextColor(p.amber).Grow(1).Shrink(1).MinWidth(0)
+							ui.Icon(c, iconAlert).Size(15, 15).TextColor(p.amberText).Shrink(0)
+							ui.Text(c, cat.CloudflareTunnelNeedGatewayHint()).FontSize(12).TextColor(p.amberText).Grow(1).Shrink(1).MinWidth(0)
 						})
 						if actionChip(c.Key("btn-tunnel-enable-gateway"), p, iconPlay, cat.CloudflareTunnelEnableGatewayBtn(), false).Clicked() {
 							a.state.GatewayEnabled = true
@@ -831,8 +826,8 @@ func (a *app) renderCloudflareTunnelView(c *ui.Context, p palette) {
 					Padding(8, 12, 8, 12).Radius(8).
 					Background(p.amberBg).Border(1, p.amber.Alpha(0.25)).
 					Children(func() {
-						ui.Icon(c, iconAlert).Size(15, 15).TextColor(p.amber).Shrink(0)
-						ui.Text(c, cat.CloudflareTunnelNeedTokenHint()).FontSize(12).TextColor(p.amber).Grow(1).Shrink(1).MinWidth(0)
+						ui.Icon(c, iconAlert).Size(15, 15).TextColor(p.amberText).Shrink(0)
+						ui.Text(c, cat.CloudflareTunnelNeedTokenHint()).FontSize(12).TextColor(p.amberText).Grow(1).Shrink(1).MinWidth(0)
 					})
 			}
 

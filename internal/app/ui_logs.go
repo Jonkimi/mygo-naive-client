@@ -19,68 +19,63 @@ func (a *app) renderLogsPage(c *ui.Context, p palette) {
 
 	ui.Column(c.Key("logs-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// Layer 1: Unified Header (Title + Segmented Sub-Tab + Live Status | Engine Level Select + Actions)
-		ui.Row(c.Key("logs-header")).
-			Padding(12, 18, 12, 18).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Wrap().
-			Background(p.surface).
-			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-			Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().MinWidth(0).Shrink(1).Children(func() {
-					ui.Text(c, cat.LogsPageTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+		dsPageHeader(c, p, "logs-header", true, func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Wrap().MinWidth(0).Shrink(1).Children(func() {
+				dsPageTitle(c, p, cat.LogsPageTitle())
 
-					if segmentedControl(c.Key("logs-subtab-ctrl"), p, &a.logsSubTab, []string{cat.LogsTabGateway(), cat.LogsTabNodes()}) {
-						a.logsPaused = false
-						a.logsFrozenLines = nil
-						if a.logsSubTab == 1 {
-							a.ensureSelectedLogNode()
-						}
+				if segmentedControl(c.Key("logs-subtab-ctrl"), p, &a.logsSubTab, []string{cat.LogsTabGateway(), cat.LogsTabNodes()}) {
+					a.logsPaused = false
+					a.logsFrozenLines = nil
+					if a.logsSubTab == 1 {
+						a.ensureSelectedLogNode()
 					}
+				}
 
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						if a.logsPaused {
-							statusDot(c, p.amber)
-							ui.Text(c, cat.LogsStatusPaused()).FontSize(12).TextColor(p.amber).NoWrap()
-						} else {
-							statusDot(c, p.green)
-							ui.Text(c, cat.LogsStatusLive()).FontSize(12).TextColor(p.textMuted).NoWrap()
-						}
-						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap()
-						ui.Text(c, cat.LogsLineCount(len(filteredEntries), len(rawEntries))).
-							FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
-					})
-				})
-
-				// Right header controls: Engine Log Level Select + Pause / Copy / Clear
-				ui.Row(c).AlignItems(ui.Center).Shrink(0).Gap(6).Wrap().Children(func() {
-					a.renderLogsEngineLevelSelect(c, p)
-
-					pauseIcon := iconStop
-					pauseLabel := cat.LogsActionPause()
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
 					if a.logsPaused {
-						pauseIcon = iconPlay
-						pauseLabel = cat.LogsActionResume()
+						statusDot(c, p.amber)
+						ui.Text(c, cat.LogsStatusPaused()).FontSize(dsFontBody).TextColor(p.amberText).NoWrap()
+					} else {
+						statusDot(c, p.green)
+						ui.Text(c, cat.LogsStatusLive()).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
 					}
-					btnPause := quietToolbarButton(c.Key("btn-logs-pause"), p, pauseIcon, pauseLabel, false).
-						Label(pauseLabel)
-					if btnPause.Clicked() {
-						a.toggleLogsPause()
-					}
-
-					copyDimmed := len(filteredEntries) == 0
-					btnCopy := quietToolbarButton(c.Key("btn-logs-copy"), p, iconCopy, cat.LogCopy(), copyDimmed).
-						Label(cat.LogCopy())
-					if !copyDimmed && btnCopy.Clicked() {
-						a.writeClipboard(joinLogEntries(filteredEntries), cat.CopiedServiceLogs())
-					}
-
-					clearDimmed := len(rawEntries) == 0
-					btnClear := quietToolbarButton(c.Key("btn-logs-clear"), p, iconTrash, cat.LogClear(), clearDimmed).
-						Label(cat.LogClear())
-					if !clearDimmed && btnClear.Clicked() {
-						a.clearCurrentLogs()
-					}
+					ui.Text(c, "·").FontSize(dsFontBody).TextColor(p.textDim).NoWrap()
+					ui.Text(c, cat.LogsLineCount(len(filteredEntries), len(rawEntries))).
+						FontSize(dsFontBody).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
 				})
 			})
+		}, func() {
+			// Right header controls: Engine Log Level Select + Pause / Copy / Clear
+			ui.Row(c).AlignItems(ui.Center).Shrink(0).Gap(dsSpaceSM).Wrap().Children(func() {
+				a.renderLogsEngineLevelSelect(c, p)
+
+				pauseIcon := iconStop
+				pauseLabel := cat.LogsActionPause()
+				if a.logsPaused {
+					pauseIcon = iconPlay
+					pauseLabel = cat.LogsActionResume()
+				}
+				btnPause := quietToolbarButton(c.Key("btn-logs-pause"), p, pauseIcon, pauseLabel, false).
+					Label(pauseLabel)
+				if btnPause.Clicked() {
+					a.toggleLogsPause()
+				}
+
+				copyDimmed := len(filteredEntries) == 0
+				btnCopy := quietToolbarButton(c.Key("btn-logs-copy"), p, iconCopy, cat.LogCopy(), copyDimmed).
+					Label(cat.LogCopy()).Disabled(copyDimmed).DimDisabled(false)
+				if !copyDimmed && btnCopy.Clicked() {
+					a.writeClipboard(joinLogEntries(filteredEntries), cat.CopiedServiceLogs())
+				}
+
+				clearDimmed := len(rawEntries) == 0
+				btnClear := quietToolbarButton(c.Key("btn-logs-clear"), p, iconTrash, cat.LogClear(), clearDimmed).
+					Label(cat.LogClear()).Disabled(clearDimmed).DimDisabled(false)
+				if !clearDimmed && btnClear.Clicked() {
+					a.clearCurrentLogs()
+				}
+			})
+		})
 
 		// 2. Main Body Container
 		ui.Column(c.Key("logs-body")).
@@ -173,9 +168,9 @@ func (a *app) renderLogsEngineLevelSelect(c *ui.Context, p palette) {
 		panel.Column().Gap(2).MinWidth(136).
 			AttachTo(sel.Trigger, ui.AnchorBottomEnd, ui.AnchorTopEnd).
 			Margin(4, 0, 0, 0).
-			Padding(4).Radius(10).
+			Padding(4).Radius(dsRadiusLG).
 			Background(p.card).Border(1, p.border).
-			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+			Shadow(p.popoverShadow())
 		for _, item := range levels {
 			selected := item.key == activeKey
 			opt := sel.Item(item.key).
@@ -236,8 +231,8 @@ func (a *app) renderLogsFilterToolbar(c *ui.Context, p palette) {
 			}{
 				{"", "btn-logs-filter-all", cat.LogsLevelAll(), p.text},
 				{"info", "btn-logs-filter-info", cat.LogsLevelInfo(), p.accentText},
-				{"warn", "btn-logs-filter-warn", cat.LogsLevelWarn(), p.amber},
-				{"error", "btn-logs-filter-error", cat.LogsLevelError(), p.red},
+				{"warn", "btn-logs-filter-warn", cat.LogsLevelWarn(), p.amberText},
+				{"error", "btn-logs-filter-error", cat.LogsLevelError(), p.redText},
 				{"debug", "btn-logs-filter-debug", cat.LogsLevelDebug(), p.textMuted},
 			}
 
@@ -348,9 +343,9 @@ func (a *app) renderNodeLogSelect(c *ui.Context, p palette) {
 		panel.Column().Gap(2).MinWidth(230).
 			AttachTo(sel.Trigger, ui.AnchorBottomStart, ui.AnchorTopStart).
 			Margin(4, 0, 0, 0).
-			Padding(4).Radius(10).
+			Padding(4).Radius(dsRadiusLG).
 			Background(p.card).Border(1, p.border).
-			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18))
+			Shadow(p.popoverShadow())
 		for _, svc := range a.state.Services {
 			svcName := svc.Name
 			if svcName == "" {
@@ -560,9 +555,9 @@ func filterLogLines(lines []string, levelFilter, sourceFilter, query string) []s
 func logLineColor(line string, p palette) ui.Color {
 	switch detectLogLineLevel(line) {
 	case "error":
-		return p.red
+		return p.redText
 	case "warn":
-		return p.amber
+		return p.amberText
 	case "debug":
 		return p.textDim
 	default:

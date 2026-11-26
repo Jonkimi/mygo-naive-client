@@ -22,64 +22,59 @@ func (a *app) renderInsightsPage(c *ui.Context, p palette) {
 
 	ui.Column(c.Key("insights-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// Header row: Title + quiet status dot summary | Protection & Ads Switches + Manage Rules button
-		ui.Row(c.Key("insights-header")).
-			Padding(14, 18, 14, 18).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
-			Background(p.surface).
-			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-			Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
-					ui.Text(c, cat.NavInsights()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+		dsPageHeader(c, p, "insights-header", false, func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
+				dsPageTitle(c, p, cat.NavInsights())
 
-					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
-						statusLabel := cat.InsightsProtectionPaused()
-						if a.state.BlockerEnabled {
-							statusDot(c, p.green)
-							statusLabel = cat.InsightsProtectionActive()
-						} else {
-							hollowStatusDot(c, p.textDim.Alpha(0.5))
-						}
-						ui.Text(c, statusLabel).FontSize(12).TextColor(p.textMuted).NoWrap()
-						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap()
-						ui.Text(c, cat.InsightsRulesCountShort(activeRules)).
-							FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).SingleLine().Ellipsis("…")
-					})
-				})
-
-				// Header Action Controls
-				ui.Row(c).AlignItems(ui.Center).Gap(10).Shrink(0).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Text(c, cat.InsightsProtectionShort()).FontSize(12).TextColor(p.textMuted).NoWrap()
-						blockerOn := a.state.BlockerEnabled
-						if ui.Switch(c.Key("btn-toggle-blocker"), &blockerOn).
-							Label("btn-toggle-blocker").
-							Tooltip(cat.InsightsToggleProtectionTooltip()).
-							Changed() {
-							a.toggleBlockerEnabled()
-						}
-					})
-
-					ui.Box(c).Size(1, 16).Background(p.borderSubtle).Shrink(0)
-
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Text(c, cat.InsightsBuiltinAdsShort()).FontSize(12).TextColor(p.textMuted).NoWrap()
-						adsOn := a.state.BlockerBlockAds
-						if ui.Switch(c.Key("btn-toggle-ads"), &adsOn).
-							Label("btn-toggle-ads").
-							Tooltip(cat.InsightsToggleAdsTooltip()).
-							Changed() {
-							a.toggleBlockerBlockAds()
-						}
-					})
-
-					btnRules := actionChip(c.Key("btn-manage-rules"), p, iconList, cat.InsightsRulesAndSubscriptions(), false).
-						Label("btn-manage-rules").
-						Tooltip(cat.InsightsManageRulesTooltip())
-					if btnRules.Clicked() {
-						a.insightsShowManageRules = !a.insightsShowManageRules
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).MinWidth(0).Shrink(1).Children(func() {
+					statusLabel := cat.InsightsProtectionPaused()
+					if a.state.BlockerEnabled {
+						statusDot(c, p.green)
+						statusLabel = cat.InsightsProtectionActive()
+					} else {
+						hollowStatusDot(c, p.textDim.Alpha(0.5))
 					}
+					ui.Text(c, statusLabel).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
+					ui.Text(c, "·").FontSize(dsFontBody).TextColor(p.textDim).NoWrap()
+					ui.Text(c, cat.InsightsRulesCountShort(activeRules)).
+						FontSize(dsFontBody).FontFeatures("tnum").TextColor(p.textMuted).SingleLine().Ellipsis("…")
 				})
 			})
+		}, func() {
+			// Header Action Controls
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Shrink(0).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+					ui.Text(c, cat.InsightsProtectionShort()).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
+					blockerOn := a.state.BlockerEnabled
+					if ui.Switch(c.Key("btn-toggle-blocker"), &blockerOn).
+						Label("btn-toggle-blocker").
+						Tooltip(cat.InsightsToggleProtectionTooltip()).
+						Changed() {
+						a.toggleBlockerEnabled()
+					}
+				})
+
+				ui.Box(c).Size(1, 16).Background(p.borderSubtle).Shrink(0)
+
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Children(func() {
+					ui.Text(c, cat.InsightsBuiltinAdsShort()).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
+					adsOn := a.state.BlockerBlockAds
+					if ui.Switch(c.Key("btn-toggle-ads"), &adsOn).
+						Label("btn-toggle-ads").
+						Tooltip(cat.InsightsToggleAdsTooltip()).
+						Changed() {
+						a.toggleBlockerBlockAds()
+					}
+				})
+
+				btnRules := actionChip(c.Key("btn-manage-rules"), p, iconList, cat.InsightsRulesAndSubscriptions(), false).
+					Label("btn-manage-rules").
+					Tooltip(cat.InsightsManageRulesTooltip())
+				if btnRules.Clicked() {
+					a.insightsShowManageRules = !a.insightsShowManageRules
+				}
+			})
+		})
 
 		// Scrollable main content
 		ui.Scroll(c.Key("insights-scroll")).Grow(1).Fill().MinHeight(0).Children(func() {
@@ -294,7 +289,7 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 							Children(func() {
 								ui.Text(c, dom).Font("monospace").FontSize(11).TextColor(p.text).Grow(1).SingleLine().Ellipsis("…").Tooltip(dom)
 								ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
-									ui.Text(c, fmt.Sprintf("%d", cnt)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.red)
+									ui.Text(c, fmt.Sprintf("%d", cnt)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.redText)
 									btnAllow := ui.ButtonBase(c.Key("btn-quick-whitelist-"+dom)).
 										Label("btn-quick-whitelist-"+dom).
 										Padding(2, 6, 2, 6).Radius(4).
@@ -341,7 +336,7 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 							Children(func() {
 								ui.Text(c, dom).Font("monospace").FontSize(11).TextColor(p.text).Grow(1).SingleLine().Ellipsis("…").Tooltip(dom)
 								ui.Row(c).AlignItems(ui.Center).Gap(8).Shrink(0).Children(func() {
-									ui.Text(c, fmt.Sprintf("%d", cnt)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.green)
+									ui.Text(c, fmt.Sprintf("%d", cnt)).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(p.greenText)
 									btnDeny := ui.ButtonBase(c.Key("btn-quick-denylist-"+dom)).
 										Label("btn-quick-denylist-"+dom).
 										Padding(2, 6, 2, 6).Radius(4).
@@ -351,7 +346,7 @@ func (a *app) renderInsightsTopDomains(c *ui.Context, p palette) {
 										btnDeny.Background(p.redBg)
 									}
 									btnDeny.Children(func() {
-										ui.Text(c, cat.InsightsActionDenylist()).FontSize(11).FontWeight(500).TextColor(p.red)
+										ui.Text(c, cat.InsightsActionDenylist()).FontSize(11).FontWeight(500).TextColor(p.redText)
 									})
 									if btnDeny.Clicked() {
 										a.addBlockerDenylist(dom)
@@ -401,8 +396,8 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 					}
 					filterOpts := []segmentedOption{
 						{Label: cat.InsightsFilterAll(), A11yLabel: "btn-filter-all", ActiveColor: p.text},
-						{Label: cat.InsightsFilterBlocked(), A11yLabel: "btn-filter-blocked", ActiveColor: p.red},
-						{Label: cat.InsightsFilterAllowed(), A11yLabel: "btn-filter-allowed", ActiveColor: p.green},
+						{Label: cat.InsightsFilterBlocked(), A11yLabel: "btn-filter-blocked", ActiveColor: p.redText},
+						{Label: cat.InsightsFilterAllowed(), A11yLabel: "btn-filter-allowed", ActiveColor: p.greenText},
 					}
 					if compactSegmentedOptions(c.Key("insights-log-filter-ctrl"), p, &filterIdx, filterOpts) {
 						a.insightsFilter = filterKeys[filterIdx]
@@ -432,10 +427,13 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 					idStr := strconv.FormatInt(e.ID, 10)
 					timeStr := e.Timestamp.Format("15:04:05")
 
-					verdictFg := p.green
+					verdictDot := p.green
+					verdictFg := p.greenText
 					if e.Verdict == blocker.VerdictBlocked {
-						verdictFg = p.red
+						verdictDot = p.red
+						verdictFg = p.redText
 					} else if e.Verdict == blocker.VerdictWhitelisted {
+						verdictDot = p.accent
 						verdictFg = p.accentText
 					}
 
@@ -460,7 +458,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 
 							// Col 3: Verdict (7px dot + label, no pill)
 							ui.Row(c).Width(84).AlignItems(ui.Center).Gap(6).Children(func() {
-								statusDot(c, verdictFg)
+								statusDot(c, verdictDot)
 								ui.Text(c, string(e.Verdict)).FontSize(10).FontWeight(600).TextColor(verdictFg).SingleLine().Ellipsis("…")
 							})
 
@@ -480,7 +478,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 							ui.Row(c).Width(175).AlignItems(ui.Center).Gap(4).Tooltip(domTip).Children(func() {
 								ui.Text(c, dom).Font("monospace").FontSize(11).TextColor(p.text).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 								if foldCount > 1 {
-									ui.Text(c, fmt.Sprintf("×%d", foldCount)).FontSize(10).FontWeight(600).FontFeatures("tnum").TextColor(p.red).Shrink(0)
+									ui.Text(c, fmt.Sprintf("×%d", foldCount)).FontSize(10).FontWeight(600).FontFeatures("tnum").TextColor(p.redText).Shrink(0)
 								}
 							})
 
@@ -512,17 +510,17 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 									targetColor := p.textDim
 									targetWeight := 400
 									if isWarp {
-										targetColor = p.amber
+										targetColor = p.amberText
 										targetWeight = 600
 									}
 									ui.Text(c, target).FontSize(10).FontWeight(targetWeight).TextColor(targetColor).SingleLine().Ellipsis("…").Shrink(0)
 								} else if strings.Contains(chainText, "WARP") || strings.Contains(chainText, "Cloudflare") {
-									ui.Text(c, chainText).FontSize(10).FontWeight(600).TextColor(p.amber).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+									ui.Text(c, chainText).FontSize(10).FontWeight(600).TextColor(p.amberText).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 								} else {
 									ui.Text(c, chainText).FontSize(10).TextColor(p.textDim).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 								}
 								if errText != "" {
-									ui.Text(c, "("+errText+")").FontSize(10).TextColor(p.red).SingleLine().Shrink(0)
+									ui.Text(c, "("+errText+")").FontSize(10).TextColor(p.redText).SingleLine().Shrink(0)
 								}
 							})
 
@@ -551,7 +549,7 @@ func (a *app) renderInsightsQueryLogs(c *ui.Context, p palette) {
 										btnB.Background(p.redBg)
 									}
 									btnB.Children(func() {
-										ui.Text(c, cat.InsightsActionDenylist()).FontSize(11).FontWeight(500).TextColor(p.red)
+										ui.Text(c, cat.InsightsActionDenylist()).FontSize(11).FontWeight(500).TextColor(p.redText)
 									})
 									if btnB.Clicked() {
 										a.addBlockerDenylist(dom)
@@ -646,7 +644,7 @@ func (a *app) renderInsightsManageRulesDrawer(c *ui.Context, p palette) {
 					editorSectionCard(c, p, func() {
 						ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 							ui.Text(c, cat.InsightsDenylistTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-							ui.Text(c, fmt.Sprintf("%d", len(a.state.BlockerDenylist))).FontSize(11).FontFeatures("tnum").TextColor(p.red)
+							ui.Text(c, fmt.Sprintf("%d", len(a.state.BlockerDenylist))).FontSize(11).FontFeatures("tnum").TextColor(p.redText)
 						})
 						ui.Text(c, cat.InsightsDenylistDesc()).FontSize(11).TextColor(p.textMuted)
 
@@ -730,7 +728,7 @@ func (a *app) renderInsightsManageRulesDrawer(c *ui.Context, p palette) {
 										btnDel.Background(p.redBg)
 									}
 									btnDel.Children(func() {
-										ui.Text(c, cat.InsightsActionDelete()).FontSize(11).TextColor(p.red)
+										ui.Text(c, cat.InsightsActionDelete()).FontSize(11).TextColor(p.redText)
 									})
 									if btnDel.Clicked() {
 										a.removeBlockerSubscription(s)
@@ -800,7 +798,7 @@ func (a *app) renderInsightsFailures(c *ui.Context, p palette) {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					statusDot(c, p.red)
 					ui.Text(c, "异常连接与分流诊断").FontSize(12).FontWeight(600).TextColor(p.text)
-					ui.Text(c, fmt.Sprintf("共 %d 项异常", totalCount)).FontSize(11).FontFeatures("tnum").TextColor(p.red)
+					ui.Text(c, fmt.Sprintf("共 %d 项异常", totalCount)).FontSize(11).FontFeatures("tnum").TextColor(p.redText)
 				})
 
 				btnResolveAll := ui.ButtonBase(c.Key("btn-resolve-all-failures")).
@@ -906,10 +904,10 @@ func queryDurationColor(d time.Duration, p palette) ui.Color {
 		return p.textDim
 	}
 	if d < 200*time.Millisecond {
-		return p.green
+		return p.greenText
 	}
 	if d < 800*time.Millisecond {
-		return p.amber
+		return p.amberText
 	}
-	return p.red
+	return p.redText
 }

@@ -61,7 +61,7 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 				statusCol = p.accentText
 			} else if targetRule.Enabled {
 				statusText = cat.StatusRunning()
-				statusCol = p.green
+				statusCol = p.greenText
 			}
 
 			ui.Row(c).
@@ -146,7 +146,7 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 					switch targetRule.Action.Type {
 					case routing.ActionBlock:
 						dsDetailKvGroup(c, func() {
-							dsDetailKvRow(c, p, cat.RuleActionLabel(), cat.RoutingBlock(), false, false, p.red, "")
+							dsDetailKvRow(c, p, cat.RuleActionLabel(), cat.RoutingBlock(), false, false, p.redText, "")
 						})
 						ui.Text(c, cat.RuleDrawerDescBlock()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
 
@@ -182,9 +182,9 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 									activeCount = a.activeRunningCount()
 								}
 								if activeCount > 0 {
-									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNodesOnline(fmt.Sprint(activeCount)), false, true, p.green, "")
+									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNodesOnline(fmt.Sprint(activeCount)), false, true, p.greenText, "")
 								} else {
-									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNoNodesOnline(), false, true, p.amber, "")
+									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNoNodesOnline(), false, true, p.amberText, "")
 								}
 							} else {
 								isOrder := targetRule.Action.EffectiveDispatchPolicy() == routing.DispatchOrder
@@ -211,7 +211,7 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 								targetSummary := strings.Join(targetParts, sep)
 								targetCol := p.text
 								if len(res.MissingNodeIDs) > 0 {
-									targetCol = p.amber
+									targetCol = p.amberText
 								}
 								dsDetailKvRow(c, p, cat.RuleDrawerTargetsTitle(), targetSummary, false, false, targetCol, targetSummary)
 
@@ -227,9 +227,9 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 								dsDetailKvRow(c, p, cat.RuleDrawerDispatchTitle(), dispatchLabel, false, false, p.textMuted, "")
 
 								if res.OnlineCount > 0 {
-									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNodesOnline(fmt.Sprint(res.OnlineCount)), false, true, p.green, "")
+									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNodesOnline(fmt.Sprint(res.OnlineCount)), false, true, p.greenText, "")
 								} else {
-									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNoNodesOnline(), false, true, p.amber, "")
+									dsDetailKvRow(c, p, cat.RuleDrawerActiveNodes(), cat.RuleDrawerNoNodesOnline(), false, true, p.amberText, "")
 								}
 							}
 						})
@@ -242,7 +242,7 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 							if activeCount > 0 {
 								ui.Text(c, cat.RuleDrawerDescProxyPool()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
 							} else {
-								ui.Text(c, cat.RuleDrawerDescProxyPoolEmpty()).FontSize(11).TextColor(p.amber).LineHeight(1.4)
+								ui.Text(c, cat.RuleDrawerDescProxyPoolEmpty()).FontSize(11).TextColor(p.amberText).LineHeight(1.4)
 							}
 						} else if isDirectWarp {
 							ui.Text(c, cat.RuleDrawerDescWarp()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
@@ -268,9 +268,9 @@ func (a *app) renderRuleDrawer(c *ui.Context, p palette) {
 						dsDetailSectionTitle(c, p, cat.RuleDrawerCriteria())
 						if hasGeoCriteria {
 							if hasGeo {
-								ui.Text(c, cat.GeodataStatusReady()).FontSize(11).FontWeight(500).TextColor(p.green)
+								ui.Text(c, cat.GeodataStatusReady()).FontSize(11).FontWeight(500).TextColor(p.greenText)
 							} else {
-								ui.Text(c, cat.RulePendingGeoData()).FontSize(11).FontWeight(500).TextColor(p.amber)
+								ui.Text(c, cat.RulePendingGeoData()).FontSize(11).FontWeight(500).TextColor(p.amberText)
 							}
 						}
 					})

@@ -146,14 +146,14 @@ func (a *app) renderNodeDrawerDiagnosticBanner(c *ui.Context, p palette, svc con
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-						ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.red)
-						ui.Text(c, cat.StatusError()).FontSize(12).FontWeight(700).TextColor(p.red)
+						ui.Icon(c, iconAlert).Size(13, 13).TextColor(p.redText)
+						ui.Text(c, cat.StatusError()).FontSize(12).FontWeight(700).TextColor(p.redText)
 					})
 					if subtleActionChip(c.Key("btn-copy-drawer-err"), p, iconCopy, cat.BtnCopy(), false).Tooltip(cat.ActionCopyError()).Clicked() {
 						a.writeClipboard(rt.LastError, cat.ToastErrorCopied())
 					}
 				})
-				ui.Text(c, rt.LastError).FontSize(11).TextColor(p.red).LineHeight(1.4)
+				ui.Text(c, rt.LastError).FontSize(11).TextColor(p.redText).LineHeight(1.4)
 			})
 		return
 	}
@@ -167,7 +167,7 @@ func (a *app) renderNodeDrawerDiagnosticBanner(c *ui.Context, p palette, svc con
 			Background(p.amberBg).Border(1, p.amber.Alpha(0.28)).
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).Children(func() {
-					ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(12).FontWeight(700).TextColor(p.amber)
+					ui.Text(c, cat.NodeUnhealthyDiagnosticTitle()).FontSize(12).FontWeight(700).TextColor(p.amberText)
 					if isWarp {
 						if compactStripButton(c.Key("btn-drawer-goto-cf"), p, cat.ActionGoToCloudflare(), cat.ActionGoToCloudflare(), p.text).Clicked() {
 							a.activeNodeDrawerID = ""
@@ -266,9 +266,9 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 					case pct >= 95:
 						rateColor = p.text
 					case pct >= 75:
-						rateColor = p.amber
+						rateColor = p.amberText
 					default:
-						rateColor = p.red
+						rateColor = p.redText
 					}
 				} else {
 					rateText = cat.NodeDrawerAwaitingSample()
@@ -285,11 +285,11 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 					probeTip = cat.AutoProbing()
 				} else {
 					probeText = cat.LatencyTestingShort()
-					probeColor = p.amber
+					probeColor = p.amberText
 				}
 			} else if rt.ProbeError != "" {
 				probeText = cat.LatencyFailed()
-				probeColor = p.red
+				probeColor = p.redText
 				probeTip = rt.ProbeError
 			} else if rt.Latency > 0 {
 				ms := int(max(1, rt.Latency.Milliseconds()))
@@ -308,10 +308,10 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 			})
 
 			if rt.ProbeError != "" {
-				ui.Text(c, rt.ProbeError).FontSize(11).TextColor(p.red).LineHeight(1.35)
+				ui.Text(c, rt.ProbeError).FontSize(11).TextColor(p.redText).LineHeight(1.35)
 			}
 			if rt.SpeedError != "" {
-				ui.Text(c, rt.SpeedError).FontSize(11).TextColor(p.red).LineHeight(1.35)
+				ui.Text(c, rt.SpeedError).FontSize(11).TextColor(p.redText).LineHeight(1.35)
 			}
 
 			// Compact Circuit + Bandwidth footer
@@ -321,31 +321,31 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 					sc := a.tracker.GetScore(svc.ID)
 					switch {
 					case sc.CircuitState == telemetry.CircuitHalfOpen:
-						circuitText, circuitColor = circuitLabelForScore(cat, sc), p.amber
+						circuitText, circuitColor = circuitLabelForScore(cat, sc), p.amberText
 					case sc.IsBroken || sc.CircuitState == telemetry.CircuitOpen:
-						circuitText, circuitColor = circuitLabelForScore(cat, sc), p.red
+						circuitText, circuitColor = circuitLabelForScore(cat, sc), p.redText
 					case sc.ConsecutiveFailures > 0:
-						circuitText, circuitColor = fmt.Sprintf("%d", sc.ConsecutiveFailures), p.amber
+						circuitText, circuitColor = fmt.Sprintf("%d", sc.ConsecutiveFailures), p.amberText
 					case unhealthy:
-						circuitText, circuitColor = cat.StatusUnhealthy(), p.amber
+						circuitText, circuitColor = cat.StatusUnhealthy(), p.amberText
 					default:
-						circuitText, circuitColor = cat.NodeDrawerCircuitNormal(), p.green
+						circuitText, circuitColor = cat.NodeDrawerCircuitNormal(), p.greenText
 					}
 				} else if unhealthy {
-					circuitText, circuitColor = cat.StatusUnhealthy(), p.amber
+					circuitText, circuitColor = cat.StatusUnhealthy(), p.amberText
 				} else {
-					circuitText, circuitColor = cat.NodeDrawerCircuitNormal(), p.green
+					circuitText, circuitColor = cat.NodeDrawerCircuitNormal(), p.greenText
 				}
 			}
 
 			bwText, bwColor, bwTip := "—", p.textDim, ""
 			switch {
 			case rt.SpeedTesting && rt.DownloadSpeed > 0:
-				bwText, bwColor = "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.amber
+				bwText, bwColor = "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.amberText
 			case rt.SpeedTesting:
-				bwText, bwColor = "—", p.amber
+				bwText, bwColor = "—", p.amberText
 			case rt.SpeedError != "":
-				bwText, bwColor, bwTip = cat.DownloadFailed(), p.red, rt.SpeedError
+				bwText, bwColor, bwTip = cat.DownloadFailed(), p.redText, rt.SpeedError
 			case rt.DownloadSpeed > 0:
 				bwText, bwColor = "↓ "+runner.FormatSpeed(rt.DownloadSpeed), p.text
 			}
@@ -390,21 +390,13 @@ func (a *app) renderNodeDrawerTelemetryCard(c *ui.Context, p palette, svc config
 
 func (a *app) renderNodeDrawerHelpPopover(c *ui.Context, anchor ui.Element, p palette) {
 	cat := a.catalog()
-	ui.PopoverBase(c, anchor, &a.nodeDrawerHelpOpen, func(panel ui.Element) {
-		panel.Column().
-			AttachTo(anchor, ui.AnchorBottomStart, ui.AnchorTopStart).
-			Margin(6, 0, 0, 0).
-			Width(320).Padding(12).Gap(8).Radius(10).
-			Background(p.card).Border(1, p.border).
-			Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.22)).
-			Children(func() {
-				ui.Text(c, cat.NodeDrawerTelemetryHelp()).FontSize(12).FontWeight(700).TextColor(p.text)
-				ui.Text(c, cat.NodeDrawerProbeLatencyDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-				ui.Text(c, cat.NodeDrawerRealLatencyDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-				ui.Text(c, cat.NodeDrawerSuccessRateDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-				ui.Text(c, cat.NodeDrawerCircuitDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-				ui.Text(c, cat.NodeDrawerFinalScoreDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.35)
-			})
+	dsHelpPopover(c, p, anchor, &a.nodeDrawerHelpOpen, 320, ui.AnchorBottomStart, ui.AnchorTopStart, func() {
+		ui.Text(c, cat.NodeDrawerTelemetryHelp()).FontSize(dsFontBody).FontWeight(700).TextColor(p.text)
+		ui.Text(c, cat.NodeDrawerProbeLatencyDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(dsLineHeightBody)
+		ui.Text(c, cat.NodeDrawerRealLatencyDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(dsLineHeightBody)
+		ui.Text(c, cat.NodeDrawerSuccessRateDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(dsLineHeightBody)
+		ui.Text(c, cat.NodeDrawerCircuitDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(dsLineHeightBody)
+		ui.Text(c, cat.NodeDrawerFinalScoreDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(dsLineHeightBody)
 	})
 }
 
@@ -464,7 +456,7 @@ func (a *app) renderNodeDrawerParamsCard(c *ui.Context, p palette, svc config.Se
 				dsDetailKvRow(c, p, cat.NodeDrawerWarpChain(), a.warpTransportPillLabel(svc), false, false, p.text, "")
 			}
 			if rt.Restarts > 0 {
-				dsDetailKvRow(c, p, cat.NodeDrawerRestarts(), cat.RestartsPill(rt.Restarts), false, true, p.amber, "")
+				dsDetailKvRow(c, p, cat.NodeDrawerRestarts(), cat.RestartsPill(rt.Restarts), false, true, p.amberText, "")
 			}
 			if len(svc.Tags) > 2 {
 				dsDetailKvRow(c, p, cat.TagsLabel(), strings.Join(svc.Tags, ", "), false, false, p.textMuted, "")
@@ -555,15 +547,15 @@ func (a *app) renderNodeDrawerConfigCard(c *ui.Context, p palette, svc config.Se
 
 func runtimeStatusTextAndColor(cat locales.Messages, p palette, st runner.State, unhealthy bool) (string, ui.Color) {
 	if unhealthy && st == runner.StateRunning {
-		return cat.StatusUnhealthy(), p.amber
+		return cat.StatusUnhealthy(), p.amberText
 	}
 	switch st {
 	case runner.StateRunning:
-		return cat.StatusRunning(), p.green
+		return cat.StatusRunning(), p.greenText
 	case runner.StateStarting:
-		return cat.StatusStarting(), p.amber
+		return cat.StatusStarting(), p.amberText
 	case runner.StateError:
-		return cat.StatusError(), p.red
+		return cat.StatusError(), p.redText
 	default:
 		return cat.StatusStopped(), p.textMuted
 	}

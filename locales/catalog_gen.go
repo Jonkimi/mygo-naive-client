@@ -336,6 +336,16 @@ func (msgs Messages) RoutingProxyPool() string {
 	return Catalog.Format(msgs.locale, "routingProxyPool", nil)
 }
 
+// RoutingOnlineCount says "{count} online"
+// in the language the app shows.
+func RoutingOnlineCount(count string) string { return In(i18n.Locale()).RoutingOnlineCount(count) }
+
+// RoutingOnlineCount says "{count} online"
+// in the language of msgs.
+func (msgs Messages) RoutingOnlineCount(count string) string {
+	return Catalog.Format(msgs.locale, "routingOnlineCount", map[string]any{"count": count})
+}
+
 // NewRule says "New Rule"
 // in the language the app shows.
 func NewRule() string { return In(i18n.Locale()).NewRule() }

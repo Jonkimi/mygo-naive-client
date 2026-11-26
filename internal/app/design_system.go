@@ -7,10 +7,11 @@ import "github.com/egoist/mygo/ui"
 // referencing these tokens instead of scattering ad-hoc pixel literals.
 const (
 	// Typography scale (pt/px)
-	dsFontPageTitle    float32 = 18
+	dsFontPageTitle    float32 = 17
+	dsFontDialogTitle  float32 = 16
 	dsFontDrawerTitle  float32 = 15
 	dsFontCardTitle    float32 = 14
-	dsFontSectionTitle float32 = 12
+	dsFontSectionTitle float32 = 13
 	dsFontLabel        float32 = 12
 	dsFontBody         float32 = 12
 	dsFontCaption      float32 = 11
@@ -31,12 +32,17 @@ const (
 	dsRadiusSM   float32 = 6
 	dsRadiusMD   float32 = 8
 	dsRadiusLG   float32 = 10
+	dsRadiusXL   float32 = 12
 	dsRadiusPill float32 = 999
 
 	// Control height scale
 	dsHeightCompact   float32 = 24
 	dsHeightRowAction float32 = 28
 	dsHeightControl   float32 = 32
+
+	// Page header rhythm
+	dsPageHeaderPadV float32 = 12
+	dsPageHeaderPadH float32 = 18
 
 	// Drawer & card layout rhythm
 	dsDrawerWidth        float32 = 460
@@ -59,6 +65,57 @@ const (
 	dsDetailGroupGap   float32 = 8
 )
 
+// dsPageHeader renders the unified fixed top header bar across workbench pages.
+func dsPageHeader(c *ui.Context, p palette, key string, wrap bool, left, right func()) {
+	row := ui.Row(c.Key(key)).
+		Padding(dsPageHeaderPadV, dsPageHeaderPadH, dsPageHeaderPadV, dsPageHeaderPadH).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(dsSpaceLG).
+		Background(p.surface).
+		BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle)
+	if wrap {
+		row.Wrap()
+	}
+	row.Children(func() {
+		if left != nil {
+			left()
+		}
+		if right != nil {
+			right()
+		}
+	})
+}
+
+// dsPageTitle renders the unified primary page heading inside dsPageHeader.
+func dsPageTitle(c *ui.Context, p palette, title string) {
+	ui.Text(c, title).FontSize(dsFontPageTitle).FontWeight(700).TextColor(p.text).NoWrap()
+}
+
+// dsHelpPopover renders a standardized anchored help popover for inline '?' and strategy help triggers.
+func dsHelpPopover(c *ui.Context, p palette, anchor ui.Element, open *bool, width float32, anchorEdge, panelEdge ui.Anchor, children func()) {
+	ui.PopoverBase(c, anchor, open, func(panel ui.Element) {
+		panel.Column().
+			AttachTo(anchor, anchorEdge, panelEdge).
+			Margin(dsSpaceSM, 0, 0, 0).
+			Width(width).Padding(dsCardPad).Gap(dsSpaceMD).Radius(dsRadiusLG).
+			Background(p.card).Border(1, p.border).
+			Shadow(p.popoverShadow()).
+			Children(children)
+	})
+}
+
+// dsModalDialog renders a standardized centered modal dialog for focused import and destructive confirmations.
+func dsModalDialog(c *ui.Context, p palette, key string, open *bool, width float32, build func()) {
+	ui.DialogBase(c.Key(key), open, func(backdrop, panel ui.Element) {
+		backdrop.Background(p.modalBackdrop())
+		panel.Column().
+			Width(width).
+			Padding(dsSpace2XL).Gap(14).
+			Radius(dsRadiusXL).Background(p.card).Border(1, p.border).
+			Shadow(p.modalShadow()).
+			Children(build)
+	})
+}
+
 // dsDrawerSpec configures a unified 460px right-edge slide-over drawer.
 type dsDrawerSpec struct {
 	BackdropKey string
@@ -70,13 +127,9 @@ type dsDrawerSpec struct {
 // dsDrawerShell renders the standardized right-edge slide-over drawer backdrop, panel geometry,
 // transition, border, shadow, and optional modal Escape handling.
 func dsDrawerShell(c *ui.Context, p palette, spec dsDrawerSpec, build func()) {
-	backdropAlpha := float32(0.30)
-	if spec.Modal {
-		backdropAlpha = 0.35
-	}
 	backdrop := ui.Box(c.Key(spec.BackdropKey)).
 		Absolute().Top(0).Left(0).Right(0).Bottom(0).
-		Background(ui.RGBA(0, 0, 0, backdropAlpha)).
+		Background(p.drawerBackdrop(spec.Modal)).
 		Transition(ui.ElementTransition{
 			Enter: &ui.Motion{Opacity: 0},
 			Exit:  &ui.Motion{Opacity: 0},
@@ -93,7 +146,7 @@ func dsDrawerShell(c *ui.Context, p palette, spec dsDrawerSpec, build func()) {
 		}).
 		Background(p.drawerBg).
 		BorderWidth(0, 0, 0, 1).BorderColor(p.border).
-		Shadow(0, 8, 36, 0, ui.RGBA(0, 0, 0, 0.4))
+		Shadow(p.drawerShadow())
 
 	if spec.Modal {
 		panel.Modal()
@@ -164,7 +217,7 @@ func dsDrawerErrorBanner(c *ui.Context, p palette, rowKey, copyBtnKey, errText, 
 			PaddingX(dsSpaceLG).PaddingY(dsSpaceMD).Radius(dsRadiusMD).
 			Background(p.redBg).Border(1, p.red.Alpha(0.24)).
 			Children(func() {
-				ui.Text(c, errText).FontSize(dsFontBody).FontWeight(500).TextColor(p.red).LineHeight(dsLineHeightBody).Grow(1)
+				ui.Text(c, errText).FontSize(dsFontBody).FontWeight(500).TextColor(p.redText).LineHeight(dsLineHeightBody).Grow(1)
 				btnCopy := ui.ButtonBase(c.Key(copyBtnKey)).
 					Label(copyBtnKey).
 					Padding(2, 6, 2, 6).Radius(dsRadiusXS).

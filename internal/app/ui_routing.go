@@ -588,8 +588,8 @@ func (a *app) renderChipsTagInput(
 				Background(p.elevated).Border(1, p.amber.Alpha(0.3)).
 				Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-						ui.Icon(c, iconDownload).Size(11, 11).TextColor(p.amber)
-						ui.Text(c, guideText).FontSize(11).TextColor(p.amber)
+						ui.Icon(c, iconDownload).Size(11, 11).TextColor(p.amberText)
+						ui.Text(c, guideText).FontSize(11).TextColor(p.amberText)
 					})
 				})
 			if btn.Clicked() && !a.updatingGeoData {
@@ -754,7 +754,7 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 							if isNode && missing {
 								chipBg = p.amberBg
 								chipBorder = p.amber.Alpha(0.5)
-								chipText = p.amber
+								chipText = p.amberText
 							} else if isNode {
 								chipBg = p.elevated
 								chipBorder = p.borderSubtle
@@ -780,10 +780,10 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 									}
 									ui.Text(c, labelText).FontSize(11).FontWeight(500).TextColor(chipText)
 									if isNode && foundSvc && svc.EnableWARP {
-										tagPill(c, "+WARP", p.green, p.greenBg)
+										tagPill(c, "+WARP", p.greenText, p.greenBg)
 									}
 									if isNode && missing {
-										tagPill(c, cat.RuleTargetMissingNode(), p.amber, p.amberBg)
+										tagPill(c, cat.RuleTargetMissingNode(), p.amberText, p.amberBg)
 									}
 									if isOrder && len(a.ruleEditor.targets) > 1 {
 										if chipIdx > 0 {
@@ -893,11 +893,11 @@ func (a *app) renderProxyTargetPicker(c *ui.Context, p palette, runningIDs map[s
 										ui.Box(c).Size(6, 6).Radius(3).Background(dotCol)
 										ui.Text(c, s.Name).FontSize(11).FontWeight(500).TextColor(p.text)
 										protoLabel := strings.ToUpper(string(s.EffectiveProtocol()))
-										ui.Text(c, protoLabel).FontSize(9).TextColor(p.textDim)
+										ui.Text(c, protoLabel).FontSize(dsFontMicro).TextColor(p.textDim)
 										if s.IsBuiltinWarp() {
-											tagPill(c, cat.TagBuiltin(), p.green, p.greenBg)
+											tagPill(c, cat.TagBuiltin(), p.greenText, p.greenBg)
 										} else if s.EnableWARP {
-											tagPill(c, "+WARP", p.green, p.greenBg)
+											tagPill(c, "+WARP", p.greenText, p.greenBg)
 										}
 									})
 								})
@@ -1174,7 +1174,7 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 	switch act.Type {
 	case routing.ActionBlock:
 		routeText = "➔ " + cat.RoutingBlock()
-		routeColor = p.red
+		routeColor = p.redText
 	case routing.ActionDirect:
 		routeText = "➔ " + cat.RoutingDirect()
 		routeColor = p.textMuted
@@ -1193,14 +1193,14 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 			if activeCount == 0 && !a.isBuiltinWarpNeeded() {
 				activeCount = a.activeRunningCount()
 			}
-			routeText = fmt.Sprintf("➔ %s (%d 在线)", cat.RoutingProxyPool(), activeCount)
+			routeText = fmt.Sprintf("➔ %s (%s)", cat.RoutingProxyPool(), cat.RoutingOnlineCount(fmt.Sprint(activeCount)))
 			if pref != "" {
 				routeText += " · " + pref
 			}
 			if activeCount > 0 {
 				routeColor = p.text
 			} else {
-				routeColor = p.amber
+				routeColor = p.amberText
 			}
 		} else {
 			allTags := true
@@ -1216,13 +1216,13 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 			if !isFinal && isSingleWarpTarget(act) && isRuleDomesticDNS(rule) {
 				routeText = "➔ " + cat.RoutingWarp()
 				if res.OnlineCount > 0 {
-					routeColor = p.green
+					routeColor = p.greenText
 				} else {
-					routeColor = p.amber
+					routeColor = p.amberText
 				}
 			} else if allTags && !isOrder {
 				tagDisplay := strings.Join(tagLabels, ", ")
-				routeText = fmt.Sprintf("➔ %s (%d 在线)", tagDisplay, res.OnlineCount)
+				routeText = fmt.Sprintf("➔ %s (%s)", tagDisplay, cat.RoutingOnlineCount(fmt.Sprint(res.OnlineCount)))
 				if act.FallbackToPool {
 					routeText += " · " + cat.RuleTargetFallbackBadge()
 				}
@@ -1232,7 +1232,7 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 				if res.OnlineCount > 0 {
 					routeColor = p.text
 				} else {
-					routeColor = p.amber
+					routeColor = p.amberText
 				}
 			} else {
 				var parts []string
@@ -1255,7 +1255,7 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 				if isOrder {
 					sep = " → "
 				}
-				routeText = fmt.Sprintf("➔ %s (%d 在线)", strings.Join(parts, sep), res.OnlineCount)
+				routeText = fmt.Sprintf("➔ %s (%s)", strings.Join(parts, sep), cat.RoutingOnlineCount(fmt.Sprint(res.OnlineCount)))
 				if act.FallbackToPool {
 					routeText += " · " + cat.RuleTargetFallbackBadge()
 				}
@@ -1263,7 +1263,7 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 					routeText += " · " + pref
 				}
 				if len(res.MissingNodeIDs) > 0 || res.OnlineCount == 0 {
-					routeColor = p.amber
+					routeColor = p.amberText
 				} else {
 					routeColor = p.text
 				}
@@ -1291,103 +1291,13 @@ func (a *app) renderRuleRouteSummary(c *ui.Context, p palette, rule routing.Rule
 					if !hasOtherCriteria {
 						warnLabel = cat.RulePendingGeoData()
 					}
-					ui.Text(c, warnLabel).FontSize(10).FontWeight(600).TextColor(p.amber).NoWrap()
+					ui.Text(c, warnLabel).FontSize(10).FontWeight(600).TextColor(p.amberText).NoWrap()
 				}
 				if dnsText != "" {
 					ui.Text(c, dnsText).FontSize(11).TextColor(p.textDim).NoWrap()
 				}
 			})
 		})
-}
-
-func (a *app) renderActionBadges(c *ui.Context, p palette, rule routing.Rule, isFinal bool, runningIDs map[string]bool) {
-	cat := a.catalog()
-	act := rule.Action
-	switch act.Type {
-	case routing.ActionBlock:
-		statusBadge(c, cat.RoutingBlock(), p.red, p.redBg)
-	case routing.ActionDirect:
-		statusBadge(c, cat.RoutingDirect(), p.textDim, p.elevated)
-		tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
-	default:
-		targets := act.NormalizedTargets()
-		res := a.resolveActionTargets(act, runningIDs)
-		if len(targets) == 0 {
-			activeCount := res.OnlineCount
-			if activeCount == 0 && !a.isBuiltinWarpNeeded() {
-				activeCount = a.activeRunningCount()
-			}
-			label := fmt.Sprintf("%s (%d 在线)", cat.RoutingProxyPool(), activeCount)
-			if activeCount > 0 {
-				statusBadge(c, label, p.green, p.greenBg)
-			} else {
-				statusBadge(c, label, p.amber, p.amberBg)
-			}
-			tagPill(c, cat.DnsRemoteBadge(), p.green, p.greenBg)
-		} else {
-			allTags := true
-			var tagLabels []string
-			for _, t := range targets {
-				if t.Kind != routing.TargetTag {
-					allTags = false
-					break
-				}
-				tagLabels = append(tagLabels, "#"+t.Value)
-			}
-			isOrder := act.EffectiveDispatchPolicy() == routing.DispatchOrder && len(targets) > 1
-			if !isFinal && isSingleWarpTarget(act) && isRuleDomesticDNS(rule) {
-				if res.OnlineCount > 0 {
-					statusBadge(c, cat.RoutingWarp(), p.green, p.greenBg)
-				} else {
-					statusBadge(c, cat.RoutingWarp(), p.amber, p.amberBg)
-				}
-			} else if allTags && !isOrder {
-				tagDisplay := strings.Join(tagLabels, ", ")
-				label := fmt.Sprintf("%s (%d 在线)", tagDisplay, res.OnlineCount)
-				if res.OnlineCount > 0 {
-					statusBadge(c, label, p.accentText, p.accentBg)
-				} else {
-					statusBadge(c, fmt.Sprintf("%s (0 在线)", tagDisplay), p.amber, p.amberBg)
-				}
-			} else {
-				for idx, t := range targets {
-					if idx > 0 && isOrder {
-						ui.Text(c, "→").FontSize(11).TextColor(p.textDim)
-					}
-					if t.Kind == routing.TargetNode {
-						if svc, ok := a.serviceOrBuiltinWarp(t.Value); ok {
-							fg, bg := p.textMuted, p.elevated
-							if runningIDs[svc.ID] {
-								fg, bg = p.green, p.greenBg
-							}
-							tagPill(c, svc.Name, fg, bg)
-							if svc.EnableWARP {
-								tagPill(c, "+WARP", p.green, p.greenBg)
-							}
-						} else {
-							tagPill(c, t.Value+" ("+cat.RuleTargetMissingNode()+")", p.amber, p.amberBg)
-						}
-					} else {
-						tagPill(c, "#"+t.Value, p.accentText, p.accentBg)
-					}
-				}
-				onlineLabel := fmt.Sprintf("%d 在线", res.OnlineCount)
-				if res.OnlineCount > 0 {
-					statusBadge(c, onlineLabel, p.green, p.greenBg)
-				} else {
-					statusBadge(c, onlineLabel, p.amber, p.amberBg)
-				}
-			}
-			if !isFinal && isRuleDomesticDNS(rule) {
-				tagPill(c, cat.DnsDomesticBadge(), p.textDim, p.elevated)
-			} else {
-				tagPill(c, cat.DnsRemoteBadge(), p.accentText, p.accentBg)
-			}
-			if act.FallbackToPool {
-				tagPill(c, cat.RuleTargetFallbackBadge(), p.textMuted, p.elevated)
-			}
-		}
-	}
 }
 
 func (a *app) renderRuleCard(c *ui.Context, p palette, ruleIndex int, rule routing.Rule, hasGeo bool, runningIDs map[string]bool) {
@@ -1514,110 +1424,98 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 
 	ui.Column(c.Key("routing-page")).Grow(1).Fill().MinHeight(0).Children(func() {
 		// Fixed Page Header (Nodes pattern)
-		ui.Row(c.Key("routing-header")).
-			AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).
-			Padding(14, 18, 14, 18).
-			Background(p.surface).
-			BorderWidth(0, 0, 1, 0).BorderColor(p.borderSubtle).
-			Children(func() {
-				// Left: Title + tabular summary + GeoData dot
-				ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
-					ui.Text(c, cat.RoutingTitle()).FontSize(17).FontWeight(700).TextColor(p.text).NoWrap()
+		dsPageHeader(c, p, "routing-header", false, func() {
+			// Left: Title + tabular summary + GeoData dot
+			ui.Row(c).AlignItems(ui.Center).Gap(10).MinWidth(0).Shrink(1).Children(func() {
+				dsPageTitle(c, p, cat.RoutingTitle())
 
-					ui.Row(c).AlignItems(ui.Center).Gap(6).MinWidth(0).Shrink(1).Children(func() {
-						ui.Text(c, cat.RoutingEnabledSummary(enabledCount, totalCount)).
-							FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
-						ui.Text(c, "·").FontSize(12).TextColor(p.textDim).NoWrap()
-						if hasGeo {
-							statusDot(c, p.green)
-							geoLabel := cat.GeodataStatusReady()
-							if a.localGeodataVersion != "" {
-								geoLabel = fmt.Sprintf("%s (%s)", cat.GeodataStatusReady(), a.localGeodataVersion)
-							}
-							ui.Text(c, geoLabel).FontSize(12).FontFeatures("tnum").TextColor(p.textMuted).SingleLine().Ellipsis("…")
-						} else {
-							statusDot(c, p.amber)
-							ui.Text(c, cat.GeodataStatusMissing()).FontSize(12).TextColor(p.amber).SingleLine().Ellipsis("…")
+				ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).MinWidth(0).Shrink(1).Children(func() {
+					ui.Text(c, cat.RoutingEnabledSummary(enabledCount, totalCount)).
+						FontSize(dsFontBody).FontFeatures("tnum").TextColor(p.textMuted).NoWrap()
+					ui.Text(c, "·").FontSize(dsFontBody).TextColor(p.textDim).NoWrap()
+					if hasGeo {
+						statusDot(c, p.green)
+						geoLabel := cat.GeodataStatusReady()
+						if a.localGeodataVersion != "" {
+							geoLabel = fmt.Sprintf("%s (%s)", cat.GeodataStatusReady(), a.localGeodataVersion)
+						}
+						ui.Text(c, geoLabel).FontSize(dsFontBody).FontFeatures("tnum").TextColor(p.textMuted).SingleLine().Ellipsis("…")
+					} else {
+						statusDot(c, p.amber)
+						ui.Text(c, cat.GeodataStatusMissing()).FontSize(dsFontBody).TextColor(p.amberText).SingleLine().Ellipsis("…")
+					}
+				})
+			})
+		}, func() {
+			// Right: Search + Strategy Help Popover + More Menu + New Rule CTA
+			ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Shrink(0).Children(func() {
+				ui.SearchField(c.Key("input-routing-search"), &a.routingSearch).
+					Placeholder(cat.RoutingSearchPlaceholder()).
+					Label(cat.RoutingSearchPlaceholder()).
+					Width(156).Height(dsHeightControl).Radius(dsRadiusMD).FontSize(dsFontBody).
+					Background(p.card)
+
+				helpBtn := quietToolbarButton(c.Key("btn-routing-strategy-help"), p, iconInfo, cat.RoutingStrategyHelpBtn(), false).
+					Tooltip(cat.RoutingStrategyHelpTooltip())
+				if helpBtn.Clicked() {
+					a.openRoutingMoreMenu = false
+					a.showRoutingStrategyHelp = !a.showRoutingStrategyHelp
+				}
+				dsHelpPopover(c, p, helpBtn, &a.showRoutingStrategyHelp, 380, ui.AnchorBottomEnd, ui.AnchorTopEnd, func() {
+					ui.Column(c).Gap(dsSpaceXS).Children(func() {
+						ui.Text(c, cat.RoutingMatchOrderTitle()).FontSize(dsFontBody).FontWeight(600).TextColor(p.text)
+						ui.Text(c, cat.RoutingMatchOrderDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(1.4)
+					})
+					ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
+					ui.Column(c).Gap(dsSpaceXS).Children(func() {
+						ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(dsFontBody).FontWeight(600).TextColor(p.text)
+						ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(1.4)
+						ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(dsFontCaption).TextColor(p.textDim).LineHeight(1.4)
+						ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(dsFontCaption).TextColor(p.textDim).LineHeight(1.4)
+						ui.Text(c, cat.RoutingDnsDescTun()).FontSize(dsFontCaption).TextColor(p.textDim).LineHeight(1.4)
+					})
+					ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
+					ui.Column(c).Gap(dsSpaceXS).Children(func() {
+						ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(dsFontBody).FontWeight(600).TextColor(p.text)
+						ui.Text(c, cat.RoutingSmartPoolDesc()).FontSize(dsFontCaption).TextColor(p.textMuted).LineHeight(1.4)
+						ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(dsFontCaption).TextColor(p.textDim).LineHeight(1.4)
+						ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(dsFontCaption).TextColor(p.textDim).LineHeight(1.4)
+						ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(dsFontCaption).TextColor(p.textDim).LineHeight(1.4)
+					})
+				})
+
+				moreBtn := quietToolbarIconButton(c.Key("btn-routing-more"), p, iconMore, cat.RoutingMoreActions(), a.openRoutingMoreMenu).
+					Tooltip(cat.RoutingMoreActions())
+				if moreBtn.Clicked() {
+					a.showRoutingStrategyHelp = false
+					a.openRoutingMoreMenu = !a.openRoutingMoreMenu
+				}
+				ui.PopoverBase(c, moreBtn, &a.openRoutingMoreMenu, func(panel ui.Element) {
+					styleMenuPopoverPanel(panel, moreBtn, p, 176)
+					panel.Children(func() {
+						geoLabel := cat.UpdateGeoData()
+						if a.updatingGeoData {
+							geoLabel = cat.Updating()
+						}
+						if popoverMenuItem(c.Key("btn-update-geodata"), p, geoLabel, p.text, a.updatingGeoData, false).
+							Disabled(a.updatingGeoData).DimDisabled(false).Clicked() {
+							a.openRoutingMoreMenu = false
+							a.triggerUpdateGeoData()
+						}
+						if popoverMenuItem(c.Key("btn-reset-presets"), p, cat.ResetPresets(), p.text, false, false).Clicked() {
+							a.openRoutingMoreMenu = false
+							a.resetRoutingPresets()
 						}
 					})
 				})
 
-				// Right: Search + Strategy Help Popover + More Menu + New Rule CTA
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Shrink(0).Children(func() {
-					ui.SearchField(c.Key("input-routing-search"), &a.routingSearch).
-						Placeholder(cat.RoutingSearchPlaceholder()).
-						Label(cat.RoutingSearchPlaceholder()).
-						Width(156).Height(32).Radius(8).FontSize(12).
-						Background(p.card)
-
-					helpBtn := quietToolbarButton(c.Key("btn-routing-strategy-help"), p, iconInfo, cat.RoutingStrategyHelpBtn(), false).
-						Tooltip(cat.RoutingStrategyHelpTooltip())
-					if helpBtn.Clicked() {
-						a.openRoutingMoreMenu = false
-						a.showRoutingStrategyHelp = !a.showRoutingStrategyHelp
-					}
-					ui.PopoverBase(c, helpBtn, &a.showRoutingStrategyHelp, func(panel ui.Element) {
-						panel.Column().
-							AttachTo(helpBtn, ui.AnchorBottomEnd, ui.AnchorTopEnd).
-							Margin(4, 0, 0, 0).
-							Width(380).Padding(14).Radius(10).Gap(10).
-							Background(p.card).Border(1, p.border).
-							Shadow(0, 10, 28, 0, ui.RGBA(0, 0, 0, 0.18)).
-							Children(func() {
-								ui.Column(c).Gap(4).Children(func() {
-									ui.Text(c, cat.RoutingMatchOrderTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-									ui.Text(c, cat.RoutingMatchOrderDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-								})
-								ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
-								ui.Column(c).Gap(4).Children(func() {
-									ui.Text(c, cat.RoutingDnsAlignmentTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-									ui.Text(c, cat.RoutingDnsAlignmentDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-									ui.Text(c, cat.RoutingDnsDescDirect()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
-									ui.Text(c, cat.RoutingDnsDescProxyPort()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
-									ui.Text(c, cat.RoutingDnsDescTun()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
-								})
-								ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
-								ui.Column(c).Gap(4).Children(func() {
-									ui.Text(c, cat.RoutingSmartPoolTitle()).FontSize(12).FontWeight(600).TextColor(p.text)
-									ui.Text(c, cat.RoutingSmartPoolDesc()).FontSize(11).TextColor(p.textMuted).LineHeight(1.4)
-									ui.Text(c, cat.RoutingSmartPoolDetailEWMA()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
-									ui.Text(c, cat.RoutingSmartPoolDetailCircuit()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
-									ui.Text(c, cat.RoutingSmartPoolDetailAffinity()).FontSize(11).TextColor(p.textDim).LineHeight(1.4)
-								})
-							})
-					})
-
-					moreBtn := quietToolbarIconButton(c.Key("btn-routing-more"), p, iconMore, cat.RoutingMoreActions(), a.openRoutingMoreMenu).
-						Tooltip(cat.RoutingMoreActions())
-					if moreBtn.Clicked() {
-						a.showRoutingStrategyHelp = false
-						a.openRoutingMoreMenu = !a.openRoutingMoreMenu
-					}
-					ui.PopoverBase(c, moreBtn, &a.openRoutingMoreMenu, func(panel ui.Element) {
-						styleMenuPopoverPanel(panel, moreBtn, p, 176)
-						panel.Children(func() {
-							geoLabel := cat.UpdateGeoData()
-							if a.updatingGeoData {
-								geoLabel = cat.Updating()
-							}
-							if popoverMenuItem(c.Key("btn-update-geodata"), p, geoLabel, p.text, a.updatingGeoData, false).Clicked() {
-								a.openRoutingMoreMenu = false
-								a.triggerUpdateGeoData()
-							}
-							if popoverMenuItem(c.Key("btn-reset-presets"), p, cat.ResetPresets(), p.text, false, false).Clicked() {
-								a.openRoutingMoreMenu = false
-								a.resetRoutingPresets()
-							}
-						})
-					})
-
-					if primaryPillButton(c.Key("btn-new-rule"), p, iconPlus, cat.NewRule(), p.accent, false).Clicked() {
-						a.openRoutingMoreMenu = false
-						a.showRoutingStrategyHelp = false
-						a.openCreateRuleDialog()
-					}
-				})
+				if primaryPillButton(c.Key("btn-new-rule"), p, iconPlus, cat.NewRule(), p.accent, false).Clicked() {
+					a.openRoutingMoreMenu = false
+					a.showRoutingStrategyHelp = false
+					a.openCreateRuleDialog()
+				}
 			})
+		})
 
 		ui.Scroll(c.Key("routing-page-scroll")).
 			Grow(1).Fill().MinHeight(0).
@@ -1631,8 +1529,8 @@ func (a *app) renderRoutingPage(c *ui.Context, p palette) {
 						Background(p.amberBg).Border(1, p.amber.Alpha(0.3)).
 						Children(func() {
 							ui.Row(c).AlignItems(ui.Center).Gap(8).Grow(1).MinWidth(0).Children(func() {
-								ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amber).Shrink(0)
-								ui.Text(c, cat.RoutingGeodataBanner()).FontSize(12).FontWeight(500).TextColor(p.amber).
+								ui.Icon(c, iconAlert).Size(14, 14).TextColor(p.amberText).Shrink(0)
+								ui.Text(c, cat.RoutingGeodataBanner()).FontSize(12).FontWeight(500).TextColor(p.amberText).
 									SingleLine().Ellipsis("…")
 							})
 							btnText := cat.UpdateGeoData()
@@ -1862,7 +1760,7 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 						actionOpts := []segmentedOption{
 							{Label: cat.RoutingProxy(), ActiveColor: p.accentText},
 							{Label: cat.RoutingDirect(), ActiveColor: p.text},
-							{Label: cat.RoutingBlock(), ActiveColor: p.red},
+							{Label: cat.RoutingBlock(), ActiveColor: p.redText},
 						}
 						fullWidthSegmentedOptions(c.Key("rule-set-action"), p, &a.ruleEditor.actionIndex, actionOpts)
 						switch a.ruleEditor.actionIndex {
@@ -1873,7 +1771,7 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 								dsHintText(c, cat.RuleActionDirectHint(), p.textDim)
 							}
 						case 2: // Block
-							dsHintText(c, cat.RuleDrawerDescBlock(), p.red)
+							dsHintText(c, cat.RuleDrawerDescBlock(), p.redText)
 						}
 					})
 
@@ -1886,7 +1784,7 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 									ui.Row(c).AlignItems(ui.Center).Gap(dsSpaceSM).Grow(1).Children(func() {
 										dsSectionLabel(c, p, cat.RuleDirectWarpTitle())
 										if a.ruleEditor.directWarp {
-											tagPill(c, cat.RoutingWarp(), p.green, p.greenBg)
+											tagPill(c, cat.RoutingWarp(), p.greenText, p.greenBg)
 										}
 									})
 									ui.Switch(c.Key("toggle-rule-direct-warp"), &a.ruleEditor.directWarp).Label("toggle-rule-direct-warp")
@@ -1895,7 +1793,7 @@ func (a *app) renderRuleEditorDrawer(c *ui.Context, p palette) {
 							})
 							ui.Box(c).Fill().Height(1).Background(p.borderSubtle)
 							if a.ruleEditor.directWarp {
-								dsHintText(c, cat.RuleActionWarpHint(), p.green)
+								dsHintText(c, cat.RuleActionWarpHint(), p.greenText)
 							} else {
 								dsHintText(c, cat.RuleActionDirectHint(), p.textDim)
 							}

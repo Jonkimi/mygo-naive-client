@@ -98,10 +98,10 @@ func (a *app) renderLogDrawerHeader(
 	cat := a.catalog()
 
 	liveText := cat.LogsStatusLive()
-	liveColor := p.green
+	liveColor := p.greenText
 	if a.logDrawerPaused {
 		liveText = cat.LogsStatusPaused()
-		liveColor = p.amber
+		liveColor = p.amberText
 	}
 
 	ui.Row(c).
@@ -182,6 +182,7 @@ func (a *app) renderLogDrawerHeader(
 				}
 
 				clearBtn := quietRowIconButton(c.Key("btn-drawer-clear"), p, iconTrash, cat.LogClear(), len(rawEntries) == 0, false).
+					Disabled(len(rawEntries) == 0).DimDisabled(false).
 					Tooltip(cat.LogClear())
 				if clearBtn.Clicked() && len(rawEntries) > 0 {
 					logs.Clear()
@@ -209,8 +210,8 @@ func (a *app) renderLogDrawerToolbar(c *ui.Context, p palette, filtered []runner
 	}{
 		{"", cat.LogsLevelAll(), p.text, p.elevated},
 		{"info", cat.LogsLevelInfo(), p.accentText, p.accentBg},
-		{"warn", cat.LogsLevelWarn(), p.amber, p.amberBg},
-		{"error", cat.LogsLevelError(), p.red, p.redBg},
+		{"warn", cat.LogsLevelWarn(), p.amberText, p.amberBg},
+		{"error", cat.LogsLevelError(), p.redText, p.redBg},
 		{"debug", cat.LogsLevelDebug(), p.textMuted, p.elevated},
 	}
 
