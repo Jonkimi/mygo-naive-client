@@ -127,12 +127,15 @@ func TestSysproxy_DefaultBypassReservedSubnets(t *testing.T) {
 		"127.0.0.1",
 		"127.0.0.0/8",
 		"::1",
+		"::1/128",
 		"localhost",
 		"*.local",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"169.254.0.0/16",
+		"fc00::/7",
+		"fe80::/10",
 	}
 
 	sp := NewWithExecutor(execMock, "")
@@ -180,7 +183,7 @@ func TestSysproxy_DefaultBypassReservedSubnets(t *testing.T) {
 	if err := sp.setLinux("127.0.0.1", "10808", wantBypass); err != nil {
 		t.Fatalf("setLinux failed: %v", err)
 	}
-	wantIgnoreHosts := "['127.0.0.1', '127.0.0.0/8', '::1', 'localhost', '*.local', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16']"
+	wantIgnoreHosts := "['127.0.0.1', '127.0.0.0/8', '::1', '::1/128', 'localhost', '*.local', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', 'fc00::/7', 'fe80::/10']"
 	var gotIgnoreHosts string
 	for _, c := range calls {
 		if c.name == "gsettings" && len(c.args) == 4 && c.args[1] == "org.gnome.system.proxy" && c.args[2] == "ignore-hosts" {
@@ -189,6 +192,23 @@ func TestSysproxy_DefaultBypassReservedSubnets(t *testing.T) {
 	}
 	if gotIgnoreHosts != wantIgnoreHosts {
 		t.Fatalf("setLinux ignore-hosts mismatch:\n got: %q\nwant: %q", gotIgnoreHosts, wantIgnoreHosts)
+	}
+}
+
+// Tests that Windows ProxyServer formats IPv6 proxy hosts with brackets.
+func TestSysproxy_WindowsIPv6ProxyServerFormatting(t *testing.T) {
+	var proxyServer string
+	sp := NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+		if name == "reg" && len(args) >= 8 && args[3] == "ProxyServer" {
+			proxyServer = args[7]
+		}
+		return []byte("ok"), nil
+	}, "")
+	if err := sp.setWindows("::1", "10808", []string{"::1/128"}); err != nil {
+		t.Fatalf("setWindows failed: %v", err)
+	}
+	if proxyServer != "[::1]:10808" {
+		t.Fatalf("expected Windows ProxyServer [::1]:10808, got %q", proxyServer)
 	}
 }
 

@@ -289,6 +289,9 @@ func (ns *Netstack) resolveHostIP(ctx context.Context, host string) (netip.Addr,
 		return addr, nil
 	}
 	if strings.EqualFold(host, "localhost") {
+		if !ns.IPv4.IsValid() && ns.IPv6.IsValid() {
+			return netip.IPv6Loopback(), nil
+		}
 		return netip.MustParseAddr("127.0.0.1"), nil
 	}
 	if ns.ctx.Err() != nil {
@@ -327,14 +330,27 @@ func (ns *Netstack) resolveInTunnelDNS(ctx context.Context, host string) (netip.
 	}, host, ns.IPv4.IsValid() || !ns.IPv6.IsValid(), ns.IPv6.IsValid())
 }
 
-// ResolveDNSOverTunnel resolves host via Cloudflare's in-tunnel DNS (1.1.1.1:53 UDP, then 1.0.0.1:53 TCP)
-// using the supplied tunnel dial function.
+// ResolveDNSOverTunnel resolves host via Cloudflare's in-tunnel DNS (1.1.1.1:53 UDP, then 1.0.0.1:53 TCP,
+// or IPv6 Cloudflare DNS when IPv6-only) using the supplied tunnel dial function.
 func ResolveDNSOverTunnel(
 	ctx context.Context,
 	dial func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error),
 	host string,
 	allowV4 bool,
 	allowV6 bool,
+) (netip.Addr, error) {
+	return ResolveDNSOverTunnelWithStrategy(ctx, dial, host, allowV4, allowV6, !allowV4 && allowV6)
+}
+
+// ResolveDNSOverTunnelWithStrategy resolves host via Cloudflare's in-tunnel DNS, ordering AAAA vs A
+// queries according to preferV6 and falling back between families/transports.
+func ResolveDNSOverTunnelWithStrategy(
+	ctx context.Context,
+	dial func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error),
+	host string,
+	allowV4 bool,
+	allowV6 bool,
+	preferV6 bool,
 ) (netip.Addr, error) {
 	if dial == nil {
 		return netip.Addr{}, errors.New("nil dialer")
@@ -346,8 +362,16 @@ func ResolveDNSOverTunnel(
 		return netip.Addr{}, err
 	}
 	qtype := dns.TypeA
+	var altQType uint16
 	if !allowV4 && allowV6 {
 		qtype = dns.TypeAAAA
+	} else if preferV6 && allowV6 {
+		qtype = dns.TypeAAAA
+		if allowV4 {
+			altQType = dns.TypeA
+		}
+	} else if allowV6 {
+		altQType = dns.TypeAAAA
 	}
 
 	query := func(qt uint16, server netip.Addr, useTCP bool) (netip.Addr, error) {
@@ -360,6 +384,12 @@ func ResolveDNSOverTunnel(
 	}
 
 	udpServer := netip.MustParseAddr("1.1.1.1")
+	tcpServer := netip.MustParseAddr("1.0.0.1")
+	if !allowV4 && allowV6 {
+		udpServer = netip.MustParseAddr("2606:4700:4700::1111")
+		tcpServer = netip.MustParseAddr("2606:4700:4700::1001")
+	}
+
 	addr, err := query(qtype, udpServer, false)
 	if err == nil {
 		return addr, nil
@@ -368,26 +398,25 @@ func ResolveDNSOverTunnel(
 		return netip.Addr{}, err
 	}
 	if errors.Is(err, ErrNoDNSRecords) {
-		if qtype == dns.TypeA && allowV6 {
-			addr, v6Err := query(dns.TypeAAAA, udpServer, false)
-			if v6Err == nil || errors.Is(v6Err, ErrNoDNSRecords) || ctx.Err() != nil {
-				return addr, v6Err
+		if altQType != 0 {
+			addr, altErr := query(altQType, udpServer, false)
+			if altErr == nil || errors.Is(altErr, ErrNoDNSRecords) || ctx.Err() != nil {
+				return addr, altErr
 			}
-			// UDP AAAA timed out or hit a transport error; fall through to TCP.
-			err = v6Err
+			// UDP alt-family timed out or hit a transport error; fall through to TCP.
+			err = altErr
 		} else {
 			return netip.Addr{}, err
 		}
 	}
 
-	// Fallback to TCP 1.0.0.1:53 inside the tunnel when UDP fails at transport level.
-	tcpServer := netip.MustParseAddr("1.0.0.1")
+	// Fallback to TCP inside the tunnel when UDP fails at transport level.
 	addr, tcpErr := query(qtype, tcpServer, true)
 	if tcpErr == nil || ctx.Err() != nil {
 		return addr, tcpErr
 	}
-	if qtype == dns.TypeA && allowV6 && errors.Is(tcpErr, ErrNoDNSRecords) {
-		return query(dns.TypeAAAA, tcpServer, true)
+	if altQType != 0 && errors.Is(tcpErr, ErrNoDNSRecords) {
+		return query(altQType, tcpServer, true)
 	}
 	return netip.Addr{}, tcpErr
 }

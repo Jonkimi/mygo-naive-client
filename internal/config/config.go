@@ -383,7 +383,7 @@ func (s Service) RedactedProxy() string {
 		if port <= 0 {
 			port = 443
 		}
-		res = fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
+		res = fmt.Sprintf("%s://%s", s.EffectiveProtocol(), net.JoinHostPort(strings.Trim(s.Server, "[]"), strconv.Itoa(port)))
 	} else if s.EffectiveKind() == KindExternalProxy {
 		u, err := url.Parse(s.ExternalURI)
 		if err != nil || u.Host == "" {
@@ -447,7 +447,7 @@ func (s Service) CompactRemoteEndpoint() string {
 		if port <= 0 {
 			port = 443
 		}
-		res = fmt.Sprintf("%s://%s:%d", s.EffectiveProtocol(), s.Server, port)
+		res = fmt.Sprintf("%s://%s", s.EffectiveProtocol(), net.JoinHostPort(strings.Trim(s.Server, "[]"), strconv.Itoa(port)))
 	} else if s.EffectiveKind() == KindExternalProxy {
 		u, err := url.Parse(s.ExternalURI)
 		if err != nil || u.Host == "" {
@@ -493,11 +493,13 @@ type ListenEndpoint struct {
 }
 
 // DialAddr returns the local address suitable for dialing from this machine
-// (converting 0.0.0.0 or empty addr to 127.0.0.1).
+// (converting 0.0.0.0 or empty addr to 127.0.0.1, and :: to ::1).
 func (e ListenEndpoint) DialAddr() string {
-	host := e.Addr
-	if host == "" || host == "0.0.0.0" || host == "::" {
+	host := strings.Trim(e.Addr, "[]")
+	if host == "" || host == "0.0.0.0" {
 		host = "127.0.0.1"
+	} else if host == "::" {
+		host = "::1"
 	}
 	return net.JoinHostPort(host, strconv.Itoa(e.Port))
 }
@@ -580,8 +582,9 @@ func (s Service) Validate() error {
 	}
 	if s.EffectiveProtocol() == ProtoWARP {
 		if s.WARPConfig != nil && s.WARPConfig.Endpoint != "" {
-			if _, _, err := net.SplitHostPort(s.WARPConfig.Endpoint); err != nil {
-				if net.ParseIP(s.WARPConfig.Endpoint) == nil && strings.Contains(s.WARPConfig.Endpoint, ":") {
+			ep := strings.TrimSpace(s.WARPConfig.Endpoint)
+			if _, _, err := net.SplitHostPort(ep); err != nil {
+				if net.ParseIP(strings.Trim(ep, "[]")) == nil && strings.Contains(ep, ":") {
 					return fmt.Errorf("无效的 WARP 端点地址: %q", s.WARPConfig.Endpoint)
 				}
 			}

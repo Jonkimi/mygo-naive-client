@@ -12,6 +12,10 @@ func SetupRoutes(name string, excludeIPs []string) error {
 	return nil
 }
 
+func SetupRoutesWithOptions(name string, excludeIPs []string, forceIPv6Route bool) error {
+	return nil
+}
+
 func TeardownRoutes(name string, excludeIPs []string) error {
 	return nil
 }

@@ -8,6 +8,10 @@ func bindSocketToInterface(network string, ifIndex int, c syscall.RawConn) error
 	return nil
 }
 
-func defaultPhysicalRouteInterface() string {
+func defaultPhysicalRouteInterfaceV4() string {
+	return ""
+}
+
+func defaultPhysicalRouteInterfaceV6() string {
 	return ""
 }

@@ -16,8 +16,14 @@ var buildNativeOutbound = BuildNativeOutbound
 // BuildNativeOutbound converts a config.Service into sing-box native outbound options.
 func BuildNativeOutbound(svc config.Service) map[string]any {
 	ob := buildNativeOutboundInner(svc)
-	if srv, ok := ob["server"].(string); ok && srv != "" && net.ParseIP(srv) == nil {
-		ob["domain_resolver"] = "domestic-doh"
+	if srv, ok := ob["server"].(string); ok && srv != "" {
+		cleanSrv := strings.Trim(strings.TrimSpace(srv), "[]")
+		if cleanSrv != srv {
+			ob["server"] = cleanSrv
+		}
+		if net.ParseIP(cleanSrv) == nil {
+			ob["domain_resolver"] = "domestic-doh"
+		}
 	}
 	return ob
 }
@@ -99,7 +105,7 @@ func buildNativeOutboundInner(svc config.Service) map[string]any {
 					"server_port": port,
 					"version":     "5",
 				}
-				if host == "127.0.0.1" || host == "localhost" {
+				if host == "127.0.0.1" || host == "localhost" || host == "::1" {
 					if ifName := loopbackInterfaceName(); ifName != "" {
 						ob["bind_interface"] = ifName
 					}

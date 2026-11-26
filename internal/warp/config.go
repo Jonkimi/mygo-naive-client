@@ -18,15 +18,36 @@ const (
 )
 
 const (
-	DefaultMASQUEEndpoint    = "162.159.198.2:443"
-	DefaultMASQUESNI         = "consumer-masque.cloudflareclient.com"
-	DefaultWireGuardEndpoint = "162.159.192.1:2408"
-	DefaultWireGuardPubKey   = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
-	DefaultIPv4              = "172.16.0.2"
-	DefaultIPv6              = "2606:4700:110:8a36:df92:1074:9602:57a2"
-	DefaultMTU               = 1280
-	DefaultWarpProbeURL      = "http://connect.rom.miui.com/generate_204"
+	DefaultMASQUEEndpoint      = "162.159.198.2:443"
+	DefaultMASQUEEndpointV6    = "[2606:4700:103::1]:443"
+	DefaultMASQUESNI           = "consumer-masque.cloudflareclient.com"
+	DefaultWireGuardEndpoint   = "162.159.192.1:2408"
+	DefaultWireGuardEndpointV6 = "[2606:4700:d0::1]:2408"
+	DefaultWireGuardPubKey     = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
+	DefaultIPv4                = "172.16.0.2"
+	DefaultIPv6                = "2606:4700:110:8a36:df92:1074:9602:57a2"
+	DefaultMTU                 = 1280
+	DefaultWarpProbeURL        = "http://connect.rom.miui.com/generate_204"
 )
+
+// AnycastBypassCIDRs returns all Cloudflare WARP Anycast IPv4 and IPv6 subnets
+// that should bypass TUN capture to prevent routing loops.
+func AnycastBypassCIDRs() []string {
+	return []string{
+		"162.159.192.0/24",
+		"162.159.193.0/24",
+		"162.159.195.0/24",
+		"162.159.198.0/24",
+		"162.159.199.0/24",
+		"162.159.200.0/24",
+		"162.159.204.0/24",
+		"188.114.96.0/22",
+		"2606:4700:d0::/48",
+		"2606:4700:d1::/48",
+		"2606:4700:103::/48",
+		"2606:4700:104::/48",
+	}
+}
 
 // Account holds Cloudflare device registration and credentials.
 type Account struct {

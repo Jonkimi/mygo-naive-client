@@ -49,6 +49,9 @@ func TestCollectDarwinSearchDomains_IncludesAllSearchTokensAndSplitDNSResolver(t
 	}
 
 	cmds := buildDarwinDNSCommands("utun5", got)
+	if !strings.Contains(cmds, "d.add ServerAddresses * "+DNSAddress+" "+DNSAddressV6+"\n") {
+		t.Errorf("missing dual-stack ServerAddresses line in:\n%s", cmds)
+	}
 	if !strings.Contains(cmds, "d.add SearchDomains * office.local tail8bfe1c.ts.net tail9abc.ts.net\n") {
 		t.Errorf("missing SearchDomains line in:\n%s", cmds)
 	}
@@ -57,5 +60,28 @@ func TestCollectDarwinSearchDomains_IncludesAllSearchTokensAndSplitDNSResolver(t
 	}
 	if !strings.Contains(cmds, "d.add SupplementalMatchOrders * # 100000 100000 100000 100000\n") {
 		t.Errorf("missing SupplementalMatchOrders line in:\n%s", cmds)
+	}
+}
+
+// Tests that macOS exclude and default route builders handle pure-IPv6 hosts and forced IPv6-over-IPv4 routes.
+func TestBuildDarwinIPv6Routes(t *testing.T) {
+	// 1. Pure-IPv6 host (no gw4/iface4) uses gw6 for IPv6 node bypass routes.
+	cmds := buildDarwinExcludeRouteCommands([]string{"[2001:db8::1]", "2606:4700:d0::/48", "1.2.3.4"}, "", "", "fe80::1%en0", "en0")
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 IPv6 exclude route commands on IPv6-only host, got %v", cmds)
+	}
+	want0 := []string{"route", "-q", "-n", "add", "-inet6", "2001:db8::1/128", "fe80::1%en0"}
+	want1 := []string{"route", "-q", "-n", "add", "-inet6", "2606:4700:d0::/48", "fe80::1%en0"}
+	if !reflect.DeepEqual(cmds[0], want0) || !reflect.DeepEqual(cmds[1], want1) {
+		t.Fatalf("unexpected IPv6 exclude commands: %v", cmds)
+	}
+
+	// 2. Default route builder installs IPv6 half-default routes when installIPv6 is true.
+	defRoutes := buildDarwinDefaultRouteCommands("utun9", true)
+	if len(defRoutes) != 4 {
+		t.Fatalf("expected 4 default routes (v4+v6), got %v", defRoutes)
+	}
+	if !reflect.DeepEqual(defRoutes[2], []string{"route", "-q", "-n", "add", "-inet6", "::/1", "-interface", "utun9"}) {
+		t.Fatalf("unexpected ::/1 route command: %v", defRoutes[2])
 	}
 }

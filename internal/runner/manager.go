@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,7 @@ type Manager struct {
 	binPath        string
 	xrayBinPath    string
 	logLevel       string
+	dnsStrategy    string
 	workDir        string
 	instances      map[string]*instance
 	onChange       func()
@@ -160,6 +162,13 @@ func (m *Manager) SetXrayBinaryPath(path string) {
 func (m *Manager) SetLogLevel(level string) {
 	m.mu.Lock()
 	m.logLevel = level
+	m.mu.Unlock()
+}
+
+// SetDNSStrategy updates the DNS IP strategy used when generating Xray sidecar configs.
+func (m *Manager) SetDNSStrategy(strategy string) {
+	m.mu.Lock()
+	m.dnsStrategy = strategy
 	m.mu.Unlock()
 }
 
@@ -405,11 +414,13 @@ func (m *Manager) Start(svc config.Service) error {
 						}
 						allocatedPort = p
 					}
-					host := ep.Addr
-					if host == "" || host == "0.0.0.0" || host == "::" {
+					host := strings.Trim(ep.Addr, "[]")
+					if host == "" || host == "0.0.0.0" {
 						host = "127.0.0.1"
+					} else if host == "::" {
+						host = "::1"
 					}
-					listens[i] = fmt.Sprintf("%s://%s:%d", ep.Proto, host, allocatedPort)
+					listens[i] = fmt.Sprintf("%s://%s", ep.Proto, net.JoinHostPort(host, strconv.Itoa(allocatedPort)))
 				} else if allocatedPort == 0 {
 					allocatedPort = ep.Port
 				}
@@ -423,6 +434,7 @@ func (m *Manager) Start(svc config.Service) error {
 	naiveBin := m.binPath
 	xrayBin := m.xrayBinPath
 	logLevel := m.logLevel
+	dnsStrategy := m.dnsStrategy
 	m.mu.Unlock()
 
 	isXray := svc.EffectiveProtocol() != config.ProtoNaive
@@ -459,7 +471,7 @@ func (m *Manager) Start(svc config.Service) error {
 
 	if isXray {
 		var err error
-		cfgBytes, err = GenerateXrayConfigWithLogLevel(svc, allocatedPort, logLevel)
+		cfgBytes, err = GenerateXrayConfigWithOptions(svc, allocatedPort, logLevel, dnsStrategy)
 		if err != nil {
 			m.setError(svc.ID, err.Error())
 			return err

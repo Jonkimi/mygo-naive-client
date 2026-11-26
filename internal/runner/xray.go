@@ -10,7 +10,7 @@ import (
 
 // GenerateXrayConfig builds a complete Xray JSON configuration for sidecar execution.
 func GenerateXrayConfig(svc config.Service, listenPort int) ([]byte, error) {
-	return GenerateXrayConfigWithLogLevel(svc, listenPort, "warning")
+	return GenerateXrayConfigWithOptions(svc, listenPort, "warning", "")
 }
 
 func normalizeXrayLogLevel(level string) string {
@@ -28,8 +28,26 @@ func normalizeXrayLogLevel(level string) string {
 	}
 }
 
+func xrayDNSQueryStrategy(dnsStrategy string) string {
+	switch strings.ToLower(strings.TrimSpace(dnsStrategy)) {
+	case "ipv4_only":
+		return "UseIPv4"
+	case "ipv6_only":
+		return "UseIPv6"
+	case "prefer_ipv4", "prefer_ipv6":
+		return "UseIP"
+	default:
+		return ""
+	}
+}
+
 // GenerateXrayConfigWithLogLevel builds a complete Xray JSON configuration with a specified log level.
 func GenerateXrayConfigWithLogLevel(svc config.Service, listenPort int, logLevel string) ([]byte, error) {
+	return GenerateXrayConfigWithOptions(svc, listenPort, logLevel, "")
+}
+
+// GenerateXrayConfigWithOptions builds a complete Xray JSON configuration with log level and DNS IP strategy.
+func GenerateXrayConfigWithOptions(svc config.Service, listenPort int, logLevel string, dnsStrategy string) ([]byte, error) {
 	if listenPort <= 0 {
 		listenPort = 1080
 	}
@@ -57,12 +75,18 @@ func GenerateXrayConfigWithLogLevel(svc config.Service, listenPort int, logLevel
 		"inbounds":  []any{inbound},
 		"outbounds": []any{outbound},
 	}
+	if qs := xrayDNSQueryStrategy(dnsStrategy); qs != "" {
+		cfg["dns"] = map[string]any{
+			"queryStrategy": qs,
+		}
+	}
 
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
 func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 	proto := svc.EffectiveProtocol()
+	serverHost := strings.Trim(strings.TrimSpace(svc.Server), "[]")
 	serverPort := svc.ServerPort
 	if serverPort <= 0 {
 		serverPort = 443
@@ -83,7 +107,7 @@ func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 			"settings": map[string]any{
 				"vnext": []any{
 					map[string]any{
-						"address": svc.Server,
+						"address": serverHost,
 						"port":    serverPort,
 						"users":   []any{user},
 					},
@@ -99,7 +123,7 @@ func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 			"settings": map[string]any{
 				"vnext": []any{
 					map[string]any{
-						"address": svc.Server,
+						"address": serverHost,
 						"port":    serverPort,
 						"users": []any{
 							map[string]any{
@@ -121,7 +145,7 @@ func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 			"settings": map[string]any{
 				"servers": []any{
 					map[string]any{
-						"address":  svc.Server,
+						"address":  serverHost,
 						"port":     serverPort,
 						"password": svc.Password,
 					},
@@ -140,7 +164,7 @@ func buildXrayOutbound(svc config.Service) (map[string]any, error) {
 			"settings": map[string]any{
 				"servers": []any{
 					map[string]any{
-						"address":  svc.Server,
+						"address":  serverHost,
 						"port":     serverPort,
 						"method":   method,
 						"password": svc.Password,

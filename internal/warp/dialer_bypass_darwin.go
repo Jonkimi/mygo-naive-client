@@ -28,7 +28,7 @@ func bindSocketToInterface(network string, ifIndex int, c syscall.RawConn) error
 	return opErr
 }
 
-func defaultPhysicalRouteInterface() string {
+func defaultPhysicalRouteInterfaceV4() string {
 	out, err := exec.Command("route", "-n", "get", "default").Output()
 	if err != nil {
 		return ""
@@ -44,6 +44,37 @@ func defaultPhysicalRouteInterface() string {
 	}
 	// If default route is currently utun, inspect routing table for default gateway on physical interface.
 	out2, err := exec.Command("netstat", "-rn", "-f", "inet").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out2), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 && fields[0] == "default" {
+			cand := fields[3]
+			if !isVirtualTunInterface(cand) {
+				if _, err := net.InterfaceByName(cand); err == nil {
+					return cand
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func defaultPhysicalRouteInterfaceV6() string {
+	out, err := exec.Command("route", "-n", "get", "-inet6", "default").Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "interface:" {
+				cand := strings.TrimSpace(fields[1])
+				if !isVirtualTunInterface(cand) {
+					return cand
+				}
+			}
+		}
+	}
+	out2, err := exec.Command("netstat", "-rn", "-f", "inet6").Output()
 	if err != nil {
 		return ""
 	}

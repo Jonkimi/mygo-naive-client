@@ -125,6 +125,7 @@ type app struct {
 	tailnetSyncMu   sync.Mutex
 	tailnetSyncTimer *time.Timer
 	tunDevice       *tunhelper.ReceivedDevice
+	tunForceIPv6    bool
 	mockTunDevice    func() (*tunhelper.ReceivedDevice, error)
 	mockTunCreator   func(options tun.Options) (tun.Tun, error)
 	mockNodeResolver func(host string) []net.IP
@@ -542,6 +543,7 @@ func (a *app) initSubsystems() {
 		})
 	})
 	a.mgr.SetLogLevel(a.state.LogLevel)
+	a.mgr.SetDNSStrategy(a.effectiveProxyDNSStrategy())
 	a.appendSystemLog("INFO", "Client initialized (gateway port :%d, traffic mode: %s, log level: %s)", a.state.GatewayPort, a.state.TrafficMode, normalizeLogLevel(a.state.LogLevel))
 	a.mgr.PreStartChecker = func(svc config.Service) error {
 		if svc.EffectiveEngine() == config.EngineSingBox {
@@ -2188,6 +2190,8 @@ type gatewayConfigSnapshot struct {
 	RemoteDNS          string
 	PreferIPv4         bool
 	DNSStrategy        string
+	DirectDNSStrategy  string
+	ProxyDNSStrategy   string
 	DNSOptimisticCache bool
 	LogLevel           string
 	TailnetEnabled    bool
@@ -2230,6 +2234,8 @@ func (a *app) buildGatewaySnapshotFromUI() gatewayConfigSnapshot {
 		RemoteDNS:          a.effectiveRemoteDNS(),
 		PreferIPv4:         a.state.PreferIPv4,
 		DNSStrategy:        normalizeDNSStrategy(a.state.DNSStrategy, a.state.PreferIPv4),
+		DirectDNSStrategy:  normalizeOptionalDNSStrategy(a.state.DirectDNSStrategy),
+		ProxyDNSStrategy:   normalizeOptionalDNSStrategy(a.state.ProxyDNSStrategy),
 		DNSOptimisticCache: a.state.DNSOptimisticCache,
 		LogLevel:           a.state.LogLevel,
 		TailnetEnabled:    a.state.TailnetEnabled,
@@ -2362,7 +2368,7 @@ func (a *app) startDormantServiceForTag(eng *boxengine.Engine, tag string) {
 	}
 }
 
-func (a *app) requestTunDevice() (*tunhelper.ReceivedDevice, error) {
+func (a *app) requestTunDevice(forceIPv6Route bool) (*tunhelper.ReceivedDevice, error) {
 	if a.mockTunDevice != nil {
 		return a.mockTunDevice()
 	}
@@ -2374,6 +2380,7 @@ func (a *app) requestTunDevice() (*tunhelper.ReceivedDevice, error) {
 		exe = realPath
 	}
 	client := tunhelper.NewClient()
+	client.ForceIPv6Route = forceIPv6Route
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	excludeIPs := a.collectNodeServerIPs()
@@ -2428,13 +2435,13 @@ func (a *app) collectNodeServerIPs() []string {
 		}
 	}
 	// Exclude bootstrap DNS & domestic DoH IPs from TUN routing to prevent routing deadlocks
-	for _, b := range parseDNSList(a.state.BootstrapDNS, boxengine.DefaultBootstrapDNS) {
+	for _, b := range parseDNSList(a.state.BootstrapDNS, effectiveDefaultDNSList(boxengine.DefaultBootstrapDNS, boxengine.DefaultBootstrapDNSV6)) {
 		if host, _, err := net.SplitHostPort(b); err == nil {
 			b = host
 		}
 		addHost(b)
 	}
-	for _, d := range parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH) {
+	for _, d := range parseDNSList(a.effectiveDomesticDNS(), effectiveDefaultDNSList(boxengine.DefaultDomesticDoH, boxengine.DefaultDomesticDoHV6)) {
 		if u, err := url.Parse(d); err == nil && u.Hostname() != "" {
 			addHost(u.Hostname())
 		} else {
@@ -2445,15 +2452,7 @@ func (a *app) collectNodeServerIPs() []string {
 		}
 	}
 	// Exclude Cloudflare WARP Anycast subnets from TUN routing to prevent routing loops for local WARP and scans
-	for _, warpCIDR := range []string{
-		"162.159.192.0/24",
-		"162.159.193.0/24",
-		"162.159.195.0/24",
-		"162.159.198.0/24",
-		"162.159.200.0/24",
-		"162.159.204.0/24",
-		"188.114.96.0/22",
-	} {
+	for _, warpCIDR := range warp.AnycastBypassCIDRs() {
 		if !seen[warpCIDR] {
 			seen[warpCIDR] = true
 			ips = append(ips, warpCIDR)
@@ -2548,7 +2547,12 @@ func (a *app) resolveNodeHostIPs(host string) []net.IP {
 	defer cancel()
 	ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if len(ips) == 0 {
-		ips = lookupDNSServer(host, "223.5.5.5:53", 1000*time.Millisecond)
+		if !warp.IsIPv6OnlyHost() {
+			ips = lookupDNSServer(host, "223.5.5.5:53", 1000*time.Millisecond)
+		}
+		if len(ips) == 0 {
+			ips = lookupDNSServer(host, "[2400:3200::1]:53", 1000*time.Millisecond)
+		}
 	}
 	return ips
 }
@@ -2840,6 +2844,8 @@ func (a *app) startGatewayLocked() error {
 	}
 
 	trafficMode := snap.TrafficMode
+	wantForceIPv6 := effectiveSnapSubStrategy(snap.ProxyDNSStrategy, snap.DNSStrategy) != "ipv4_only" ||
+		effectiveSnapSubStrategy(snap.DirectDNSStrategy, snap.DNSStrategy) != "ipv4_only"
 	var tunFD int
 	var tunName string
 	if trafficMode == "tun" {
@@ -2855,6 +2861,7 @@ func (a *app) startGatewayLocked() error {
 					}
 					a.gatewayMu.Lock()
 					a.tunDevice = dev
+					a.tunForceIPv6 = wantForceIPv6
 					a.gatewayMu.Unlock()
 					curTun = dev
 				}
@@ -2873,8 +2880,20 @@ func (a *app) startGatewayLocked() error {
 			}
 		} else {
 			curTun := a.getTunDevice()
+			a.gatewayMu.Lock()
+			prevForceIPv6 := a.tunForceIPv6
+			a.gatewayMu.Unlock()
+			if curTun != nil && a.mockTunDevice == nil && prevForceIPv6 != wantForceIPv6 {
+				a.gatewayMu.Lock()
+				if a.tunDevice == curTun {
+					a.tunDevice = nil
+				}
+				a.gatewayMu.Unlock()
+				_ = curTun.Close()
+				curTun = nil
+			}
 			if curTun == nil {
-				dev, err := a.requestTunDevice()
+				dev, err := a.requestTunDevice(wantForceIPv6)
 				if err != nil {
 					err = fmt.Errorf("request TUN device: %w", err)
 					a.setLastGatewayErr(err)
@@ -2882,6 +2901,7 @@ func (a *app) startGatewayLocked() error {
 				}
 				a.gatewayMu.Lock()
 				a.tunDevice = dev
+				a.tunForceIPv6 = wantForceIPv6
 				a.gatewayMu.Unlock()
 				curTun = dev
 			}
@@ -2945,12 +2965,15 @@ func (a *app) startGatewayLocked() error {
 		FailureMonitor:        a.failureMonitor,
 		Blocker:               a.blocker,
 		BootstrapDomains:      append([]string(nil), snap.BootstrapDomains...),
-		BootstrapDNS:          parseDNSList(snap.BootstrapDNS, boxengine.DefaultBootstrapDNS),
-		DomesticDoH:           parseDNSList(snap.DomesticDNS, boxengine.DefaultDomesticDoH),
-		RemoteDoH:             parseDNSList(snap.RemoteDNS, boxengine.DefaultRemoteDoH),
+		BootstrapDNS:          parseOptionalDNSList(snap.BootstrapDNS),
+		DomesticDoH:           parseOptionalDNSList(snap.DomesticDNS),
+		RemoteDoH:             parseOptionalDNSList(snap.RemoteDNS),
 		PreferIPv4:            snap.PreferIPv4,
 		DNSStrategy:           snap.DNSStrategy,
+		DirectDNSStrategy:     snap.DirectDNSStrategy,
+		ProxyDNSStrategy:      snap.ProxyDNSStrategy,
 		DNSOptimisticCache:    snap.DNSOptimisticCache,
+		DualStackLoopback:     canBindIPv6Loopback(port),
 		TailnetConfig:         &tnCfg,
 		TailnetMode:           tnMode,
 		TailnetHostExcludes:   tnInfo.Excludes,
@@ -3070,6 +3093,41 @@ func parseDNSList(s string, defaults []string) []string {
 	return list
 }
 
+func parseOptionalDNSList(s string) []string {
+	return parseDNSList(s, nil)
+}
+
+func effectiveDefaultDNSList(v4, v6 []string) []string {
+	if warp.IsIPv6OnlyHost() {
+		return v6
+	}
+	return v4
+}
+
+func effectiveSnapSubStrategy(override, global string) string {
+	if s := normalizeOptionalDNSStrategy(override); s != "" {
+		return s
+	}
+	return global
+}
+
+func (a *app) effectiveProxyDNSStrategy() string {
+	global := normalizeDNSStrategy(a.state.DNSStrategy, a.state.PreferIPv4)
+	return effectiveSnapSubStrategy(a.state.ProxyDNSStrategy, global)
+}
+
+func canBindIPv6Loopback(port int) bool {
+	if port <= 0 {
+		return false
+	}
+	ln, err := net.Listen("tcp6", fmt.Sprintf("[::1]:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
 func (a *app) collectBootstrapDomains() []string {
 	var tnStatus tailnet.Status
 	if a.tailnetMgr != nil {
@@ -3124,7 +3182,7 @@ func (a *app) collectBootstrapDomains() []string {
 	}
 
 	// Collect domestic DoH domains to ensure they can be resolved via Bootstrap DNS without deadlocking.
-	for _, ep := range parseDNSList(a.effectiveDomesticDNS(), boxengine.DefaultDomesticDoH) {
+	for _, ep := range parseDNSList(a.effectiveDomesticDNS(), effectiveDefaultDNSList(boxengine.DefaultDomesticDoH, boxengine.DefaultDomesticDoHV6)) {
 		if u, err := url.Parse(ep); err == nil && u.Hostname() != "" {
 			add(u.Hostname(), false)
 		}
@@ -4038,9 +4096,11 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		Remote             string
 		PreferIPv4         bool
 		DNSStrategy        string
+		DirectDNSStrategy  string
+		ProxyDNSStrategy   string
 		DNSOptimisticCache bool
 		TailnetEnabled     bool
-		TailnetMode      string
+		TailnetMode        string
 		TailnetStateSig  string
 		Cloudflare       warp.Config
 	}{
@@ -4059,6 +4119,8 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		Remote:             snap.RemoteDNS,
 		PreferIPv4:         snap.PreferIPv4,
 		DNSStrategy:        snap.DNSStrategy,
+		DirectDNSStrategy:  snap.DirectDNSStrategy,
+		ProxyDNSStrategy:   snap.ProxyDNSStrategy,
 		DNSOptimisticCache: snap.DNSOptimisticCache,
 		TailnetEnabled:     snap.TailnetEnabled,
 		TailnetMode:      snap.TailnetMode,

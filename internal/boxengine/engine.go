@@ -68,7 +68,11 @@ type EngineOptions struct {
 	NodeIPResolver     func(host string) []net.IP
 	PreferIPv4         bool
 	DNSStrategy        string
+	DirectDNSStrategy  string
+	ProxyDNSStrategy   string
 	DNSOptimisticCache bool
+	DualStackLoopback  bool
+	HostIPv6Only       *bool
 	ActiveIDs          map[string]bool
 	OnDemandStart     func(poolTag string)
 	OnTelemetryUpdate func()
@@ -187,6 +191,7 @@ type Engine struct {
 	logWriter             *boxPlatformWriter
 	preferIPv4            bool
 	dnsStrategy           string
+	proxyDNSStrategy      string
 	boxCtx                context.Context
 	cancel            context.CancelFunc
 	closersMu         sync.Mutex
@@ -231,7 +236,7 @@ func New(opts EngineOptions) (*Engine, error) {
 	}
 
 	if listenPort == 0 {
-		ln, err := net.Listen("tcp", fmt.Sprintf("%s:0", listenHost))
+		ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, "0"))
 		if err != nil {
 			return nil, fmt.Errorf("failed to allocate ephemeral port: %w", err)
 		}
@@ -251,9 +256,10 @@ func New(opts EngineOptions) (*Engine, error) {
 	}
 
 	normLvl, parsedLvl := parseSingBoxLogLevel(opts.LogLevel)
+	globalStrategy := effectiveDNSStrategy(opts)
 	eng := &Engine{
 		port:                      listenPort,
-		addr:                      fmt.Sprintf("%s:%d", listenHost, listenPort),
+		addr:                      net.JoinHostPort(listenHost, strconv.Itoa(listenPort)),
 		services:                  opts.Services,
 		allocatedPorts:            allocated,
 		activeIDs:                 opts.ActiveIDs,
@@ -273,7 +279,8 @@ func New(opts EngineOptions) (*Engine, error) {
 		logLevel:                  normLvl,
 		logWriter:                 newBoxPlatformWriter(parsedLvl, opts.OnLog),
 		preferIPv4:                opts.PreferIPv4,
-		dnsStrategy:               effectiveDNSStrategy(opts),
+		dnsStrategy:               globalStrategy,
+		proxyDNSStrategy:          effectiveSubDNSStrategy(opts.ProxyDNSStrategy, globalStrategy),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1148,14 +1155,23 @@ func defaultNodeIPResolver() func(host string) []net.IP {
 		defer cancel()
 		ips, _ := net.DefaultResolver.LookupIP(ctx, "ip", h)
 		if len(ips) == 0 {
-			r := &net.Resolver{
-				PreferGo: true,
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					d := net.Dialer{Timeout: 1000 * time.Millisecond}
-					return d.DialContext(ctx, "udp", "223.5.5.5:53")
-				},
+			fallbackServers := []string{"223.5.5.5:53", "[2400:3200::1]:53"}
+			if warp.IsIPv6OnlyHost() {
+				fallbackServers = []string{"[2400:3200::1]:53"}
 			}
-			ips, _ = r.LookupIP(ctx, "ip", h)
+			for _, srvAddr := range fallbackServers {
+				r := &net.Resolver{
+					PreferGo: true,
+					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+						d := net.Dialer{Timeout: 1000 * time.Millisecond}
+						return d.DialContext(ctx, "udp", srvAddr)
+					},
+				}
+				if found, _ := r.LookupIP(ctx, "ip", h); len(found) > 0 {
+					ips = found
+					break
+				}
+			}
 		}
 
 		cacheMu.Lock()
@@ -1423,7 +1439,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		inbounds = append(inbounds, map[string]any{
 			"type":        "mixed",
 			"tag":         "tailnet-mixed-in",
-			"listen":      "0.0.0.0",
+			"listen":      "::",
 			"listen_port": port,
 		})
 	}
@@ -1464,7 +1480,7 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			"auto_route":   isWindows,
 			"strict_route": isWindows,
 			"stack":        "system",
-			"dns_address":  []string{tunhelper.DNSAddress},
+			"dns_address":  []string{tunhelper.DNSAddress, tunhelper.DNSAddressV6},
 		}
 		if isWindows {
 			// On Windows, setting dns_mode to "hijack" combined with strict_route installs
@@ -1477,18 +1493,10 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			tunIn["interface_name"] = opts.TunInterface
 		}
 		excludes := resolveNodeExcludes(opts)
-		// Exclude loopback addresses from TUN capture so 127.0.0.1 is never trapped in TUN
+		// Exclude loopback addresses from TUN capture so 127.0.0.1 and ::1 are never trapped in TUN
 		excludes = append(excludes, "127.0.0.0/8", "::1/128")
 		// Exclude Cloudflare WARP Anycast endpoints so local WARP clients do not loop into TUN
-		excludes = append(excludes,
-			"162.159.192.0/24",
-			"162.159.193.0/24",
-			"162.159.195.0/24",
-			"162.159.198.0/24",
-			"162.159.200.0/24",
-			"162.159.204.0/24",
-			"188.114.96.0/22",
-		)
+		excludes = append(excludes, warp.AnycastBypassCIDRs()...)
 		if opts.TailnetMode == tailnet.ModeHost {
 			tailnetExcludes := append([]string{}, tailnet.DefaultTailnetSubnets...)
 			tailnetExcludes = append(tailnetExcludes, opts.TailnetHostExcludes...)
@@ -1504,6 +1512,15 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 			tunIn["route_exclude_address"] = excludes
 		}
 		inbounds = append(inbounds, tunIn)
+	}
+
+	if opts.DualStackLoopback && host == "127.0.0.1" && !(opts.TailnetConfig != nil && opts.TailnetConfig.ExposeMixedPort) {
+		inbounds = append(inbounds, map[string]any{
+			"type":        "mixed",
+			"tag":         "mixed-in-v6",
+			"listen":      "::1",
+			"listen_port": port,
+		})
 	}
 	return inbounds
 }
@@ -1821,6 +1838,9 @@ func buildMasqueOutboundConfig(svc config.Service, globalCfg *warp.Config, tag, 
 func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, tag, detour string) map[string]any {
 	peerHost := "162.159.192.1"
 	peerPort := 2408
+	if warp.IsIPv6OnlyHost() {
+		peerHost = "2606:4700:d0::1"
+	}
 	if explicitEP := resolveExplicitWarpEndpoint(svc, globalCfg, warp.ModeWireGuard); explicitEP != "" {
 		if h, pStr, err := net.SplitHostPort(explicitEP); err == nil {
 			peerHost = h
@@ -1831,6 +1851,7 @@ func buildWireGuardEndpointConfig(svc config.Service, globalCfg *warp.Config, ta
 			peerHost = explicitEP
 		}
 	}
+	peerHost = strings.Trim(strings.TrimSpace(peerHost), "[]")
 
 	privKey := ""
 	peerPubKey := warp.DefaultWireGuardPubKey
@@ -2065,18 +2086,38 @@ func isProxyOutboundTag(outboundTag string) bool {
 		strings.HasPrefix(outboundTag, "node-")
 }
 
+func isHostIPv6Only(opts EngineOptions) bool {
+	if opts.HostIPv6Only != nil {
+		return *opts.HostIPv6Only
+	}
+	return warp.IsIPv6OnlyHost()
+}
+
 func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomains []string) map[string]any {
+	hostIPv6Only := isHostIPv6Only(opts)
 	bootstrapDNS := opts.BootstrapDNS
 	if len(bootstrapDNS) == 0 {
-		bootstrapDNS = DefaultBootstrapDNS
+		if hostIPv6Only {
+			bootstrapDNS = DefaultBootstrapDNSV6
+		} else {
+			bootstrapDNS = DefaultBootstrapDNS
+		}
 	}
 	domesticDoH := opts.DomesticDoH
 	if len(domesticDoH) == 0 {
-		domesticDoH = DefaultDomesticDoH
+		if hostIPv6Only {
+			domesticDoH = DefaultDomesticDoHV6
+		} else {
+			domesticDoH = DefaultDomesticDoH
+		}
 	}
 	remoteDoH := opts.RemoteDoH
 	if len(remoteDoH) == 0 {
-		remoteDoH = DefaultRemoteDoH
+		if hostIPv6Only {
+			remoteDoH = DefaultRemoteDoHV6
+		} else {
+			remoteDoH = DefaultRemoteDoH
+		}
 	}
 
 	remoteDoHDetour := "PROXY_POOL"
@@ -2189,9 +2230,9 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 			"domain_regex":  []string{`^[^.]+$`},
 			"server":        "tailscale-host-dns",
 		})
-		// Reverse DNS for Tailscale CGNAT addresses
+		// Reverse DNS for Tailscale CGNAT and ULA addresses
 		dnsRules = append(dnsRules, map[string]any{
-			"domain_suffix": []string{".100.in-addr.arpa"},
+			"domain_suffix": []string{".100.in-addr.arpa", ".0.e.1.a.c.5.1.1.a.7.d.f.ip6.arpa"},
 			"server":        "tailscale-host-dns",
 		})
 	} else if opts.TailnetMode == tailnet.ModeEmbedded && opts.TailnetConfig != nil {
@@ -2276,13 +2317,49 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 		dnsFinal = "domestic-doh"
 	}
 
+	globalStrategy := effectiveDNSStrategy(opts)
+	hasSplitStrategy := strings.TrimSpace(opts.DirectDNSStrategy) != "" || strings.TrimSpace(opts.ProxyDNSStrategy) != ""
+	directStrategy := effectiveSubDNSStrategy(opts.DirectDNSStrategy, globalStrategy)
+	proxyStrategy := effectiveSubDNSStrategy(opts.ProxyDNSStrategy, globalStrategy)
+
 	dnsMap := map[string]any{
 		"servers":         dnsServers,
 		"final":           dnsFinal,
 		"reverse_mapping": true,
 	}
-	if strategy := effectiveDNSStrategy(opts); strategy != "" {
-		dnsMap["strategy"] = strategy
+	if !hasSplitStrategy || directStrategy == proxyStrategy {
+		eff := globalStrategy
+		if hasSplitStrategy {
+			eff = directStrategy
+		}
+		if eff != "" {
+			dnsMap["strategy"] = eff
+		}
+	} else {
+		for _, rule := range dnsRules {
+			srv, _ := rule["server"].(string)
+			var ruleStrat string
+			switch {
+			case srv == "domestic-doh" || srv == "bootstrap-dns":
+				ruleStrat = directStrategy
+			case srv == "remote-doh" || strings.HasPrefix(srv, "remote-doh-"):
+				ruleStrat = proxyStrategy
+			}
+			if ruleStrat != "" {
+				rule["strategy"] = ruleStrat
+			}
+		}
+		finalStrat := proxyStrategy
+		if dnsFinal == "domestic-doh" {
+			finalStrat = directStrategy
+		}
+		if finalStrat != "" {
+			dnsRules = append(dnsRules, map[string]any{
+				"domain_regex": []string{".*"},
+				"server":       dnsFinal,
+				"strategy":     finalStrat,
+			})
+		}
 	}
 	if opts.DNSOptimisticCache {
 		dnsMap["optimistic"] = true
@@ -2304,6 +2381,17 @@ func effectiveDNSStrategy(opts EngineOptions) string {
 		return "prefer_ipv4"
 	}
 	return ""
+}
+
+func effectiveSubDNSStrategy(override, globalStrategy string) string {
+	switch strings.ToLower(strings.TrimSpace(override)) {
+	case "ipv4_only", "prefer_ipv4", "prefer_ipv6", "ipv6_only":
+		return strings.ToLower(strings.TrimSpace(override))
+	case "as_is", "default":
+		return ""
+	default:
+		return globalStrategy
+	}
 }
 
 func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDomains []string) map[string]any {
@@ -2380,20 +2468,7 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 
 	// 0.4 Cloudflare WARP Anycast endpoints routed directly to prevent local WARP routing loops
 	singRules = append(singRules, map[string]any{
-		"ip_cidr": []string{
-			"162.159.192.0/24",
-			"162.159.193.0/24",
-			"162.159.195.0/24",
-			"162.159.198.0/24",
-			"162.159.200.0/24",
-			"162.159.204.0/24",
-			"188.114.96.0/24",
-			"188.114.97.0/24",
-			"188.114.98.0/24",
-			"188.114.99.0/24",
-			"2606:4700:d0::/48",
-			"2606:4700:d1::/48",
-		},
+		"ip_cidr":  warp.AnycastBypassCIDRs(),
 		"outbound": "direct",
 	})
 
@@ -2407,22 +2482,32 @@ func buildRouteConfig(opts EngineOptions, finalOutbound string, allBootstrapDoma
 	var bootstrapIPs []string
 	bootstrapList := opts.BootstrapDNS
 	if len(bootstrapList) == 0 {
-		bootstrapList = DefaultBootstrapDNS
+		if isHostIPv6Only(opts) {
+			bootstrapList = DefaultBootstrapDNSV6
+		} else {
+			bootstrapList = DefaultBootstrapDNS
+		}
 	}
-	for _, raw := range bootstrapList {
+	addBootstrapIP := func(raw string) {
 		raw = strings.TrimSpace(raw)
 		if host, _, err := net.SplitHostPort(raw); err == nil {
 			raw = host
 		}
+		raw = strings.Trim(raw, "[]")
 		if ip := net.ParseIP(raw); ip != nil {
-			bootstrapIPs = append(bootstrapIPs, ip.String())
+			if ip4 := ip.To4(); ip4 != nil {
+				bootstrapIPs = append(bootstrapIPs, ip4.String()+"/32")
+			} else {
+				bootstrapIPs = append(bootstrapIPs, ip.String()+"/128")
+			}
 		}
+	}
+	for _, raw := range bootstrapList {
+		addBootstrapIP(raw)
 	}
 	for _, doh := range opts.DomesticDoH {
 		if u, err := url.Parse(doh); err == nil && u.Hostname() != "" {
-			if ip := net.ParseIP(u.Hostname()); ip != nil {
-				bootstrapIPs = append(bootstrapIPs, ip.String())
-			}
+			addBootstrapIP(u.Hostname())
 		}
 	}
 	if len(bootstrapIPs) > 0 {
@@ -2621,8 +2706,10 @@ func buildDNSServerMap(tag string, rawAddr string, detour string, domainResolver
 
 	host, portStr, err := net.SplitHostPort(rawAddr)
 	if err != nil {
-		host = rawAddr
+		host = strings.Trim(rawAddr, "[]")
 		portStr = "53"
+	} else {
+		host = strings.Trim(host, "[]")
 	}
 	port, _ := strconv.Atoi(portStr)
 	if port <= 0 {

@@ -35,8 +35,20 @@ func NewClient(httpClient *http.Client) *Client {
 		dialTCP := func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, _ := net.SplitHostPort(addr)
 			if host == "api.cloudflareclient.com" {
-				// Direct Anycast IPs bypass DNS pollution in Mainland China while preserving SNI TLS verification
-				ips := []string{"162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.200.1"}
+				// Direct Anycast IPs bypass DNS pollution in Mainland China while preserving SNI TLS verification.
+				// Order IPv6 first on IPv6-only hosts, or mix IPv6 after IPv4 on dual-stack hosts.
+				v4IPs := []string{"162.159.192.1", "162.159.193.1", "162.159.195.1", "162.159.200.1"}
+				v6IPs := []string{"2606:4700:d0::1", "2606:4700:d1::1"}
+				var ips []string
+				switch {
+				case IsIPv6OnlyHost():
+					ips = v6IPs
+				case HasGlobalIPv6():
+					ips = append(ips, v4IPs...)
+					ips = append(ips, v6IPs...)
+				default:
+					ips = v4IPs
+				}
 				var lastErr error
 				for _, ip := range ips {
 					subCtx, subCancel := context.WithTimeout(ctx, 2*time.Second)

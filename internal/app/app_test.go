@@ -3295,8 +3295,8 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 	a.settingsSubTab = 1
 	cat := a.catalog()
 
-	if a.state.DNSStrategy != "ipv4_only" || !a.state.PreferIPv4 {
-		t.Fatalf("expected default DNSStrategy=ipv4_only and PreferIPv4=true, got %q / %v", a.state.DNSStrategy, a.state.PreferIPv4)
+	if a.state.DNSStrategy != "prefer_ipv4" || !a.state.PreferIPv4 {
+		t.Fatalf("expected default DNSStrategy=prefer_ipv4 and PreferIPv4=true, got %q / %v", a.state.DNSStrategy, a.state.PreferIPv4)
 	}
 	if !a.state.DNSOptimisticCache {
 		t.Fatalf("expected DNSOptimisticCache to default to true")
@@ -3335,8 +3335,8 @@ func TestApp_PreferIPv4ToggleUI(t *testing.T) {
 	}
 
 	// 3. Change DNS resolution strategy dropdown to Default Dual-Stack (as_is)
-	if err := tt.Click(cat.DnsStrategyIPv4Only()); err != nil {
-		t.Fatalf("click DNS strategy select trigger %s: %v", cat.DnsStrategyIPv4Only(), err)
+	if err := tt.Click(cat.DnsStrategyPreferIPv4()); err != nil {
+		t.Fatalf("click DNS strategy select trigger %s: %v", cat.DnsStrategyPreferIPv4(), err)
 	}
 	tt.Frame()
 	if err := tt.Click(cat.DnsStrategyAsIs()); err != nil {
@@ -4574,6 +4574,61 @@ func TestNodeHealth_StartupAutoProbeDistinguishedUIAndProbeURLPresets(t *testing
 	tt.Frame()
 	if a.state.Cloudflare.ProbeURL != "" {
 		t.Fatalf("expected WARP ProbeURL cleared by default preset option, got %q", a.state.Cloudflare.ProbeURL)
+	}
+}
+
+// Tests selecting independent Direct and Proxy DNS strategies in Settings and verifying persistence and gateway signature updates.
+func TestApp_SplitDNSStrategyUI(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	a.initDNS()
+	a.settingsSubTab = 1
+	cat := a.catalog()
+
+	a.refreshGatewaySnapshot()
+	sigBefore := a.gatewayConfigSignatureForSnapshot(a.getGatewaySnapshot(), nil)
+
+	tt := ui.NewTester(func(c *ui.Context) {
+		a.renderSettingsPage(c, darkPalette)
+	}, 800, 2200)
+
+	// 1. Set Direct DNS Strategy to IPv4 Only (via PopUpButton accessibility role)
+	directSelect, ok := tt.AccessByRole(ui.RolePopUpButton, cat.DnsDirectStrategyLabel())
+	if !ok {
+		t.Fatalf("find Direct DNS strategy select")
+	}
+	tt.ClickAt(directSelect.Bounds.X+directSelect.Bounds.W/2, directSelect.Bounds.Y+directSelect.Bounds.H/2)
+	tt.Frame()
+	if err := tt.Click(cat.DnsStrategyIPv4Only()); err != nil {
+		t.Fatalf("select IPv4 Only for Direct DNS: %v", err)
+	}
+	tt.Frame()
+
+	// 2. Set Proxy DNS Strategy to Prefer IPv6
+	proxySelect, ok := tt.AccessByRole(ui.RolePopUpButton, cat.DnsProxyStrategyLabel())
+	if !ok {
+		t.Fatalf("find Proxy DNS strategy select")
+	}
+	tt.ClickAt(proxySelect.Bounds.X+proxySelect.Bounds.W/2, proxySelect.Bounds.Y+proxySelect.Bounds.H/2)
+	tt.Frame()
+	if err := tt.Click(cat.DnsStrategyPreferIPv6()); err != nil {
+		t.Fatalf("select Prefer IPv6 for Proxy DNS: %v", err)
+	}
+	tt.Frame()
+
+	if a.state.DirectDNSStrategy != "ipv4_only" || a.state.ProxyDNSStrategy != "prefer_ipv6" {
+		t.Fatalf("expected DirectDNSStrategy=ipv4_only and ProxyDNSStrategy=prefer_ipv6, got %q / %q", a.state.DirectDNSStrategy, a.state.ProxyDNSStrategy)
+	}
+
+	a.refreshGatewaySnapshot()
+	sigAfter := a.gatewayConfigSignatureForSnapshot(a.getGatewaySnapshot(), nil)
+	if sigAfter == sigBefore {
+		t.Fatalf("expected gateway signature to change when split DNS strategies are updated")
+	}
+
+	// Reload state from disk and verify persistence.
+	a.loadState()
+	if a.state.DirectDNSStrategy != "ipv4_only" || a.state.ProxyDNSStrategy != "prefer_ipv6" {
+		t.Fatalf("expected persisted split DNS strategies, got %q / %q", a.state.DirectDNSStrategy, a.state.ProxyDNSStrategy)
 	}
 }
 

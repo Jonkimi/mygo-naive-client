@@ -52,6 +52,8 @@ type PersistedState struct {
 	RemoteDoH               string              `json:"remoteDoH,omitempty"`    // Deprecated alias
 	PreferIPv4              bool                `json:"preferIpv4"`
 	DNSStrategy             string              `json:"dnsStrategy,omitempty"`
+	DirectDNSStrategy       string              `json:"directDnsStrategy,omitempty"`
+	ProxyDNSStrategy        string              `json:"proxyDnsStrategy,omitempty"`
 	DNSOptimisticCache      bool                `json:"dnsOptimisticCache"`
 	TrafficMode             string              `json:"trafficMode,omitempty"`
 	SystemProxyBypass       []string            `json:"systemProxyBypass,omitempty"`
@@ -125,9 +127,18 @@ func normalizeDNSStrategy(strategy string, preferIPv4 bool) string {
 		return strings.ToLower(strings.TrimSpace(strategy))
 	}
 	if preferIPv4 {
-		return "ipv4_only"
+		return "prefer_ipv4"
 	}
 	return "as_is"
+}
+
+func normalizeOptionalDNSStrategy(strategy string) string {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case "ipv4_only", "prefer_ipv4", "as_is", "prefer_ipv6", "ipv6_only":
+		return strings.ToLower(strings.TrimSpace(strategy))
+	default:
+		return ""
+	}
 }
 
 func defaultPersistedState() PersistedState {
@@ -139,7 +150,7 @@ func defaultPersistedState() PersistedState {
 		GatewayEnabled:          true,
 		GatewayPort:             10809,
 		PreferIPv4:              true,
-		DNSStrategy:             "ipv4_only",
+		DNSStrategy:             "prefer_ipv4",
 		DNSOptimisticCache:      true,
 		TrafficMode:             "port",
 		RoutingRules:            routing.DefaultPresets(),
@@ -355,6 +366,8 @@ func (a *app) loadState() {
 		_ = json.Unmarshal(raw, &st)
 	}
 	st.DNSStrategy = normalizeDNSStrategy(st.DNSStrategy, st.PreferIPv4)
+	st.DirectDNSStrategy = normalizeOptionalDNSStrategy(st.DirectDNSStrategy)
+	st.ProxyDNSStrategy = normalizeOptionalDNSStrategy(st.ProxyDNSStrategy)
 	st.PreferIPv4 = st.DNSStrategy == "ipv4_only" || st.DNSStrategy == "prefer_ipv4"
 
 	if st.InstalledGeodataTag == "" && a.localGeodataVersion != "" {
@@ -585,6 +598,13 @@ func (a *app) loadState() {
 	a.syncBuiltinWarpService()
 	a.syncRouter()
 	a.syncBlocker()
+	if a.mgr != nil {
+		effProxy := st.ProxyDNSStrategy
+		if effProxy == "" {
+			effProxy = st.DNSStrategy
+		}
+		a.mgr.SetDNSStrategy(effProxy)
+	}
 	if a.tailnetMgr != nil {
 		a.tailnetMgr.UpdateConfig(st.tailnetConfig())
 	}

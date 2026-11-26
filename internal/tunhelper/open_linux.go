@@ -69,7 +69,101 @@ func isBypassSafeCIDR(ipNet *net.IPNet) bool {
 // SetupRoutes installs default 0/1 and 128/1 routes on Linux pointing to the TUN interface,
 // and installs specific direct routes for excludeIPs (hosts and CIDRs).
 func SetupRoutes(name string, excludeIPs []string) error {
+	return SetupRoutesWithOptions(name, excludeIPs, false)
+}
+
+// SetupRoutesWithOptions installs default routes on Linux with optional forced IPv6 TUN capture routes.
+func SetupRoutesWithOptions(name string, excludeIPs []string, forceIPv6Route bool) error {
 	_ = TeardownRoutes(name, excludeIPs)
+
+	gw4, dev4 := getDefaultGatewayV4()
+	gw6, dev6 := getDefaultGatewayV6()
+
+	for _, r := range buildLinuxExcludeRouteCommands(excludeIPs, gw4, dev4, gw6, dev6) {
+		_ = exec.Command(r[0], r[1:]...).Run()
+	}
+
+	installIPv6 := forceIPv6Route || gw6 != "" || dev6 != ""
+	for _, r := range buildLinuxDefaultRouteCommands(name, installIPv6) {
+		_ = exec.Command(r[0], r[1:]...).Run()
+	}
+	return nil
+}
+
+func isLinuxVirtualInterface(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(lower, "tun") ||
+		strings.HasPrefix(lower, "utun") ||
+		strings.HasPrefix(lower, "tap") ||
+		strings.HasPrefix(lower, "wg") ||
+		strings.HasPrefix(lower, "tailscale") ||
+		strings.HasPrefix(lower, "lo")
+}
+
+func parseLinuxDefaultRoute(out string) (gw, dev string) {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		var lineGW, lineDev string
+		for i := 0; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "via":
+				lineGW = fields[i+1]
+			case "dev":
+				lineDev = fields[i+1]
+			}
+		}
+		if lineDev != "" && !isLinuxVirtualInterface(lineDev) {
+			return lineGW, lineDev
+		}
+	}
+	return "", ""
+}
+
+func getDefaultGatewayV4() (string, string) {
+	out, err := exec.Command("ip", "route", "show", "default").Output()
+	if err != nil {
+		return "", ""
+	}
+	return parseLinuxDefaultRoute(string(out))
+}
+
+func getDefaultGatewayV6() (string, string) {
+	out, err := exec.Command("ip", "-6", "route", "show", "default").Output()
+	if err != nil {
+		return "", ""
+	}
+	return parseLinuxDefaultRoute(string(out))
+}
+
+func buildLinuxExcludeRouteCommands(excludeIPs []string, gw4, dev4, gw6, dev6 string) [][]string {
+	var cmds [][]string
+	addRoute := func(isV6 bool, target string) {
+		if !isV6 {
+			switch {
+			case gw4 != "" && dev4 != "":
+				cmds = append(cmds, []string{"ip", "route", "replace", target, "via", gw4, "dev", dev4})
+			case gw4 != "":
+				cmds = append(cmds, []string{"ip", "route", "replace", target, "via", gw4})
+			case dev4 != "":
+				cmds = append(cmds, []string{"ip", "route", "replace", target, "dev", dev4})
+			default:
+				cmds = append(cmds, []string{"ip", "route", "add", target, "scope", "link"})
+			}
+			return
+		}
+		switch {
+		case gw6 != "" && dev6 != "":
+			cmds = append(cmds, []string{"ip", "-6", "route", "replace", target, "via", gw6, "dev", dev6})
+		case gw6 != "":
+			cmds = append(cmds, []string{"ip", "-6", "route", "replace", target, "via", gw6})
+		case dev6 != "":
+			cmds = append(cmds, []string{"ip", "-6", "route", "replace", target, "dev", dev6})
+		case dev4 != "":
+			cmds = append(cmds, []string{"ip", "-6", "route", "replace", target, "dev", dev4})
+		default:
+			cmds = append(cmds, []string{"ip", "-6", "route", "add", target, "scope", "link"})
+		}
+	}
 
 	for _, entry := range excludeIPs {
 		trimmed := strings.TrimSpace(entry)
@@ -81,34 +175,34 @@ func SetupRoutes(name string, excludeIPs []string) error {
 			if err != nil || !isBypassSafeCIDR(ipNet) {
 				continue
 			}
-			if ipNet.IP.To4() != nil {
-				_ = exec.Command("ip", "route", "add", ipNet.String(), "scope", "link").Run()
-			} else {
-				_ = exec.Command("ip", "-6", "route", "add", ipNet.String(), "scope", "link").Run()
-			}
+			addRoute(ipNet.IP.To4() == nil, ipNet.String())
 			continue
 		}
-		ip := net.ParseIP(trimmed)
+		ip := net.ParseIP(strings.Trim(trimmed, "[]"))
 		if !isBypassSafe(ip) {
 			continue
 		}
 		if ip.To4() != nil {
-			_ = exec.Command("ip", "route", "add", ip.String()+"/32", "scope", "link").Run()
+			addRoute(false, ip.String()+"/32")
 		} else {
-			_ = exec.Command("ip", "-6", "route", "add", ip.String()+"/128", "scope", "link").Run()
+			addRoute(true, ip.String()+"/128")
 		}
 	}
+	return cmds
+}
 
+func buildLinuxDefaultRouteCommands(name string, installIPv6 bool) [][]string {
 	routes := [][]string{
 		{"ip", "route", "add", "0.0.0.0/1", "dev", name},
 		{"ip", "route", "add", "128.0.0.0/1", "dev", name},
-		{"ip", "-6", "route", "add", "::/1", "dev", name},
-		{"ip", "-6", "route", "add", "8000::/1", "dev", name},
 	}
-	for _, r := range routes {
-		_ = exec.Command(r[0], r[1:]...).Run()
+	if installIPv6 {
+		routes = append(routes,
+			[]string{"ip", "-6", "route", "add", "::/1", "dev", name},
+			[]string{"ip", "-6", "route", "add", "8000::/1", "dev", name},
+		)
 	}
-	return nil
+	return routes
 }
 
 // TeardownRoutes removes default 0/1 and 128/1 routes and host/subnet routes on Linux.

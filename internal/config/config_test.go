@@ -249,4 +249,47 @@ naive+https://bob:pw2@1.2.3.4:8443?security=tls&sni=sni.example.com#SNI-Node
 	}
 }
 
+// Tests IPv6 server formatting, bracketed WARP endpoint validation, :: DialAddr, and IPv6 Naive SNI import.
+func TestConfig_IPv6FormattingAndValidation(t *testing.T) {
+	svc := Service{
+		ID:         "vless-v6",
+		Name:       "VLESS IPv6",
+		Protocol:   ProtoVLESS,
+		Engine:     EngineSingBox,
+		Server:     "2001:db8::1",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+	}
+	if got := svc.CompactRemoteEndpoint(); got != "vless://[2001:db8::1]:443" {
+		t.Errorf("CompactRemoteEndpoint = %q, want vless://[2001:db8::1]:443", got)
+	}
+	if got := svc.RedactedProxy(); got != "vless://[2001:db8::1]:443" {
+		t.Errorf("RedactedProxy = %q, want vless://[2001:db8::1]:443", got)
+	}
+
+	ep := ListenEndpoint{Proto: "socks", Addr: "::", Port: 1080}
+	if got := ep.DialAddr(); got != "[::1]:1080" {
+		t.Errorf("DialAddr for :: = %q, want [::1]:1080", got)
+	}
+
+	warpSvc := Service{
+		Name:     "WARP-V6",
+		Protocol: ProtoWARP,
+		WARPConfig: &WarpNodeConfig{
+			Endpoint: "[2606:4700:d0::1]",
+		},
+	}
+	if err := warpSvc.Validate(); err != nil {
+		t.Errorf("expected bare bracketed IPv6 WARP endpoint to validate, got: %v", err)
+	}
+
+	imported, err := ParseImport("naive+https://user:pass@[2001:db8::1]:443?sni=2001:db8::2#NaiveV6", 1080)
+	if err != nil {
+		t.Fatalf("ParseImport naive IPv6 sni failed: %v", err)
+	}
+	if imported.PrimaryProxy() != "https://user:pass@[2001:db8::2]:443" {
+		t.Errorf("unexpected PrimaryProxy with IPv6 sni: %q", imported.PrimaryProxy())
+	}
+}
+
 

@@ -77,7 +77,7 @@ func (s Service) warpShareURI() string {
 }
 
 func (s Service) vlessShareURI() string {
-	server := s.Server
+	server := strings.Trim(s.Server, "[]")
 	port := s.ServerPort
 	if port <= 0 {
 		port = 443
@@ -184,7 +184,7 @@ func (s Service) vmessShareURI() string {
 }
 
 func (s Service) trojanShareURI() string {
-	server := s.Server
+	server := strings.Trim(s.Server, "[]")
 	port := s.ServerPort
 	if port <= 0 {
 		port = 443
@@ -219,7 +219,7 @@ func (s Service) trojanShareURI() string {
 }
 
 func (s Service) shadowsocksShareURI() string {
-	server := s.Server
+	server := strings.Trim(s.Server, "[]")
 	port := s.ServerPort
 	if port <= 0 {
 		port = 8388
@@ -241,7 +241,7 @@ func (s Service) shadowsocksShareURI() string {
 }
 
 func (s Service) hysteria2ShareURI() string {
-	server := s.Server
+	server := strings.Trim(s.Server, "[]")
 	port := s.ServerPort
 	if port <= 0 {
 		port = 443
@@ -265,7 +265,7 @@ func (s Service) hysteria2ShareURI() string {
 }
 
 func (s Service) tuicShareURI() string {
-	server := s.Server
+	server := strings.Trim(s.Server, "[]")
 	port := s.ServerPort
 	if port <= 0 {
 		port = 8443
@@ -304,7 +304,7 @@ func (s Service) socks5ShareURI() string {
 	if s.ExternalURI != "" {
 		return s.ExternalURI
 	}
-	host := s.Server
+	host := strings.Trim(s.Server, "[]")
 	if host == "" {
 		host = "127.0.0.1"
 	}
@@ -331,7 +331,7 @@ func (s Service) httpShareURI() string {
 	if s.ExternalURI != "" {
 		return s.ExternalURI
 	}
-	host := s.Server
+	host := strings.Trim(s.Server, "[]")
 	if host == "" {
 		host = "127.0.0.1"
 	}
@@ -669,11 +669,13 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 		host := u.Host
 		hostname := u.Hostname()
 		if sni != "" {
-			hostname = sni
-			if strings.Contains(sni, ":") {
+			hostname = strings.Trim(sni, "[]")
+			if _, _, err := net.SplitHostPort(sni); err == nil {
 				host = sni
 			} else if p := u.Port(); p != "" {
-				host = net.JoinHostPort(sni, p)
+				host = net.JoinHostPort(hostname, p)
+			} else if ip := net.ParseIP(hostname); ip != nil && ip.To4() == nil {
+				host = "[" + ip.String() + "]"
 			} else {
 				host = sni
 			}

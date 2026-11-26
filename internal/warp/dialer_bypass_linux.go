@@ -32,8 +32,24 @@ func bindSocketToInterface(network string, ifIndex int, c syscall.RawConn) error
 	return opErr
 }
 
-func defaultPhysicalRouteInterface() string {
+func defaultPhysicalRouteInterfaceV4() string {
 	out, err := exec.Command("ip", "route", "show", "default").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "dev" && !isVirtualTunInterface(fields[i+1]) {
+				return fields[i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func defaultPhysicalRouteInterfaceV6() string {
+	out, err := exec.Command("ip", "-6", "route", "show", "default").Output()
 	if err != nil {
 		return ""
 	}

@@ -465,6 +465,29 @@ func TestResolveDNSOverTunnel_ErrorClassificationAndTCPFallback(t *testing.T) {
 		t.Fatalf("expected TCP fallback sequence [A, AAAA], got %v", tcpTypes)
 	}
 
+	// 2b. With preferV6=true, ResolveDNSOverTunnelWithStrategy queries AAAA before A.
+	var prefV6Types []uint16
+	addrPref, errPref := ResolveDNSOverTunnelWithStrategy(context.Background(), func(ctx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+		return serveDNS(func(req *dns.Msg) *dns.Msg {
+			prefV6Types = append(prefV6Types, req.Question[0].Qtype)
+			resp := new(dns.Msg)
+			resp.SetReply(req)
+			if req.Question[0].Qtype == dns.TypeAAAA {
+				resp.Answer = append(resp.Answer, &dns.AAAA{
+					Hdr:  dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
+					AAAA: wantV6,
+				})
+			}
+			return resp
+		})
+	}, "v6pref.example.invalid", true, true, true)
+	if errPref != nil || addrPref != netip.MustParseAddr("2001:db8::42") {
+		t.Fatalf("expected preferV6 AAAA resolution to succeed, got addr=%v err=%v", addrPref, errPref)
+	}
+	if len(prefV6Types) != 1 || prefV6Types[0] != dns.TypeAAAA {
+		t.Fatalf("expected single AAAA query when preferV6=true, got %v", prefV6Types)
+	}
+
 	// 3. Truncated UDP response (TC=1) and SERVFAIL must trigger TCP 1.0.0.1:53 fallback, not ErrNoDNSRecords.
 	for _, tc := range []struct {
 		name      string

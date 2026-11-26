@@ -756,3 +756,54 @@ func TestProbeMASQUEEndpoint_EnrolledAccountVerifiesConnectIP(t *testing.T) {
 		t.Fatalf("expected fragmented ClientHello writes during probeH2")
 	}
 }
+
+// Tests that EndpointSelector chooses IPv6 candidates on IPv6-only hosts and mixes IPv6 on dual-stack hosts.
+func TestEndpointSelector_IPv6OnlyAndDualStackCandidateSelection(t *testing.T) {
+	selV6Only := NewEndpointSelector()
+	selV6Only.hasIPv4Fn = func() bool { return false }
+	selV6Only.hasIPv6Fn = func() bool { return true }
+	selV6Only.raceWindow = 40 * time.Millisecond
+	var probedV6 []string
+	var mu sync.Mutex
+	selV6Only.masqueProbeFn = func(ctx context.Context, dialer Dialer, endpoint string, acc *Account, opts MASQUEOptions) (string, time.Duration, error) {
+		mu.Lock()
+		probedV6 = append(probedV6, endpoint)
+		mu.Unlock()
+		return "h3", 10 * time.Millisecond, nil
+	}
+	res, err := selV6Only.SelectMASQUEEndpoint(context.Background(), "direct", nil, &Account{}, MASQUEOptions{})
+	if err != nil {
+		t.Fatalf("SelectMASQUEEndpoint IPv6-only failed: %v", err)
+	}
+	if !strings.Contains(res.Endpoint, "[") {
+		t.Fatalf("expected IPv6 endpoint on IPv6-only host, got %q", res.Endpoint)
+	}
+	for _, ep := range probedV6 {
+		if !strings.Contains(ep, "[") {
+			t.Errorf("expected only IPv6 candidates probed on IPv6-only host, saw %q", ep)
+		}
+	}
+
+	// Dual-stack should include both IPv4 and IPv6 candidates in the runtime pool.
+	selDual := NewEndpointSelector()
+	selDual.hasIPv4Fn = func() bool { return true }
+	selDual.hasIPv6Fn = func() bool { return true }
+	mixed := selDual.effectiveRuntimeCandidates(DefaultMASQUERuntimeCandidates, true, DefaultMASQUERuntimeCandidatesV6)
+	var sawV4, sawV6 bool
+	for _, ep := range mixed {
+		if strings.Contains(ep, "[") {
+			sawV6 = true
+		} else {
+			sawV4 = true
+		}
+	}
+	if !sawV4 || !sawV6 {
+		t.Fatalf("expected both IPv4 and IPv6 candidates on dual-stack host, got %v", mixed)
+	}
+
+	// packetListenTarget should bind IPv6 socket for IPv6 endpoints.
+	listenNet, listenAddr := packetListenTarget("udp", "[2606:4700:103::1]:443", net.ParseIP("192.0.2.10"), net.ParseIP("2001:db8::10"))
+	if listenNet != "udp6" || listenAddr != "[2001:db8::10]:0" {
+		t.Fatalf("unexpected packetListenTarget for IPv6: net=%q addr=%q", listenNet, listenAddr)
+	}
+}

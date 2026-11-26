@@ -27,6 +27,8 @@ var (
 		"https://dns.alidns.com/dns-query",
 		"https://1.12.12.12/dns-query",
 		"https://doh.pub/dns-query",
+		"https://[2400:3200::1]/dns-query",
+		"https://[2402:4e00::]/dns-query",
 	}
 
 	remoteDNSPresets = []string{
@@ -36,6 +38,8 @@ var (
 		"https://dns.google/dns-query",
 		"https://dns.quad9.net/dns-query",
 		"https://doh.opendns.com/dns-query",
+		"https://[2606:4700:4700::1111]/dns-query",
+		"https://[2001:4860:4860::8888]/dns-query",
 	}
 
 	bootstrapDNSPresets = []string{
@@ -44,9 +48,21 @@ var (
 		"114.114.114.114",
 		"180.76.76.76",
 		"1.12.12.12",
+		"2400:3200::1",
+		"2402:4e00::",
+		"2606:4700:4700::1111",
 	}
 
 	dnsStrategyCodes = []string{
+		"ipv4_only",
+		"prefer_ipv4",
+		"as_is",
+		"prefer_ipv6",
+		"ipv6_only",
+	}
+
+	dnsSubStrategyCodes = []string{
+		"",
 		"ipv4_only",
 		"prefer_ipv4",
 		"as_is",
@@ -155,6 +171,18 @@ func (a *app) appIconLabels() []string {
 func (a *app) dnsStrategyLabels() []string {
 	cat := a.catalog()
 	return []string{
+		cat.DnsStrategyIPv4Only(),
+		cat.DnsStrategyPreferIPv4(),
+		cat.DnsStrategyAsIs(),
+		cat.DnsStrategyPreferIPv6(),
+		cat.DnsStrategyIPv6Only(),
+	}
+}
+
+func (a *app) dnsSubStrategyLabels() []string {
+	cat := a.catalog()
+	return []string{
+		cat.DnsStrategyInherit(),
 		cat.DnsStrategyIPv4Only(),
 		cat.DnsStrategyPreferIPv4(),
 		cat.DnsStrategyAsIs(),
@@ -424,6 +452,42 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 				nextCode := dnsStrategyCodes[indexOfCode(strategyLabels, curStrategyLabel)]
 				a.state.DNSStrategy = nextCode
 				a.state.PreferIPv4 = nextCode == "ipv4_only" || nextCode == "prefer_ipv4"
+				if a.mgr != nil {
+					a.mgr.SetDNSStrategy(a.effectiveProxyDNSStrategy())
+				}
+				a.saveState()
+				a.initDNS()
+			}
+		})
+
+		subStrategyLabels := a.dnsSubStrategyLabels()
+
+		directStrategyCode := normalizeOptionalDNSStrategy(a.state.DirectDNSStrategy)
+		curDirectLabel := subStrategyLabels[indexOfCode(dnsSubStrategyCodes, directStrategyCode)]
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {
+			ui.Column(c).Gap(2).Grow(1).Shrink(1).MinWidth(140).Children(func() {
+				ui.Text(c, cat.DnsDirectStrategyLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				ui.Text(c, cat.DnsDirectStrategyHint()).FontSize(11).TextColor(p.textDim)
+			})
+			if ui.Select(c.Key("page-set-dns-direct-strategy"), &curDirectLabel, subStrategyLabels).Label(cat.DnsDirectStrategyLabel()).Width(250).MaxWidthPercent(100).Shrink(0).Changed() {
+				a.state.DirectDNSStrategy = dnsSubStrategyCodes[indexOfCode(subStrategyLabels, curDirectLabel)]
+				a.saveState()
+				a.initDNS()
+			}
+		})
+
+		proxyStrategyCode := normalizeOptionalDNSStrategy(a.state.ProxyDNSStrategy)
+		curProxyLabel := subStrategyLabels[indexOfCode(dnsSubStrategyCodes, proxyStrategyCode)]
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {
+			ui.Column(c).Gap(2).Grow(1).Shrink(1).MinWidth(140).Children(func() {
+				ui.Text(c, cat.DnsProxyStrategyLabel()).FontSize(13).FontWeight(500).TextColor(p.text)
+				ui.Text(c, cat.DnsProxyStrategyHint()).FontSize(11).TextColor(p.textDim)
+			})
+			if ui.Select(c.Key("page-set-dns-proxy-strategy"), &curProxyLabel, subStrategyLabels).Label(cat.DnsProxyStrategyLabel()).Width(250).MaxWidthPercent(100).Shrink(0).Changed() {
+				a.state.ProxyDNSStrategy = dnsSubStrategyCodes[indexOfCode(subStrategyLabels, curProxyLabel)]
+				if a.mgr != nil {
+					a.mgr.SetDNSStrategy(a.effectiveProxyDNSStrategy())
+				}
 				a.saveState()
 				a.initDNS()
 			}

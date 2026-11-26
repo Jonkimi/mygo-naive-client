@@ -26,11 +26,13 @@ const (
 	TunIPv4Prefix  = TunIPv4 + "/30"
 
 	TunIPv6       = "fdfe:dcba:9876::1"
+	TunIPv6Peer   = "fdfe:dcba:9876::2"
 	TunIPv6Prefix = TunIPv6 + "/126"
 
-	// DNSAddress is the in-TUN DNS address. The sing-box tun inbound hijacks it, and the
-	// macOS DynamicStore DNS entry points at it.
-	DNSAddress = TunIPv4Peer
+	// DNSAddress and DNSAddressV6 are the in-TUN DNS addresses. The sing-box tun inbound
+	// hijacks them, and the macOS DynamicStore DNS entry points at them.
+	DNSAddress   = TunIPv4Peer
+	DNSAddressV6 = TunIPv6Peer
 )
 
 // ReceivedDevice represents a TUN device file descriptor received from the privileged helper.
@@ -74,11 +76,18 @@ func IsHelper(args []string) bool {
 
 // BuildPrivilegedCommand returns the command and arguments needed to spawn the helper with privileges.
 func BuildPrivilegedCommand(helperBin string, sockPath string, isRoot bool, excludeIPs ...string) (string, []string) {
-	var args []string
+	return BuildPrivilegedCommandWithOptions(helperBin, sockPath, isRoot, false, excludeIPs...)
+}
+
+// BuildPrivilegedCommandWithOptions returns the command and arguments needed to spawn the helper with privileges
+// and optional IPv6 capture route forcing (for IPv6-over-IPv4 tunneling).
+func BuildPrivilegedCommandWithOptions(helperBin string, sockPath string, isRoot bool, forceIPv6Route bool, excludeIPs ...string) (string, []string) {
+	args := []string{"--tun-helper", "--sock", sockPath}
+	if forceIPv6Route {
+		args = append(args, "--force-ipv6-route")
+	}
 	if len(excludeIPs) > 0 {
-		args = []string{"--tun-helper", "--sock", sockPath, "--exclude-ips", strings.Join(excludeIPs, ",")}
-	} else {
-		args = []string{"--tun-helper", "--sock", sockPath}
+		args = append(args, "--exclude-ips", strings.Join(excludeIPs, ","))
 	}
 	if isRoot {
 		return helperBin, args
@@ -131,8 +140,9 @@ func defaultCommandExecutor(ctx context.Context, name string, args ...string) er
 
 // HelperClient coordinates launching the privileged helper and receiving the TUN FD.
 type HelperClient struct {
-	Executor CommandExecutor
-	IsRoot   bool
+	Executor       CommandExecutor
+	IsRoot         bool
+	ForceIPv6Route bool
 }
 
 // NewClient creates a new HelperClient.
@@ -160,7 +170,7 @@ func (c *HelperClient) RequestDevice(ctx context.Context, helperBin string, excl
 		devCh <- dev
 	}()
 
-	cmdName, cmdArgs := BuildPrivilegedCommand(helperBin, sockPath, c.IsRoot, excludeIPs...)
+	cmdName, cmdArgs := BuildPrivilegedCommandWithOptions(helperBin, sockPath, c.IsRoot, c.ForceIPv6Route, excludeIPs...)
 	execErrCh := make(chan error, 1)
 	go func() {
 		// Use Background context so the privileged helper is not killed when the handshake ctx completes.
@@ -197,6 +207,7 @@ func RunHelper(args []string) error {
 	fs := flag.NewFlagSet("tun-helper", flag.ContinueOnError)
 	sockPath := fs.String("sock", "", "Path to unix domain socket")
 	excludeIPsStr := fs.String("exclude-ips", "", "Comma-separated IPs to exclude from TUN")
+	forceIPv6Route := fs.Bool("force-ipv6-route", false, "Force installing IPv6 TUN capture routes")
 	cleanup := fs.Bool("cleanup", false, "Clean up stale TUN routes and DNS entries and exit")
 	_ = fs.Bool("tun-helper", true, "Helper mode")
 
@@ -228,7 +239,7 @@ func RunHelper(args []string) error {
 		_ = closeFD(fd)
 	}()
 
-	if err := SetupRoutes(name, excludeIPs); err != nil {
+	if err := SetupRoutesWithOptions(name, excludeIPs, *forceIPv6Route); err != nil {
 		_ = TeardownRoutes(name, excludeIPs)
 		return fmt.Errorf("setup routes: %w", err)
 	}

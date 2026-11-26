@@ -28,6 +28,7 @@ import (
 	"naive-client/internal/routing"
 	"naive-client/internal/tailnet"
 	"naive-client/internal/telemetry"
+	"naive-client/internal/tunhelper"
 	"naive-client/internal/warp"
 
 	"github.com/miekg/dns"
@@ -2418,5 +2419,131 @@ func TestBlockerDNSTransport_SkipsNodeAndInfraDomains(t *testing.T) {
 	}
 	if seenUser["blocked.example.com"] != blocker.VerdictBlocked {
 		t.Errorf("expected blocked.example.com to be VerdictBlocked, got %+v", seenUser)
+	}
+}
+
+// Tests IPv6 TUN DNS/excludes, split Direct/Proxy DNS strategies, IPv6-only host defaults, and bracketed IPv6 handling.
+func TestEngine_IPv6FullSupport(t *testing.T) {
+	ctx := createBoxContext(context.Background(), nil)
+	ipv6OnlyTrue := true
+
+	opts := EngineOptions{
+		TrafficMode:       "tun",
+		DNSStrategy:       "prefer_ipv4",
+		DirectDNSStrategy: "ipv4_only",
+		ProxyDNSStrategy:  "prefer_ipv6",
+		DualStackLoopback: true,
+		HostIPv6Only:      &ipv6OnlyTrue,
+		Services: []config.Service{
+			{
+				ID:         "v6-native",
+				Protocol:   config.ProtoVLESS,
+				Engine:     config.EngineSingBox,
+				Server:     "[2001:db8::50]",
+				ServerPort: 443,
+				UUID:       "12345678-1234-1234-1234-123456789abc",
+			},
+			{
+				ID:          "v6-socks-local",
+				Kind:        config.KindExternalProxy,
+				Protocol:    config.ProtoSOCKS5,
+				Engine:      config.EngineSingBox,
+				ExternalURI: "socks5://[::1]:1081",
+			},
+		},
+		Rules: []routing.Rule{
+			{
+				ID:           "r-cn",
+				Enabled:      true,
+				DomainSuffix: []string{"cn"},
+				Action:       routing.RouteAction{Type: routing.ActionDirect},
+			},
+			{
+				ID:           "r-proxy",
+				Enabled:      true,
+				DomainSuffix: []string{"example.org"},
+				Action:       routing.RouteAction{Type: routing.ActionProxyPool},
+			},
+		},
+		FinalAction: "PROXY_POOL",
+	}
+
+	eng := &Engine{}
+	boxOpts, err := eng.buildConfig(ctx, opts, "127.0.0.1", 10809)
+	if err != nil {
+		t.Fatalf("buildConfig with split DNS strategies and IPv6 options failed: %v", err)
+	}
+	if boxOpts == nil || boxOpts.DNS == nil {
+		t.Fatalf("expected non-nil DNS options")
+	}
+
+	// Verify inbounds: tun-in has dual-stack DNS addresses and IPv6 WARP CIDRs; mixed-in-v6 is appended.
+	inbounds := buildInboundsConfig(opts, "127.0.0.1", 10809)
+	var tunIn, mixedV6 map[string]any
+	for _, in := range inbounds {
+		if in["tag"] == "tun-in" {
+			tunIn = in
+		} else if in["tag"] == "mixed-in-v6" {
+			mixedV6 = in
+		}
+	}
+	if tunIn == nil {
+		t.Fatalf("missing tun-in inbound")
+	}
+	dnsAddrs, _ := tunIn["dns_address"].([]string)
+	if len(dnsAddrs) != 2 || dnsAddrs[0] != tunhelper.DNSAddress || dnsAddrs[1] != tunhelper.DNSAddressV6 {
+		t.Fatalf("expected dual-stack tun dns_address, got %v", tunIn["dns_address"])
+	}
+	excludes, _ := tunIn["route_exclude_address"].([]string)
+	if !slices.Contains(excludes, "2606:4700:d0::/48") || !slices.Contains(excludes, "2606:4700:103::/48") {
+		t.Fatalf("expected IPv6 WARP Anycast CIDRs in route_exclude_address, got %v", excludes)
+	}
+	if mixedV6 == nil || mixedV6["listen"] != "::1" {
+		t.Fatalf("expected mixed-in-v6 listening on ::1, got %v", mixedV6)
+	}
+
+	// Verify DNS defaults on IPv6-only host and per-rule split strategy.
+	dnsCfg := buildDNSConfig(opts, "PROXY_POOL", nil)
+	if _, hasGlobalStrat := dnsCfg["strategy"]; hasGlobalStrat {
+		t.Fatalf("expected top-level dns.strategy omitted when direct and proxy strategies differ, got %v", dnsCfg["strategy"])
+	}
+	servers := dnsCfg["servers"].([]map[string]any)
+	var sawBootV6, sawDomV6, sawRemV6 bool
+	for _, s := range servers {
+		switch s["tag"] {
+		case "bootstrap-dns":
+			sawBootV6 = s["server"] == "2400:3200::1"
+		case "domestic-doh":
+			sawDomV6 = s["server"] == "2400:3200::1"
+		case "remote-doh":
+			sawRemV6 = s["server"] == "2606:4700:4700::1111"
+		}
+	}
+	if !sawBootV6 || !sawDomV6 || !sawRemV6 {
+		t.Fatalf("expected IPv6 default DNS servers on IPv6-only host, got %+v", servers)
+	}
+
+	// Verify BuildNativeOutbound strips IPv6 brackets and binds ::1 SOCKS5 to loopback.
+	obV6 := BuildNativeOutbound(opts.Services[0])
+	if obV6["server"] != "2001:db8::50" {
+		t.Errorf("expected unbracketed server 2001:db8::50, got %v", obV6["server"])
+	}
+	if _, hasResolver := obV6["domain_resolver"]; hasResolver {
+		t.Errorf("IPv6 literal server should not get domain_resolver")
+	}
+	obLoop := BuildNativeOutbound(opts.Services[1])
+	if ifName := loopbackInterfaceName(); ifName != "" && obLoop["bind_interface"] != ifName {
+		t.Errorf("expected ::1 SOCKS5 bound to %s, got %v", ifName, obLoop["bind_interface"])
+	}
+
+	// Verify buildDNSServerMap handles bracketed IPv6 without port.
+	srvMap := buildDNSServerMap("test", "[2400:3200::1]", "", "")
+	if srvMap["server"] != "2400:3200::1" {
+		t.Errorf("expected unbracketed DNS server 2400:3200::1, got %v", srvMap["server"])
+	}
+
+	// Verify AAAA blocker chain formats "::".
+	if got := formatDNSChain("remote-doh", true, "ads", dns.TypeAAAA); got != "ads -> ::" {
+		t.Errorf("expected AAAA block chain 'ads -> ::', got %q", got)
 	}
 }

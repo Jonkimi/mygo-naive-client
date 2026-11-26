@@ -43,7 +43,7 @@ func (d *defaultDialer) DialContext(ctx context.Context, network, addr string) (
 
 func (d *defaultDialer) ListenPacket(ctx context.Context, network, addr string) (net.PacketConn, error) {
 	var lc net.ListenConfig
-	listenNet, listenAddr := packetListenTarget(network, addr, nil)
+	listenNet, listenAddr := packetListenTarget(network, addr, nil, nil)
 	return lc.ListenPacket(ctx, listenNet, listenAddr)
 }
 
@@ -87,8 +87,13 @@ func resolveMASQUEUDPAddr(ctx context.Context, dialer Dialer, pConn net.PacketCo
 		return nil, fmt.Errorf("no IP addresses for %q", host)
 	}
 	selected := ips[0]
+	wantV6 := IsIPv6OnlyHost()
 	for _, ip := range ips {
-		if ip.Is4() {
+		if wantV6 && ip.Is6() {
+			selected = ip
+			break
+		}
+		if !wantV6 && ip.Is4() {
 			selected = ip
 			break
 		}

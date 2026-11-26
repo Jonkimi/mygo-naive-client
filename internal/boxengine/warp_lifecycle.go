@@ -209,14 +209,47 @@ func resolveWarpDomainViaDoH(
 		}
 		eng.mu.RUnlock()
 	}
+
+	var strategy C.DomainStrategy
+	if !allowV6 && allowV4 {
+		strategy = C.DomainStrategyIPv4Only
+	} else if !allowV4 && allowV6 {
+		strategy = C.DomainStrategyIPv6Only
+	} else if eng != nil {
+		effectiveStrat := eng.dnsStrategy
+		if eng.proxyDNSStrategy != "" {
+			effectiveStrat = eng.proxyDNSStrategy
+		}
+		switch effectiveStrat {
+		case "ipv4_only":
+			strategy = C.DomainStrategyIPv4Only
+		case "prefer_ipv4":
+			strategy = C.DomainStrategyPreferIPv4
+		case "prefer_ipv6":
+			strategy = C.DomainStrategyPreferIPv6
+		case "ipv6_only":
+			strategy = C.DomainStrategyIPv6Only
+		default:
+			if eng.preferIPv4 {
+				strategy = C.DomainStrategyPreferIPv4
+			}
+		}
+	}
+	preferV6 := strategy == C.DomainStrategyPreferIPv6 || strategy == C.DomainStrategyIPv6Only
+	dialV4 := allowV4 && strategy != C.DomainStrategyIPv6Only
+	dialV6 := allowV6 && strategy != C.DomainStrategyIPv4Only
+	if !dialV4 && !dialV6 {
+		dialV4, dialV6 = allowV4, allowV6
+	}
+
 	if lookupBoxCtx == nil {
-		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, allowV4, allowV6)
+		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, dialV4, dialV6, preferV6)
 	}
 
 	dnsRouter := service.FromContext[adapter.DNSRouter](lookupBoxCtx)
 	transportMgr := service.FromContext[adapter.DNSTransportManager](lookupBoxCtx)
 	if dnsRouter == nil || transportMgr == nil {
-		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, allowV4, allowV6)
+		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, dialV4, dialV6, preferV6)
 	}
 
 	var targetTag string
@@ -236,30 +269,9 @@ func resolveWarpDomainViaDoH(
 		tr, ok = transportMgr.Transport("domestic-doh")
 	}
 	if !ok || tr == nil {
-		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, allowV4, allowV6)
+		return resolveDomainViaDialerDNS(ctx, tunnelDialer, host, dialV4, dialV6, preferV6)
 	}
 
-	var strategy C.DomainStrategy
-	if !allowV6 && allowV4 {
-		strategy = C.DomainStrategyIPv4Only
-	} else if !allowV4 && allowV6 {
-		strategy = C.DomainStrategyIPv6Only
-	} else if eng != nil {
-		switch eng.dnsStrategy {
-		case "ipv4_only":
-			strategy = C.DomainStrategyIPv4Only
-		case "prefer_ipv4":
-			strategy = C.DomainStrategyPreferIPv4
-		case "prefer_ipv6":
-			strategy = C.DomainStrategyPreferIPv6
-		case "ipv6_only":
-			strategy = C.DomainStrategyIPv6Only
-		default:
-			if eng.preferIPv4 {
-				strategy = C.DomainStrategyPreferIPv4
-			}
-		}
-	}
 	queryOpts := adapter.DNSQueryOptions{
 		Transport:      tr,
 		Strategy:       strategy,
@@ -300,13 +312,13 @@ func resolveWarpDomainViaDoH(
 	return netip.Addr{}, warp.ErrNoDNSRecords
 }
 
-func resolveDomainViaDialerDNS(ctx context.Context, d N.Dialer, host string, allowV4, allowV6 bool) (netip.Addr, error) {
+func resolveDomainViaDialerDNS(ctx context.Context, d N.Dialer, host string, allowV4, allowV6, preferV6 bool) (netip.Addr, error) {
 	if d == nil {
 		return netip.Addr{}, errors.New("nil dialer")
 	}
-	return warp.ResolveDNSOverTunnel(ctx, func(dCtx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
+	return warp.ResolveDNSOverTunnelWithStrategy(ctx, func(dCtx context.Context, network string, server netip.Addr, port uint16) (net.Conn, error) {
 		return d.DialContext(dCtx, network, M.SocksaddrFrom(server, port))
-	}, host, allowV4, allowV6)
+	}, host, allowV4, allowV6, preferV6)
 }
 
 // close cancels active operations, atomically transitions to closed while detaching any

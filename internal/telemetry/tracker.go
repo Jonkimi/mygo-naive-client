@@ -473,7 +473,7 @@ func ExtractRootDomain(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	host = strings.TrimSpace(strings.ToLower(host))
+	host = strings.Trim(strings.TrimSpace(strings.ToLower(host)), "[]")
 	if host == "" || net.ParseIP(host) != nil {
 		return host
 	}

@@ -132,14 +132,20 @@ func TestBuildPrivilegedCommand(t *testing.T) {
 		t.Errorf("unexpected direct args: %v", directArgs)
 	}
 
-	// With excludeIPs
-	_, excludeArgs := BuildPrivilegedCommand("/opt/naive-client", "/tmp/tun.sock", true, "150.230.61.225", "1.1.1.1")
+	// With forceIPv6Route and excludeIPs
+	_, excludeArgs := BuildPrivilegedCommandWithOptions("/opt/naive-client", "/tmp/tun.sock", true, true, "150.230.61.225", "2001:db8::1")
 	foundExclude := false
-	for i := 0; i < len(excludeArgs)-1; i++ {
-		if excludeArgs[i] == "--exclude-ips" && excludeArgs[i+1] == "150.230.61.225,1.1.1.1" {
-			foundExclude = true
-			break
+	foundForceV6 := false
+	for i := 0; i < len(excludeArgs); i++ {
+		if excludeArgs[i] == "--force-ipv6-route" {
+			foundForceV6 = true
 		}
+		if i < len(excludeArgs)-1 && excludeArgs[i] == "--exclude-ips" && excludeArgs[i+1] == "150.230.61.225,2001:db8::1" {
+			foundExclude = true
+		}
+	}
+	if !foundForceV6 {
+		t.Errorf("expected --force-ipv6-route in args, got: %v", excludeArgs)
 	}
 	if !foundExclude {
 		t.Errorf("expected --exclude-ips in args, got: %v", excludeArgs)

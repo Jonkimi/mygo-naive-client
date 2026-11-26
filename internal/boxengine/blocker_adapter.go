@@ -258,7 +258,7 @@ func (t *blockerDNSTransport) handleQuery(ctx context.Context, q mDNS.Question) 
 		return nil, false, 0
 	}
 	blocked, rule, verdict := t.blocker.Evaluate(domain)
-	chain := formatDNSChain(t.underlying.Tag(), blocked, rule)
+	chain := formatDNSChain(t.underlying.Tag(), blocked, rule, q.Qtype)
 	var logID int64
 	if t.blocker.Logger() != nil {
 		logID = t.blocker.Logger().RecordWithChain(domain, blocker.SourceDNS, verdict, rule, chain)
@@ -762,12 +762,16 @@ func formatGatewayChain(target string, matchedRule adapter.Rule, matchOutbound a
 	return chain
 }
 
-func formatDNSChain(serverTag string, blocked bool, blockerRule string) string {
+func formatDNSChain(serverTag string, blocked bool, blockerRule string, qtypes ...uint16) string {
 	if blocked {
-		if blockerRule != "" {
-			return blockerRule + " -> 0.0.0.0"
+		targetIP := "0.0.0.0"
+		if len(qtypes) > 0 && qtypes[0] == mDNS.TypeAAAA {
+			targetIP = "::"
 		}
-		return "block -> 0.0.0.0"
+		if blockerRule != "" {
+			return blockerRule + " -> " + targetIP
+		}
+		return "block -> " + targetIP
 	}
 	switch {
 	case serverTag == "domestic-doh":

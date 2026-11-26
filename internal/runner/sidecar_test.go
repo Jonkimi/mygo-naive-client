@@ -308,3 +308,55 @@ func TestManagerSidecarSanitizesProxyEnv(t *testing.T) {
 		}
 	}
 }
+
+// Tests that Xray sidecar config strips IPv6 brackets and honors DNS IP strategy, and Manager rewrites ::0 listen URIs cleanly.
+func TestXrayAndManager_IPv6Support(t *testing.T) {
+	svc := config.Service{
+		ID:         "vless-xray-v6",
+		Name:       "VLESS V6",
+		Protocol:   config.ProtoVLESS,
+		Engine:     config.EngineSidecar,
+		Server:     "[2001:db8::9]",
+		ServerPort: 443,
+		UUID:       "12345678-1234-1234-1234-123456789abc",
+	}
+	raw, err := GenerateXrayConfigWithOptions(svc, 10812, "warning", "prefer_ipv6")
+	if err != nil {
+		t.Fatalf("GenerateXrayConfigWithOptions failed: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal xray json: %v", err)
+	}
+	ob := parsed["outbounds"].([]any)[0].(map[string]any)
+	addr := ob["settings"].(map[string]any)["vnext"].([]any)[0].(map[string]any)["address"]
+	if addr != "2001:db8::9" {
+		t.Errorf("expected unbracketed IPv6 server 2001:db8::9, got %v", addr)
+	}
+	dnsCfg, _ := parsed["dns"].(map[string]any)
+	if dnsCfg["queryStrategy"] != "UseIP" {
+		t.Errorf("expected dns.queryStrategy UseIP for prefer_ipv6, got %v", dnsCfg["queryStrategy"])
+	}
+
+	if runtime.GOOS != "windows" {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "naive")
+		writeFakeScript(t, bin, "naive started")
+		mgr := NewManager(bin, dir, nil)
+		nSvc := config.Service{
+			ID:       "naive-v6-loop",
+			Name:     "Naive V6",
+			Protocol: config.ProtoNaive,
+			Engine:   config.EngineSidecar,
+			Listens:  []string{"socks://[::1]:0"},
+			Proxies:  []string{"https://u:p@example.com"},
+		}
+		if err := mgr.Start(nSvc); err != nil {
+			t.Fatalf("Start naive [::1]:0 failed: %v", err)
+		}
+		defer mgr.Stop(nSvc.ID)
+		if got := mgr.StatusOf(nSvc.ID).AllocatedPort; got <= 0 {
+			t.Errorf("expected allocated port > 0, got %d", got)
+		}
+	}
+}

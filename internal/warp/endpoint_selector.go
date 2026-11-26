@@ -138,6 +138,30 @@ var (
 		"162.159.195.2:7103",
 	}
 
+	// DefaultMASQUERuntimeCandidatesV6 provides an IPv6 Anycast starter pool for MASQUE.
+	DefaultMASQUERuntimeCandidatesV6 = []string{
+		"[2606:4700:103::1]:443",
+		"[2606:4700:103::2]:443",
+		"[2606:4700:104::1]:443",
+		"[2606:4700:104::2]:443",
+		"[2606:4700:103::1]:8443",
+		"[2606:4700:104::2]:4443",
+		"[2606:4700:103::1]:500",
+		"[2606:4700:104::2]:4500",
+	}
+
+	// DefaultWireGuardRuntimeCandidatesV6 provides an IPv6 Anycast starter pool for WireGuard.
+	DefaultWireGuardRuntimeCandidatesV6 = []string{
+		"[2606:4700:d0::1]:2408",
+		"[2606:4700:d1::1]:2408",
+		"[2606:4700:d0::2]:500",
+		"[2606:4700:d1::2]:4500",
+		"[2606:4700:d0::1]:1701",
+		"[2606:4700:d1::1]:894",
+		"[2606:4700:d0::2]:7103",
+		"[2606:4700:d1::2]:8854",
+	}
+
 	masqueH2Subnet198 = netip.MustParsePrefix("162.159.198.0/24")
 	masqueH2Subnet199 = netip.MustParsePrefix("162.159.199.0/24")
 	masqueH2SubnetV6A = netip.MustParsePrefix("2606:4700:103::/48")
@@ -239,6 +263,8 @@ type EndpointSelector struct {
 	masqueProbeFn func(ctx context.Context, dialer Dialer, endpoint string, acc *Account, opts MASQUEOptions) (string, time.Duration, error)
 	wgProbeFn     func(ctx context.Context, dialer Dialer, endpoint string, acc *Account) (time.Duration, error)
 	nowFn         func() time.Time
+	hasIPv4Fn     func() bool
+	hasIPv6Fn     func() bool
 }
 
 // NewEndpointSelector creates an EndpointSelector with standard 30m cache TTL and 2m failure cooldown.
@@ -390,6 +416,44 @@ func (s *EndpointSelector) activeCandidates(key EndpointCacheKey, base []string)
 	return healthy
 }
 
+func (s *EndpointSelector) hasIPv4() bool {
+	if s.hasIPv4Fn != nil {
+		return s.hasIPv4Fn()
+	}
+	return HasIPv4Connectivity()
+}
+
+func (s *EndpointSelector) hasIPv6() bool {
+	if s.hasIPv6Fn != nil {
+		return s.hasIPv6Fn()
+	}
+	return HasGlobalIPv6()
+}
+
+func (s *EndpointSelector) effectiveRuntimeCandidates(base []string, isDefault bool, v6Pool []string) []string {
+	if !isDefault || len(v6Pool) == 0 {
+		return base
+	}
+	hasV4 := s.hasIPv4()
+	hasV6 := s.hasIPv6()
+	if !hasV4 && hasV6 {
+		return v6Pool
+	}
+	if hasV4 && hasV6 {
+		mixed := make([]string, 0, defaultRuntimeBatch)
+		v4Limit := min(6, len(base))
+		mixed = append(mixed, base[:v4Limit]...)
+		for _, ep := range v6Pool {
+			if len(mixed) >= defaultRuntimeBatch {
+				break
+			}
+			mixed = append(mixed, ep)
+		}
+		return mixed
+	}
+	return base
+}
+
 // SelectMASQUEEndpoint chooses the fastest reachable MASQUE endpoint for scopeKey,
 // using the per-scope cache when valid and otherwise probing candidates concurrently.
 func (s *EndpointSelector) SelectMASQUEEndpoint(ctx context.Context, scopeKey string, dialer Dialer, acc *Account, opts MASQUEOptions) (EndpointCandidateResult, error) {
@@ -412,10 +476,12 @@ func (s *EndpointSelector) SelectMASQUEEndpoint(ctx context.Context, scopeKey st
 		}, nil
 	}
 
+	isDefaultPool := slices.Equal(s.masqueCandidates, DefaultMASQUERuntimeCandidates)
 	baseCandidates := s.masqueCandidates
-	if (opts.TCPOnly || opts.ForceH2 || opts.PreferH2) && slices.Equal(s.masqueCandidates, DefaultMASQUERuntimeCandidates) {
+	if (opts.TCPOnly || opts.ForceH2 || opts.PreferH2) && isDefaultPool {
 		baseCandidates = DefaultMASQUEH2RuntimeCandidates
 	}
+	baseCandidates = s.effectiveRuntimeCandidates(baseCandidates, isDefaultPool, DefaultMASQUERuntimeCandidatesV6)
 	candidates := s.activeCandidates(key, baseCandidates)
 	if scopeKey != "direct" && !opts.TCPOnly && !opts.ForceH2 {
 		// Chained remote nodes can resolve Cloudflare's Anycast hostname remotely if IPs fail.
@@ -497,12 +563,16 @@ func (s *EndpointSelector) SelectMASQUEAndConnect(ctx context.Context, scopeKey 
 			return nil, "", err
 		}
 		// Last-resort fallback to default endpoint.
-		tun, fbErr := ConnectMASQUEWithOptions(ctx, dialer, DefaultMASQUEEndpoint, acc, opts)
-		if fbErr != nil {
-			return nil, "", fmt.Errorf("endpoint selection failed (%v) and default %s failed: %w", err, DefaultMASQUEEndpoint, fbErr)
+		fallbackEP := DefaultMASQUEEndpoint
+		if !s.hasIPv4() && s.hasIPv6() {
+			fallbackEP = DefaultMASQUEEndpointV6
 		}
-		s.SetCached(key, DefaultMASQUEEndpoint, tun.Protocol(), 0)
-		return tun, DefaultMASQUEEndpoint, nil
+		tun, fbErr := ConnectMASQUEWithOptions(ctx, dialer, fallbackEP, acc, opts)
+		if fbErr != nil {
+			return nil, "", fmt.Errorf("endpoint selection failed (%v) and default %s failed: %w", err, fallbackEP, fbErr)
+		}
+		s.SetCached(key, fallbackEP, tun.Protocol(), 0)
+		return tun, fallbackEP, nil
 	}
 
 	tun, err := ConnectMASQUEWithOptions(ctx, dialer, best.Endpoint, acc, opts)
@@ -551,7 +621,8 @@ func (s *EndpointSelector) SelectWireGuardEndpoint(ctx context.Context, scopeKey
 		}, nil
 	}
 
-	candidates := s.activeCandidates(key, s.wgCandidates)
+	baseCandidates := s.effectiveRuntimeCandidates(s.wgCandidates, slices.Equal(s.wgCandidates, DefaultWireGuardRuntimeCandidates), DefaultWireGuardRuntimeCandidatesV6)
+	candidates := s.activeCandidates(key, baseCandidates)
 	probeFn := s.wgProbeFn
 	if probeFn == nil {
 		probeFn = probeWireGuardEndpoint
@@ -735,10 +806,12 @@ func scanBestEndpointsWithProbers(
 	}
 
 	includeIPv6 := false
+	ipv6Only := false
 	if opts.IncludeIPv6 != nil {
 		includeIPv6 = *opts.IncludeIPv6
 	} else if len(opts.Candidates) == 0 {
 		includeIPv6 = hasGlobalIPv6()
+		ipv6Only = includeIPv6 && !HasIPv4Connectivity()
 	}
 
 	var hits []scanInitialHit
@@ -754,13 +827,23 @@ func scanBestEndpointsWithProbers(
 			MixedCaseSNI: opts.MixedCaseSNI,
 		}, opts, masqueProbe, wgProbe)
 	} else if mode == ModeWireGuard {
-		candidates := sampleWireGuardCandidatesWithIPv6(opts.SampleCount, includeIPv6)
+		var candidates []string
+		if ipv6Only {
+			candidates = sampleCIDRPorts(WireGuardAnycastCIDRsV6, WireGuardPorts, opts.SampleCount)
+		} else {
+			candidates = sampleWireGuardCandidatesWithIPv6(opts.SampleCount, includeIPv6)
+		}
 		if len(candidates) == 0 {
 			return nil, errors.New("no scan candidates generated")
 		}
 		hits, lastErr = sweepInitialCandidates(ctx, candidates, mode, MASQUEOptions{}, opts, masqueProbe, wgProbe)
 	} else if opts.TCPOnly || opts.PreferH2 {
-		candidates := sampleMASQUEH2Candidates(opts.SampleCount, includeIPv6)
+		var candidates []string
+		if ipv6Only {
+			candidates = sampleCIDRPorts(MASQUEAnycastCIDRsV6, MASQUEPorts, opts.SampleCount)
+		} else {
+			candidates = sampleMASQUEH2Candidates(opts.SampleCount, includeIPv6)
+		}
 		if len(candidates) == 0 {
 			return nil, errors.New("no scan candidates generated")
 		}
@@ -773,7 +856,12 @@ func scanBestEndpointsWithProbers(
 		}, opts, masqueProbe, wgProbe)
 	} else {
 		// QUIC-first MASQUE mode: Tier 1 tests dedicated ::1/::2 QUIC Anycast endpoints across all official ports.
-		quicCandidates := sampleMASQUEQUICCandidates(opts.SampleCount, includeIPv6)
+		var quicCandidates []string
+		if ipv6Only {
+			quicCandidates = enumerateHostPrefixesPorts(MASQUEQUICAnycastCIDRsV6, MASQUEPorts, opts.SampleCount)
+		} else {
+			quicCandidates = sampleMASQUEQUICCandidates(opts.SampleCount, includeIPv6)
+		}
 		if len(quicCandidates) == 0 {
 			return nil, errors.New("no scan candidates generated")
 		}
@@ -793,8 +881,14 @@ func scanBestEndpointsWithProbers(
 			for _, ep := range quicCandidates {
 				seen[ep] = true
 			}
+			var h2Pool []string
+			if ipv6Only {
+				h2Pool = sampleCIDRPorts(MASQUEAnycastCIDRsV6, MASQUEPorts, opts.SampleCount)
+			} else {
+				h2Pool = sampleMASQUEH2Candidates(opts.SampleCount, includeIPv6)
+			}
 			var h2Candidates []string
-			for _, ep := range sampleMASQUEH2Candidates(opts.SampleCount, includeIPv6) {
+			for _, ep := range h2Pool {
 				if !seen[ep] {
 					h2Candidates = append(h2Candidates, ep)
 				}

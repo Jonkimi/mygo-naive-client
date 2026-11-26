@@ -107,12 +107,15 @@ func (s *Sysproxy) Set(addr string, bypass []string) error {
 			"127.0.0.1",
 			"127.0.0.0/8",
 			"::1",
+			"::1/128",
 			"localhost",
 			"*.local",
 			"10.0.0.0/8",
 			"172.16.0.0/12",
 			"192.168.0.0/16",
 			"169.254.0.0/16",
+			"fc00::/7",
+			"fe80::/10",
 		}
 	}
 
@@ -280,7 +283,7 @@ func (s *Sysproxy) unsetLinux() error {
 
 // Windows implementation using reg.exe
 func (s *Sysproxy) setWindows(host, port string, bypass []string) error {
-	server := fmt.Sprintf("%s:%s", host, port)
+	server := net.JoinHostPort(strings.Trim(host, "[]"), port)
 	override := strings.Join(bypass, ";") + ";<local>"
 	regPath := `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
 	_, _ = s.exec("reg", "add", regPath, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f")

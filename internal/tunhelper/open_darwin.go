@@ -89,11 +89,38 @@ func isBypassSafeCIDR(ipNet *net.IPNet) bool {
 // installs direct host/subnet routes for excludeIPs to bypass the TUN interface,
 // and installs a high-priority DynamicStore DNS entry for Split DNS hijacking.
 func SetupRoutes(name string, excludeIPs []string) error {
+	return SetupRoutesWithOptions(name, excludeIPs, false)
+}
+
+// SetupRoutesWithOptions configures system routes on macOS with optional forced IPv6 capture routes
+// (for IPv6-over-IPv4 tunneling when the host lacks a native IPv6 default route).
+func SetupRoutesWithOptions(name string, excludeIPs []string, forceIPv6Route bool) error {
 	_ = teardownRoutesInternal(name, excludeIPs, false)
 
-	gw, iface := getDefaultGateway()
+	gw4, iface4 := getDefaultGateway()
+	gw6, iface6 := getDefaultGatewayV6()
 
 	// 1. Install specific host/subnet routes for node and Anycast IPs to bypass TUN directly via physical gateway
+	for _, r := range buildDarwinExcludeRouteCommands(excludeIPs, gw4, iface4, gw6, iface6) {
+		_ = exec.Command(r[0], r[1:]...).Run()
+	}
+
+	// 2. Install default 0/1 and 128/1 routes pointing to utun
+	installIPv6 := forceIPv6Route || checkDarwinIPv6()
+	for _, r := range buildDarwinDefaultRouteCommands(name, installIPv6) {
+		_ = exec.Command(r[0], r[1:]...).Run()
+	}
+
+	// 3. Configure macOS DynamicStore DNS so utun intercepts all DNS requests with highest priority
+	setupDarwinDNS(name)
+
+	_ = exec.Command("dscacheutil", "-flushcache").Run()
+	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
+	return nil
+}
+
+func buildDarwinExcludeRouteCommands(excludeIPs []string, gw4, iface4, gw6, iface6 string) [][]string {
+	var cmds [][]string
 	for _, entry := range excludeIPs {
 		trimmed := strings.TrimSpace(entry)
 		if trimmed == "" {
@@ -105,54 +132,58 @@ func SetupRoutes(name string, excludeIPs []string) error {
 				continue
 			}
 			if ipNet.IP.To4() != nil {
-				if gw != "" {
-					_ = exec.Command("route", "-q", "-n", "add", "-net", ipNet.String(), gw).Run()
-				} else if iface != "" {
-					_ = exec.Command("route", "-q", "-n", "add", "-net", ipNet.String(), "-interface", iface).Run()
+				if gw4 != "" {
+					cmds = append(cmds, []string{"route", "-q", "-n", "add", "-net", ipNet.String(), gw4})
+				} else if iface4 != "" {
+					cmds = append(cmds, []string{"route", "-q", "-n", "add", "-net", ipNet.String(), "-interface", iface4})
 				}
-			} else if iface != "" {
-				_ = exec.Command("route", "-q", "-n", "add", "-inet6", ipNet.String(), "-interface", iface).Run()
+			} else {
+				if gw6 != "" {
+					cmds = append(cmds, []string{"route", "-q", "-n", "add", "-inet6", ipNet.String(), gw6})
+				} else if iface6 != "" {
+					cmds = append(cmds, []string{"route", "-q", "-n", "add", "-inet6", ipNet.String(), "-interface", iface6})
+				} else if iface4 != "" {
+					cmds = append(cmds, []string{"route", "-q", "-n", "add", "-inet6", ipNet.String(), "-interface", iface4})
+				}
 			}
 			continue
 		}
-		ip := net.ParseIP(trimmed)
+		ip := net.ParseIP(strings.Trim(trimmed, "[]"))
 		if !isBypassSafe(ip) {
 			continue
 		}
 		if ip.To4() != nil {
-			if gw != "" {
-				_ = exec.Command("route", "-q", "-n", "add", "-host", ip.String(), gw).Run()
-			} else if iface != "" {
-				_ = exec.Command("route", "-q", "-n", "add", "-host", ip.String(), "-interface", iface).Run()
+			if gw4 != "" {
+				cmds = append(cmds, []string{"route", "-q", "-n", "add", "-host", ip.String(), gw4})
+			} else if iface4 != "" {
+				cmds = append(cmds, []string{"route", "-q", "-n", "add", "-host", ip.String(), "-interface", iface4})
 			}
 		} else {
-			if iface != "" {
-				_ = exec.Command("route", "-q", "-n", "add", "-inet6", ip.String()+"/128", "-interface", iface).Run()
+			target := ip.String() + "/128"
+			if gw6 != "" {
+				cmds = append(cmds, []string{"route", "-q", "-n", "add", "-inet6", target, gw6})
+			} else if iface6 != "" {
+				cmds = append(cmds, []string{"route", "-q", "-n", "add", "-inet6", target, "-interface", iface6})
+			} else if iface4 != "" {
+				cmds = append(cmds, []string{"route", "-q", "-n", "add", "-inet6", target, "-interface", iface4})
 			}
 		}
 	}
+	return cmds
+}
 
-	// 2. Install default 0/1 and 128/1 routes pointing to utun
+func buildDarwinDefaultRouteCommands(name string, installIPv6 bool) [][]string {
 	routes := [][]string{
 		{"route", "-q", "-n", "add", "-net", "0.0.0.0/1", "-interface", name},
 		{"route", "-q", "-n", "add", "-net", "128.0.0.0/1", "-interface", name},
 	}
-	if checkDarwinIPv6() {
+	if installIPv6 {
 		routes = append(routes,
 			[]string{"route", "-q", "-n", "add", "-inet6", "::/1", "-interface", name},
 			[]string{"route", "-q", "-n", "add", "-inet6", "8000::/1", "-interface", name},
 		)
 	}
-	for _, r := range routes {
-		_ = exec.Command(r[0], r[1:]...).Run()
-	}
-
-	// 3. Configure macOS DynamicStore DNS so utun intercepts all DNS requests with highest priority
-	setupDarwinDNS(name)
-
-	_ = exec.Command("dscacheutil", "-flushcache").Run()
-	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
-	return nil
+	return routes
 }
 
 // TeardownRoutes removes the 0/1 and 128/1 routes, node host routes, and DynamicStore DNS on macOS.
@@ -233,7 +264,7 @@ func setupDarwinDNS(ifName string) {
 func buildDarwinDNSCommands(ifName string, searchDomains []string) string {
 	var sb strings.Builder
 	sb.WriteString("d.init\n")
-	sb.WriteString("d.add ServerAddresses * " + DNSAddress + "\n")
+	sb.WriteString("d.add ServerAddresses * " + DNSAddress + " " + DNSAddressV6 + "\n")
 	sb.WriteString(fmt.Sprintf("d.add InterfaceName %s\n", ifName))
 	if len(searchDomains) > 0 {
 		sb.WriteString("d.add SearchDomains * " + strings.Join(searchDomains, " ") + "\n")
@@ -295,10 +326,10 @@ func cleanupStaleDarwinDNS() {
 	for idx, key := range keys {
 		match := false
 		if idx+1 < len(sections) {
-			if strings.Contains(sections[idx+1], DNSAddress) {
+			if strings.Contains(sections[idx+1], DNSAddress) || strings.Contains(sections[idx+1], DNSAddressV6) {
 				match = true
 			}
-		} else if strings.Contains(string(showOut), DNSAddress) {
+		} else if strings.Contains(string(showOut), DNSAddress) || strings.Contains(string(showOut), DNSAddressV6) {
 			match = true
 		}
 		if match {
@@ -411,8 +442,20 @@ func getDefaultGateway() (string, string) {
 	if err != nil {
 		return "", ""
 	}
+	return parseDarwinRouteOutput(string(out))
+}
+
+func getDefaultGatewayV6() (string, string) {
+	out, err := exec.Command("route", "-n", "get", "-inet6", "default").Output()
+	if err != nil {
+		return "", ""
+	}
+	return parseDarwinRouteOutput(string(out))
+}
+
+func parseDarwinRouteOutput(out string) (string, string) {
 	var gw, iface string
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 	for _, l := range lines {
 		fields := strings.Fields(l)
 		if len(fields) >= 2 {

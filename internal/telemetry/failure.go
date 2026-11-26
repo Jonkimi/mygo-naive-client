@@ -68,6 +68,7 @@ func cleanTarget(target string) string {
 	if h, _, err := net.SplitHostPort(t); err == nil {
 		t = h
 	}
+	t = strings.Trim(t, "[]")
 	return strings.ToLower(t)
 }
 

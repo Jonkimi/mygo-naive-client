@@ -1892,6 +1892,56 @@ func (msgs Messages) DnsStrategyIPv6Only() string {
 	return Catalog.Format(msgs.locale, "dnsStrategyIPv6Only", nil)
 }
 
+// DnsStrategyInherit says "Inherit Global Strategy"
+// in the language the app shows.
+func DnsStrategyInherit() string { return In(i18n.Locale()).DnsStrategyInherit() }
+
+// DnsStrategyInherit says "Inherit Global Strategy"
+// in the language of msgs.
+func (msgs Messages) DnsStrategyInherit() string {
+	return Catalog.Format(msgs.locale, "dnsStrategyInherit", nil)
+}
+
+// DnsDirectStrategyLabel says "Direct / Domestic DNS Strategy"
+// in the language the app shows.
+func DnsDirectStrategyLabel() string { return In(i18n.Locale()).DnsDirectStrategyLabel() }
+
+// DnsDirectStrategyLabel says "Direct / Domestic DNS Strategy"
+// in the language of msgs.
+func (msgs Messages) DnsDirectStrategyLabel() string {
+	return Catalog.Format(msgs.locale, "dnsDirectStrategyLabel", nil)
+}
+
+// DnsDirectStrategyHint says "Override IP family strategy for direct domestic queries (useful when local ISP lacks IPv6)"
+// in the language the app shows.
+func DnsDirectStrategyHint() string { return In(i18n.Locale()).DnsDirectStrategyHint() }
+
+// DnsDirectStrategyHint says "Override IP family strategy for direct domestic queries (useful when local ISP lacks IPv6)"
+// in the language of msgs.
+func (msgs Messages) DnsDirectStrategyHint() string {
+	return Catalog.Format(msgs.locale, "dnsDirectStrategyHint", nil)
+}
+
+// DnsProxyStrategyLabel says "Proxy / Remote DNS Strategy"
+// in the language the app shows.
+func DnsProxyStrategyLabel() string { return In(i18n.Locale()).DnsProxyStrategyLabel() }
+
+// DnsProxyStrategyLabel says "Proxy / Remote DNS Strategy"
+// in the language of msgs.
+func (msgs Messages) DnsProxyStrategyLabel() string {
+	return Catalog.Format(msgs.locale, "dnsProxyStrategyLabel", nil)
+}
+
+// DnsProxyStrategyHint says "Override IP family strategy for proxied queries (supports IPv6-over-IPv4 via remote/WARP nodes)"
+// in the language the app shows.
+func DnsProxyStrategyHint() string { return In(i18n.Locale()).DnsProxyStrategyHint() }
+
+// DnsProxyStrategyHint says "Override IP family strategy for proxied queries (supports IPv6-over-IPv4 via remote/WARP nodes)"
+// in the language of msgs.
+func (msgs Messages) DnsProxyStrategyHint() string {
+	return Catalog.Format(msgs.locale, "dnsProxyStrategyHint", nil)
+}
+
 // DnsStrategyHelpButton says "DNS Strategy Help"
 // in the language the app shows.
 func DnsStrategyHelpButton() string { return In(i18n.Locale()).DnsStrategyHelpButton() }
@@ -1912,11 +1962,11 @@ func (msgs Messages) DnsStrategyHelpTitle() string {
 	return Catalog.Format(msgs.locale, "dnsStrategyHelpTitle", nil)
 }
 
-// DnsStrategyHelpDesc says "• IPv4 Only (Default): Queries A records only and answers AAAA locally with empty NODATA, eliminating uncached AAAA…"
+// DnsStrategyHelpDesc says "• Prefer IPv4 (Default): Queries both A and AAAA records and prefers IPv4, supporting dual-stack access while keepi…"
 // in the language the app shows.
 func DnsStrategyHelpDesc() string { return In(i18n.Locale()).DnsStrategyHelpDesc() }
 
-// DnsStrategyHelpDesc says "• IPv4 Only (Default): Queries A records only and answers AAAA locally with empty NODATA, eliminating uncached AAAA…"
+// DnsStrategyHelpDesc says "• Prefer IPv4 (Default): Queries both A and AAAA records and prefers IPv4, supporting dual-stack access while keepi…"
 // in the language of msgs.
 func (msgs Messages) DnsStrategyHelpDesc() string {
 	return Catalog.Format(msgs.locale, "dnsStrategyHelpDesc", nil)
