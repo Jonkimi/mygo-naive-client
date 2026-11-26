@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -407,6 +408,7 @@ func TestEditor_VMessSecurityNetworkAndProtocolSwitch(t *testing.T) {
 	// 1. Create dialog -> select VMess via UI dropdown (verifies Select binds persistent protoName)
 	a.openCreateServiceDialog()
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	if err := tt.Click("NaiveProxy"); err != nil {
 		t.Fatalf("click protocol dropdown: %v", err)
@@ -460,6 +462,7 @@ func TestEditor_VMessSecurityNetworkAndProtocolSwitch(t *testing.T) {
 		t.Fatalf("click save button: %v", err)
 	}
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	if len(a.state.Services) != 1 {
 		t.Fatalf("expected 1 saved service, got %d (err=%q)", len(a.state.Services), a.editor.errText)
@@ -483,6 +486,7 @@ func TestEditor_VMessSecurityNetworkAndProtocolSwitch(t *testing.T) {
 	}
 	a.openEditServiceDialog(plainVMess)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	if a.editor.vmessSecIndex != 1 {
 		t.Fatalf("expected vmessSecIndex=1 for Security=none, got %d", a.editor.vmessSecIndex)
@@ -581,6 +585,7 @@ func TestEditor_ALPNComboboxCandidates(t *testing.T) {
 	a.state.Services = []config.Service{vmessSvc}
 	a.openEditServiceDialog(vmessSvc)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	a.editor.scroll.Y = 160
 	tt.Frame()
 
@@ -677,6 +682,7 @@ func TestEditor_VMessCipherSelectionAndSave(t *testing.T) {
 	// 1. Opening VMess node with empty Method shows "auto"
 	a.openEditServiceDialog(vmessSvc)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	if a.editor.vmessMethod != "auto" {
 		t.Fatalf("expected default vmessMethod='auto', got %q", a.editor.vmessMethod)
 	}
@@ -698,6 +704,7 @@ func TestEditor_VMessCipherSelectionAndSave(t *testing.T) {
 		t.Fatalf("save edited VMess node: %v", err)
 	}
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	saved := a.state.Services[0]
 	if saved.Method != "aes-128-gcm" {
@@ -753,6 +760,7 @@ func TestEditor_FingerprintComboboxCandidates(t *testing.T) {
 	a.state.Services = []config.Service{vmessSvc}
 	a.openEditServiceDialog(vmessSvc)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	a.editor.scroll.Y = 140
 	tt.Frame()
 
@@ -810,6 +818,7 @@ func TestEditor_Hysteria2BandwidthUpDownMbps(t *testing.T) {
 	a.state.Services = []config.Service{hy2Svc}
 	a.openEditServiceDialog(hy2Svc)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	// Scroll down if needed so both up_mbps and down_mbps inputs are visible in the drawer viewport.
 	a.editor.scroll.Y = 200

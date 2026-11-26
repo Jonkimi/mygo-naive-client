@@ -2470,6 +2470,7 @@ func TestGeoData_SettingsAndRoutingWorkbench(t *testing.T) {
 	// Create a rule with GeoSite and GeoIP using quick-pick suggestions
 	a.openCreateRuleDialog()
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	// Switch to GeoData tab in rule editor
 	if err := tt.Click(a.catalog().RuleTabGeoData()); err != nil {
@@ -3847,6 +3848,7 @@ func TestRouting_UnifiedTargetPickerOrderAndMissingNodeWarning(t *testing.T) {
 	// 1. Open create dialog -> Proxy (index 0), blank targets (PROXY_POOL), smart policy, strict isolation
 	a.openCreateRuleDialog()
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	if a.ruleEditor.actionIndex != 0 || len(a.ruleEditor.targets) != 0 || !a.ruleEditor.strictIsolation {
 		t.Fatalf("unexpected initial rule editor state: %+v", a.ruleEditor)
 	}
@@ -3959,6 +3961,7 @@ func TestRouting_DirectWarpToggleInRuleEditor(t *testing.T) {
 	// 1. Edit preset-lan-direct: Direct tab should NOT expose Direct -> WARP switch
 	a.openEditRuleDialog(lanRule)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	if a.ruleEditor.actionIndex != 1 {
 		t.Fatalf("expected preset-lan-direct to open on Direct (1), got %d", a.ruleEditor.actionIndex)
 	}
@@ -3967,10 +3970,12 @@ func TestRouting_DirectWarpToggleInRuleEditor(t *testing.T) {
 	}
 	a.ruleEditor.open = false
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	// 2. Edit preset-cn-direct: Direct tab exposes toggle-rule-direct-warp; enabling it saves builtin-warp target
 	a.openEditRuleDialog(cnRule)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	if a.ruleEditor.actionIndex != 1 || a.ruleEditor.directWarp {
 		t.Fatalf("expected preset-cn-direct to open on Direct with directWarp=false")
 	}

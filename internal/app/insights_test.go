@@ -129,6 +129,7 @@ func TestInsights_RuleManagementDrawer(t *testing.T) {
 		t.Fatalf("failed to click btn-manage-rules: %v", err)
 	}
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	if !a.insightsShowManageRules {
 		t.Fatalf("expected insightsShowManageRules to be true")
@@ -489,6 +490,7 @@ func TestInsights_DenylistPersistedAcrossLoadStateAndFormats(t *testing.T) {
 	a2.activeTab = TabInsights
 	a2.insightsShowManageRules = true
 	tt2.Frame()
+	tt2.Advance(300 * time.Millisecond)
 
 	a2.blockerDenylistInput = "*.manual-bad.example"
 	if err := tt2.Click("btn-add-denylist"); err != nil {

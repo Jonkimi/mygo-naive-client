@@ -377,8 +377,8 @@ func TestInsights_WarpChainDisplay(t *testing.T) {
 }
 
 func TestBuiltinWarp_DirectLatencyProbe(t *testing.T) {
-	if testing.Short() || os.Getenv("RUN_LIVE_WARP_TESTS") == "" {
-		t.Skip("live Cloudflare WARP network test skipped; set RUN_LIVE_WARP_TESTS=1 to run")
+	if testing.Short() || os.Getenv("LIVE") == "" {
+		t.Skip("live Cloudflare WARP network test skipped; set LIVE=1 to run")
 	}
 	a, tt, _ := newTestApp(t, nil)
 	freePort, err := runner.AllocateFreePort()
@@ -1308,6 +1308,7 @@ func TestNaiveWarp_EditorSavesMasqueH2AndNormalizesCardBadge(t *testing.T) {
 	tt.SetSize(960, 900)
 	a.openEditServiceDialog(naiveSvc)
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	a.editor.scroll.Y = 400
 	tt.Frame()
 	if err := tt.Click(a.catalog().NodeEditorEnableWarp()); err != nil {
@@ -1340,6 +1341,7 @@ func TestNaiveWarp_EditorSavesMasqueH2AndNormalizesCardBadge(t *testing.T) {
 
 	a.loadState()
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 
 	reloaded := a.state.Services[0]
 	if reloaded.WARPConfig == nil || reloaded.WARPConfig.Transport != config.WarpTransportMasque {
@@ -1355,6 +1357,7 @@ func TestNaiveWarp_EditorSavesMasqueH2AndNormalizesCardBadge(t *testing.T) {
 		t.Fatalf("open node drawer: %v", err)
 	}
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	if !tt.HasText("➔ WARP · MASQUE H2") {
 		t.Fatalf("expected node drawer to show '➔ WARP · MASQUE H2'")
 	}
@@ -1472,6 +1475,7 @@ func TestSidecarWarp_DisableWhileRunningSyncsGatewayWithoutWarp(t *testing.T) {
 	tt.SetSize(960, 900)
 	a.openEditServiceDialog(a.state.Services[0])
 	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	a.editor.scroll.Y = 400
 	tt.Frame()
 	if err := tt.Click(a.catalog().NodeEditorEnableWarp()); err != nil {
