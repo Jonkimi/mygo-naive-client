@@ -473,6 +473,17 @@ func Run() error {
 	return mygo.App.Run()
 }
 
+// quitApp stops active proxy sidecars and terminates the desktop application.
+func (a *app) quitApp() {
+	a.quitting = true
+	if a.mgr != nil {
+		_ = a.mgr.StopAll()
+	}
+	if !a.headless {
+		mygo.App.Quit()
+	}
+}
+
 func newApp(dataDir string) *app {
 	recPath := filepath.Join(dataDir, "network-recovery.json")
 	st := defaultPersistedState()

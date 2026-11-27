@@ -111,21 +111,14 @@ go tool mygo bundle
 
 | 快捷键 (macOS) | 快捷键 (Win / Linux) | 功能说明 |
 | :--- | :--- | :--- |
-| <kbd>Cmd</kbd> + <kbd>1</kbd> ~ <kbd>7</kbd> | <kbd>Ctrl</kbd> + <kbd>1</kbd> ~ <kbd>7</kbd> | 在各工作台视图间快速切换 |
-| <kbd>Cmd</kbd> + <kbd>,</kbd> | <kbd>Ctrl</kbd> + <kbd>,</kbd> | 快速呼出全局偏好设置 |
+| <kbd>Cmd</kbd> + <kbd>1</kbd> ~ <kbd>7</kbd> | <kbd>Ctrl</kbd> + <kbd>1</kbd> ~ <kbd>7</kbd> | 切换工作台视图（节点 / 分流 / 洞察 / 组网 / Cloudflare / 运行日志 / 设置） |
+| <kbd>Cmd</kbd> + <kbd>,</kbd> | <kbd>Ctrl</kbd> + <kbd>,</kbd> | 快速呼出设置页面 |
 | <kbd>Cmd</kbd> + <kbd>B</kbd> | <kbd>Ctrl</kbd> + <kbd>B</kbd> | 展开或收起左侧导航栏 |
 | <kbd>Esc</kbd> | <kbd>Esc</kbd> | 关闭当前打开的抽屉或弹窗 |
+| <kbd>Cmd</kbd> + <kbd>N</kbd> | <kbd>Ctrl</kbd> + <kbd>N</kbd> | 新建代理节点 |
+| <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> | 从剪贴板导入节点 |
+| <kbd>Cmd</kbd> + <kbd>R</kbd> | <kbd>Ctrl</kbd> + <kbd>R</kbd> | 检查核心组件更新 |
 | <kbd>Cmd</kbd> + <kbd>Q</kbd> | <kbd>Ctrl</kbd> + <kbd>Q</kbd> | 退出应用程序 |
-
----
-
-## 📖 导入与导出说明
-
-在主界面点击 **「剪贴板导入」**，支持粘贴单行或多行代理协议节点链接及完整的 JSON 配置文件：
-
-- **批量链接导入**：自动识别主流代理协议分享链接、认证信息、传输参数（如自定义 SNI）及节点备注，一键批量解析入库。
-- **JSON 配置导入**：支持粘贴标准节点 JSON 配置或代理客户端配置数组，自动完成字段映射与本地端口分配。
-- **一键分享与导出**：支持将已配置节点导出为标准代理协议链接或复制到剪贴板，便于多设备同步与迁移。
 
 ---
 

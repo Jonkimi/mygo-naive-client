@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -13,11 +14,37 @@ import (
 
 const collapsedTileSize float32 = 36
 
+func primaryShortcutLabel(key string) string {
+	return formatPrimaryShortcutForOS(runtime.GOOS, key)
+}
+
+func formatPrimaryShortcutForOS(goos, key string) string {
+	if goos == "darwin" {
+		return "⌘" + key
+	}
+	return "Ctrl+" + key
+}
+
+func renderSidebarShortcutHint(c *ui.Context, p palette, shortcut string) {
+	row := ui.Row(c).AlignItems(ui.Center)
+	if runtime.GOOS == "darwin" {
+		row.Width(24).Justify(ui.Start)
+	} else {
+		row.MinWidth(36).Justify(ui.End)
+	}
+	row.Children(func() {
+		ui.Text(c, shortcut).FontSize(dsFontCaption).TextColor(p.textDim).NoWrap()
+	})
+}
+
 func (a *app) renderSidebar(c *ui.Context, p palette) {
 	cat := a.catalog()
 	collapsed := a.state.SidebarCollapsed
 
 	var targetWidth float32 = 190
+	if runtime.GOOS != "darwin" {
+		targetWidth = 204
+	}
 	if collapsed {
 		targetWidth = 56
 	}
@@ -45,13 +72,13 @@ func (a *app) renderSidebar(c *ui.Context, p palette) {
 				navCol.AlignItems(ui.Center)
 			}
 			navCol.Children(func() {
-				a.renderNavItem(c, p, TabNodes, iconNavNodes, cat.NavNodes(), "⌘1", collapsed)
-				a.renderNavItem(c, p, TabRouting, iconNavRouting, cat.NavRouting(), "⌘2", collapsed)
-				a.renderNavItem(c, p, TabInsights, iconNavInsights, cat.NavInsights(), "⌘3", collapsed)
-				a.renderNavItem(c, p, TabTailnet, iconNavTailnet, cat.NavTailnet(), "⌘4", collapsed)
-				a.renderNavItem(c, p, TabCloudflare, iconNavCloudflare, cat.NavCloudflare(), "⌘5", collapsed)
-				a.renderNavItem(c, p, TabLogs, iconTerminal, cat.NavLogs(), "⌘6", collapsed)
-				a.renderNavItem(c, p, TabSettings, iconNavSettings, cat.NavSettings(), "⌘,", collapsed)
+				a.renderNavItem(c, p, TabNodes, iconNavNodes, cat.NavNodes(), primaryShortcutLabel("1"), collapsed)
+				a.renderNavItem(c, p, TabRouting, iconNavRouting, cat.NavRouting(), primaryShortcutLabel("2"), collapsed)
+				a.renderNavItem(c, p, TabInsights, iconNavInsights, cat.NavInsights(), primaryShortcutLabel("3"), collapsed)
+				a.renderNavItem(c, p, TabTailnet, iconNavTailnet, cat.NavTailnet(), primaryShortcutLabel("4"), collapsed)
+				a.renderNavItem(c, p, TabCloudflare, iconNavCloudflare, cat.NavCloudflare(), primaryShortcutLabel("5"), collapsed)
+				a.renderNavItem(c, p, TabLogs, iconTerminal, cat.NavLogs(), primaryShortcutLabel("6"), collapsed)
+				a.renderNavItem(c, p, TabSettings, iconNavSettings, cat.NavSettings(), primaryShortcutLabel(","), collapsed)
 			})
 
 			// Spacer
@@ -91,6 +118,7 @@ func (a *app) renderSidebarHeader(c *ui.Context, p palette, collapsed bool) {
 
 func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool) {
 	cat := a.catalog()
+	toggleShortcut := primaryShortcutLabel("B")
 
 	if collapsed {
 		btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
@@ -98,7 +126,7 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 			Size(collapsedTileSize, collapsedTileSize).Radius(dsRadiusMD).
 			Background(ui.Transparent).
 			AlignItems(ui.Center).Justify(ui.Center).
-			Tooltip(cat.SidebarExpand() + " (⌘B)").
+			Tooltip(fmt.Sprintf("%s (%s)", cat.SidebarExpand(), toggleShortcut)).
 			Children(func() {
 				ui.Icon(c, iconSidebarExpand).Size(16, 16).TextColor(p.textDim)
 			})
@@ -116,18 +144,16 @@ func (a *app) renderSidebarToggleButton(c *ui.Context, p palette, collapsed bool
 	btn := ui.ButtonBase(c.Key("btn-sidebar-toggle-bottom")).
 		Label(cat.SidebarCollapse()).
 		FillWidth().
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
 		Height(collapsedTileSize).PaddingX(10).Radius(dsRadiusMD).
 		Background(ui.Transparent).
-		Tooltip(cat.SidebarCollapse() + " (⌘B)").
+		Tooltip(fmt.Sprintf("%s (%s)", cat.SidebarCollapse(), toggleShortcut)).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Gap(9).Children(func() {
 				ui.Icon(c, iconSidebarCollapse).Size(16, 16).TextColor(p.textDim)
 				ui.Text(c, cat.SidebarCollapse()).FontSize(dsFontBody).TextColor(p.textMuted).NoWrap()
 			})
-			ui.Row(c).Width(24).Justify(ui.Start).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "⌘B").FontSize(dsFontCaption).TextColor(p.textDim).NoWrap()
-			})
+			renderSidebarShortcutHint(c, p, toggleShortcut)
 		})
 	if btn.Pressed() {
 		btn.Background(p.elevated)
@@ -184,7 +210,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 	btn := ui.ButtonBase(c.Key(key)).
 		Label(label).
 		FillWidth().
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(8).
 		Height(collapsedTileSize).PaddingX(10).Radius(dsRadiusMD).
 		Background(bg).
 		Children(func() {
@@ -197,9 +223,7 @@ func (a *app) renderNavItem(c *ui.Context, p palette, tab TabID, icon *ui.SVG, l
 					ui.Box(c).Size(6, 6).Radius(dsRadiusPill).Background(p.amber)
 				}
 			})
-			ui.Row(c).Width(24).Justify(ui.Start).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, shortcut).FontSize(dsFontCaption).TextColor(p.textDim).NoWrap()
-			})
+			renderSidebarShortcutHint(c, p, shortcut)
 		})
 
 	if !active {

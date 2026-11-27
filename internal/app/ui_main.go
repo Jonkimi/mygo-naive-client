@@ -65,6 +65,10 @@ func (a *app) view(c *ui.Context) {
 	c.OnShortcut(ui.Cmd, ui.Key7, func() { a.activeTab = TabSettings })
 	c.OnShortcut(ui.Cmd, ui.KeyComma, func() { a.activeTab = TabSettings })
 	c.OnShortcut(ui.Cmd, ui.KeyB, func() { a.toggleSidebar() })
+	c.OnShortcut(ui.Cmd, ui.KeyN, func() { a.openCreateServiceDialog() })
+	c.OnShortcut(ui.Cmd|ui.Shift, ui.KeyV, func() { a.openImportDialog() })
+	c.OnShortcut(ui.Cmd, ui.KeyR, func() { a.triggerCheckUpdate(true) })
+	c.OnShortcut(ui.Cmd, ui.KeyQ, func() { a.quitApp() })
 
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.renderSidebar(c, p)

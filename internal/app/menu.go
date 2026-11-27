@@ -47,11 +47,7 @@ func (a *app) installAppMenu() {
 				Label:       cat.TrayQuit(),
 				Accelerator: "CmdOrCtrl+Q",
 				Click: func(*mygo.MenuItem, *mygo.Window) {
-					a.quitting = true
-					if a.mgr != nil {
-						_ = a.mgr.StopAll()
-					}
-					mygo.App.Quit()
+					a.quitApp()
 				},
 			},
 		},

@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1393,9 +1394,10 @@ func TestWorkbenchSidebarNavigationAndLogDrawer(t *testing.T) {
 		t.Fatalf("expected activeTab TabRouting, got %v", a.activeTab)
 	}
 
-	// Verify shortcut '⌘2' is rendered for Routing in the enabled sidebar
-	if !tt.HasText("⌘2") {
-		t.Fatalf("expected shortcut '⌘2' for enabled routing nav item")
+	// Verify platform-appropriate shortcut is rendered for Routing in the enabled sidebar
+	expectedRoutingShortcut := primaryShortcutLabel("2")
+	if !tt.HasText(expectedRoutingShortcut) {
+		t.Fatalf("expected shortcut %q for enabled routing nav item", expectedRoutingShortcut)
 	}
 
 	// Switch back to Nodes
@@ -1488,6 +1490,34 @@ func TestSidebarCollapseToggle(t *testing.T) {
 
 	if a.state.SidebarCollapsed {
 		t.Fatalf("expected sidebar to be expanded after clicking expand button")
+	}
+}
+
+// TestSidebarShortcutDisplayByPlatform verifies platform-specific shortcut formatting and expanded sidebar rendering.
+func TestSidebarShortcutDisplayByPlatform(t *testing.T) {
+	if got := formatPrimaryShortcutForOS("darwin", "1"); got != "⌘1" {
+		t.Fatalf("darwin shortcut = %q, want %q", got, "⌘1")
+	}
+	if got := formatPrimaryShortcutForOS("darwin", ","); got != "⌘," {
+		t.Fatalf("darwin settings shortcut = %q, want %q", got, "⌘,")
+	}
+	for _, osName := range []string{"windows", "linux"} {
+		if got := formatPrimaryShortcutForOS(osName, "1"); got != "Ctrl+1" {
+			t.Fatalf("%s shortcut = %q, want %q", osName, got, "Ctrl+1")
+		}
+		if got := formatPrimaryShortcutForOS(osName, "B"); got != "Ctrl+B" {
+			t.Fatalf("%s toggle shortcut = %q, want %q", osName, got, "Ctrl+B")
+		}
+	}
+
+	_, tt, _ := newTestApp(t, nil)
+	tt.Frame()
+
+	for _, key := range []string{"1", "2", "3", "4", "5", "6", ",", "B"} {
+		want := primaryShortcutLabel(key)
+		if !tt.HasText(want) {
+			t.Fatalf("expected sidebar shortcut %q to be rendered on %s", want, runtime.GOOS)
+		}
 	}
 }
 
@@ -4915,6 +4945,72 @@ func TestApp_NodeIPv6Capability_EditorAndDrawerUI(t *testing.T) {
 	}
 	if !tt.HasText(cat.NodeIPv6StatusUnsupported()) {
 		t.Fatalf("expected manual IPv6ModeUnsupported override in drawer (%q), got texts: %v", cat.NodeIPv6StatusUnsupported(), tt.Texts())
+	}
+}
+
+// Verifies cross-platform window shortcuts for creating a node, opening clipboard import, checking updates, and quitting.
+func TestWindowActionShortcuts(t *testing.T) {
+	a, tt, _ := newTestApp(t, nil)
+
+	var updateHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		updateHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tag_name":"v0.0.0"}`))
+	}))
+	defer srv.Close()
+
+	oldNaiveAPI := updater.LatestReleaseAPI
+	oldXrayAPI := updater.LatestXrayReleaseAPI
+	oldGeoAPI := updater.LatestGeodataReleaseAPI
+	updater.LatestReleaseAPI = srv.URL
+	updater.LatestXrayReleaseAPI = srv.URL
+	updater.LatestGeodataReleaseAPI = srv.URL
+	t.Cleanup(func() {
+		updater.LatestReleaseAPI = oldNaiveAPI
+		updater.LatestXrayReleaseAPI = oldXrayAPI
+		updater.LatestGeodataReleaseAPI = oldGeoAPI
+	})
+
+	// Cmd/Ctrl+N opens the new node editor drawer.
+	tt.Key(ui.Cmd, ui.KeyN)
+	tt.Advance(300 * time.Millisecond)
+	if !a.editor.open || !a.editor.isNew {
+		t.Fatalf("expected Cmd/Ctrl+N to open new node editor, got open=%v isNew=%v", a.editor.open, a.editor.isNew)
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Advance(300 * time.Millisecond)
+
+	// Cmd/Ctrl+Shift+V opens the clipboard import dialog.
+	tt.SetClipboard("https://user:pass@example.com:443#Node1")
+	tt.Key(ui.Cmd|ui.Shift, ui.KeyV)
+	tt.Advance(300 * time.Millisecond)
+	if !a.importDlg.open {
+		t.Fatalf("expected Cmd/Ctrl+Shift+V to open import dialog")
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Advance(300 * time.Millisecond)
+	if a.importDlg.open {
+		a.importDlg.open = false
+		tt.Frame()
+		tt.Advance(300 * time.Millisecond)
+	}
+
+	// Cmd/Ctrl+R triggers update check across core and geodata feeds.
+	tt.Key(ui.Cmd, ui.KeyR)
+	tt.Frame()
+	waitForUI(t, a, tt, 5*time.Second, func() bool {
+		return !a.checkingUpdate && !a.checkingXrayUpdate && !a.checkingGeodataUpdate && updateHits.Load() >= 3
+	})
+	if a.latestRelease == nil || a.latestRelease.TagName != "v0.0.0" {
+		t.Fatalf("expected Cmd/Ctrl+R to populate latestRelease v0.0.0, got %+v (err=%q)", a.latestRelease, a.updateError)
+	}
+
+	// Cmd/Ctrl+Q triggers quit state.
+	tt.Key(ui.Cmd, ui.KeyQ)
+	tt.Frame()
+	if !a.quitting {
+		t.Fatalf("expected Cmd/Ctrl+Q to set quitting=true")
 	}
 }
 

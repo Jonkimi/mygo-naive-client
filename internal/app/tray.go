@@ -176,11 +176,7 @@ func (a *app) buildTrayMenu() *mygo.Menu {
 	items = append(items, &mygo.MenuItem{
 		Label: cat.TrayQuit(),
 		Click: func(*mygo.MenuItem, *mygo.Window) {
-			a.quitting = true
-			if a.mgr != nil {
-				_ = a.mgr.StopAll()
-			}
-			mygo.App.Quit()
+			a.quitApp()
 		},
 	})
 
