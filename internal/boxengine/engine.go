@@ -170,6 +170,7 @@ type Engine struct {
 	box               *box.Box
 	port              int
 	addr              string
+	dualStackLoopback bool
 	services          []config.Service
 	allocatedPorts    map[string]int
 	activeIDs         map[string]bool
@@ -255,11 +256,15 @@ func New(opts EngineOptions) (*Engine, error) {
 		cfCfg.Account = cloneWarpAccount(cfCfg.Account)
 	}
 
+	hasIPv6Loopback := listenHost == "::" || listenHost == "::1" ||
+		(listenHost == "127.0.0.1" && (opts.DualStackLoopback || (opts.TailnetConfig != nil && opts.TailnetConfig.ExposeMixedPort)))
+
 	normLvl, parsedLvl := parseSingBoxLogLevel(opts.LogLevel)
 	globalStrategy := effectiveDNSStrategy(opts)
 	eng := &Engine{
 		port:                      listenPort,
 		addr:                      net.JoinHostPort(listenHost, strconv.Itoa(listenPort)),
+		dualStackLoopback:         hasIPv6Loopback,
 		services:                  opts.Services,
 		allocatedPorts:            allocated,
 		activeIDs:                 opts.ActiveIDs,
@@ -512,6 +517,35 @@ func (e *Engine) LocalProxyAddr() string {
 		return net.JoinHostPort("127.0.0.1", portStr)
 	}
 	return e.addr
+}
+
+// LocalProxyAddrs returns all active loopback host:port addresses served by the mixed inbound(s).
+func (e *Engine) LocalProxyAddrs() []string {
+	if e == nil {
+		return nil
+	}
+	host, portStr, err := net.SplitHostPort(e.addr)
+	if err != nil {
+		if e.port > 0 {
+			portStr = strconv.Itoa(e.port)
+			host = "127.0.0.1"
+		} else if e.addr != "" {
+			return []string{e.addr}
+		} else {
+			return nil
+		}
+	}
+	if host == "::1" {
+		return []string{net.JoinHostPort("::1", portStr)}
+	}
+	addrs := []string{e.LocalProxyAddr()}
+	if e.dualStackLoopback {
+		v6 := net.JoinHostPort("::1", portStr)
+		if v6 != addrs[0] {
+			addrs = append(addrs, v6)
+		}
+	}
+	return addrs
 }
 
 // SetLogLevel dynamically updates the embedded sing-box log level without restarting the engine.

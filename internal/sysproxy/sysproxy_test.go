@@ -161,7 +161,7 @@ func TestSysproxy_DefaultBypassReservedSubnets(t *testing.T) {
 				gotOverride = c.args[7]
 			}
 		}
-		wantOverride := strings.Join(wantBypass, ";") + ";<local>"
+		wantOverride := formatWindowsProxyOverride(wantBypass)
 		if gotOverride != wantOverride {
 			t.Fatalf("windows ProxyOverride mismatch:\n got: %q\nwant: %q", gotOverride, wantOverride)
 		}
@@ -243,6 +243,73 @@ func TestSysproxy_WildcardNormalizedToLoopback(t *testing.T) {
 		if !strings.Contains(string(raw), `"addr": "127.0.0.1:10809"`) {
 			t.Fatalf("expected normalized recovery addr 127.0.0.1:10809 for %q, got:\n%s", input, string(raw))
 		}
+	}
+}
+
+// Tests that custom bypass lists preserve user rules while retaining dual-stack loopback guards without duplicates.
+func TestSysproxy_CustomBypassPreservesDualStackLoopback(t *testing.T) {
+	var calls []string
+	sp := NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+		if name == "networksetup" && len(args) > 0 && args[0] == "-listallnetworkservices" {
+			return []byte("Wi-Fi\n"), nil
+		}
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return []byte("ok"), nil
+	}, "")
+
+	if err := sp.Set("127.0.0.1:10809", []string{"*.corp.internal", "127.0.0.1", " *.corp.internal "}); err != nil {
+		t.Fatalf("Set with custom bypass failed: %v", err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"*.corp.internal", "127.0.0.1", "::1", "localhost"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in sysproxy bypass calls, got:\n%s", want, joined)
+		}
+	}
+	if got := normalizeBypass([]string{"*.corp.internal", "127.0.0.1", " *.corp.internal "}); !reflect.DeepEqual(got, []string{"*.corp.internal", "127.0.0.1", "::1", "localhost"}) {
+		t.Fatalf("unexpected normalizeBypass output: %v", got)
+	}
+}
+
+// Tests that Windows ProxyOverride keeps dual-stack CIDR rules, adds WinINET wildcards/bracketed loopback, and avoids duplicate <local>.
+func TestSysproxy_WindowsProxyOverrideCompatibility(t *testing.T) {
+	var proxyOverride string
+	sp := NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+		if name == "reg" && len(args) >= 8 && args[3] == "ProxyOverride" {
+			proxyOverride = args[7]
+		}
+		return []byte("ok"), nil
+	}, "")
+
+	if err := sp.setWindows("127.0.0.1", "10809", defaultBypass); err != nil {
+		t.Fatalf("setWindows failed: %v", err)
+	}
+	parts := strings.Split(proxyOverride, ";")
+	for _, want := range []string{"127.*", "10.*", "192.168.*", "169.254.*", "[::1]", "fc00::/7", "fe80::/10", "<local>"} {
+		found := false
+		for _, p := range parts {
+			if p == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected %q in Windows ProxyOverride %q", want, proxyOverride)
+		}
+	}
+	localCount := 0
+	for _, p := range parts {
+		if strings.EqualFold(p, "<local>") {
+			localCount++
+		}
+	}
+	if localCount != 1 {
+		t.Fatalf("expected exactly one <local> in ProxyOverride %q, got %d", proxyOverride, localCount)
+	}
+
+	deduped := formatWindowsProxyOverride([]string{"127.0.0.1", "<local>", "<LOCAL>"})
+	if deduped != "127.0.0.1;<local>" {
+		t.Fatalf("expected no duplicate <local>, got %q", deduped)
 	}
 }
 

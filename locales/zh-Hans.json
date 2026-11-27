@@ -185,6 +185,8 @@
   "gatewayLANNoAddress": "未检测到可用的局域网 IP 地址",
   "gatewayLANBadge": "局域网",
   "gatewayLANAddressCopied": "已复制局域网代理地址",
+  "gatewayLocalAddressesLabel": "本机代理地址（点击复制）",
+  "gatewayLocalAddressCopied": "已复制本机代理地址",
   "dohSectionTitle": "分流 DNS / DoH 解析",
   "dohSectionDesc": "分别配置国内直连 DNS、境外代理 DNS 与纯 IP 引导 DNS（提供常用预设选项）",
   "dnsPolicySectionTitle": "DNS 策略与缓存",

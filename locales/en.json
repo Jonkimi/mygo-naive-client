@@ -185,6 +185,8 @@
   "gatewayLANNoAddress": "No active LAN IP address detected",
   "gatewayLANBadge": "LAN",
   "gatewayLANAddressCopied": "Copied LAN proxy address",
+  "gatewayLocalAddressesLabel": "Local Proxy Addresses (click to copy)",
+  "gatewayLocalAddressCopied": "Copied local proxy address",
   "dohSectionTitle": "Split DNS / DoH Resolution",
   "dohSectionDesc": "Configure Domestic direct DNS, Remote proxy DNS, and pure IP Bootstrap DNS",
   "dnsPolicySectionTitle": "DNS Strategy & Cache",

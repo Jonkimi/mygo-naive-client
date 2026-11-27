@@ -398,6 +398,36 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 			}
 		}
 
+		if gw != nil && a.state.GatewayEnabled {
+			if localAddrs := gw.LocalProxyAddrs(); len(localAddrs) > 0 {
+				ui.Column(c.Key("page-set-gateway-local-addrs")).Gap(6).
+					Padding(8, 10, 8, 10).Radius(6).
+					Background(p.elevated).Border(1, p.borderSubtle).
+					Children(func() {
+						ui.Text(c, cat.GatewayLocalAddressesLabel()).FontSize(11).FontWeight(500).TextColor(p.textDim)
+						ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+							for _, addr := range localAddrs {
+								btn := ui.ButtonBase(c.Key("page-set-gateway-local-addr-"+addr)).
+									Label(addr).
+									Padding(4, 8, 4, 8).Radius(5).
+									Background(p.card).Border(1, p.border).
+									Children(func() {
+										ui.Text(c, addr).FontSize(11).FontFeatures("tnum").TextColor(p.text).NoWrap()
+									})
+								if btn.Pressed() {
+									btn.Background(p.borderSubtle)
+								} else if btn.Hovered() {
+									btn.Background(p.cardHover)
+								}
+								if btn.Clicked() {
+									a.writeClipboard(addr, cat.GatewayLocalAddressCopied())
+								}
+							}
+						})
+					})
+			}
+		}
+
 		ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
 
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {

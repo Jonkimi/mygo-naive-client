@@ -2614,3 +2614,98 @@ func TestEngine_AllowLANWildcardInboundsAndLocalProxyAddr(t *testing.T) {
 		_ = conn6.Close()
 	}
 }
+
+// Tests that LocalProxyAddrs reports active IPv4 and IPv6 loopback addresses across bind modes.
+func TestEngine_LocalProxyAddrs(t *testing.T) {
+	eng0, err := New(EngineOptions{
+		ListenAddr: "0.0.0.0:0",
+	})
+	if err != nil {
+		t.Fatalf("New Engine with 0.0.0.0:0 failed: %v", err)
+	}
+	if err := eng0.Start(); err != nil {
+		t.Fatalf("Start Engine with 0.0.0.0:0 failed: %v", err)
+	}
+	defer func() { _ = eng0.Close() }()
+	want0 := []string{fmt.Sprintf("127.0.0.1:%d", eng0.Port())}
+	if got := eng0.LocalProxyAddrs(); !slices.Equal(got, want0) {
+		t.Fatalf("0.0.0.0 LocalProxyAddrs: got %v, want %v", got, want0)
+	}
+
+	eng4, err := New(EngineOptions{
+		ListenAddr:        "127.0.0.1:0",
+		DualStackLoopback: false,
+	})
+	if err != nil {
+		t.Fatalf("New Engine with 127.0.0.1:0 failed: %v", err)
+	}
+	if err := eng4.Start(); err != nil {
+		t.Fatalf("Start Engine with 127.0.0.1:0 failed: %v", err)
+	}
+	defer func() { _ = eng4.Close() }()
+	want4 := []string{fmt.Sprintf("127.0.0.1:%d", eng4.Port())}
+	if got := eng4.LocalProxyAddrs(); !slices.Equal(got, want4) {
+		t.Fatalf("127.0.0.1 (single-stack) LocalProxyAddrs: got %v, want %v", got, want4)
+	}
+
+	if ln6, err := net.Listen("tcp6", "[::1]:0"); err == nil {
+		_ = ln6.Close()
+		engDS, err := New(EngineOptions{
+			ListenAddr:        "127.0.0.1:0",
+			DualStackLoopback: true,
+		})
+		if err != nil {
+			t.Fatalf("New Engine with DualStackLoopback failed: %v", err)
+		}
+		if err := engDS.Start(); err != nil {
+			t.Fatalf("Start Engine with DualStackLoopback failed: %v", err)
+		}
+		defer func() { _ = engDS.Close() }()
+
+		wantDS := []string{
+			fmt.Sprintf("127.0.0.1:%d", engDS.Port()),
+			fmt.Sprintf("[::1]:%d", engDS.Port()),
+		}
+		gotDS := engDS.LocalProxyAddrs()
+		if !slices.Equal(gotDS, wantDS) {
+			t.Fatalf("DualStackLoopback LocalProxyAddrs: got %v, want %v", gotDS, wantDS)
+		}
+		for _, addr := range gotDS {
+			conn, err := net.DialTimeout("tcp", addr, time.Second)
+			if err != nil {
+				t.Fatalf("dial DualStackLoopback %s failed: %v", addr, err)
+			}
+			_ = conn.Close()
+		}
+	}
+
+	if lnW6, err := net.Listen("tcp", "[::]:0"); err == nil {
+		_ = lnW6.Close()
+		engW6, err := New(EngineOptions{
+			ListenAddr: "[::]:0",
+		})
+		if err != nil {
+			t.Fatalf("New Engine with [::]:0 failed: %v", err)
+		}
+		if err := engW6.Start(); err != nil {
+			t.Fatalf("Start Engine with [::]:0 failed: %v", err)
+		}
+		defer func() { _ = engW6.Close() }()
+
+		wantW6 := []string{
+			fmt.Sprintf("127.0.0.1:%d", engW6.Port()),
+			fmt.Sprintf("[::1]:%d", engW6.Port()),
+		}
+		gotW6 := engW6.LocalProxyAddrs()
+		if !slices.Equal(gotW6, wantW6) {
+			t.Fatalf("[::] LocalProxyAddrs: got %v, want %v", gotW6, wantW6)
+		}
+		for _, addr := range gotW6 {
+			conn, err := net.DialTimeout("tcp", addr, time.Second)
+			if err != nil {
+				t.Fatalf("dial [::] loopback %s failed: %v", addr, err)
+			}
+			_ = conn.Close()
+		}
+	}
+}

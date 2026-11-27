@@ -1842,6 +1842,26 @@ func (msgs Messages) GatewayLANAddressCopied() string {
 	return Catalog.Format(msgs.locale, "gatewayLANAddressCopied", nil)
 }
 
+// GatewayLocalAddressesLabel says "Local Proxy Addresses (click to copy)"
+// in the language the app shows.
+func GatewayLocalAddressesLabel() string { return In(i18n.Locale()).GatewayLocalAddressesLabel() }
+
+// GatewayLocalAddressesLabel says "Local Proxy Addresses (click to copy)"
+// in the language of msgs.
+func (msgs Messages) GatewayLocalAddressesLabel() string {
+	return Catalog.Format(msgs.locale, "gatewayLocalAddressesLabel", nil)
+}
+
+// GatewayLocalAddressCopied says "Copied local proxy address"
+// in the language the app shows.
+func GatewayLocalAddressCopied() string { return In(i18n.Locale()).GatewayLocalAddressCopied() }
+
+// GatewayLocalAddressCopied says "Copied local proxy address"
+// in the language of msgs.
+func (msgs Messages) GatewayLocalAddressCopied() string {
+	return Catalog.Format(msgs.locale, "gatewayLocalAddressCopied", nil)
+}
+
 // DohSectionTitle says "Split DNS / DoH Resolution"
 // in the language the app shows.
 func DohSectionTitle() string { return In(i18n.Locale()).DohSectionTitle() }

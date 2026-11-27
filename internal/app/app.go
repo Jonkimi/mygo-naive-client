@@ -3337,12 +3337,33 @@ func discoverLANIPs() []string {
 			}
 		}
 	}
-	sort.Strings(v4s)
-	sort.Strings(v6s)
-	out := append(v4s, v6s...)
-	if len(out) > 4 {
-		out = out[:4]
+	return selectDualStackLANIPs(v4s, v6s, 4)
+}
+
+func selectDualStackLANIPs(v4s, v6s []string, maxTotal int) []string {
+	if maxTotal <= 0 {
+		return nil
 	}
+	v4 := append([]string(nil), v4s...)
+	v6 := append([]string(nil), v6s...)
+	sort.Strings(v4)
+	sort.Strings(v6)
+	if len(v4)+len(v6) <= maxTotal {
+		return append(v4, v6...)
+	}
+	v6Quota := min(len(v6), maxTotal/2)
+	v4Quota := min(len(v4), maxTotal-v6Quota)
+	if rem := maxTotal - v4Quota - v6Quota; rem > 0 {
+		addV6 := min(rem, len(v6)-v6Quota)
+		v6Quota += addV6
+		rem -= addV6
+		if rem > 0 {
+			v4Quota += min(rem, len(v4)-v4Quota)
+		}
+	}
+	out := make([]string, 0, v4Quota+v6Quota)
+	out = append(out, v4[:v4Quota]...)
+	out = append(out, v6[:v6Quota]...)
 	return out
 }
 

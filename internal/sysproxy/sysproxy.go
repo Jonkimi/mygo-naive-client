@@ -93,6 +93,48 @@ func (s *Sysproxy) RecoverIfDirty() error {
 	return nil
 }
 
+var defaultBypass = []string{
+	"127.0.0.1",
+	"127.0.0.0/8",
+	"::1",
+	"::1/128",
+	"localhost",
+	"*.local",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"169.254.0.0/16",
+	"fc00::/7",
+	"fe80::/10",
+}
+
+func normalizeBypass(bypass []string) []string {
+	if len(bypass) == 0 {
+		return append([]string(nil), defaultBypass...)
+	}
+	seen := make(map[string]bool, len(bypass)+3)
+	out := make([]string, 0, len(bypass)+3)
+	add := func(entry string) {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			return
+		}
+		key := strings.ToLower(trimmed)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, trimmed)
+	}
+	for _, entry := range bypass {
+		add(entry)
+	}
+	for _, required := range []string{"127.0.0.1", "::1", "localhost"} {
+		add(required)
+	}
+	return out
+}
+
 func (s *Sysproxy) Set(addr string, bypass []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,22 +148,7 @@ func (s *Sysproxy) Set(addr string, bypass []string) error {
 		addr = net.JoinHostPort(host, port)
 	}
 
-	if len(bypass) == 0 {
-		bypass = []string{
-			"127.0.0.1",
-			"127.0.0.0/8",
-			"::1",
-			"::1/128",
-			"localhost",
-			"*.local",
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-			"192.168.0.0/16",
-			"169.254.0.0/16",
-			"fc00::/7",
-			"fe80::/10",
-		}
-	}
+	bypass = normalizeBypass(bypass)
 
 	// Write dirty recovery marker before touching system state
 	if s.recoveryPath != "" {
@@ -286,9 +313,47 @@ func (s *Sysproxy) unsetLinux() error {
 }
 
 // Windows implementation using reg.exe
+func formatWindowsProxyOverride(bypass []string) string {
+	seen := make(map[string]bool, len(bypass)+8)
+	out := make([]string, 0, len(bypass)+8)
+	add := func(entry string) {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			return
+		}
+		key := strings.ToLower(trimmed)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, trimmed)
+	}
+	for _, entry := range bypass {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		add(trimmed)
+		switch strings.ToLower(trimmed) {
+		case "127.0.0.0/8":
+			add("127.*")
+		case "10.0.0.0/8":
+			add("10.*")
+		case "192.168.0.0/16":
+			add("192.168.*")
+		case "169.254.0.0/16":
+			add("169.254.*")
+		case "::1":
+			add("[::1]")
+		}
+	}
+	add("<local>")
+	return strings.Join(out, ";")
+}
+
 func (s *Sysproxy) setWindows(host, port string, bypass []string) error {
 	server := net.JoinHostPort(strings.Trim(host, "[]"), port)
-	override := strings.Join(bypass, ";") + ";<local>"
+	override := formatWindowsProxyOverride(bypass)
 	regPath := `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
 	_, _ = s.exec("reg", "add", regPath, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f")
 	_, _ = s.exec("reg", "add", regPath, "/v", "ProxyServer", "/t", "REG_SZ", "/d", server, "/f")

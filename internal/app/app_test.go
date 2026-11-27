@@ -4669,6 +4669,29 @@ func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
 	tt := ui.NewTester(func(c *ui.Context) {
 		a.renderSettingsPage(c, darkPalette)
 	}, 900, 1400)
+	tt.Frame()
+
+	// Verify local proxy address pill(s) appear and clicking copies the address.
+	wantLocal := fmt.Sprintf("127.0.0.1:%d", port)
+	wantV6Local := fmt.Sprintf("[::1]:%d", port)
+	localAddrs := a.gateway.LocalProxyAddrs()
+	if !tt.HasText(wantLocal) {
+		t.Fatalf("expected local proxy address %q in Settings UI, texts: %v", wantLocal, tt.Texts())
+	}
+	copyTarget := wantLocal
+	if slices.Contains(localAddrs, wantV6Local) {
+		if !tt.HasText(wantV6Local) {
+			t.Fatalf("expected IPv6 loopback proxy address %q in Settings UI, texts: %v", wantV6Local, tt.Texts())
+		}
+		copyTarget = wantV6Local
+	}
+	if err := tt.Click(copyTarget); err != nil {
+		t.Fatalf("click local proxy address %q: %v", copyTarget, err)
+	}
+	tt.Frame()
+	if a.clipboardMem != copyTarget {
+		t.Fatalf("expected clipboard %q, got %q", copyTarget, a.clipboardMem)
+	}
 
 	// Toggle Allow LAN on via the switch role.
 	sw, ok := tt.AccessByRole(ui.RoleSwitch, cat.GatewayAllowLANLabel())
@@ -4698,9 +4721,9 @@ func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
 	if err != nil || (host != "::" && host != "0.0.0.0") {
 		t.Fatalf("expected gateway bound to wildcard host (:: or 0.0.0.0), got %q", gw.Addr())
 	}
-	wantLocal := fmt.Sprintf("127.0.0.1:%d", port)
-	if gw.LocalProxyAddr() != wantLocal {
-		t.Fatalf("expected LocalProxyAddr %q, got %q", wantLocal, gw.LocalProxyAddr())
+	wantLocalLoopback := fmt.Sprintf("127.0.0.1:%d", port)
+	if gw.LocalProxyAddr() != wantLocalLoopback {
+		t.Fatalf("expected LocalProxyAddr %q, got %q", wantLocalLoopback, gw.LocalProxyAddr())
 	}
 
 	// Verify persistence on reload.
@@ -4777,6 +4800,31 @@ func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
 	}
 	if tt.HasText(wantV4Addr) || tt.HasText(wantV6Addr) {
 		t.Fatalf("expected LAN proxy addresses hidden after turning off Allow LAN")
+	}
+}
+
+// Tests that selectDualStackLANIPs reserves balanced IPv4/IPv6 slots so multiple IPv4 interfaces do not crowd out IPv6 LAN addresses.
+func TestSelectDualStackLANIPs(t *testing.T) {
+	v4s := []string{"192.168.1.5", "192.168.1.1", "192.168.1.3", "192.168.1.2", "192.168.1.4"}
+	v6s := []string{"fd00::2", "fd00::1", "fd00::5", "fd00::3", "fd00::4"}
+
+	if got := selectDualStackLANIPs(v4s, v6s[:2], 4); !slices.Equal(got, []string{"192.168.1.1", "192.168.1.2", "fd00::1", "fd00::2"}) {
+		t.Fatalf("5v4+2v6: got %v", got)
+	}
+	if got := selectDualStackLANIPs(v4s, v6s[:1], 4); !slices.Equal(got, []string{"192.168.1.1", "192.168.1.2", "192.168.1.3", "fd00::2"}) {
+		t.Fatalf("5v4+1v6: got %v", got)
+	}
+	if got := selectDualStackLANIPs(v4s[:1], v6s, 4); !slices.Equal(got, []string{"192.168.1.5", "fd00::1", "fd00::2", "fd00::3"}) {
+		t.Fatalf("1v4+5v6: got %v", got)
+	}
+	if got := selectDualStackLANIPs(v4s, nil, 4); !slices.Equal(got, []string{"192.168.1.1", "192.168.1.2", "192.168.1.3", "192.168.1.4"}) {
+		t.Fatalf("5v4+0v6: got %v", got)
+	}
+	if got := selectDualStackLANIPs(nil, v6s, 4); !slices.Equal(got, []string{"fd00::1", "fd00::2", "fd00::3", "fd00::4"}) {
+		t.Fatalf("0v4+5v6: got %v", got)
+	}
+	if got := selectDualStackLANIPs(v4s[:2], v6s[:1], 4); !slices.Equal(got, []string{"192.168.1.1", "192.168.1.5", "fd00::2"}) {
+		t.Fatalf("2v4+1v6: got %v", got)
 	}
 }
 
