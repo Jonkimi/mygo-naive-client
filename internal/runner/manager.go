@@ -1000,6 +1000,58 @@ func (m *Manager) ProbeService(svc config.Service, probeURL string) {
 	}()
 }
 
+// ProbeServiceIPv6Ctx checks whether a running service can reach literal IPv6 endpoints
+// without mutating ProbeService UI state (Probing, Latency, ProbeError).
+func (m *Manager) ProbeServiceIPv6Ctx(ctx context.Context, svc config.Service, targets []string) (supported bool, conclusive bool) {
+	if m == nil {
+		return false, false
+	}
+	m.mu.RLock()
+	inst, ok := m.instances[svc.ID]
+	var state State
+	var allocPort int
+	if ok {
+		state = inst.status.State
+		allocPort = inst.status.AllocatedPort
+	}
+	m.mu.RUnlock()
+	if !ok || state != StateRunning {
+		return false, false
+	}
+
+	var tr *http.Transport
+	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && m.ServiceDialer != nil {
+		tr = &http.Transport{
+			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
+				return m.ServiceDialer(c, svc, network, addr)
+			},
+		}
+	} else {
+		ep, err := resolveProbeEndpoint(svc, allocPort)
+		if err != nil {
+			return false, false
+		}
+		tr, err = ProxyTransport(ep)
+		if err != nil {
+			return false, false
+		}
+	}
+
+	supported, conclusive = ProbeIPv6WithTransport(ctx, tr, targets)
+	if !supported {
+		m.mu.RLock()
+		stillRunning := false
+		if inst, exists := m.instances[svc.ID]; exists {
+			stillRunning = inst.status.State == StateRunning
+		}
+		m.mu.RUnlock()
+		if !stillRunning {
+			return false, false
+		}
+	}
+	return supported, conclusive
+}
+
 // DownloadTestServiceCtx synchronously measures download throughput through the service's primary listen endpoint,
 // respecting the provided context for cancellation. The service must be in StateRunning.
 func (m *Manager) DownloadTestServiceCtx(ctx context.Context, svc config.Service, downloadURL string) (float64, error) {

@@ -189,6 +189,9 @@ type app struct {
 	lastRecoveryProbeAt    map[string]time.Time
 	halfOpenProbing        map[string]bool
 	cooldownTimers         map[string]*time.Timer
+	ipv6ProbeMu            sync.Mutex
+	ipv6Probing            map[string]bool
+	ipv6ProbeURLs          []string
 
 	activeTab              TabID
 	activeLogDrawerID      string
@@ -599,11 +602,13 @@ func (a *app) initSubsystems() {
 		if a.tracker != nil {
 			a.tracker.RecordProbe(id, rtt)
 		}
+		a.maybeProbeServiceIPv6(id, true)
 	}
 	a.mgr.OnAutoProbeSuccess = func(id string, rtt time.Duration) {
 		if a.tracker != nil {
 			a.tracker.RecordAutoProbe(id, rtt)
 		}
+		a.maybeProbeServiceIPv6(id, false)
 	}
 	a.mgr.OnProbeFailure = func(id string, err error) {
 		if a.tracker != nil {
@@ -1022,6 +1027,81 @@ func (a *app) scheduleCooldownWakeup(nodeID string, delay time.Duration) {
 	})
 	a.cooldownTimers[nodeID] = timer
 	a.recoveryProbeMu.Unlock()
+}
+
+const ipv6ProbeTTL = 30 * time.Minute
+
+func (a *app) maybeProbeServiceIPv6(svcID string, force bool) {
+	if a.mgr == nil || svcID == "" {
+		return
+	}
+	if a.mgr.StatusOf(svcID).State != runner.StateRunning {
+		return
+	}
+	var target config.Service
+	found := false
+	for _, svc := range a.snapshotServices() {
+		if svc.ID == svcID {
+			target = svc
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+	if target.EffectiveIPv6Mode() != config.IPv6ModeAuto {
+		return
+	}
+	if target.EffectiveProtocol() == config.ProtoWARP || target.EnableWARP {
+		if a.tracker != nil {
+			a.tracker.SetIPv6Capability(svcID, telemetry.IPv6Supported)
+		}
+		return
+	}
+	if !force {
+		if a.effectiveProxyDNSStrategy() == "ipv4_only" {
+			return
+		}
+		if a.tracker != nil && !a.tracker.NeedsIPv6Probe(svcID, ipv6ProbeTTL) {
+			return
+		}
+	}
+	if a.headless && len(a.ipv6ProbeURLs) == 0 {
+		return
+	}
+
+	a.ipv6ProbeMu.Lock()
+	if a.ipv6Probing == nil {
+		a.ipv6Probing = make(map[string]bool)
+	}
+	if a.ipv6Probing[svcID] {
+		a.ipv6ProbeMu.Unlock()
+		return
+	}
+	a.ipv6Probing[svcID] = true
+	probeURLs := append([]string(nil), a.ipv6ProbeURLs...)
+	a.ipv6ProbeMu.Unlock()
+
+	go func() {
+		defer func() {
+			a.ipv6ProbeMu.Lock()
+			delete(a.ipv6Probing, svcID)
+			a.ipv6ProbeMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		supported, conclusive := a.mgr.ProbeServiceIPv6Ctx(ctx, target, probeURLs)
+		if !conclusive || a.tracker == nil {
+			return
+		}
+		if supported {
+			a.tracker.SetIPv6Capability(svcID, telemetry.IPv6Supported)
+		} else {
+			a.tracker.SetIPv6Capability(svcID, telemetry.IPv6Unsupported)
+		}
+		a.notifyTelemetryUI()
+	}()
 }
 
 // notifyTelemetryUI triggers a rate-limited UI re-render when business traffic records real RTT samples.

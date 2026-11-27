@@ -969,6 +969,24 @@ func (e *Engine) DialNode(ctx context.Context, nodeID string, network, addr stri
 	return conn, err
 }
 
+// IsWarpNode reports whether nodeID is a standalone WARP node or has chained WARP enabled.
+func (e *Engine) IsWarpNode(nodeID string) bool {
+	return e.isWarpNode(nodeID)
+}
+
+// GetNodeIPv6Mode returns the manual IPv6Mode override configured for nodeID.
+func (e *Engine) GetNodeIPv6Mode(nodeID string) string {
+	cleanID := strings.TrimPrefix(nodeID, "node-")
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, svc := range e.services {
+		if svc.ID == cleanID {
+			return svc.EffectiveIPv6Mode()
+		}
+	}
+	return config.IPv6ModeAuto
+}
+
 // IsChainedWarp reports whether nodeID is a non-WARP proxy node with EnableWARP enabled.
 func (e *Engine) IsChainedWarp(nodeID string) bool {
 	return e.isChainedWarpNode(nodeID)

@@ -942,3 +942,55 @@ func TestTracker_AutoProbeRequiresThreeSuccessesWhileManualTakesOne(t *testing.T
 	}
 }
 
+// Tests per-node IPv6 capability state transitions, zero-dial GetScore propagation, TTL expiry, ResetNode clearing, and IPv6 error matching.
+func TestTracker_IPv6CapabilityAndErrorClassifier(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	tr := NewTracker()
+	tr.SetNowFuncForTest(func() time.Time { return now })
+
+	node := "node-v6-cap"
+	if cap, ts := tr.GetIPv6Capability(node); cap != IPv6Unknown || !ts.IsZero() {
+		t.Fatalf("expected initial unknown IPv6 capability, got %v at %v", cap, ts)
+	}
+	if !tr.NeedsIPv6Probe(node, 30*time.Minute) {
+		t.Fatalf("expected new node to need IPv6 probe")
+	}
+
+	// Setting capability on a zero-dial node must propagate via GetScore's early return branch.
+	tr.SetIPv6Capability(node, IPv6Supported)
+	if cap, _ := tr.GetIPv6Capability(node); cap != IPv6Supported || cap.String() != "supported" {
+		t.Fatalf("expected IPv6Supported, got %v", cap)
+	}
+	if sc := tr.GetScore(node); sc.IPv6Capability != IPv6Supported || sc.IPv6ProbedAt.IsZero() {
+		t.Fatalf("expected zero-dial GetScore to include IPv6Supported, got %+v", sc)
+	}
+	if tr.NeedsIPv6Probe(node, 30*time.Minute) {
+		t.Fatalf("expected fresh IPv6 capability not to need immediate re-probe")
+	}
+
+	// Advancing past TTL triggers re-probe need; active dials retain IPv6Capability in GetScore.
+	now = now.Add(31 * time.Minute)
+	if !tr.NeedsIPv6Probe(node, 30*time.Minute) {
+		t.Fatalf("expected expired IPv6 capability to need re-probe after TTL")
+	}
+	tr.RecordDial(node, "example.com", 40*time.Millisecond, nil)
+	tr.SetIPv6Capability(node, IPv6Unsupported)
+	if sc := tr.GetScore(node); sc.IPv6Capability != IPv6Unsupported || sc.TotalDials != 1 {
+		t.Fatalf("expected active GetScore to preserve IPv6Unsupported, got %+v", sc)
+	}
+
+	// ResetNode clears IPv6 capability state back to unknown.
+	tr.ResetNode(node)
+	if cap, ts := tr.GetIPv6Capability(node); cap != IPv6Unknown || !ts.IsZero() {
+		t.Fatalf("expected ResetNode to clear IPv6 capability, got %v at %v", cap, ts)
+	}
+
+	if !IsIPv6UnsupportedError(errors.New("connect: network is unreachable")) ||
+		!IsIPv6UnsupportedError(errors.New("socks5: Address type not supported")) {
+		t.Fatalf("expected IPv6 unreachable/unsupported errors to match classifier")
+	}
+	if IsIPv6UnsupportedError(errors.New("i/o timeout")) {
+		t.Fatalf("generic timeout must not be classified as IPv6Unsupported")
+	}
+}
+

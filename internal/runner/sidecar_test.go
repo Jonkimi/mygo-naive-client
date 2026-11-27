@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -358,5 +361,35 @@ func TestXrayAndManager_IPv6Support(t *testing.T) {
 		if got := mgr.StatusOf(nSvc.ID).AllocatedPort; got <= 0 {
 			t.Errorf("expected allocated port > 0, got %d", got)
 		}
+	}
+}
+
+// Tests that ProbeIPv6WithTransport distinguishes reachable targets, unreachable targets, and canceled parent contexts.
+func TestProbeIPv6WithTransport(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	tr := &http.Transport{}
+	if sup, conc := ProbeIPv6WithTransport(context.Background(), tr, []string{srv.URL}); !sup || !conc {
+		t.Fatalf("expected (true, true) for reachable target %s, got (%v, %v)", srv.URL, sup, conc)
+	}
+
+	// Closed URL yields (false, true); second reachable URL succeeds.
+	closedSrv := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closedSrv.URL
+	closedSrv.Close()
+	if sup, conc := ProbeIPv6WithTransport(context.Background(), tr, []string{closedURL, srv.URL}); !sup || !conc {
+		t.Fatalf("expected fallback target to succeed, got (%v, %v)", sup, conc)
+	}
+	if sup, conc := ProbeIPv6WithTransport(context.Background(), tr, []string{closedURL}); sup || !conc {
+		t.Fatalf("expected (false, true) when all targets fail cleanly, got (%v, %v)", sup, conc)
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if sup, conc := ProbeIPv6WithTransport(canceledCtx, tr, []string{srv.URL}); sup || conc {
+		t.Fatalf("expected (false, false) when parent context is canceled, got (%v, %v)", sup, conc)
 	}
 }

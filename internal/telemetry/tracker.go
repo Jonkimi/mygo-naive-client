@@ -61,6 +61,26 @@ type slowDomainRecord struct {
 	at   time.Time
 }
 
+// IPv6Capability tracks runtime IPv6 egress capability detected for a proxy node.
+type IPv6Capability int
+
+const (
+	IPv6Unknown IPv6Capability = iota
+	IPv6Supported
+	IPv6Unsupported
+)
+
+func (c IPv6Capability) String() string {
+	switch c {
+	case IPv6Supported:
+		return "supported"
+	case IPv6Unsupported:
+		return "unsupported"
+	default:
+		return "unknown"
+	}
+}
+
 type NodeStats struct {
 	EWMA                 time.Duration
 	PassiveEWMA          time.Duration
@@ -73,6 +93,8 @@ type NodeStats struct {
 	LastFailure          time.Time
 	LastFailureReason    string
 	LastPassiveDial      time.Time
+	ipv6Cap              IPv6Capability
+	ipv6ProbedAt         time.Time
 	circuitTrippedAt     time.Time
 	circuitCooldown      time.Duration
 	circuitTripCount     int
@@ -301,6 +323,8 @@ type QualityScore struct {
 	ConsecutiveFailures      int
 	CircuitPenalty           float64
 	LastPassiveDial          time.Time
+	IPv6Capability           IPv6Capability
+	IPv6ProbedAt             time.Time
 }
 
 // SiteFault represents an error caused by the remote target website rather than the proxy node.
@@ -782,6 +806,61 @@ func (t *Tracker) recordProbe(nodeID string, rtt time.Duration, manual bool) {
 	}
 }
 
+// SetIPv6Capability updates the runtime IPv6 egress capability for nodeID.
+func (t *Tracker) SetIPv6Capability(nodeID string, cap IPv6Capability) {
+	if t == nil || nodeID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowLocked()
+	st, exists := t.nodes[nodeID]
+	if !exists {
+		if cap == IPv6Unknown {
+			return
+		}
+		st = &NodeStats{}
+		t.nodes[nodeID] = st
+	}
+	st.ipv6Cap = cap
+	if cap == IPv6Unknown {
+		st.ipv6ProbedAt = time.Time{}
+	} else {
+		st.ipv6ProbedAt = now
+	}
+}
+
+// GetIPv6Capability returns the last recorded IPv6 egress capability and its timestamp.
+func (t *Tracker) GetIPv6Capability(nodeID string) (IPv6Capability, time.Time) {
+	if t == nil || nodeID == "" {
+		return IPv6Unknown, time.Time{}
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	st, ok := t.nodes[nodeID]
+	if !ok {
+		return IPv6Unknown, time.Time{}
+	}
+	return st.ipv6Cap, st.ipv6ProbedAt
+}
+
+// NeedsIPv6Probe reports whether nodeID lacks a fresh runtime IPv6 egress check.
+func (t *Tracker) NeedsIPv6Probe(nodeID string, ttl time.Duration) bool {
+	if t == nil || nodeID == "" {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	st, ok := t.nodes[nodeID]
+	if !ok || st.ipv6Cap == IPv6Unknown || st.ipv6ProbedAt.IsZero() {
+		return true
+	}
+	if ttl > 0 && t.nowLocked().Sub(st.ipv6ProbedAt) >= ttl {
+		return true
+	}
+	return false
+}
+
 // ResetNode clears all telemetry stats, sticky domain affinities, and domain error records for nodeID.
 func (t *Tracker) ResetNode(nodeID string) {
 	t.mu.Lock()
@@ -901,6 +980,12 @@ func (t *Tracker) GetScore(nodeID string) QualityScore {
 func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 	st, ok := t.nodes[nodeID]
 	if !ok || (st.TotalDials == 0 && st.EWMA == 0) {
+		var ipv6Cap IPv6Capability
+		var ipv6ProbedAt time.Time
+		if ok {
+			ipv6Cap = st.ipv6Cap
+			ipv6ProbedAt = st.ipv6ProbedAt
+		}
 		return QualityScore{
 			EWMA:                0,
 			SuccessRate:         1.0,
@@ -911,6 +996,8 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 			SuccessfulDials:     0,
 			ConsecutiveFailures: 0,
 			CircuitPenalty:      0,
+			IPv6Capability:      ipv6Cap,
+			IPv6ProbedAt:        ipv6ProbedAt,
 		}
 	}
 
@@ -953,6 +1040,8 @@ func (t *Tracker) getScoreLocked(nodeID string) QualityScore {
 		ConsecutiveFailures:      st.ConsecutiveFailures,
 		CircuitPenalty:           circuitPenalty,
 		LastPassiveDial:          st.LastPassiveDial,
+		IPv6Capability:           st.ipv6Cap,
+		IPv6ProbedAt:             st.ipv6ProbedAt,
 	}
 }
 

@@ -138,6 +138,32 @@ type Service struct {
 	// Cloudflare WARP egress chaining or standalone node settings
 	EnableWARP bool            `json:"enableWarp,omitempty"`
 	WARPConfig *WarpNodeConfig `json:"warpConfig,omitempty"`
+
+	// IPv6Mode controls per-node IPv6 egress scheduling ("", "supported", "unsupported").
+	IPv6Mode string `json:"ipv6Mode,omitempty"`
+}
+
+const (
+	IPv6ModeAuto        = ""
+	IPv6ModeSupported   = "supported"
+	IPv6ModeUnsupported = "unsupported"
+)
+
+// NormalizeIPv6Mode normalizes persisted or user-supplied node IPv6 mode strings.
+func NormalizeIPv6Mode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "supported", "on", "true":
+		return IPv6ModeSupported
+	case "unsupported", "off", "false", "ipv4_only":
+		return IPv6ModeUnsupported
+	default:
+		return IPv6ModeAuto
+	}
+}
+
+// EffectiveIPv6Mode returns the normalized per-node IPv6 egress mode.
+func (s Service) EffectiveIPv6Mode() string {
+	return NormalizeIPv6Mode(s.IPv6Mode)
 }
 
 // IsBuiltinWarp returns true if this service is the client's built-in direct Cloudflare WARP node.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"naive-client/internal/blocker"
+	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/telemetry"
 	"naive-client/internal/warp"
@@ -45,6 +46,17 @@ type NodeProvider interface {
 
 type warpDomainResolverProvider interface {
 	ResolveWarpDomain(ctx context.Context, nodeID string, ob adapter.Outbound, dest M.Socksaddr) (M.Socksaddr, error)
+}
+
+type nodeIPv6Provider interface {
+	GetNodeIPv6Mode(nodeID string) string
+	IsWarpNode(nodeID string) bool
+}
+
+type poolDialAttempt struct {
+	candID            string
+	useDomainFallback bool
+	forcedCap         bool
 }
 
 // PoolOutboundOptions defines configuration for a PoolOutbound instance.
@@ -387,6 +399,237 @@ func (p *PoolOutbound) resolveCandidateDestination(ctx context.Context, candID s
 	return destination, nil
 }
 
+func extractSniffedDomain(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	inboundCtx := adapter.ContextFrom(ctx)
+	if inboundCtx == nil {
+		return ""
+	}
+	dom := strings.Trim(strings.ToLower(strings.TrimSpace(inboundCtx.Domain)), ".")
+	if dom == "" || net.ParseIP(dom) != nil {
+		return ""
+	}
+	return dom
+}
+
+func (p *PoolOutbound) effectiveIPv6Capability(candID string) (telemetry.IPv6Capability, bool) {
+	if np, ok := p.provider.(nodeIPv6Provider); ok {
+		switch config.NormalizeIPv6Mode(np.GetNodeIPv6Mode(candID)) {
+		case config.IPv6ModeSupported:
+			return telemetry.IPv6Supported, true
+		case config.IPv6ModeUnsupported:
+			return telemetry.IPv6Unsupported, true
+		}
+		if np.IsWarpNode(candID) {
+			return telemetry.IPv6Supported, true
+		}
+	}
+	if p.tracker != nil {
+		cap, _ := p.tracker.GetIPv6Capability(candID)
+		return cap, false
+	}
+	return telemetry.IPv6Unknown, false
+}
+
+func (p *PoolOutbound) buildDialAttempts(ordered []string, dest M.Socksaddr, sniffedDomain string) []poolDialAttempt {
+	if !dest.IsIPv6() {
+		attempts := make([]poolDialAttempt, 0, len(ordered))
+		for _, id := range ordered {
+			attempts = append(attempts, poolDialAttempt{candID: id})
+		}
+		return attempts
+	}
+	var supported, unknown, unsupported []poolDialAttempt
+	for _, id := range ordered {
+		cap, forced := p.effectiveIPv6Capability(id)
+		switch cap {
+		case telemetry.IPv6Supported:
+			supported = append(supported, poolDialAttempt{candID: id, forcedCap: forced})
+		case telemetry.IPv6Unsupported:
+			if sniffedDomain != "" {
+				unsupported = append(unsupported, poolDialAttempt{
+					candID:            id,
+					useDomainFallback: true,
+					forcedCap:         forced,
+				})
+			}
+		default:
+			unknown = append(unknown, poolDialAttempt{candID: id, forcedCap: forced})
+		}
+	}
+	attempts := make([]poolDialAttempt, 0, len(supported)+len(unknown)+len(unsupported))
+	attempts = append(attempts, supported...)
+	attempts = append(attempts, unknown...)
+	attempts = append(attempts, unsupported...)
+	return attempts
+}
+
+func (p *PoolOutbound) markPassiveIPv6Supported(candID string, forced bool) {
+	if forced || p.tracker == nil {
+		return
+	}
+	if cap, _ := p.tracker.GetIPv6Capability(candID); cap == telemetry.IPv6Unknown {
+		p.tracker.SetIPv6Capability(candID, telemetry.IPv6Supported)
+	}
+}
+
+func (p *PoolOutbound) dialAttempt(
+	ctx, dialCtx context.Context,
+	network string,
+	destination M.Socksaddr,
+	sniffedDomain, targetHost, sourceKey string,
+	attempt poolDialAttempt,
+	singleCandidate bool,
+) (conn net.Conn, err error, abort bool, ipv6Unsupported bool) {
+	ob, ok := p.provider.GetOutbound(attempt.candID)
+	if !ok || ob == nil {
+		return nil, nil, false, false
+	}
+
+	isSidecar := false
+	if p.provider != nil {
+		isSidecar = p.provider.IsSidecar(attempt.candID)
+	}
+
+	attemptDest := destination
+	if attempt.useDomainFallback && sniffedDomain != "" {
+		attemptDest = M.Socksaddr{Fqdn: sniffedDomain, Port: destination.Port}
+	}
+
+	start := time.Now()
+	candDest, err := p.resolveCandidateDestination(dialCtx, attempt.candID, ob, attemptDest)
+	if err != nil && (errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled)) {
+		if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
+		}
+		return nil, err, true, false
+	}
+	if err == nil {
+		conn, err = ob.DialContext(dialCtx, network, candDest)
+	}
+	rtt := time.Since(start)
+
+	if err != nil {
+		if errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
+			}
+			return nil, err, true, false
+		}
+		if attemptDest.IsIPv6() && telemetry.IsIPv6UnsupportedError(err) {
+			if !attempt.forcedCap && p.tracker != nil {
+				p.tracker.SetIPv6Capability(attempt.candID, telemetry.IPv6Unsupported)
+			}
+			return nil, err, false, true
+		}
+		if p.tracker != nil {
+			if isSidecar {
+				p.tracker.RecordDial(attempt.candID, targetHost, 0, err)
+			} else {
+				p.tracker.RecordDial(attempt.candID, targetHost, rtt, err)
+			}
+		}
+		return nil, err, false, false
+	}
+
+	if isSidecar && network == "tcp" {
+		// Sidecar outbounds connect to localhost (127.0.0.1:allocPort).
+		// Local loopback TCP acceptance does not mean the remote proxy tunnel succeeded.
+		// Defer both dial success/failure and real internet TTFB RTT recording to wrapFirstRTTConn
+		// so remote timeouts, resets, and blackholes accurately update SuccessRate and CircuitBreaker.
+		destPort := destination.Port
+		poolTag := p.tag
+		candID := attempt.candID
+		forcedCap := attempt.forcedCap
+		attemptIsV6 := attemptDest.IsIPv6()
+		var stalledPenalized atomic.Bool
+		wrapped := wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
+			skipPenalty := firstErr != nil && attemptIsV6 && telemetry.IsIPv6UnsupportedError(firstErr)
+			if skipPenalty {
+				if !forcedCap && p.tracker != nil {
+					p.tracker.SetIPv6Capability(candID, telemetry.IPv6Unsupported)
+				}
+			} else if firstErr == nil && attemptIsV6 {
+				p.markPassiveIPv6Supported(candID, forcedCap)
+			}
+			if !skipPenalty && p.tracker != nil && !errors.Is(firstErr, errPreWriteAborted) {
+				trackerRTT := realRTT
+				if firstErr == nil {
+					// Only plausible first-response RTTs feed the tracker; the log keeps the real value.
+					if trackerRTT < minValidFirstRTT {
+						trackerRTT = 0
+					} else if trackerRTT > maxValidFirstRTT {
+						trackerRTT = maxValidFirstRTT
+					}
+				}
+				if !isTLS && firstErr == nil && realRTT >= telemetry.SeverePacketLossRTT {
+					// For non-TLS traffic, latencies >= SeverePacketLossRTT (3000ms) typically reflect
+					// backend application computation (e.g. AI inference, slow search, report export)
+					// rather than network RTO packet loss.
+					// Pass trackerRTT = 0 to record a successful dial and maintain domain affinity
+					// without contaminating network EWMA or triggering false packet-loss stalls.
+					trackerRTT = 0
+				}
+				if stalledPenalized.Load() {
+					if firstErr == nil && trackerRTT > 0 {
+						p.tracker.RecordRecoveredStalledDial(candID, trackerRTT)
+					}
+				} else {
+					p.tracker.RecordDial(candID, targetHost, trackerRTT, firstErr)
+				}
+			}
+			if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
+			} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+				p.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
+			}
+			if !skipPenalty && firstErr != nil && !errors.Is(firstErr, errPreWriteAborted) && p.failureMonitor != nil && singleCandidate {
+				p.failureMonitor.Record(telemetry.FailureEvent{
+					Category:       telemetry.FailureProxy,
+					Target:         targetHost,
+					Port:           destPort,
+					OriginalAction: poolTag,
+					Error:          firstErr,
+				})
+			}
+			if p.onTelemetryUpdate != nil {
+				p.onTelemetryUpdate()
+			}
+		}, func() {
+			if p.tracker != nil && p.tracker.RecordStall(candID, targetHost) {
+				stalledPenalized.Store(true)
+			}
+			if p.onTelemetryUpdate != nil {
+				p.onTelemetryUpdate()
+			}
+		})
+		if fc, ok := wrapped.(*firstRTTConn); ok {
+			fc.dialCtx = ctx
+		}
+		return wrapped, nil, false, false
+	}
+
+	if attemptDest.IsIPv6() {
+		p.markPassiveIPv6Supported(attempt.candID, attempt.forcedCap)
+	}
+	if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+		p.blocker.Logger().AnnotateDurationBySource(sourceKey, rtt)
+	}
+	if p.tracker != nil {
+		if isSidecar {
+			p.tracker.RecordDial(attempt.candID, targetHost, 0, nil)
+		} else {
+			p.tracker.RecordDial(attempt.candID, targetHost, rtt, nil)
+		}
+	}
+	if p.onTelemetryUpdate != nil {
+		p.onTelemetryUpdate()
+	}
+	return conn, nil, false, false
+}
+
 func (p *PoolOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if p.provider == nil {
 		return nil, errors.New("node provider is nil")
@@ -428,135 +671,55 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 		return nil, err
 	}
 
+	sniffedDomain := extractSniffedDomain(ctx)
+	attempts := p.buildDialAttempts(ordered, destination, sniffedDomain)
+	if destination.IsIPv6() && len(attempts) == 0 {
+		err := fmt.Errorf("no IPv6-capable candidates available in %s", p.tag)
+		if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(sourceKey, "无支持 IPv6 的节点")
+		}
+		if p.onTelemetryUpdate != nil {
+			p.onTelemetryUpdate()
+		}
+		return nil, err
+	}
+
 	dialCtx := withPoolDial(ctx)
 	var lastErr error
+	var domainRetry []poolDialAttempt
+	singleCandidate := len(ordered) == 1
 
-	for _, candID := range ordered {
-		ob, ok := p.provider.GetOutbound(candID)
-		if !ok || ob == nil {
-			continue
-		}
-
-		isSidecar := false
-		if p.provider != nil {
-			isSidecar = p.provider.IsSidecar(candID)
-		}
-
-		start := time.Now()
-		candDest, err := p.resolveCandidateDestination(dialCtx, candID, ob, destination)
-		if err != nil && (errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled)) {
-			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
-			}
+	for _, attempt := range attempts {
+		conn, err, abort, v6Unsupported := p.dialAttempt(ctx, dialCtx, network, destination, sniffedDomain, targetHost, sourceKey, attempt, singleCandidate)
+		if abort {
 			return nil, err
 		}
-		var conn net.Conn
-		if err == nil {
-			conn, err = ob.DialContext(dialCtx, network, candDest)
+		if err == nil && conn != nil {
+			return conn, nil
 		}
-		rtt := time.Since(start)
-
-		if err != nil {
-			if errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
-				if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					p.blocker.Logger().AnnotateBySource(sourceKey, formatConnectionError(err))
-				}
-				return nil, err
-			}
-			if p.tracker != nil {
-				if isSidecar {
-					p.tracker.RecordDial(candID, targetHost, 0, err)
-				} else {
-					p.tracker.RecordDial(candID, targetHost, rtt, err)
-				}
-			}
-			// Do not consume the source binding here: a later candidate may still succeed
-			// and needs it to record the connection duration. Final failure is annotated below.
-			lastErr = err
-			continue
-		}
-
-		if isSidecar && network == "tcp" {
-			// Sidecar outbounds connect to localhost (127.0.0.1:allocPort).
-			// Local loopback TCP acceptance does not mean the remote proxy tunnel succeeded.
-			// Defer both dial success/failure and real internet TTFB RTT recording to wrapFirstRTTConn
-			// so remote timeouts, resets, and blackholes accurately update SuccessRate and CircuitBreaker.
-			destPort := destination.Port
-			poolTag := p.tag
-			singleCandidate := len(ordered) == 1
-			var stalledPenalized atomic.Bool
-			wrapped := wrapFirstRTTConn(conn, func(realRTT time.Duration, isTLS bool, firstErr error) {
-				if p.tracker != nil && !errors.Is(firstErr, errPreWriteAborted) {
-					trackerRTT := realRTT
-					if firstErr == nil {
-						// Only plausible first-response RTTs feed the tracker; the log keeps the real value.
-						if trackerRTT < minValidFirstRTT {
-							trackerRTT = 0
-						} else if trackerRTT > maxValidFirstRTT {
-							trackerRTT = maxValidFirstRTT
-						}
-					}
-					if !isTLS && firstErr == nil && realRTT >= telemetry.SeverePacketLossRTT {
-						// For non-TLS traffic, latencies >= SeverePacketLossRTT (3000ms) typically reflect
-						// backend application computation (e.g. AI inference, slow search, report export)
-						// rather than network RTO packet loss.
-						// Pass trackerRTT = 0 to record a successful dial and maintain domain affinity
-						// without contaminating network EWMA or triggering false packet-loss stalls.
-						trackerRTT = 0
-					}
-					if stalledPenalized.Load() {
-						if firstErr == nil && trackerRTT > 0 {
-							p.tracker.RecordRecoveredStalledDial(candID, trackerRTT)
-						}
-					} else {
-						p.tracker.RecordDial(candID, targetHost, trackerRTT, firstErr)
-					}
-				}
-				if firstErr != nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					p.blocker.Logger().AnnotateFailureBySource(sourceKey, formatConnectionError(firstErr), realRTT)
-				} else if firstErr == nil && sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-					p.blocker.Logger().AnnotateDurationBySource(sourceKey, realRTT)
-				}
-				if firstErr != nil && !errors.Is(firstErr, errPreWriteAborted) && p.failureMonitor != nil && singleCandidate {
-					p.failureMonitor.Record(telemetry.FailureEvent{
-						Category:       telemetry.FailureProxy,
-						Target:         targetHost,
-						Port:           destPort,
-						OriginalAction: poolTag,
-						Error:          firstErr,
-					})
-				}
-				if p.onTelemetryUpdate != nil {
-					p.onTelemetryUpdate()
-				}
-			}, func() {
-				if p.tracker != nil && p.tracker.RecordStall(candID, targetHost) {
-					stalledPenalized.Store(true)
-				}
-				if p.onTelemetryUpdate != nil {
-					p.onTelemetryUpdate()
-				}
+		if v6Unsupported && sniffedDomain != "" && !attempt.useDomainFallback {
+			domainRetry = append(domainRetry, poolDialAttempt{
+				candID:            attempt.candID,
+				useDomainFallback: true,
+				forcedCap:         attempt.forcedCap,
 			})
-			if fc, ok := wrapped.(*firstRTTConn); ok {
-				fc.dialCtx = ctx
-			}
-			conn = wrapped
-		} else {
-			if sourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().AnnotateDurationBySource(sourceKey, rtt)
-			}
-			if p.tracker != nil {
-				if isSidecar {
-					p.tracker.RecordDial(candID, targetHost, 0, nil)
-				} else {
-					p.tracker.RecordDial(candID, targetHost, rtt, nil)
-				}
-			}
-			if p.onTelemetryUpdate != nil {
-				p.onTelemetryUpdate()
-			}
 		}
-		return conn, nil
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	for _, retry := range domainRetry {
+		conn, err, abort, _ := p.dialAttempt(ctx, dialCtx, network, destination, sniffedDomain, targetHost, sourceKey, retry, singleCandidate)
+		if abort {
+			return nil, err
+		}
+		if err == nil && conn != nil {
+			return conn, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
 	}
 
 	if lastErr == nil {
@@ -583,6 +746,59 @@ func (p *PoolOutbound) DialContext(ctx context.Context, network string, destinat
 	return nil, fmt.Errorf("all candidates failed in %s: %w", p.tag, lastErr)
 }
 
+func (p *PoolOutbound) listenPacketAttempt(
+	ctx, packetCtx context.Context,
+	destination M.Socksaddr,
+	sniffedDomain, targetHost, udpSourceKey string,
+	attempt poolDialAttempt,
+) (conn net.PacketConn, err error, abort bool, ipv6Unsupported bool) {
+	ob, ok := p.provider.GetOutbound(attempt.candID)
+	if !ok || ob == nil {
+		return nil, nil, false, false
+	}
+
+	attemptDest := destination
+	if attempt.useDomainFallback && sniffedDomain != "" {
+		attemptDest = M.Socksaddr{Fqdn: sniffedDomain, Port: destination.Port}
+	}
+
+	candDest, err := p.resolveCandidateDestination(packetCtx, attempt.candID, ob, attemptDest)
+	if err != nil && (errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled)) {
+		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(err))
+		}
+		return nil, err, true, false
+	}
+	if err == nil {
+		conn, err = ob.ListenPacket(packetCtx, candDest)
+	}
+	if err == nil {
+		if attemptDest.IsIPv6() {
+			p.markPassiveIPv6Supported(attempt.candID, attempt.forcedCap)
+		}
+		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().UnbindSourceConn(udpSourceKey)
+		}
+		return conn, nil, false, false
+	}
+	if errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
+		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(err))
+		}
+		return nil, err, true, false
+	}
+	if attemptDest.IsIPv6() && telemetry.IsIPv6UnsupportedError(err) {
+		if !attempt.forcedCap && p.tracker != nil {
+			p.tracker.SetIPv6Capability(attempt.candID, telemetry.IPv6Unsupported)
+		}
+		return nil, err, false, true
+	}
+	if p.tracker != nil {
+		p.tracker.RecordDial(attempt.candID, targetHost, 0, err)
+	}
+	return nil, err, false, false
+}
+
 func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if p.provider == nil {
 		return nil, errors.New("node provider is nil")
@@ -591,11 +807,6 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	udpSourceKey := ""
 	if inboundCtx := adapter.ContextFrom(ctx); inboundCtx != nil && inboundCtx.Source.Port != 0 {
 		udpSourceKey = inboundCtx.Source.String()
-	}
-	unbindUDP := func() {
-		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-			p.blocker.Logger().UnbindSourceConn(udpSourceKey)
-		}
 	}
 
 	targetHost := extractTargetHost(ctx, destination)
@@ -616,41 +827,50 @@ func (p *PoolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 		return nil, fmt.Errorf("no active proxy candidates for UDP packet in pool %s", tagKey)
 	}
 
+	sniffedDomain := extractSniffedDomain(ctx)
+	attempts := p.buildDialAttempts(ordered, destination, sniffedDomain)
+	if destination.IsIPv6() && len(attempts) == 0 {
+		if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
+			p.blocker.Logger().AnnotateBySource(udpSourceKey, "无支持 IPv6 的节点")
+		}
+		return nil, fmt.Errorf("no IPv6-capable candidates available for UDP packet in %s", p.tag)
+	}
+
 	packetCtx := withPoolDial(ctx)
 	var lastErr error
+	var domainRetry []poolDialAttempt
 
-	for _, candID := range ordered {
-		ob, ok := p.provider.GetOutbound(candID)
-		if !ok || ob == nil {
-			continue
-		}
-
-		candDest, err := p.resolveCandidateDestination(packetCtx, candID, ob, destination)
-		if err != nil && (errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled)) {
-			if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(err))
-			}
+	for _, attempt := range attempts {
+		conn, err, abort, v6Unsupported := p.listenPacketAttempt(ctx, packetCtx, destination, sniffedDomain, targetHost, udpSourceKey, attempt)
+		if abort {
 			return nil, err
 		}
-		var conn net.PacketConn
-		if err == nil {
-			conn, err = ob.ListenPacket(packetCtx, candDest)
-		}
-		if err == nil {
-			// UDP has no handshake RTT; leave Duration empty (UI shows the UDP tag).
-			unbindUDP()
+		if err == nil && conn != nil {
 			return conn, nil
 		}
-		if errors.Is(err, warp.ErrNoDNSRecords) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || errors.Is(err, context.Canceled) {
-			if udpSourceKey != "" && p.blocker != nil && p.blocker.Logger() != nil {
-				p.blocker.Logger().AnnotateBySource(udpSourceKey, formatConnectionError(err))
-			}
+		if v6Unsupported && sniffedDomain != "" && !attempt.useDomainFallback {
+			domainRetry = append(domainRetry, poolDialAttempt{
+				candID:            attempt.candID,
+				useDomainFallback: true,
+				forcedCap:         attempt.forcedCap,
+			})
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	for _, retry := range domainRetry {
+		conn, err, abort, _ := p.listenPacketAttempt(ctx, packetCtx, destination, sniffedDomain, targetHost, udpSourceKey, retry)
+		if abort {
 			return nil, err
 		}
-		if p.tracker != nil {
-			p.tracker.RecordDial(candID, targetHost, 0, err)
+		if err == nil && conn != nil {
+			return conn, nil
 		}
-		lastErr = err
+		if err != nil {
+			lastErr = err
+		}
 	}
 
 	if lastErr == nil {

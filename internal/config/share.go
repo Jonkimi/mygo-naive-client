@@ -246,9 +246,15 @@ func (s Service) hysteria2ShareURI() string {
 	if port <= 0 {
 		port = 443
 	}
+	var userInfo *url.Userinfo
+	if user, pass, ok := strings.Cut(s.Password, ":"); ok {
+		userInfo = url.UserPassword(user, pass)
+	} else {
+		userInfo = url.User(s.Password)
+	}
 	u := &url.URL{
 		Scheme: "hysteria2",
-		User:   url.User(s.Password),
+		User:   userInfo,
 		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
 	}
 	q := make(url.Values)
@@ -592,6 +598,9 @@ func ParseImport(raw string, nextPort int) (Service, error) {
 		pass := ""
 		if u.User != nil {
 			pass = u.User.Username()
+			if p, hasPass := u.User.Password(); hasPass {
+				pass += ":" + p
+			}
 		}
 		q := u.Query()
 		svc := DefaultService("", nextPort)

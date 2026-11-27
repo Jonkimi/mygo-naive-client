@@ -9,6 +9,7 @@ import (
 
 	"naive-client/internal/config"
 	"naive-client/internal/runner"
+	"naive-client/internal/telemetry"
 	"naive-client/internal/warp"
 )
 
@@ -111,6 +112,8 @@ type editorForm struct {
 	warpPrivateKey     string
 	warpIPv4           string
 	warpIPv6           string
+
+	ipv6ModeIndex int // 0: Auto, 1: Supported, 2: Unsupported
 
 	// Advanced Naive fields
 	tunnelTimeout string
@@ -307,6 +310,14 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 		warpIPv6 = svc.WARPConfig.AddressIPv6
 	}
 
+	ipv6ModeIdx := 0
+	switch svc.EffectiveIPv6Mode() {
+	case config.IPv6ModeSupported:
+		ipv6ModeIdx = 1
+	case config.IPv6ModeUnsupported:
+		ipv6ModeIdx = 2
+	}
+
 	a.editor = editorForm{
 		open:               true,
 		isNew:              isNew,
@@ -353,6 +364,7 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 		warpPrivateKey:     warpPrivKey,
 		warpIPv4:           warpIPv4,
 		warpIPv6:           warpIPv6,
+		ipv6ModeIndex:      ipv6ModeIdx,
 		concurrencyStr: conc,
 		tunnelTimeout:  tunnel,
 		idleTimeout:    idle,
@@ -365,6 +377,17 @@ func (a *app) populateEditorForm(svc config.Service, isNew, returnToDrawer bool)
 		sslKeyLogFile:  svc.SSLKeyLogFile,
 		noPostQuantum:  svc.NoPostQuantum,
 		extraJSON:      svc.ExtraJSON,
+	}
+}
+
+func (a *app) editorIPv6Mode() string {
+	switch a.editor.ipv6ModeIndex {
+	case 1:
+		return config.IPv6ModeSupported
+	case 2:
+		return config.IPv6ModeUnsupported
+	default:
+		return config.IPv6ModeAuto
 	}
 }
 
@@ -428,6 +451,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 			Protocol:  config.ProtoWARP,
 			Engine:    config.EngineSingBox,
 			Tags:      tags,
+			IPv6Mode:  a.editorIPv6Mode(),
 			WARPConfig: &config.WarpNodeConfig{
 				Transport:      transport,
 				MasquePreferH2: &preferH2,
@@ -453,6 +477,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 			Engine:      config.EngineSingBox,
 			Tags:        tags,
 			ExternalURI: strings.TrimSpace(a.editor.externalURI),
+			IPv6Mode:    a.editorIPv6Mode(),
 		}
 		attachWARP(&svc)
 		if err := svc.Validate(); err != nil {
@@ -481,6 +506,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 			SSLKeyLogFile:     strings.TrimSpace(a.editor.sslKeyLogFile),
 			NoPostQuantum:     a.editor.noPostQuantum,
 			ExtraJSON:         strings.TrimSpace(a.editor.extraJSON),
+			IPv6Mode:          a.editorIPv6Mode(),
 		}
 		if s := strings.TrimSpace(a.editor.concurrencyStr); s != "" {
 			if v, err := strconv.Atoi(s); err == nil {
@@ -621,6 +647,7 @@ func (a *app) buildServiceFromEditor() (config.Service, error) {
 		DownMbps:             downMbps,
 		ZeroRTTHandshake:     a.editor.zeroRTT,
 		ExtraJSON:            strings.TrimSpace(a.editor.extraJSON),
+		IPv6Mode:             a.editorIPv6Mode(),
 	}
 	if s := strings.TrimSpace(a.editor.concurrencyStr); s != "" {
 		if v, err := strconv.Atoi(s); err == nil {
@@ -1065,7 +1092,7 @@ func (a *app) renderEditorConnectionCard(c *ui.Context, p palette, proto config.
 
 		case config.ProtoHysteria2:
 			a.renderEditorServerPortRow(c, p, "hy2", "443")
-			labeledInput(c, p, "inp-hy2-password", cat.PasswordLabel(), &a.editor.password, "password")
+			labeledInput(c, p, "inp-hy2-password", cat.PasswordLabel(), &a.editor.password, "password / user:password")
 			ui.Grid(c.Key("editor-hy2-grid")).Columns(2).Gap(10).Children(func() {
 				labeledInput(c, p, "inp-hy2-sni", cat.SniLabel(), &a.editor.sni, "domain.com")
 				labeledInput(c, p, "inp-hy2-cc", cat.CongestionCtlLabel(), &a.editor.congestionCtl, "bbr")
@@ -1167,6 +1194,21 @@ func (a *app) renderEditorAdvancedTab(c *ui.Context, p palette) {
 
 		editorSectionCard(c, p, func() {
 			ui.Text(c, cat.EditorGroupAdvanced()).FontSize(11).FontWeight(700).TextColor(p.textDim)
+
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(10).Children(func() {
+					ui.Text(c, cat.NodeIPv6CapabilityLabel()).FontSize(12).FontWeight(500).TextColor(p.text)
+					compactSegmentedControl(
+						c.Key("inp-node-ipv6-mode"),
+						p,
+						&a.editor.ipv6ModeIndex,
+						[]string{cat.NodeIPv6ModeAuto(), cat.NodeIPv6ModeSupported(), cat.NodeIPv6ModeUnsupported()},
+					)
+				})
+				ui.Text(c, cat.NodeIPv6EditorHint()).FontSize(11).TextColor(p.textDim).LineHeight(1.35)
+			})
+
+			ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
 
 			if proto == config.ProtoNaive {
 				ui.Grid(c.Key("editor-naive-timeouts-grid")).Columns(2).Gap(10).Children(func() {
@@ -1272,13 +1314,21 @@ func (a *app) saveEditorService() {
 		a.state.Services = append(a.state.Services, svc)
 		a.toast(a.catalog().ToastServiceCreated(svc.Name))
 	} else {
+		var prevIPv6Mode string
 		for i := range a.state.Services {
 			if a.state.Services[i].ID == svc.ID {
+				prevIPv6Mode = a.state.Services[i].EffectiveIPv6Mode()
 				a.state.Services[i] = svc
 				break
 			}
 		}
+		if prevIPv6Mode != svc.EffectiveIPv6Mode() && a.tracker != nil {
+			a.tracker.SetIPv6Capability(svc.ID, telemetry.IPv6Unknown)
+		}
 		a.refreshServicesSnapshot()
+		if gw := a.getGateway(); gw != nil && a.mgr != nil {
+			gw.UpdateNodes(a.snapshotServices(), a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
+		}
 		st := a.mgr.StatusOf(svc.ID).State
 		if st == runner.StateRunning || st == runner.StateStarting {
 			_ = a.mgr.Start(svc)

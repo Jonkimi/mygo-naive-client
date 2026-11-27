@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -504,15 +505,19 @@ func TestPoolOutbound_SidecarRemoteFailureAndCircuitBreaker(t *testing.T) {
 }
 
 type funcMockOutbound struct {
-	tag    string
-	dialFn func() (net.Conn, error)
+	tag        string
+	dialFn     func() (net.Conn, error)
+	dialDestFn func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error)
 }
 
-func (m *funcMockOutbound) Type() string                                          { return "func-mock" }
-func (m *funcMockOutbound) Tag() string                                           { return m.tag }
-func (m *funcMockOutbound) Network() []string                                     { return []string{"tcp", "udp"} }
-func (m *funcMockOutbound) Dependencies() []string                                { return nil }
+func (m *funcMockOutbound) Type() string           { return "func-mock" }
+func (m *funcMockOutbound) Tag() string            { return m.tag }
+func (m *funcMockOutbound) Network() []string      { return []string{"tcp", "udp"} }
+func (m *funcMockOutbound) Dependencies() []string { return nil }
 func (m *funcMockOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if m.dialDestFn != nil {
+		return m.dialDestFn(ctx, network, destination)
+	}
 	return m.dialFn()
 }
 func (m *funcMockOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -1656,6 +1661,168 @@ func TestPoolOutbound_UDPFailureTripsCircuitBreaker(t *testing.T) {
 	sc := tr.GetScore("node-udp-bad")
 	if !sc.IsBroken || sc.ConsecutiveFailures != 3 {
 		t.Fatalf("expected 3 UDP ListenPacket failures to trip circuit breaker, got %+v", sc)
+	}
+}
+
+type ipv6AwareTestProvider struct {
+	*testNodeProvider
+	ipv6Modes map[string]string
+	warpNodes map[string]bool
+}
+
+func (p *ipv6AwareTestProvider) GetNodeIPv6Mode(nodeID string) string {
+	return p.ipv6Modes[nodeID]
+}
+
+func (p *ipv6AwareTestProvider) IsWarpNode(nodeID string) bool {
+	return p.warpNodes[nodeID]
+}
+
+// Tests IPv6 capability prioritization, passive learning with zero circuit penalty, and sniffed-domain fallback rewrite.
+func TestPoolOutbound_IPv6SchedulingAndPassiveLearning(t *testing.T) {
+	tr := telemetry.NewTracker()
+
+	// Record faster RTT on node-v4only (10ms) and slower RTT on node-v6ok (80ms)
+	tr.RecordDial("node-v4only", "ipv4.example.com", 10*time.Millisecond, nil)
+	tr.RecordDial("node-v6ok", "ipv4.example.com", 80*time.Millisecond, nil)
+	tr.SetIPv6Capability("node-v4only", telemetry.IPv6Unsupported)
+	tr.SetIPv6Capability("node-v6ok", telemetry.IPv6Supported)
+
+	var dialedByV4Only []M.Socksaddr
+	var dialedByV6Ok []M.Socksaddr
+
+	provider := &ipv6AwareTestProvider{
+		testNodeProvider: &testNodeProvider{
+			candidates: map[string][]string{"PROXY_POOL": {"node-v4only", "node-v6ok"}},
+			nodes: map[string]adapter.Outbound{
+				"node-v4only": &funcMockOutbound{
+					tag: "node-v4only",
+					dialDestFn: func(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
+						dialedByV4Only = append(dialedByV4Only, dest)
+						c1, _ := net.Pipe()
+						return c1, nil
+					},
+				},
+				"node-v6ok": &funcMockOutbound{
+					tag: "node-v6ok",
+					dialDestFn: func(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
+						dialedByV6Ok = append(dialedByV6Ok, dest)
+						c1, _ := net.Pipe()
+						return c1, nil
+					},
+				},
+			},
+		},
+		ipv6Modes: map[string]string{},
+		warpNodes: map[string]bool{},
+	}
+
+	pool := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider,
+		Tracker:      tr,
+	})
+
+	// 1. IPv6 destination must route directly to slower node-v6ok without touching node-v4only.
+	c6, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("[2606:4700::1]:443"))
+	if err != nil {
+		t.Fatalf("IPv6 dial failed: %v", err)
+	}
+	_ = c6.Close()
+	if len(dialedByV4Only) != 0 || len(dialedByV6Ok) != 1 {
+		t.Fatalf("expected IPv6 dial routed only to node-v6ok, got v4only=%v v6ok=%v", dialedByV4Only, dialedByV6Ok)
+	}
+
+	// IPv4 destination still picks faster node-v4only.
+	c4, err := pool.DialContext(context.Background(), "tcp", M.ParseSocksaddr("1.1.1.1:443"))
+	if err != nil {
+		t.Fatalf("IPv4 dial failed: %v", err)
+	}
+	_ = c4.Close()
+	if len(dialedByV4Only) != 1 {
+		t.Fatalf("expected IPv4 dial on faster node-v4only, got %v", dialedByV4Only)
+	}
+
+	// 2. Unknown node failing IPv6 dial with "network is unreachable" gets marked IPv6Unsupported with ZERO penalty.
+	tr2 := telemetry.NewTracker()
+	tr2.RecordDial("node-unknown", "a.com", 5*time.Millisecond, nil)
+	provider2 := &ipv6AwareTestProvider{
+		testNodeProvider: &testNodeProvider{
+			candidates: map[string][]string{"PROXY_POOL": {"node-unknown", "node-warp"}},
+			nodes: map[string]adapter.Outbound{
+				"node-unknown": &mockOutbound{tag: "node-unknown", dialErr: errors.New("connect: network is unreachable")},
+				"node-warp":    &mockOutbound{tag: "node-warp"},
+			},
+		},
+		ipv6Modes: map[string]string{},
+		warpNodes: map[string]bool{"node-warp": true}, // ordered before unknown once known, but initially unknown is tested against v6
+	}
+	// Make node-warp slightly slower initially or keep node-unknown first by putting no WARP flag first, wait:
+	// WARP nodes sort ahead of unknown! Test passive learning with two non-WARP unknown nodes first:
+	provider2.warpNodes["node-warp"] = false
+	tr2.RecordDial("node-warp", "a.com", 50*time.Millisecond, nil)
+	pool2 := NewPoolOutbound(PoolOutboundOptions{
+		Tag:          "PROXY_POOL",
+		NodeProvider: provider2,
+		Tracker:      tr2,
+	})
+	connPass, err := pool2.DialContext(context.Background(), "tcp", M.ParseSocksaddr("[2606:4700::1]:443"))
+	if err != nil {
+		t.Fatalf("expected failover from unknown IPv4-only node to second node, got %v", err)
+	}
+	_ = connPass.Close()
+	scUnk := tr2.GetScore("node-unknown")
+	if scUnk.IPv6Capability != telemetry.IPv6Unsupported {
+		t.Fatalf("expected passive learning to mark node-unknown as IPv6Unsupported, got %v", scUnk.IPv6Capability)
+	}
+	if scUnk.ConsecutiveFailures != 0 || scUnk.TotalDials != 1 || scUnk.IsBroken {
+		t.Fatalf("expected zero health/circuit penalty for IPv6 unsupported error, got %+v", scUnk)
+	}
+	scWin := tr2.GetScore("node-warp")
+	if scWin.IPv6Capability != telemetry.IPv6Supported {
+		t.Fatalf("expected winning node passively marked IPv6Supported, got %v", scWin.IPv6Capability)
+	}
+
+	// 3. All nodes IPv6Unsupported + sniffedDomain present -> rewrites [2606:4700::1]:443 to example.com:443.
+	tr3 := telemetry.NewTracker()
+	tr3.SetIPv6Capability("node-only-v4", telemetry.IPv6Unsupported)
+	var gotFallbackDests []M.Socksaddr
+	pool3 := NewPoolOutbound(PoolOutboundOptions{
+		Tag: "PROXY_POOL",
+		NodeProvider: &testNodeProvider{
+			candidates: map[string][]string{"PROXY_POOL": {"node-only-v4"}},
+			nodes: map[string]adapter.Outbound{
+				"node-only-v4": &funcMockOutbound{
+					tag: "node-only-v4",
+					dialDestFn: func(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
+						gotFallbackDests = append(gotFallbackDests, dest)
+						c1, _ := net.Pipe()
+						return c1, nil
+					},
+				},
+			},
+		},
+		Tracker: tr3,
+	})
+	sniffCtx := adapter.WithContext(context.Background(), &adapter.InboundContext{
+		Domain: "Example.COM.",
+	})
+	connSniff, err := pool3.DialContext(sniffCtx, "tcp", M.ParseSocksaddr("[2606:4700::1]:443"))
+	if err != nil {
+		t.Fatalf("expected sniffed-domain fallback rewrite to succeed, got %v", err)
+	}
+	_ = connSniff.Close()
+	if len(gotFallbackDests) != 1 || !gotFallbackDests[0].IsDomain() || gotFallbackDests[0].Fqdn != "example.com" || gotFallbackDests[0].Port != 443 {
+		t.Fatalf("expected rewritten domain destination example.com:443, got %+v", gotFallbackDests)
+	}
+
+	// 4. All nodes IPv6Unsupported + NO sniffed domain -> fails cleanly without dialing node-only-v4.
+	gotFallbackDests = nil
+	if _, err := pool3.DialContext(context.Background(), "tcp", M.ParseSocksaddr("[2606:4700::1]:443")); err == nil || !strings.Contains(err.Error(), "no IPv6-capable candidates") {
+		t.Fatalf("expected no IPv6-capable candidates error, got %v", err)
+	}
+	if len(gotFallbackDests) != 0 {
+		t.Fatalf("expected node-only-v4 not to be dialed without sniffed domain, got %+v", gotFallbackDests)
 	}
 }
 

@@ -4762,3 +4762,93 @@ func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
 	}
 }
 
+// Tests per-node IPv6 capability display in the node details drawer (auto, runtime telemetry, WARP, manual override) and editing/persistence in the node editor.
+func TestApp_NodeIPv6Capability_EditorAndDrawerUI(t *testing.T) {
+	svcs := []config.Service{
+		{
+			ID:         "vless-cap-1",
+			Name:       "JP-VLESS-Cap",
+			Protocol:   config.ProtoVLESS,
+			Engine:     config.EngineSingBox,
+			Server:     "jp.example.com",
+			ServerPort: 443,
+			UUID:       "12345678-1234-1234-1234-123456789abc",
+			Security:   "tls",
+		},
+		{
+			ID:         "vless-warp-1",
+			Name:       "SG-WARP-Chain",
+			Protocol:   config.ProtoVLESS,
+			Engine:     config.EngineSingBox,
+			Server:     "sg.example.com",
+			ServerPort: 443,
+			UUID:       "12345678-1234-1234-1234-123456789abc",
+			Security:   "tls",
+			EnableWARP: true,
+		},
+	}
+
+	a, tt, _ := newTestApp(t, svcs)
+	cat := a.catalog()
+
+	// 1. Open WARP-chained node drawer -> displays IPv6 Ready (WARP).
+	a.activeNodeDrawerID = "vless-warp-1"
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	if !tt.HasText(cat.NodeIPv6StatusSupportedWarp()) {
+		t.Fatalf("expected WARP-chained node drawer to display %q, got texts: %v", cat.NodeIPv6StatusSupportedWarp(), tt.Texts())
+	}
+
+	// 2. Switch to plain VLESS node drawer -> initially Not Tested, then reacts to Tracker runtime IPv6 capability.
+	a.activeNodeDrawerID = "vless-cap-1"
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	if !tt.HasText(cat.NodeIPv6StatusUnknown()) {
+		t.Fatalf("expected untested node drawer to display %q, got texts: %v", cat.NodeIPv6StatusUnknown(), tt.Texts())
+	}
+
+	a.tracker.SetIPv6Capability("vless-cap-1", telemetry.IPv6Supported)
+	tt.Frame()
+	if !tt.HasText(cat.NodeIPv6StatusSupported()) {
+		t.Fatalf("expected runtime IPv6Supported in drawer (%q), got texts: %v", cat.NodeIPv6StatusSupported(), tt.Texts())
+	}
+
+	a.tracker.SetIPv6Capability("vless-cap-1", telemetry.IPv6Unsupported)
+	tt.Frame()
+	if !tt.HasText(cat.NodeIPv6StatusUnsupported()) {
+		t.Fatalf("expected runtime IPv6Unsupported in drawer (%q), got texts: %v", cat.NodeIPv6StatusUnsupported(), tt.Texts())
+	}
+
+	// Reset tracker back to IPv6Supported, then override via Editor -> Advanced -> IPv4 Only and save.
+	a.tracker.SetIPv6Capability("vless-cap-1", telemetry.IPv6Supported)
+	if err := tt.Click(cat.NodeDrawerEdit()); err != nil {
+		t.Fatalf("click NodeDrawerEdit: %v", err)
+	}
+	tt.Advance(300 * time.Millisecond)
+
+	if err := tt.Click(cat.EditorTabAdvanced()); err != nil {
+		t.Fatalf("click EditorTabAdvanced: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(cat.NodeIPv6ModeUnsupported()); err != nil {
+		t.Fatalf("select NodeIPv6ModeUnsupported: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(cat.EditorSaveEdit()); err != nil {
+		t.Fatalf("click EditorSaveEdit: %v", err)
+	}
+	tt.Advance(300 * time.Millisecond)
+
+	a.loadState()
+	saved, ok := a.findService("vless-cap-1")
+	if !ok || saved.IPv6Mode != config.IPv6ModeUnsupported {
+		t.Fatalf("expected saved IPv6Mode=%q after reload, got %+v", config.IPv6ModeUnsupported, saved)
+	}
+	if a.activeNodeDrawerID != "vless-cap-1" {
+		t.Fatalf("expected returning to node drawer after edit, got %q", a.activeNodeDrawerID)
+	}
+	if !tt.HasText(cat.NodeIPv6StatusUnsupported()) {
+		t.Fatalf("expected manual IPv6ModeUnsupported override in drawer (%q), got texts: %v", cat.NodeIPv6StatusUnsupported(), tt.Texts())
+	}
+}
+

@@ -8159,3 +8159,93 @@ func ToastServiceRestartFailed(name string, err string) string {
 func (msgs Messages) ToastServiceRestartFailed(name string, err string) string {
 	return Catalog.Format(msgs.locale, "toastServiceRestartFailed", map[string]any{"name": name, "err": err})
 }
+
+// NodeIPv6CapabilityLabel says "IPv6 Egress"
+// in the language the app shows.
+func NodeIPv6CapabilityLabel() string { return In(i18n.Locale()).NodeIPv6CapabilityLabel() }
+
+// NodeIPv6CapabilityLabel says "IPv6 Egress"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6CapabilityLabel() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6CapabilityLabel", nil)
+}
+
+// NodeIPv6ModeAuto says "Auto Detect"
+// in the language the app shows.
+func NodeIPv6ModeAuto() string { return In(i18n.Locale()).NodeIPv6ModeAuto() }
+
+// NodeIPv6ModeAuto says "Auto Detect"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6ModeAuto() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6ModeAuto", nil)
+}
+
+// NodeIPv6ModeSupported says "Supported"
+// in the language the app shows.
+func NodeIPv6ModeSupported() string { return In(i18n.Locale()).NodeIPv6ModeSupported() }
+
+// NodeIPv6ModeSupported says "Supported"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6ModeSupported() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6ModeSupported", nil)
+}
+
+// NodeIPv6ModeUnsupported says "IPv4 Only"
+// in the language the app shows.
+func NodeIPv6ModeUnsupported() string { return In(i18n.Locale()).NodeIPv6ModeUnsupported() }
+
+// NodeIPv6ModeUnsupported says "IPv4 Only"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6ModeUnsupported() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6ModeUnsupported", nil)
+}
+
+// NodeIPv6StatusUnknown says "Not Tested"
+// in the language the app shows.
+func NodeIPv6StatusUnknown() string { return In(i18n.Locale()).NodeIPv6StatusUnknown() }
+
+// NodeIPv6StatusUnknown says "Not Tested"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6StatusUnknown() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6StatusUnknown", nil)
+}
+
+// NodeIPv6StatusSupported says "IPv6 Ready"
+// in the language the app shows.
+func NodeIPv6StatusSupported() string { return In(i18n.Locale()).NodeIPv6StatusSupported() }
+
+// NodeIPv6StatusSupported says "IPv6 Ready"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6StatusSupported() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6StatusSupported", nil)
+}
+
+// NodeIPv6StatusSupportedWarp says "IPv6 Ready (WARP)"
+// in the language the app shows.
+func NodeIPv6StatusSupportedWarp() string { return In(i18n.Locale()).NodeIPv6StatusSupportedWarp() }
+
+// NodeIPv6StatusSupportedWarp says "IPv6 Ready (WARP)"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6StatusSupportedWarp() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6StatusSupportedWarp", nil)
+}
+
+// NodeIPv6StatusUnsupported says "IPv4 Only"
+// in the language the app shows.
+func NodeIPv6StatusUnsupported() string { return In(i18n.Locale()).NodeIPv6StatusUnsupported() }
+
+// NodeIPv6StatusUnsupported says "IPv4 Only"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6StatusUnsupported() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6StatusUnsupported", nil)
+}
+
+// NodeIPv6EditorHint says "Controls how the proxy pool routes IPv6 traffic through this node (auto-detected during probes)"
+// in the language the app shows.
+func NodeIPv6EditorHint() string { return In(i18n.Locale()).NodeIPv6EditorHint() }
+
+// NodeIPv6EditorHint says "Controls how the proxy pool routes IPv6 traffic through this node (auto-detected during probes)"
+// in the language of msgs.
+func (msgs Messages) NodeIPv6EditorHint() string {
+	return Catalog.Format(msgs.locale, "nodeIPv6EditorHint", nil)
+}

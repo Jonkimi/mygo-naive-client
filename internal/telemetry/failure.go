@@ -246,3 +246,29 @@ func (fm *FailureMonitor) Clear() {
 	fm.items = make(map[string]*AggregatedFailure, fm.capacity)
 	fm.unresolved = 0
 }
+
+// IsIPv6UnsupportedError reports whether err indicates an IPv6 routing/family failure
+// from an upstream proxy node without IPv6 egress, rather than node downtime.
+func IsIPv6UnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"network is unreachable",
+		"no route to host",
+		"enetunreach",
+		"ehostunreach",
+		"address family not supported",
+		"eafnosupport",
+		"cannot assign requested address",
+		"network unreachable",
+		"host unreachable",
+		"address type not supported",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}

@@ -1050,5 +1050,14 @@
       "name": { "type": "String" },
       "err": { "type": "String" }
     }
-  }
+  },
+  "nodeIPv6CapabilityLabel": "IPv6 Egress",
+  "nodeIPv6ModeAuto": "Auto Detect",
+  "nodeIPv6ModeSupported": "Supported",
+  "nodeIPv6ModeUnsupported": "IPv4 Only",
+  "nodeIPv6StatusUnknown": "Not Tested",
+  "nodeIPv6StatusSupported": "IPv6 Ready",
+  "nodeIPv6StatusSupportedWarp": "IPv6 Ready (WARP)",
+  "nodeIPv6StatusUnsupported": "IPv4 Only",
+  "nodeIPv6EditorHint": "Controls how the proxy pool routes IPv6 traffic through this node (auto-detected during probes)"
 }

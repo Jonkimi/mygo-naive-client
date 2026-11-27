@@ -400,6 +400,28 @@ func (a *app) renderNodeDrawerHelpPopover(c *ui.Context, anchor ui.Element, p pa
 	})
 }
 
+func (a *app) nodeIPv6StatusDisplay(svc config.Service, p palette) (string, ui.Color) {
+	cat := a.catalog()
+	switch svc.EffectiveIPv6Mode() {
+	case config.IPv6ModeUnsupported:
+		return cat.NodeIPv6StatusUnsupported(), p.amberText
+	case config.IPv6ModeSupported:
+		return cat.NodeIPv6StatusSupported(), p.greenText
+	}
+	if svc.EffectiveProtocol() == config.ProtoWARP || svc.EnableWARP {
+		return cat.NodeIPv6StatusSupportedWarp(), p.greenText
+	}
+	if a.tracker != nil {
+		switch a.tracker.GetScore(svc.ID).IPv6Capability {
+		case telemetry.IPv6Supported:
+			return cat.NodeIPv6StatusSupported(), p.greenText
+		case telemetry.IPv6Unsupported:
+			return cat.NodeIPv6StatusUnsupported(), p.amberText
+		}
+	}
+	return cat.NodeIPv6StatusUnknown(), p.textDim
+}
+
 func (a *app) renderNodeDrawerParamsCard(c *ui.Context, p palette, svc config.Service, rt runner.Status) {
 	cat := a.catalog()
 	dsDetailCard(c, p, func() {
@@ -455,6 +477,8 @@ func (a *app) renderNodeDrawerParamsCard(c *ui.Context, p palette, svc config.Se
 			if svc.EnableWARP && svc.EffectiveProtocol() != config.ProtoWARP {
 				dsDetailKvRow(c, p, cat.NodeDrawerWarpChain(), a.warpTransportPillLabel(svc), false, false, p.text, "")
 			}
+			ipv6Text, ipv6Color := a.nodeIPv6StatusDisplay(svc, p)
+			dsDetailKvRow(c, p, cat.NodeIPv6CapabilityLabel(), ipv6Text, false, false, ipv6Color, "")
 			if rt.Restarts > 0 {
 				dsDetailKvRow(c, p, cat.NodeDrawerRestarts(), cat.RestartsPill(rt.Restarts), false, true, p.amberText, "")
 			}

@@ -486,3 +486,30 @@ func TestHysteria2BandwidthValidationAndImport(t *testing.T) {
 		t.Fatalf("expected Validate() error for negative DownMbps")
 	}
 }
+
+// Tests importing and exporting Hysteria2 share URIs with both user:password credentials and legacy single-password tokens.
+func TestHysteria2_UserPassShareURI(t *testing.T) {
+	rawUserPass := "hysteria2://direct:my-secret@claudecode-api.zihanma.com:443?sni=claudecode-api.zihanma.com#Hy2-Direct"
+	svc, err := ParseImport(rawUserPass, 1083)
+	if err != nil {
+		t.Fatalf("ParseImport Hysteria2 user:pass failed: %v", err)
+	}
+	if svc.Password != "direct:my-secret" {
+		t.Fatalf("expected Password %q, got %q", "direct:my-secret", svc.Password)
+	}
+	if got := svc.ShareURI(); got != rawUserPass {
+		t.Fatalf("round-trip ShareURI mismatch:\n got: %q\nwant: %q", got, rawUserPass)
+	}
+
+	rawLegacy := "hysteria2://legacy-pass@hy2.example.com:443#Hy2-Legacy"
+	svcLegacy, err := ParseImport(rawLegacy, 1084)
+	if err != nil {
+		t.Fatalf("ParseImport legacy Hysteria2 failed: %v", err)
+	}
+	if svcLegacy.Password != "legacy-pass" {
+		t.Fatalf("expected Password %q, got %q", "legacy-pass", svcLegacy.Password)
+	}
+	if got := svcLegacy.ShareURI(); got != rawLegacy {
+		t.Fatalf("round-trip legacy ShareURI mismatch:\n got: %q\nwant: %q", got, rawLegacy)
+	}
+}

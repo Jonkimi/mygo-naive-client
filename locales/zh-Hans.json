@@ -1001,5 +1001,14 @@
   "actionRestartH2Tooltip": "重启服务以重建 HTTP/2 单连接",
   "naiveH2TelemetryHint": "Naive HTTP/2 默认单连接复用；若延迟正常但下载偏慢，可重启重建连接或适当调高并发连接数。",
   "toastServiceRestarted": "已重启服务: {name}",
-  "toastServiceRestartFailed": "重启失败 ({name}): {err}"
+  "toastServiceRestartFailed": "重启失败 ({name}): {err}",
+  "nodeIPv6CapabilityLabel": "IPv6 出口能力",
+  "nodeIPv6ModeAuto": "自动探测",
+  "nodeIPv6ModeSupported": "支持 IPv6",
+  "nodeIPv6ModeUnsupported": "仅 IPv4",
+  "nodeIPv6StatusUnknown": "未检测",
+  "nodeIPv6StatusSupported": "支持 IPv6",
+  "nodeIPv6StatusSupportedWarp": "支持 IPv6 (WARP)",
+  "nodeIPv6StatusUnsupported": "仅 IPv4",
+  "nodeIPv6EditorHint": "控制代理池向该节点调度 IPv6 流量的方式（默认随测速自动探测，无 IPv6 时自动保护熔断）"
 }

@@ -19,6 +19,12 @@ import (
 // DefaultProbeURL is the lightweight HTTP 204 endpoint used to measure end-to-end proxy latency.
 const DefaultProbeURL = "https://cp.cloudflare.com/generate_204"
 
+// DefaultIPv6ProbeURLs are literal-IPv6 HTTP(S) endpoints used to detect genuine upstream IPv6 egress.
+var DefaultIPv6ProbeURLs = []string{
+	"https://[2606:4700:4700::1111]/cdn-cgi/trace",
+	"https://[2001:4860:4860::8888]/",
+}
+
 // DefaultDownloadURL is the default payload endpoint used to measure proxy download throughput.
 const DefaultDownloadURL = "https://speed.cloudflare.com/__down?bytes=10000000"
 
@@ -67,6 +73,32 @@ func ProbeWithTransport(ctx context.Context, transport *http.Transport, targetUR
 		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return time.Since(start), nil
+}
+
+// ProbeIPv6WithTransport verifies upstream IPv6 egress by probing literal IPv6 HTTP endpoints.
+// conclusive is false when the parent context is canceled rather than upstream IPv6 failing.
+func ProbeIPv6WithTransport(ctx context.Context, transport *http.Transport, targets []string) (supported bool, conclusive bool) {
+	if len(targets) == 0 {
+		targets = DefaultIPv6ProbeURLs
+	}
+	if transport == nil {
+		return false, false
+	}
+	for _, targetURL := range targets {
+		if ctx != nil && ctx.Err() != nil {
+			return false, false
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		_, err := ProbeWithTransport(probeCtx, transport, targetURL)
+		cancel()
+		if err == nil {
+			return true, true
+		}
+		if ctx != nil && ctx.Err() != nil {
+			return false, false
+		}
+	}
+	return false, true
 }
 
 // MeasureDownloadSpeed downloads payload through the local ListenEndpoint (socks or http)
