@@ -1008,3 +1008,65 @@ func TestBuildDNSConfig_NodeDomainsUseDomesticDoHAndDoHHostUsesBootstrap(t *test
 		t.Errorf("DoH host server = %q, want bootstrap-dns", got["dns.alidns.com"])
 	}
 }
+
+// Regression: global ipv6_only/prefer_ipv6 DNS strategies previously overrode tailscale-host-dns,
+// breaking IPv4-only Tailnet nodes (100.x.y.z) and IPv4 subnet routes.
+func TestBuildDNSConfig_TailnetStrategyUnderIPv6Modes(t *testing.T) {
+	checkTailnetStrategies := func(t *testing.T, opts EngineOptions, wantStrat string) {
+		t.Helper()
+		dnsCfg := buildDNSConfig(opts, "PROXY_POOL", nil)
+		rules, _ := dnsCfg["rules"].([]map[string]any)
+		var sawTailnet, sawLocal bool
+		for _, r := range rules {
+			srv, _ := r["server"].(string)
+			if srv == "tailscale-host-dns" {
+				sawTailnet = true
+				got, _ := r["strategy"].(string)
+				if got != wantStrat {
+					t.Errorf("tailscale-host-dns rule %+v strategy = %q, want %q", r, got, wantStrat)
+				}
+			}
+			if srv == "local-dns" {
+				sawLocal = true
+				got, _ := r["strategy"].(string)
+				if got != wantStrat {
+					t.Errorf("local-dns rule %+v strategy = %q, want %q", r, got, wantStrat)
+				}
+			}
+		}
+		if !sawTailnet || !sawLocal {
+			t.Fatalf("expected both tailscale-host-dns (%v) and local-dns (%v) rules", sawTailnet, sawLocal)
+		}
+	}
+
+	base := EngineOptions{
+		TrafficMode:           "tun",
+		TailnetMode:           tailnet.ModeHost,
+		TailnetMagicDNSSuffix: "tail8bfe1c.ts.net",
+	}
+
+	t.Run("global_ipv6_only", func(t *testing.T) {
+		opts := base
+		opts.DNSStrategy = "ipv6_only"
+		checkTailnetStrategies(t, opts, "prefer_ipv4")
+	})
+
+	t.Run("global_prefer_ipv6", func(t *testing.T) {
+		opts := base
+		opts.DNSStrategy = "prefer_ipv6"
+		checkTailnetStrategies(t, opts, "prefer_ipv4")
+	})
+
+	t.Run("split_direct_v4_proxy_v6", func(t *testing.T) {
+		opts := base
+		opts.DirectDNSStrategy = "ipv4_only"
+		opts.ProxyDNSStrategy = "prefer_ipv6"
+		checkTailnetStrategies(t, opts, "prefer_ipv4")
+	})
+
+	t.Run("global_ipv4_only_unchanged", func(t *testing.T) {
+		opts := base
+		opts.DNSStrategy = "ipv4_only"
+		checkTailnetStrategies(t, opts, "")
+	})
+}

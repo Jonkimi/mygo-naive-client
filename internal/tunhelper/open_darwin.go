@@ -112,7 +112,7 @@ func SetupRoutesWithOptions(name string, excludeIPs []string, forceIPv6Route boo
 	}
 
 	// 3. Configure macOS DynamicStore DNS so utun intercepts all DNS requests with highest priority
-	setupDarwinDNS(name)
+	setupDarwinDNS(name, installIPv6)
 
 	_ = exec.Command("dscacheutil", "-flushcache").Run()
 	_ = exec.Command("killall", "-HUP", "mDNSResponder").Run()
@@ -216,7 +216,7 @@ func teardownRoutesInternal(name string, excludeIPs []string, flushDNS bool) err
 			}
 			continue
 		}
-		ip := net.ParseIP(trimmed)
+		ip := net.ParseIP(strings.Trim(trimmed, "[]"))
 		if !isBypassSafe(ip) {
 			continue
 		}
@@ -253,18 +253,26 @@ func teardownRoutesInternal(name string, excludeIPs []string, flushDNS bool) err
 	return nil
 }
 
-func setupDarwinDNS(ifName string) {
+func setupDarwinDNS(ifName string, includeIPv6 bool) {
 	cleanupStaleDarwinDNS()
 	searchDomains := collectDarwinSearchDomains("/etc/resolv.conf", "/etc/resolver")
 	cmd := exec.Command("scutil")
-	cmd.Stdin = strings.NewReader(buildDarwinDNSCommands(ifName, searchDomains))
+	cmd.Stdin = strings.NewReader(buildDarwinDNSCommands(ifName, searchDomains, includeIPv6))
 	_ = cmd.Run()
 }
 
-func buildDarwinDNSCommands(ifName string, searchDomains []string) string {
+func buildDarwinDNSCommands(ifName string, searchDomains []string, includeIPv6 ...bool) string {
+	withIPv6 := true
+	if len(includeIPv6) > 0 {
+		withIPv6 = includeIPv6[0]
+	}
 	var sb strings.Builder
 	sb.WriteString("d.init\n")
-	sb.WriteString("d.add ServerAddresses * " + DNSAddress + " " + DNSAddressV6 + "\n")
+	if withIPv6 {
+		sb.WriteString("d.add ServerAddresses * " + DNSAddress + " " + DNSAddressV6 + "\n")
+	} else {
+		sb.WriteString("d.add ServerAddresses * " + DNSAddress + "\n")
+	}
 	sb.WriteString(fmt.Sprintf("d.add InterfaceName %s\n", ifName))
 	if len(searchDomains) > 0 {
 		sb.WriteString("d.add SearchDomains * " + strings.Join(searchDomains, " ") + "\n")
@@ -405,6 +413,7 @@ func collectDarwinSearchDomains(resolvConfPath, resolverDir string) []string {
 				}
 				content := string(data)
 				isTailscaleResolver := strings.Contains(content, "100.100.100.100") ||
+					strings.Contains(content, "fd7a:115c:a1e0::53") ||
 					strings.Contains(content, "tailscaled") ||
 					strings.HasSuffix(strings.ToLower(strings.Trim(name, ".")), ".ts.net")
 				if !isTailscaleResolver {
@@ -429,12 +438,8 @@ func collectDarwinSearchDomains(resolvConfPath, resolverDir string) []string {
 }
 
 func checkDarwinIPv6() bool {
-	out, err := exec.Command("route", "-n", "get", "-inet6", "default").Output()
-	if err != nil {
-		return false
-	}
-	s := string(out)
-	return strings.Contains(s, "interface:") && !strings.Contains(s, "not in table")
+	gw6, iface6 := getDefaultGatewayV6()
+	return gw6 != "" || iface6 != ""
 }
 
 func getDefaultGateway() (string, string) {
@@ -454,7 +459,7 @@ func getDefaultGatewayV6() (string, string) {
 }
 
 func parseDarwinRouteOutput(out string) (string, string) {
-	var gw, iface string
+	var gw, iface, rawIface string
 	lines := strings.Split(out, "\n")
 	for _, l := range lines {
 		fields := strings.Fields(l)
@@ -462,12 +467,15 @@ func parseDarwinRouteOutput(out string) (string, string) {
 			if fields[0] == "gateway:" {
 				gw = fields[1]
 			} else if fields[0] == "interface:" {
-				cand := fields[1]
-				if !strings.HasPrefix(cand, "utun") && !strings.HasPrefix(cand, "tun") && !strings.HasPrefix(cand, "lo") {
-					iface = cand
+				rawIface = fields[1]
+				if !strings.HasPrefix(rawIface, "utun") && !strings.HasPrefix(rawIface, "tun") && !strings.HasPrefix(rawIface, "lo") {
+					iface = rawIface
 				}
 			}
 		}
+	}
+	if strings.HasPrefix(rawIface, "utun") || strings.HasPrefix(rawIface, "tun") || strings.HasPrefix(rawIface, "lo") {
+		return "", ""
 	}
 	return gw, iface
 }

@@ -85,3 +85,44 @@ func TestBuildDarwinIPv6Routes(t *testing.T) {
 		t.Fatalf("unexpected ::/1 route command: %v", defRoutes[2])
 	}
 }
+
+// Regression: parseDarwinRouteOutput previously discarded virtual interfaces from iface
+// while still returning gw (e.g. fd7a:115c:a1e0::), routing exclude routes into Tailscale utun.
+func TestParseDarwinRouteOutput_IgnoresVirtualGatewayAndV6DNS(t *testing.T) {
+	tailscaleV6Route := "   route to: default\n" +
+		"destination: default\n" +
+		"       mask: default\n" +
+		"    gateway: fd7a:115c:a1e0::\n" +
+		"  interface: utun12\n" +
+		"      flags: <UP,GATEWAY,DONE,STATIC,PRCLONING,GLOBAL>\n"
+	gw, iface := parseDarwinRouteOutput(tailscaleV6Route)
+	if gw != "" || iface != "" {
+		t.Fatalf("expected empty gw and iface for virtual utun route, got (%q, %q)", gw, iface)
+	}
+
+	physV6Route := "   route to: default\n" +
+		"    gateway: fe80::1%en0\n" +
+		"  interface: en0\n"
+	gw, iface = parseDarwinRouteOutput(physV6Route)
+	if gw != "fe80::1%en0" || iface != "en0" {
+		t.Fatalf("expected physical gateway (fe80::1%%en0, en0), got (%q, %q)", gw, iface)
+	}
+
+	// Verify fd7a:115c:a1e0::53 in /etc/resolver is recognized and includeIPv6=false omits DNSAddressV6.
+	tmp := t.TempDir()
+	resolverDir := filepath.Join(tmp, "resolver")
+	if err := os.MkdirAll(resolverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resolverDir, "tail9abc.ts.net"), []byte("nameserver fd7a:115c:a1e0::53\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gotDomains := collectDarwinSearchDomains("", resolverDir)
+	if !reflect.DeepEqual(gotDomains, []string{"tail9abc.ts.net"}) {
+		t.Fatalf("expected [tail9abc.ts.net] from IPv6 MagicDNS resolver, got %v", gotDomains)
+	}
+	cmdsV4Only := buildDarwinDNSCommands("utun5", gotDomains, false)
+	if !strings.Contains(cmdsV4Only, "d.add ServerAddresses * "+DNSAddress+"\n") || strings.Contains(cmdsV4Only, DNSAddressV6) {
+		t.Fatalf("expected IPv4-only ServerAddresses when includeIPv6=false, got:\n%s", cmdsV4Only)
+	}
+}

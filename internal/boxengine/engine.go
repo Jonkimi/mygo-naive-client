@@ -2399,6 +2399,16 @@ func buildDNSConfig(opts EngineOptions, finalOutbound string, allBootstrapDomain
 			})
 		}
 	}
+	allIPv4Only := (!hasSplitStrategy && globalStrategy == "ipv4_only") ||
+		(hasSplitStrategy && directStrategy == "ipv4_only" && proxyStrategy == "ipv4_only")
+	if !allIPv4Only {
+		for _, rule := range dnsRules {
+			srv, _ := rule["server"].(string)
+			if srv == "tailscale-host-dns" || srv == "tailscale-dns" || srv == "local-dns" {
+				rule["strategy"] = "prefer_ipv4"
+			}
+		}
+	}
 	if opts.DNSOptimisticCache {
 		dnsMap["optimistic"] = true
 	}

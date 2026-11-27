@@ -33,6 +33,8 @@ type Manager struct {
 	cancelFunc       context.CancelFunc
 	epCancel         context.CancelFunc
 	pollTicker       *time.Ticker
+	refreshMu        sync.Mutex
+	hostFailStreak   int
 	hostDetectMu     sync.Mutex
 	hostDetected     bool
 	hostDetectResult *Status
@@ -61,6 +63,7 @@ func NewManager(cfg Config, detector *Detector) *Manager {
 }
 
 func (m *Manager) initStatus() {
+	m.hostFailStreak = 0
 	m.status = Status{
 		Enabled:    m.cfg.Enabled,
 		ActiveMode: m.cfg.Mode,
@@ -189,7 +192,7 @@ func (m *Manager) startHostDetectLocked(detector *Detector) chan struct{} {
 }
 
 func (m *Manager) runHostDetect(detector *Detector, ch chan struct{}) {
-	ctx, cancel := context.WithTimeout(m.cancelCtx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(m.cancelCtx, defaultHostDetectTimeout)
 	defer cancel()
 
 	st, err := detector.DetectHost(ctx)
@@ -208,6 +211,7 @@ func (m *Manager) runHostDetect(detector *Detector, ch chan struct{}) {
 				s.Enabled = true
 				s.ActiveMode = ModeHost
 				s.Error = ""
+				m.hostFailStreak = 0
 			})
 		}
 	}
@@ -323,27 +327,8 @@ func (m *Manager) Refresh(ctx context.Context) {
 	}
 
 	if mode == ModeHost || mode == ModeAuto {
-		st, err := m.detector.DetectHost(ctx)
-		if err == nil && st.BackendState == "Running" {
-			m.updateStatus(func(s *Status) {
-				*s = *st
-				s.Enabled = true
-				s.ActiveMode = ModeHost
-				s.Error = ""
-			})
-			return
-		}
-
-		if mode == ModeHost {
-			// Host mode explicitly requested but failed
-			m.updateStatus(func(s *Status) {
-				s.Enabled = true
-				s.ActiveMode = ModeHost
-				s.BackendState = "Offline"
-				if err != nil {
-					s.Error = err.Error()
-				}
-			})
+		handled := m.refreshHostMode(ctx, mode)
+		if handled {
 			return
 		}
 	}
@@ -357,6 +342,54 @@ func (m *Manager) Refresh(ctx context.Context) {
 		}
 		s.Error = ""
 	})
+}
+
+func (m *Manager) refreshHostMode(ctx context.Context, mode Mode) bool {
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
+
+	st, err := m.detector.DetectHost(ctx)
+	if err == nil && st.BackendState == "Running" {
+		m.hostDetectMu.Lock()
+		m.hostDetectResult = cloneStatusPtr(st)
+		m.hostDetectAt = m.nowTime()
+		m.hostDetected = true
+		m.hostDetectMu.Unlock()
+
+		m.updateStatus(func(s *Status) {
+			*s = *st
+			s.Enabled = true
+			s.ActiveMode = ModeHost
+			s.Error = ""
+			m.hostFailStreak = 0
+		})
+		return true
+	}
+
+	m.mu.Lock()
+	wasRunningHost := m.status.ActiveMode == ModeHost && m.status.BackendState == "Running"
+	isTransientTimeout := err != nil && errors.Is(err, context.DeadlineExceeded)
+	if wasRunningHost && isTransientTimeout && m.hostFailStreak == 0 {
+		m.hostFailStreak = 1
+		m.mu.Unlock()
+		return true
+	}
+	m.hostFailStreak++
+	m.mu.Unlock()
+
+	if mode == ModeHost {
+		// Host mode explicitly requested but failed
+		m.updateStatus(func(s *Status) {
+			s.Enabled = true
+			s.ActiveMode = ModeHost
+			s.BackendState = "Offline"
+			if err != nil {
+				s.Error = err.Error()
+			}
+		})
+		return true
+	}
+	return false
 }
 
 // BindEmbeddedEndpoint attaches sing-box's adapter.TailscaleEndpoint to receive live status.

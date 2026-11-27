@@ -224,7 +224,7 @@ func TeardownRoutes(name string, excludeIPs []string) error {
 			}
 			continue
 		}
-		ip := net.ParseIP(trimmed)
+		ip := net.ParseIP(strings.Trim(trimmed, "[]"))
 		if !isBypassSafe(ip) {
 			continue
 		}

@@ -473,3 +473,23 @@ func TestApp_HostTailnetNode_ResolvesViaMagicDNSAndExcludesBootstrap(t *testing.
 	}
 }
 
+// Regression: when IPNExtension restarts and receives a new utun interface with identical
+// Self IPs/Peers/Suffix, tailnetHostStateSig must change so gateway rebinds tailnet-direct.
+func TestTailnetHostStateSig_ChangesOnHostInterfaceChange(t *testing.T) {
+	st := tailnet.Status{
+		Enabled:        true,
+		ActiveMode:     tailnet.ModeHost,
+		BackendState:   "Running",
+		MagicDNSSuffix: "tail8bfe1c.ts.net",
+		Self: tailnet.NodeInfo{
+			Hostname: "my-mac",
+			IPs:      []string{"100.89.64.219", "fd7a:115c:a1e0::ea32:c953"},
+		},
+	}
+	sig1 := tailnetHostStateSig(st, "utun11")
+	sig2 := tailnetHostStateSig(st, "utun12")
+	if sig1 == sig2 {
+		t.Fatalf("expected tailnetHostStateSig to differ across host interface changes, both=%q", sig1)
+	}
+}
+

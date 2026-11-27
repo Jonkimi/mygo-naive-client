@@ -672,3 +672,83 @@ func TestManager_UpdateConfigAsync_NoopAndNonBlocking(t *testing.T) {
 	<-called
 	close(release)
 }
+
+// Regression: a single transient LocalAPI timeout previously flipped ModeHost to Offline
+// (or ModeAuto to Embedded), causing spurious error banners and gateway restarts.
+func TestManager_HostMode_ToleratesSingleTransientTimeout(t *testing.T) {
+	var errMu sync.Mutex
+	var failErr error
+	setFailErr := func(e error) {
+		errMu.Lock()
+		failErr = e
+		errMu.Unlock()
+	}
+	det := NewDetectorWithClient(&mockHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			errMu.Lock()
+			err := failErr
+			errMu.Unlock()
+			if err != nil {
+				return nil, err
+			}
+			return &ipnstate.Status{
+				BackendState:   "Running",
+				MagicDNSSuffix: "tail8bfe1c.ts.net",
+				Self: &ipnstate.PeerStatus{
+					HostName:     "macbook",
+					TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+					Online:       true,
+				},
+			}, nil
+		},
+	})
+
+	// 1. ModeHost stays Running on first transient DeadlineExceeded, then flips Offline on second consecutive timeout.
+	mgrHost := NewManager(Config{Enabled: true, Mode: ModeHost}, det)
+	defer mgrHost.Close()
+	mgrHost.Refresh(context.Background())
+	if st := mgrHost.Status(); st.ActiveMode != ModeHost || st.BackendState != "Running" {
+		t.Fatalf("initial status = %+v, want ModeHost Running", st)
+	}
+
+	setFailErr(context.DeadlineExceeded)
+	mgrHost.Refresh(context.Background())
+	if st := mgrHost.Status(); st.ActiveMode != ModeHost || st.BackendState != "Running" || st.Error != "" {
+		t.Fatalf("first transient timeout should keep Running without error, got %+v", st)
+	}
+
+	mgrHost.Refresh(context.Background())
+	if st := mgrHost.Status(); st.ActiveMode != ModeHost || st.BackendState != "Offline" || st.Error == "" {
+		t.Fatalf("second consecutive timeout should mark Offline with error, got %+v", st)
+	}
+
+	// Recovery resets streak so another single transient timeout is tolerated.
+	setFailErr(nil)
+	mgrHost.Refresh(context.Background())
+	if st := mgrHost.Status(); st.BackendState != "Running" || st.Error != "" {
+		t.Fatalf("recovered status = %+v, want Running", st)
+	}
+	setFailErr(context.DeadlineExceeded)
+	mgrHost.Refresh(context.Background())
+	if st := mgrHost.Status(); st.BackendState != "Running" || st.Error != "" {
+		t.Fatalf("post-recovery single timeout should keep Running, got %+v", st)
+	}
+
+	// 2. ModeAuto running in ModeHost must not falsely fall back to ModeEmbedded on a single transient timeout.
+	setFailErr(nil)
+	mgrAuto := NewManager(Config{Enabled: true, Mode: ModeAuto}, det)
+	defer mgrAuto.Close()
+	mgrAuto.Refresh(context.Background())
+	if st := mgrAuto.Status(); st.ActiveMode != ModeHost || st.BackendState != "Running" {
+		t.Fatalf("ModeAuto initial status = %+v, want ModeHost Running", st)
+	}
+	setFailErr(context.DeadlineExceeded)
+	mgrAuto.Refresh(context.Background())
+	if st := mgrAuto.Status(); st.ActiveMode != ModeHost || st.BackendState != "Running" {
+		t.Fatalf("ModeAuto single transient timeout should remain ModeHost Running, got %+v", st)
+	}
+	mgrAuto.Refresh(context.Background())
+	if st := mgrAuto.Status(); st.ActiveMode != ModeEmbedded {
+		t.Fatalf("ModeAuto consecutive timeouts should fall back to ModeEmbedded, got %+v", st)
+	}
+}

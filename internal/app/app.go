@@ -680,7 +680,11 @@ func (a *app) initSubsystems() {
 		firstEvent := true
 		prevSig := ""
 		a.tailnetUnsub = a.tailnetMgr.Subscribe(func(st tailnet.Status) {
-			sig := tailnetHostStateSig(st)
+			var hostIface string
+			if st.ActiveMode == tailnet.ModeHost && st.BackendState == "Running" {
+				hostIface = a.tailnetMgr.GetHostInterface()
+			}
+			sig := tailnetHostStateSig(st, hostIface)
 			sigMu.Lock()
 			if firstEvent {
 				prevSig = sig
@@ -3164,7 +3168,7 @@ func (a *app) effectiveDomesticDNS() string {
 	}
 	// If 100.100.100.100 was set in domestic DNS to work around Tailscale,
 	// fall back to default public domestic DoH so domestic domains don't flood MagicDNS.
-	if strings.Contains(dns, "100.100.100.100") {
+	if strings.Contains(dns, "100.100.100.100") || strings.Contains(dns, "fd7a:115c:a1e0::53") {
 		return ""
 	}
 	return dns
@@ -3531,7 +3535,7 @@ func detectDarwinTailscaleMagicDNS(resolvConfPath, resolverDir string) string {
 	if resolvConfPath != "" {
 		if data, err := os.ReadFile(resolvConfPath); err == nil {
 			s := string(data)
-			if strings.Contains(s, "100.100.100.100") {
+			if strings.Contains(s, "100.100.100.100") || strings.Contains(s, "fd7a:115c:a1e0::53") {
 				for _, l := range strings.Split(s, "\n") {
 					f := strings.Fields(l)
 					if len(f) >= 2 && (f[0] == "search" || f[0] == "domain") {
@@ -3562,7 +3566,7 @@ func detectDarwinTailscaleMagicDNS(resolvConfPath, resolverDir string) string {
 					continue
 				}
 				content := string(data)
-				if strings.Contains(content, "100.100.100.100") || strings.Contains(content, "tailscaled") {
+				if strings.Contains(content, "100.100.100.100") || strings.Contains(content, "fd7a:115c:a1e0::53") || strings.Contains(content, "tailscaled") {
 					return cleanName
 				}
 			}
@@ -3572,7 +3576,7 @@ func detectDarwinTailscaleMagicDNS(resolvConfPath, resolverDir string) string {
 	return ""
 }
 
-func tailnetHostStateSig(st tailnet.Status) string {
+func tailnetHostStateSig(st tailnet.Status, hostIface ...string) string {
 	var b strings.Builder
 	b.WriteString(string(st.ActiveMode))
 	b.WriteByte('|')
@@ -3598,6 +3602,12 @@ func tailnetHostStateSig(st tailnet.Status) string {
 			b.WriteByte(';')
 		}
 	}
+	if st.ActiveMode == tailnet.ModeHost && st.BackendState == "Running" && len(hostIface) > 0 {
+		if iface := strings.TrimSpace(hostIface[0]); iface != "" {
+			b.WriteString("|if=")
+			b.WriteString(iface)
+		}
+	}
 	return b.String()
 }
 
@@ -3605,7 +3615,12 @@ func (a *app) currentTailnetStateSig() string {
 	if a.tailnetMgr == nil {
 		return ""
 	}
-	return tailnetHostStateSig(a.tailnetMgr.Status())
+	st := a.tailnetMgr.Status()
+	var hostIface string
+	if st.ActiveMode == tailnet.ModeHost && st.BackendState == "Running" {
+		hostIface = a.tailnetMgr.GetHostInterface()
+	}
+	return tailnetHostStateSig(st, hostIface)
 }
 
 func (a *app) scheduleTailnetGatewaySync() {

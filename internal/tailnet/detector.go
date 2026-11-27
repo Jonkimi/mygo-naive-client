@@ -9,46 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sagernet/tailscale/client/local"
-	"github.com/sagernet/tailscale/ipn"
 	"github.com/sagernet/tailscale/ipn/ipnstate"
-	"github.com/sagernet/tailscale/tailcfg"
 )
+
+const defaultHostDetectTimeout = 4 * time.Second
 
 // HostClient abstracts the communication with the host tailscaled LocalAPI.
 type HostClient interface {
 	Status(ctx context.Context) (*ipnstate.Status, error)
 	SetExitNode(ctx context.Context, id string) error
 	SetUseExitNode(ctx context.Context, on bool) error
-}
-
-type realHostClient struct {
-	client *local.Client
-}
-
-func newRealHostClient() *realHostClient {
-	return &realHostClient{
-		client: &local.Client{},
-	}
-}
-
-func (r *realHostClient) Status(ctx context.Context) (*ipnstate.Status, error) {
-	return r.client.Status(ctx)
-}
-
-func (r *realHostClient) SetExitNode(ctx context.Context, id string) error {
-	mp := &ipn.MaskedPrefs{
-		Prefs: ipn.Prefs{
-			ExitNodeID: tailcfg.StableNodeID(id),
-		},
-		ExitNodeIDSet: true,
-	}
-	_, err := r.client.EditPrefs(ctx, mp)
-	return err
-}
-
-func (r *realHostClient) SetUseExitNode(ctx context.Context, on bool) error {
-	return r.client.SetUseExitNode(ctx, on)
 }
 
 // Detector probes and collects status from the host Tailscale daemon.
@@ -77,7 +47,7 @@ func (d *Detector) DetectHost(ctx context.Context) (*Status, error) {
 	}
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, defaultHostDetectTimeout)
 		defer cancel()
 	}
 
@@ -222,16 +192,21 @@ func DetectHostInterfaceForIPs(preferredIPs ...string) string {
 		}
 	}
 
-	// Pass 3: on macOS, route lookup for MagicDNS VIP disambiguates multiple utun interfaces
-	// and avoids matching ISP CGNAT on physical NICs (e.g., en0).
+	// Pass 3: on macOS, route lookup for MagicDNS VIP (IPv4 or IPv6) disambiguates multiple utun
+	// interfaces and avoids matching ISP CGNAT on physical NICs (e.g., en0).
 	if runtime.GOOS == "darwin" {
-		if out, err := exec.Command("route", "-n", "get", "100.100.100.100").Output(); err == nil {
-			for _, line := range strings.Split(string(out), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && fields[0] == "interface:" {
-					iface := fields[1]
-					if strings.HasPrefix(iface, "utun") {
-						return iface
+		for _, args := range [][]string{
+			{"-n", "get", "100.100.100.100"},
+			{"-n", "get", "-inet6", "fd7a:115c:a1e0::53"},
+		} {
+			if out, err := exec.Command("route", args...).Output(); err == nil {
+				for _, line := range strings.Split(string(out), "\n") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 && fields[0] == "interface:" {
+						iface := fields[1]
+						if strings.HasPrefix(iface, "utun") {
+							return iface
+						}
 					}
 				}
 			}
