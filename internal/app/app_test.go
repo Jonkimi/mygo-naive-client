@@ -4681,16 +4681,26 @@ func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
 	if !a.state.GatewayAllowLAN {
 		t.Fatalf("expected state GatewayAllowLAN to be true")
 	}
-	if a.gateway == nil {
+	allowDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(allowDeadline) {
+		if gw := a.getGateway(); gw != nil {
+			if host, _, err := net.SplitHostPort(gw.Addr()); err == nil && (host == "::" || host == "0.0.0.0") {
+				break
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	gw := a.getGateway()
+	if gw == nil {
 		t.Fatalf("expected gateway running after toggling Allow LAN on")
 	}
-	host, _, err := net.SplitHostPort(a.gateway.Addr())
+	host, _, err := net.SplitHostPort(gw.Addr())
 	if err != nil || (host != "::" && host != "0.0.0.0") {
-		t.Fatalf("expected gateway bound to wildcard host (:: or 0.0.0.0), got %q", a.gateway.Addr())
+		t.Fatalf("expected gateway bound to wildcard host (:: or 0.0.0.0), got %q", gw.Addr())
 	}
 	wantLocal := fmt.Sprintf("127.0.0.1:%d", port)
-	if a.gateway.LocalProxyAddr() != wantLocal {
-		t.Fatalf("expected LocalProxyAddr %q, got %q", wantLocal, a.gateway.LocalProxyAddr())
+	if gw.LocalProxyAddr() != wantLocal {
+		t.Fatalf("expected LocalProxyAddr %q, got %q", wantLocal, gw.LocalProxyAddr())
 	}
 
 	// Verify persistence on reload.
@@ -4751,8 +4761,16 @@ func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
 	if a.state.GatewayAllowLAN {
 		t.Fatalf("expected state GatewayAllowLAN to be false after second toggle")
 	}
-	if a.gateway == nil || !strings.HasPrefix(a.gateway.Addr(), "127.0.0.1:") {
-		t.Fatalf("expected gateway restored to 127.0.0.1, got %v", a.gateway)
+	restoreDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(restoreDeadline) {
+		if gw := a.getGateway(); gw != nil && strings.HasPrefix(gw.Addr(), "127.0.0.1:") {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	gwAfter := a.getGateway()
+	if gwAfter == nil || !strings.HasPrefix(gwAfter.Addr(), "127.0.0.1:") {
+		t.Fatalf("expected gateway restored to 127.0.0.1, got %v", gwAfter)
 	}
 	if slices.Contains(tt.Texts(), cat.GatewayLANBadge()) {
 		t.Fatalf("expected LAN badge hidden after turning off Allow LAN, texts: %v", tt.Texts())

@@ -607,7 +607,7 @@ func (a *app) loadState() {
 		a.mgr.SetDNSStrategy(effProxy)
 	}
 	if a.tailnetMgr != nil {
-		a.tailnetMgr.UpdateConfig(st.tailnetConfig())
+		a.tailnetMgr.UpdateConfigAsync(st.tailnetConfig())
 	}
 	if needsResave {
 		a.saveState()
@@ -703,7 +703,7 @@ func (a *app) saveState() {
 	a.syncBuiltinWarpService()
 	a.syncRouter()
 	if a.tailnetMgr != nil {
-		a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
+		a.tailnetMgr.UpdateConfigAsync(a.state.tailnetConfig())
 	}
 	a.gatewayMu.Lock()
 	snap, rev := a.snapshotPersistedStateLocked()

@@ -113,8 +113,7 @@ func (a *app) renderTailnetPage(c *ui.Context, p palette) {
 					a.state.TailnetMode = string(newMode)
 					a.saveState()
 					if a.tailnetMgr != nil {
-						a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
-						a.tailnetMgr.Refresh(context.Background())
+						a.tailnetMgr.RefreshAsync()
 					}
 					a.restartGatewayIfRunning()
 				}
@@ -338,7 +337,7 @@ func (a *app) renderTailnetPeersCard(c *ui.Context, p palette, st tailnet.Status
 				btnRefresh := quietToolbarButton(c.Key("btn-refresh-tailnet"), p, iconRefresh, cat.BtnRefresh(), false).
 					Label("btn-refresh-tailnet").Height(28)
 				if btnRefresh.Clicked() && a.tailnetMgr != nil {
-					a.tailnetMgr.Refresh(context.Background())
+					a.tailnetMgr.RefreshAsync()
 				}
 			})
 
@@ -447,9 +446,6 @@ func (a *app) renderTailnetAdvancedCard(c *ui.Context, p palette) {
 						})
 					if btnApply.Clicked() {
 						a.saveState()
-						if a.tailnetMgr != nil {
-							a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
-						}
 						a.restartGatewayIfRunning()
 						c.Toast(cat.TailnetAppliedRestarted())
 					}
@@ -460,25 +456,16 @@ func (a *app) renderTailnetAdvancedCard(c *ui.Context, p palette) {
 				ui.Column(c).Grow(1).MinWidth(200).Children(func() {
 					if labeledInput(c, p, "inp-tailnet-control-url", cat.TailnetControlURL(), &a.state.TailnetControlURL, "https://controlplane.tailscale.com").Changed() {
 						a.saveState()
-						if a.tailnetMgr != nil {
-							a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
-						}
 					}
 				})
 				ui.Column(c).Grow(1).MinWidth(200).Children(func() {
 					if labeledInput(c, p, "inp-tailnet-hostname", cat.TailnetCustomHostname(), &a.state.TailnetHostname, "NaiveClient").Changed() {
 						a.saveState()
-						if a.tailnetMgr != nil {
-							a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
-						}
 					}
 				})
 			})
 			if labeledInput(c, p, "inp-tailnet-auth-key", cat.TailnetAuthKey(), &a.state.TailnetAuthKey, "tskey-auth-...").Changed() {
 				a.saveState()
-				if a.tailnetMgr != nil {
-					a.tailnetMgr.UpdateConfig(a.state.tailnetConfig())
-				}
 			}
 		})
 }

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -497,4 +498,177 @@ func TestIsTailnetHostnameAndTarget(t *testing.T) {
 	if IsTailnetTarget(ModeHost, "100.63.255.254", "tail8bfe1c.ts.net", recs) {
 		t.Error("100.63.255.254 is outside 100.64.0.0/10 and must not match")
 	}
+}
+
+// Regression: saving a node rebuilt the gateway on the UI thread and DetectHostStatus blocked ~2s per rebuild on a slow host tailscaled, freezing the UI when enabling WARP.
+func TestManager_DetectHostStatus_StaleWhileRevalidate(t *testing.T) {
+	var calls atomic.Int32
+	called := make(chan struct{}, 4)
+	release := make(chan struct{}, 4)
+
+	det := NewDetectorWithClient(&mockHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			calls.Add(1)
+			called <- struct{}{}
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			return &ipnstate.Status{
+				BackendState:   "Running",
+				MagicDNSSuffix: "tail8bfe1c.ts.net.",
+				Self: &ipnstate.PeerStatus{
+					HostName:     "macbook",
+					TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+					Online:       true,
+				},
+			}, nil
+		},
+	})
+
+	var clkMu sync.Mutex
+	curNow := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+
+	mgr := NewManager(DefaultConfig(), det)
+	defer mgr.Close()
+	mgr.now = func() time.Time {
+		clkMu.Lock()
+		defer clkMu.Unlock()
+		return curNow
+	}
+
+	// 1. First DetectHostStatus blocks until released, returning Running with count=1.
+	firstDone := make(chan *Status, 1)
+	go func() {
+		firstDone <- mgr.DetectHostStatus()
+	}()
+	<-called
+	release <- struct{}{}
+	st1 := <-firstDone
+	if st1 == nil || st1.BackendState != "Running" {
+		t.Fatalf("first DetectHostStatus() = %+v, want Running", st1)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("calls after first detect = %d, want 1", got)
+	}
+
+	// 2. Second DetectHostStatus within TTL returns cached status without new LocalAPI query.
+	st2 := mgr.DetectHostStatus()
+	if st2 == nil || st2.BackendState != "Running" {
+		t.Fatalf("second DetectHostStatus() = %+v, want Running", st2)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("calls within TTL = %d, want 1", got)
+	}
+
+	// 3. Advance clock past TTL while client remains blocked: DetectHostStatus must return cached Running immediately.
+	clkMu.Lock()
+	curNow = curNow.Add(hostDetectTTL + time.Second)
+	clkMu.Unlock()
+
+	staleDone := make(chan *Status, 1)
+	go func() {
+		staleDone <- mgr.DetectHostStatus()
+	}()
+	select {
+	case st3 := <-staleDone:
+		if st3 == nil || st3.BackendState != "Running" {
+			t.Fatalf("stale DetectHostStatus() = %+v, want cached Running", st3)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DetectHostStatus blocked on stale cache refresh instead of returning cached status immediately")
+	}
+
+	// 4. Background refresh runs, then completes after release (count=2).
+	<-called
+	release <- struct{}{}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.hostDetectMu.Lock()
+		inFlight := mgr.hostDetectWait != nil
+		mgr.hostDetectMu.Unlock()
+		if !inFlight && calls.Load() == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls after background refresh = %d, want 2", got)
+	}
+}
+
+// Regression: saveState previously called UpdateConfig synchronously on the UI thread,
+// passing context.Background() to DetectHost without a deadline and hanging the UI
+// indefinitely when host tailscaled was unresponsive.
+func TestManager_UpdateConfigAsync_NoopAndNonBlocking(t *testing.T) {
+	var calls atomic.Int32
+	var hadDeadline atomic.Bool
+	called := make(chan struct{}, 4)
+	release := make(chan struct{})
+
+	det := NewDetectorWithClient(&mockHostClient{
+		statusFunc: func(ctx context.Context) (*ipnstate.Status, error) {
+			calls.Add(1)
+			if _, ok := ctx.Deadline(); ok {
+				hadDeadline.Store(true)
+			}
+			select {
+			case called <- struct{}{}:
+			default:
+			}
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			return &ipnstate.Status{BackendState: "Running"}, nil
+		},
+	})
+
+	// 1. DetectHost(context.Background()) must always attach a bounded deadline.
+	close(release)
+	if _, err := det.DetectHost(context.Background()); err != nil {
+		t.Fatalf("DetectHost(Background) failed: %v", err)
+	}
+	if !hadDeadline.Load() {
+		t.Fatalf("expected DetectHost(context.Background()) to attach a deadline to ctx")
+	}
+
+	// Reset release channel to block host queries.
+	release = make(chan struct{})
+	calls.Store(0)
+
+	initCfg := Config{Enabled: true, Mode: ModeHost}
+	mgr := NewManager(initCfg, det)
+	defer mgr.Close()
+	mgr.updateStatus(func(s *Status) {
+		s.Enabled = true
+		s.ActiveMode = ModeHost
+		s.BackendState = "Running"
+	})
+
+	// 2. UpdateConfigAsync with identical config is a no-op (no query, status preserved).
+	mgr.UpdateConfigAsync(initCfg)
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("unchanged UpdateConfigAsync triggered %d status calls, want 0", got)
+	}
+	if st := mgr.Status(); st.BackendState != "Running" {
+		t.Fatalf("unchanged UpdateConfigAsync cleared status: %+v", st)
+	}
+
+	// 3. UpdateConfigAsync with changed config returns immediately without blocking on hung HostClient.
+	done := make(chan struct{})
+	go func() {
+		mgr.UpdateConfigAsync(Config{Enabled: true, Mode: ModeAuto})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("UpdateConfigAsync blocked on unresponsive HostClient")
+	}
+	<-called
+	close(release)
 }

@@ -1310,6 +1310,7 @@ func (a *app) saveEditorService() {
 		a.editor.errText = err.Error()
 		return
 	}
+	var shouldRestart bool
 	if a.editor.isNew {
 		a.state.Services = append(a.state.Services, svc)
 		a.toast(a.catalog().ToastServiceCreated(svc.Name))
@@ -1326,18 +1327,20 @@ func (a *app) saveEditorService() {
 			a.tracker.SetIPv6Capability(svc.ID, telemetry.IPv6Unknown)
 		}
 		a.refreshServicesSnapshot()
-		if gw := a.getGateway(); gw != nil && a.mgr != nil {
-			gw.UpdateNodes(a.snapshotServices(), a.mgr.AllocatedPorts(), a.mgr.RunningServiceIDs())
-		}
 		st := a.mgr.StatusOf(svc.ID).State
 		if st == runner.StateRunning || st == runner.StateStarting {
-			_ = a.mgr.Start(svc)
+			shouldRestart = true
 			a.toast(a.catalog().ToastServiceUpdatedRestarted(svc.Name))
 		} else {
 			a.toast(a.catalog().ToastServiceUpdated(svc.Name))
 		}
 	}
 	a.saveState()
+	if shouldRestart {
+		go func(s config.Service) {
+			_ = a.mgr.Start(s)
+		}(svc)
+	}
 	a.rebuildTrayMenu()
 	returnID := ""
 	if a.editor.returnToDrawer && !a.editor.isNew {

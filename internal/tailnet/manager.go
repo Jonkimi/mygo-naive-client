@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -17,19 +18,27 @@ var DefaultTailnetSubnets = []string{
 	"fd7a:115c:a1e0::/48",
 }
 
+const hostDetectTTL = 15 * time.Second
+
 // Manager orchestrates Tailnet dual-mode runtime (Host daemon vs Embedded sing-box endpoint).
 type Manager struct {
-	mu           sync.RWMutex
-	cfg          Config
-	detector     *Detector
-	status       Status
-	subscribers  map[int]func(Status)
-	nextSubID    int
-	embeddedEp   adapter.TailscaleEndpoint
-	cancelCtx    context.Context
-	cancelFunc   context.CancelFunc
-	epCancel     context.CancelFunc
-	pollTicker   *time.Ticker
+	mu               sync.RWMutex
+	cfg              Config
+	detector         *Detector
+	status           Status
+	subscribers      map[int]func(Status)
+	nextSubID        int
+	embeddedEp       adapter.TailscaleEndpoint
+	cancelCtx        context.Context
+	cancelFunc       context.CancelFunc
+	epCancel         context.CancelFunc
+	pollTicker       *time.Ticker
+	hostDetectMu     sync.Mutex
+	hostDetected     bool
+	hostDetectResult *Status
+	hostDetectAt     time.Time
+	hostDetectWait   chan struct{}
+	now              func() time.Time
 }
 
 // NewManager creates and initializes a Tailnet Manager.
@@ -62,6 +71,19 @@ func (m *Manager) initStatus() {
 	}
 }
 
+func configsEqual(a, b Config) bool {
+	return a.Enabled == b.Enabled &&
+		a.Mode == b.Mode &&
+		a.ControlURL == b.ControlURL &&
+		a.AuthKey == b.AuthKey &&
+		a.Hostname == b.Hostname &&
+		a.AcceptRoutes == b.AcceptRoutes &&
+		a.ExitNode == b.ExitNode &&
+		a.ExposeMixedPort == b.ExposeMixedPort &&
+		a.AdvertiseExitNode == b.AdvertiseExitNode &&
+		slices.Equal(a.AdvertiseRoutes, b.AdvertiseRoutes)
+}
+
 // UpdateConfig updates the manager's configuration and triggers a state refresh.
 func (m *Manager) UpdateConfig(cfg Config) {
 	m.mu.Lock()
@@ -77,6 +99,33 @@ func (m *Manager) UpdateConfig(cfg Config) {
 	m.mu.Unlock()
 
 	m.Refresh(context.Background())
+}
+
+// UpdateConfigAsync updates configuration when changed and triggers a background refresh
+// without blocking the caller; unchanged configs are a no-op.
+func (m *Manager) UpdateConfigAsync(cfg Config) {
+	m.mu.Lock()
+	if configsEqual(m.cfg, cfg) {
+		m.mu.Unlock()
+		return
+	}
+	m.cfg = cfg
+	if cfg.Mode != ModeEmbedded {
+		if m.epCancel != nil {
+			m.epCancel()
+			m.epCancel = nil
+		}
+		m.embeddedEp = nil
+	}
+	m.initStatus()
+	m.mu.Unlock()
+
+	m.RefreshAsync()
+}
+
+// RefreshAsync triggers a non-blocking background Tailnet status refresh.
+func (m *Manager) RefreshAsync() {
+	go m.Refresh(m.cancelCtx)
 }
 
 // GetConfig returns a copy of current config.
@@ -117,7 +166,80 @@ func (m *Manager) ShouldUseEmbeddedMode() bool {
 	return m.cfg.Enabled && m.status.ActiveMode == ModeEmbedded
 }
 
-// DetectHostStatus queries the host Tailscale daemon directly regardless of current config.
+func (m *Manager) nowTime() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
+
+func cloneStatusPtr(st *Status) *Status {
+	if st == nil {
+		return nil
+	}
+	c := *st
+	return &c
+}
+
+func (m *Manager) startHostDetectLocked(detector *Detector) chan struct{} {
+	ch := make(chan struct{})
+	m.hostDetectWait = ch
+	go m.runHostDetect(detector, ch)
+	return ch
+}
+
+func (m *Manager) runHostDetect(detector *Detector, ch chan struct{}) {
+	ctx, cancel := context.WithTimeout(m.cancelCtx, 2*time.Second)
+	defer cancel()
+
+	st, err := detector.DetectHost(ctx)
+	var res *Status
+	if err == nil && st != nil {
+		res = cloneStatusPtr(st)
+	}
+
+	if res != nil && res.BackendState == "Running" {
+		m.mu.RLock()
+		shouldSync := m.cfg.Enabled && (m.cfg.Mode == ModeHost || m.cfg.Mode == ModeAuto)
+		m.mu.RUnlock()
+		if shouldSync {
+			m.updateStatus(func(s *Status) {
+				*s = *res
+				s.Enabled = true
+				s.ActiveMode = ModeHost
+				s.Error = ""
+			})
+		}
+	}
+
+	m.hostDetectMu.Lock()
+	m.hostDetectResult = res
+	m.hostDetectAt = m.nowTime()
+	m.hostDetected = true
+	if m.hostDetectWait == ch {
+		m.hostDetectWait = nil
+	}
+	m.hostDetectMu.Unlock()
+	close(ch)
+}
+
+// WarmHostDetection starts a non-blocking background host Tailscale probe if no result is cached yet.
+func (m *Manager) WarmHostDetection() {
+	m.mu.RLock()
+	detector := m.detector
+	m.mu.RUnlock()
+	if detector == nil {
+		return
+	}
+	m.hostDetectMu.Lock()
+	if !m.hostDetected && m.hostDetectWait == nil {
+		m.startHostDetectLocked(detector)
+	}
+	m.hostDetectMu.Unlock()
+}
+
+// DetectHostStatus queries the host Tailscale daemon directly regardless of current config,
+// returning cached results immediately and refreshing stale entries in the background.
 func (m *Manager) DetectHostStatus() *Status {
 	m.mu.RLock()
 	if m.status.BackendState == "Running" && (m.status.ActiveMode == ModeHost || m.status.ActiveMode == ModeAuto) {
@@ -130,26 +252,28 @@ func (m *Manager) DetectHostStatus() *Status {
 	if detector == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	st, err := detector.DetectHost(ctx)
-	if err != nil || st == nil {
-		return nil
-	}
-	if st.BackendState == "Running" {
-		m.mu.RLock()
-		shouldSync := m.cfg.Enabled && (m.cfg.Mode == ModeHost || m.cfg.Mode == ModeAuto)
-		m.mu.RUnlock()
-		if shouldSync {
-			m.updateStatus(func(s *Status) {
-				*s = *st
-				s.Enabled = true
-				s.ActiveMode = ModeHost
-				s.Error = ""
-			})
+
+	m.hostDetectMu.Lock()
+	if m.hostDetected {
+		res := cloneStatusPtr(m.hostDetectResult)
+		if m.nowTime().Sub(m.hostDetectAt) >= hostDetectTTL && m.hostDetectWait == nil {
+			m.startHostDetectLocked(detector)
 		}
+		m.hostDetectMu.Unlock()
+		return res
 	}
-	return st
+	waitCh := m.hostDetectWait
+	if waitCh == nil {
+		waitCh = m.startHostDetectLocked(detector)
+	}
+	m.hostDetectMu.Unlock()
+
+	<-waitCh
+
+	m.hostDetectMu.Lock()
+	res := cloneStatusPtr(m.hostDetectResult)
+	m.hostDetectMu.Unlock()
+	return res
 }
 
 // GetHostExcludeAddresses returns CGNAT, ULA, and discovered subnet routes for TUN exclusion.
@@ -392,7 +516,7 @@ func (m *Manager) startPoller() {
 				activeMode := m.status.ActiveMode
 				m.mu.RUnlock()
 				if activeMode == ModeHost || activeMode == ModeAuto {
-					m.Refresh(context.Background())
+					m.Refresh(m.cancelCtx)
 				}
 			}
 		}

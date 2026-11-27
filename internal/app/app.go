@@ -137,6 +137,9 @@ type app struct {
 	dormantStartMu     sync.Mutex
 	gatewayLifecycleMu sync.Mutex
 	gatewayMu          sync.Mutex
+	gatewaySyncMu      sync.Mutex
+	gatewaySyncPending bool
+	gatewaySyncRunning bool
 	persistMu          sync.Mutex
 	toastMu            sync.Mutex
 	uiQueueMu          sync.Mutex
@@ -480,6 +483,7 @@ func newApp(dataDir string) *app {
 	})
 	tnCfg := st.tailnetConfig()
 	tnMgr := tailnet.NewManager(tnCfg, nil)
+	tnMgr.WarmHostDetection()
 	a := &app{
 		dataDir:        dataDir,
 		state:          st,
@@ -571,6 +575,13 @@ func (a *app) initSubsystems() {
 		if err := a.ensureGatewaySynced(); err != nil {
 			return nil, err
 		}
+		gw := a.getGateway()
+		if gw == nil {
+			return nil, errors.New("gateway engine is not running")
+		}
+		return gw.DialNode(ctx, svc.ID, network, addr)
+	}
+	a.mgr.IPv6Dialer = func(ctx context.Context, svc config.Service, network, addr string) (net.Conn, error) {
 		gw := a.getGateway()
 		if gw == nil {
 			return nil, errors.New("gateway engine is not running")
@@ -3435,6 +3446,9 @@ func (a *app) initDNS() {
 }
 
 func (a *app) stopGateway() {
+	a.gatewaySyncMu.Lock()
+	a.gatewaySyncPending = false
+	a.gatewaySyncMu.Unlock()
 	if sp := a.sysproxy; sp != nil {
 		a.runSysproxyOpSync(func() { _ = sp.Unset() })
 	}
@@ -4369,30 +4383,104 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 	return fmt.Sprintf("%#v", sigObj)
 }
 
-func (a *app) syncRouter() {
-	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
-	a.loadGeoDataIfPresent()
-	a.refreshGatewaySnapshot()
+func (a *app) scheduleGatewaySync() {
+	select {
+	case <-a.quitCh:
+		return
+	default:
+	}
+	a.gatewaySyncMu.Lock()
+	a.gatewaySyncPending = true
+	if a.gatewaySyncRunning {
+		a.gatewaySyncMu.Unlock()
+		return
+	}
+	a.gatewaySyncRunning = true
+	a.gatewaySyncMu.Unlock()
+	go a.runGatewaySyncLoop()
+}
+
+func (a *app) runGatewaySyncLoop() {
+	defer func() {
+		a.gatewaySyncMu.Lock()
+		a.gatewaySyncRunning = false
+		a.gatewaySyncMu.Unlock()
+	}()
+	for {
+		a.gatewaySyncMu.Lock()
+		if !a.gatewaySyncPending {
+			a.gatewaySyncRunning = false
+			a.gatewaySyncMu.Unlock()
+			return
+		}
+		a.gatewaySyncPending = false
+		a.gatewaySyncMu.Unlock()
+
+		select {
+		case <-a.quitCh:
+			return
+		default:
+		}
+		a.syncGatewayAfterConfigChange()
+	}
+}
+
+func (a *app) syncGatewayAfterConfigChange() {
 	a.gatewayLifecycleMu.Lock()
+	defer a.gatewayLifecycleMu.Unlock()
+
+	gw := a.getGateway()
+	if gw == nil {
+		return
+	}
 	var allocPorts map[string]int
 	var activeIDs map[string]bool
 	if a.mgr != nil {
 		allocPorts = a.mgr.AllocatedPorts()
 		activeIDs = a.mgr.RunningServiceIDs()
 	}
-	gw := a.getGateway()
-	if gw != nil {
-		a.gatewayMu.Lock()
-		snap := cloneGatewayConfigSnapshot(a.gwSnap)
-		lastSig := a.lastGatewaySig
-		a.gatewayMu.Unlock()
+	a.gatewayMu.Lock()
+	snap := cloneGatewayConfigSnapshot(a.gwSnap)
+	lastSig := a.lastGatewaySig
+	a.gatewayMu.Unlock()
+
+	needsRestart := !snap.GatewayEnabled || a.gatewayConfigSignatureForSnapshot(snap, allocPorts) != lastSig
+	if !needsRestart {
 		gw.UpdateNodes(cloneServices(snap.Services), allocPorts, activeIDs)
-		needsRestart := !snap.GatewayEnabled || a.gatewayConfigSignatureForSnapshot(snap, allocPorts) != lastSig
-		if needsRestart {
-			_ = a.startGatewayLocked()
-		}
+		return
 	}
-	a.gatewayLifecycleMu.Unlock()
+	_ = a.startGatewayLocked()
+	a.dispatchUI(nil)
+}
+
+func (a *app) syncRouter() {
+	a.router = routing.NewRouter(a.state.RoutingRules, a.state.RoutingFinal)
+	a.loadGeoDataIfPresent()
+	a.refreshGatewaySnapshot()
+
+	a.gatewayMu.Lock()
+	gw := a.gateway
+	starting := a.gatewayStarting || a.startingGateway != nil
+	snap := cloneGatewayConfigSnapshot(a.gwSnap)
+	lastSig := a.lastGatewaySig
+	a.gatewayMu.Unlock()
+
+	if gw == nil && !starting {
+		return
+	}
+	var allocPorts map[string]int
+	var activeIDs map[string]bool
+	if a.mgr != nil {
+		allocPorts = a.mgr.AllocatedPorts()
+		activeIDs = a.mgr.RunningServiceIDs()
+	}
+	needsRestart := !snap.GatewayEnabled || a.gatewayConfigSignatureForSnapshot(snap, allocPorts) != lastSig
+	if gw != nil && !needsRestart {
+		gw.UpdateNodes(cloneServices(snap.Services), allocPorts, activeIDs)
+	}
+	if needsRestart || starting {
+		a.scheduleGatewaySync()
+	}
 }
 
 // otherWarpRuleCount counts the routing rules (including the final fallback)

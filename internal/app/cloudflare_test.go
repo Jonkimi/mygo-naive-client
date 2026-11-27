@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/sagernet/tailscale/ipn/ipnstate"
 
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"naive-client/internal/config"
 	"naive-client/internal/routing"
 	"naive-client/internal/runner"
+	"naive-client/internal/tailnet"
 	"naive-client/internal/warp"
 )
 
@@ -1564,6 +1566,108 @@ func TestSidecar_StartGatewayLockedPreservesBuiltPortsForSig(t *testing.T) {
 	if !ok || ob.Type() != "socks" {
 		t.Fatalf("expected node-%s outbound type=socks after ensureGatewaySynced, got ok=%v ob=%v", naiveSvc.ID, ok, ob)
 	}
+}
+
+type blockingTailnetClient struct {
+	release chan struct{}
+}
+
+func (b *blockingTailnetClient) Status(ctx context.Context) (*ipnstate.Status, error) {
+	select {
+	case <-b.release:
+		return &ipnstate.Status{BackendState: "Running"}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (b *blockingTailnetClient) SetExitNode(context.Context, string) error { return nil }
+func (b *blockingTailnetClient) SetUseExitNode(context.Context, bool) error  { return nil }
+
+// Regression: enabling WARP on a running node and saving in the node editor previously ran
+// tailnet.UpdateConfig(Background), syncRouter gateway rebuild, and mgr.Start synchronously on
+// the UI thread, freezing the UI for several seconds or hanging until macOS showed "Not Responding".
+func TestSaveEditorService_EnableWarpDoesNotBlockUIThread(t *testing.T) {
+	naiveSvc := config.Service{
+		ID:       "naive-warp-nonblock-01",
+		Name:     "Naive NonBlock",
+		Protocol: config.ProtoNaive,
+		Engine:   config.EngineSidecar,
+		Listens:  []string{"socks://127.0.0.1:0"},
+		Proxies:  []string{"https://user:pass@example.com:443"},
+	}
+
+	a, tt, _ := newTestApp(t, []config.Service{naiveSvc})
+	releaseTailnet := make(chan struct{})
+	defer close(releaseTailnet)
+	if a.tailnetMgr != nil {
+		a.tailnetMgr.Close()
+	}
+	a.state.TailnetEnabled = true
+	a.state.TailnetMode = string(tailnet.ModeHost)
+	a.tailnetMgr = tailnet.NewManager(a.state.tailnetConfig(), tailnet.NewDetectorWithClient(&blockingTailnetClient{release: releaseTailnet}))
+	defer a.tailnetMgr.Close()
+
+	a.state.GatewayPort = freeLocalPort(t)
+	a.state.GatewayEnabled = true
+	a.saveState()
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway failed: %v", err)
+	}
+	defer a.stopGateway()
+
+	if err := a.mgr.Start(naiveSvc); err != nil {
+		t.Fatalf("mgr.Start failed: %v", err)
+	}
+	defer a.mgr.StopAll()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.mgr.StatusOf(naiveSvc.ID).State == runner.StateRunning {
+			if gw := a.getGateway(); gw != nil {
+				if ob, ok := gw.GetOutbound(naiveSvc.ID); ok && ob.Type() == "socks" {
+					break
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	tt.SetSize(960, 900)
+	a.openEditServiceDialog(a.state.Services[0])
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	a.editor.scroll.Y = 400
+	tt.Frame()
+	if err := tt.Click(a.catalog().NodeEditorEnableWarp()); err != nil {
+		t.Fatalf("toggle enable warp: %v", err)
+	}
+	tt.Frame()
+
+	saveDone := make(chan struct{})
+	go func() {
+		a.saveEditorService()
+		close(saveDone)
+	}()
+	select {
+	case <-saveDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("saveEditorService blocked the UI thread instead of scheduling gateway/sidecar work asynchronously")
+	}
+
+	// Gateway and restarted sidecar must converge asynchronously to a chained WARP outbound.
+	convergeDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(convergeDeadline) {
+		if a.mgr.StatusOf(naiveSvc.ID).State == runner.StateRunning {
+			if gw := a.getGateway(); gw != nil {
+				if ob, ok := gw.GetOutbound(naiveSvc.ID); ok && ob.Type() == "masque" && gw.IsChainedWarp(naiveSvc.ID) {
+					return
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("expected gateway to converge asynchronously to chained WARP outbound")
 }
 
 

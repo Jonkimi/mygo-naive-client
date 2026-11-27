@@ -73,8 +73,11 @@ func NewDetectorWithClient(client HostClient) *Detector {
 // DetectHost checks if a local tailscaled is running and queries its status.
 func (d *Detector) DetectHost(ctx context.Context) (*Status, error) {
 	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 	}
 

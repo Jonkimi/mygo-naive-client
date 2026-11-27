@@ -110,6 +110,7 @@ type Manager struct {
 	OnProbeFailure     func(id string, err error)
 	OnServiceStarted func(svc config.Service)
 	ServiceDialer    ServiceDialerFunc
+	IPv6Dialer       ServiceDialerFunc
 	PreStartChecker  PreStartCheckerFunc
 	BackoffMin     time.Duration // overridable in tests
 }
@@ -1020,10 +1021,15 @@ func (m *Manager) ProbeServiceIPv6Ctx(ctx context.Context, svc config.Service, t
 	}
 
 	var tr *http.Transport
-	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && m.ServiceDialer != nil {
+	dialer := m.IPv6Dialer
+	if dialer == nil {
+		dialer = m.ServiceDialer
+	}
+	if (svc.EffectiveEngine() == config.EngineSingBox || svc.EnableWARP) && dialer != nil {
 		tr = &http.Transport{
+			DisableKeepAlives: true,
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
-				return m.ServiceDialer(c, svc, network, addr)
+				return dialer(c, svc, network, addr)
 			},
 		}
 	} else {
@@ -1035,7 +1041,9 @@ func (m *Manager) ProbeServiceIPv6Ctx(ctx context.Context, svc config.Service, t
 		if err != nil {
 			return false, false
 		}
+		tr.DisableKeepAlives = true
 	}
+	defer tr.CloseIdleConnections()
 
 	supported, conclusive = ProbeIPv6WithTransport(ctx, tr, targets)
 	if !supported {
