@@ -126,6 +126,9 @@ type app struct {
 	tailnetSyncTimer *time.Timer
 	tunDevice       *tunhelper.ReceivedDevice
 	tunForceIPv6    bool
+	lanIPsCache     []string
+	lanIPsUpdatedAt time.Time
+	listLANIPsFn    func() []string
 	mockTunDevice    func() (*tunhelper.ReceivedDevice, error)
 	mockTunCreator   func(options tun.Options) (tun.Tun, error)
 	mockNodeResolver func(host string) []net.IP
@@ -2177,6 +2180,7 @@ type gatewayConfigSnapshot struct {
 	Initialized       bool
 	GatewayEnabled    bool
 	GatewayPort       int
+	GatewayAllowLAN   bool
 	TrafficMode       string
 	Services          []config.Service
 	Rules             []routing.Rule
@@ -2221,6 +2225,7 @@ func (a *app) buildGatewaySnapshotFromUI() gatewayConfigSnapshot {
 		Initialized:       true,
 		GatewayEnabled:    a.state.GatewayEnabled,
 		GatewayPort:       a.state.GatewayPort,
+		GatewayAllowLAN:   a.state.GatewayAllowLAN,
 		TrafficMode:       a.state.TrafficMode,
 		Services:          cloneServices(a.state.Services),
 		Rules:             cloneRoutingRules(a.state.RoutingRules),
@@ -2941,12 +2946,14 @@ func (a *app) startGatewayLocked() error {
 	tnCfg := tnInfo.Config
 	tnMode := tnInfo.Mode
 
+	listenHost, dualStackLoopback := gatewayListenTarget(snap.GatewayAllowLAN, port)
+
 	cfCfg := snap.Cloudflare
 	cfCfg.Account = cfCfg.Account.Clone()
 	var eng *boxengine.Engine
 	var err error
 	eng, err = boxengine.New(boxengine.EngineOptions{
-		ListenAddr:            fmt.Sprintf("127.0.0.1:%d", port),
+		ListenAddr:            net.JoinHostPort(listenHost, strconv.Itoa(port)),
 		TrafficMode:           trafficMode,
 		TunFD:                 tunFD,
 		TunInterface:          tunName,
@@ -2973,7 +2980,7 @@ func (a *app) startGatewayLocked() error {
 		DirectDNSStrategy:     snap.DirectDNSStrategy,
 		ProxyDNSStrategy:      snap.ProxyDNSStrategy,
 		DNSOptimisticCache:    snap.DNSOptimisticCache,
-		DualStackLoopback:     canBindIPv6Loopback(port),
+		DualStackLoopback:     dualStackLoopback,
 		TailnetConfig:         &tnCfg,
 		TailnetMode:           tnMode,
 		TailnetHostExcludes:   tnInfo.Excludes,
@@ -3049,7 +3056,7 @@ func (a *app) startGatewayLocked() error {
 	}
 
 	if trafficMode == "sysproxy" && a.sysproxy != nil {
-		sp, addr, bypass := a.sysproxy, eng.Addr(), snap.SystemProxyBypass
+		sp, addr, bypass := a.sysproxy, eng.LocalProxyAddr(), snap.SystemProxyBypass
 		a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
 	} else if trafficMode == "tun" && a.sysproxy != nil {
 		sp := a.sysproxy
@@ -3126,6 +3133,156 @@ func canBindIPv6Loopback(port int) bool {
 	}
 	_ = ln.Close()
 	return true
+}
+
+func canBindIPv6Wildcard(port int) bool {
+	if port <= 0 {
+		return false
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("[::]:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+func gatewayListenTarget(allowLAN bool, port int) (listenHost string, dualStackLoopback bool) {
+	if !allowLAN {
+		return "127.0.0.1", canBindIPv6Loopback(port)
+	}
+	if canBindIPv6Wildcard(port) {
+		return "::", false
+	}
+	return "0.0.0.0", false
+}
+
+var ignoredLANInterfacePrefixes = []string{
+	"utun", "tun", "tap", "wg", "tailscale",
+	"docker", "br-", "veth", "virbr", "vmnet", "vboxnet",
+	"awdl", "llw", "anpi", "bridge", "lo", "gif", "stf", "ap",
+}
+
+func isIgnoredLANInterface(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range ignoredLANInterfacePrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTailscaleCGNATv4(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	// 100.64.0.0/10
+	return ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127
+}
+
+func isTailscaleULA6(ip net.IP) bool {
+	ip16 := ip.To16()
+	if ip16 == nil || ip.To4() != nil {
+		return false
+	}
+	// fd7a:115c:a1e0::/48
+	return ip16[0] == 0xfd && ip16[1] == 0x7a &&
+		ip16[2] == 0x11 && ip16[3] == 0x5c &&
+		ip16[4] == 0xa1 && ip16[5] == 0xe0
+}
+
+func discoverLANIPs() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var v4s, v6s []string
+	seen := make(map[string]bool)
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isIgnoredLANInterface(iface.Name) {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, raw := range addrs {
+			ipNet, ok := raw.(*net.IPNet)
+			if !ok || ipNet.IP == nil {
+				continue
+			}
+			ip := ipNet.IP
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil {
+				if isTailscaleCGNATv4(ip4) {
+					continue
+				}
+				if ip4.IsPrivate() {
+					s := ip4.String()
+					if !seen[s] {
+						seen[s] = true
+						v4s = append(v4s, s)
+					}
+				}
+				continue
+			}
+			if ip.IsGlobalUnicast() && !isTailscaleULA6(ip) {
+				s := ip.String()
+				if !seen[s] {
+					seen[s] = true
+					v6s = append(v6s, s)
+				}
+			}
+		}
+	}
+	sort.Strings(v4s)
+	sort.Strings(v6s)
+	out := append(v4s, v6s...)
+	if len(out) > 4 {
+		out = out[:4]
+	}
+	return out
+}
+
+func (a *app) cachedLANIPs() []string {
+	if a.listLANIPsFn != nil {
+		return a.listLANIPsFn()
+	}
+	now := time.Now()
+	a.gatewayMu.Lock()
+	if !a.lanIPsUpdatedAt.IsZero() && now.Sub(a.lanIPsUpdatedAt) < 5*time.Second {
+		out := append([]string(nil), a.lanIPsCache...)
+		a.gatewayMu.Unlock()
+		return out
+	}
+	a.gatewayMu.Unlock()
+
+	ips := discoverLANIPs()
+	a.gatewayMu.Lock()
+	a.lanIPsCache = append([]string(nil), ips...)
+	a.lanIPsUpdatedAt = now
+	a.gatewayMu.Unlock()
+	return ips
+}
+
+func (a *app) applyGatewayAllowLANChange() {
+	a.gatewayMu.Lock()
+	a.lanIPsUpdatedAt = time.Time{}
+	a.gatewayMu.Unlock()
+	a.saveState()
+	a.refreshGatewaySnapshot()
+	if a.state.GatewayEnabled {
+		if err := a.startGatewayWithFallback(); err != nil {
+			a.toast("网关启动失败: " + err.Error())
+		}
+	}
 }
 
 func (a *app) collectBootstrapDomains() []string {
@@ -3628,7 +3785,7 @@ func (a *app) setTrafficMode(mode string) error {
 		}
 		if sp := a.sysproxy; sp != nil {
 			if gw := a.getGateway(); gw != nil {
-				addr, bypass := gw.Addr(), a.state.SystemProxyBypass
+				addr, bypass := gw.LocalProxyAddr(), a.state.SystemProxyBypass
 				a.runSysproxyOp(func() { _ = sp.Set(addr, bypass) })
 			}
 		}
@@ -4082,6 +4239,7 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 	}
 	sigObj := struct {
 		Port             int
+		AllowLAN         bool
 		TrafficMode      string
 		Svcs             []svcSig
 		AllocatedPorts   map[string]int
@@ -4105,6 +4263,7 @@ func (a *app) gatewayConfigSignatureForSnapshot(snap gatewayConfigSnapshot, allo
 		Cloudflare       warp.Config
 	}{
 		Port:             snap.GatewayPort,
+		AllowLAN:         snap.GatewayAllowLAN,
 		TrafficMode:      engineTrafficMode(snap.TrafficMode),
 		Svcs:             svcs,
 		AllocatedPorts:   allocPorts,

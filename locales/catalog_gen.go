@@ -1782,6 +1782,66 @@ func (msgs Messages) GatewayPortHint() string {
 	return Catalog.Format(msgs.locale, "gatewayPortHint", nil)
 }
 
+// GatewayAllowLANLabel says "Allow LAN Connections"
+// in the language the app shows.
+func GatewayAllowLANLabel() string { return In(i18n.Locale()).GatewayAllowLANLabel() }
+
+// GatewayAllowLANLabel says "Allow LAN Connections"
+// in the language of msgs.
+func (msgs Messages) GatewayAllowLANLabel() string {
+	return Catalog.Format(msgs.locale, "gatewayAllowLANLabel", nil)
+}
+
+// GatewayAllowLANHint says "Listen on all network interfaces so other devices on the same LAN can use this HTTP/SOCKS5 gateway"
+// in the language the app shows.
+func GatewayAllowLANHint() string { return In(i18n.Locale()).GatewayAllowLANHint() }
+
+// GatewayAllowLANHint says "Listen on all network interfaces so other devices on the same LAN can use this HTTP/SOCKS5 gateway"
+// in the language of msgs.
+func (msgs Messages) GatewayAllowLANHint() string {
+	return Catalog.Format(msgs.locale, "gatewayAllowLANHint", nil)
+}
+
+// GatewayLANAddressesLabel says "LAN Proxy Addresses (click to copy)"
+// in the language the app shows.
+func GatewayLANAddressesLabel() string { return In(i18n.Locale()).GatewayLANAddressesLabel() }
+
+// GatewayLANAddressesLabel says "LAN Proxy Addresses (click to copy)"
+// in the language of msgs.
+func (msgs Messages) GatewayLANAddressesLabel() string {
+	return Catalog.Format(msgs.locale, "gatewayLANAddressesLabel", nil)
+}
+
+// GatewayLANNoAddress says "No active LAN IP address detected"
+// in the language the app shows.
+func GatewayLANNoAddress() string { return In(i18n.Locale()).GatewayLANNoAddress() }
+
+// GatewayLANNoAddress says "No active LAN IP address detected"
+// in the language of msgs.
+func (msgs Messages) GatewayLANNoAddress() string {
+	return Catalog.Format(msgs.locale, "gatewayLANNoAddress", nil)
+}
+
+// GatewayLANBadge says "LAN"
+// in the language the app shows.
+func GatewayLANBadge() string { return In(i18n.Locale()).GatewayLANBadge() }
+
+// GatewayLANBadge says "LAN"
+// in the language of msgs.
+func (msgs Messages) GatewayLANBadge() string {
+	return Catalog.Format(msgs.locale, "gatewayLANBadge", nil)
+}
+
+// GatewayLANAddressCopied says "Copied LAN proxy address"
+// in the language the app shows.
+func GatewayLANAddressCopied() string { return In(i18n.Locale()).GatewayLANAddressCopied() }
+
+// GatewayLANAddressCopied says "Copied LAN proxy address"
+// in the language of msgs.
+func (msgs Messages) GatewayLANAddressCopied() string {
+	return Catalog.Format(msgs.locale, "gatewayLANAddressCopied", nil)
+}
+
 // DohSectionTitle says "Split DNS / DoH Resolution"
 // in the language the app shows.
 func DohSectionTitle() string { return In(i18n.Locale()).DohSectionTitle() }

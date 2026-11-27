@@ -212,3 +212,37 @@ func TestSysproxy_WindowsIPv6ProxyServerFormatting(t *testing.T) {
 	}
 }
 
+// Tests that wildcard proxy listen addresses (0.0.0.0, ::, empty host) normalize to 127.0.0.1 in sysproxy Set and recovery state.
+func TestSysproxy_WildcardNormalizedToLoopback(t *testing.T) {
+	recPath := filepath.Join(t.TempDir(), "recovery.json")
+	for _, input := range []string{"0.0.0.0:10809", "[::]:10809", ":10809"} {
+		var sawCalls []string
+		sp := NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+			sawCalls = append(sawCalls, name+" "+strings.Join(args, " "))
+			if name == "networksetup" && len(args) > 0 && args[0] == "-listallnetworkservices" {
+				return []byte("An asterisk (*)\nWi-Fi\n"), nil
+			}
+			return []byte("ok"), nil
+		}, recPath)
+
+		if err := sp.Set(input, []string{"127.0.0.1"}); err != nil {
+			t.Fatalf("Set(%q) failed: %v", input, err)
+		}
+		joined := strings.Join(sawCalls, "\n")
+		if strings.Contains(joined, "0.0.0.0") || strings.Contains(joined, " :: ") || strings.Contains(joined, "[::]") {
+			t.Fatalf("expected wildcard normalized to 127.0.0.1 for %q, got calls:\n%s", input, joined)
+		}
+		if !strings.Contains(joined, "127.0.0.1") {
+			t.Fatalf("expected 127.0.0.1 in sysproxy command calls for %q, got:\n%s", input, joined)
+		}
+
+		raw, err := os.ReadFile(recPath)
+		if err != nil {
+			t.Fatalf("read recovery state: %v", err)
+		}
+		if !strings.Contains(string(raw), `"addr": "127.0.0.1:10809"`) {
+			t.Fatalf("expected normalized recovery addr 127.0.0.1:10809 for %q, got:\n%s", input, string(raw))
+		}
+	}
+}
+

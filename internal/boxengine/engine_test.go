@@ -2547,3 +2547,70 @@ func TestEngine_IPv6FullSupport(t *testing.T) {
 		t.Errorf("expected AAAA block chain 'ads -> ::', got %q", got)
 	}
 }
+
+// Tests that wildcard Allow LAN listen hosts omit duplicate tailnet-mixed-in/mixed-in-v6 inbounds and LocalProxyAddr returns 127.0.0.1.
+func TestEngine_AllowLANWildcardInboundsAndLocalProxyAddr(t *testing.T) {
+	opts := EngineOptions{
+		DualStackLoopback: true,
+		TailnetConfig: &tailnet.Config{
+			ExposeMixedPort: true,
+		},
+	}
+	for _, host := range []string{"::", "0.0.0.0", ""} {
+		inbounds := buildInboundsConfig(opts, host, 10809)
+		if len(inbounds) != 1 || inbounds[0]["tag"] != "mixed-in" {
+			t.Fatalf("host %q: expected only mixed-in inbound when wildcard bound, got %+v", host, inbounds)
+		}
+	}
+
+	eng, err := New(EngineOptions{
+		ListenAddr: "0.0.0.0:0",
+	})
+	if err != nil {
+		t.Fatalf("New Engine with 0.0.0.0:0 failed: %v", err)
+	}
+	if err := eng.Start(); err != nil {
+		t.Fatalf("Start Engine with 0.0.0.0:0 failed: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	if !strings.HasPrefix(eng.Addr(), "0.0.0.0:") {
+		t.Fatalf("expected Addr on 0.0.0.0:<port>, got %q", eng.Addr())
+	}
+	wantLocal := fmt.Sprintf("127.0.0.1:%d", eng.Port())
+	if eng.LocalProxyAddr() != wantLocal {
+		t.Fatalf("expected LocalProxyAddr %q, got %q", wantLocal, eng.LocalProxyAddr())
+	}
+	conn, err := net.DialTimeout("tcp", eng.LocalProxyAddr(), time.Second)
+	if err != nil {
+		t.Fatalf("dial LocalProxyAddr %s failed: %v", eng.LocalProxyAddr(), err)
+	}
+	_ = conn.Close()
+
+	if ln, err := net.Listen("tcp", "[::]:0"); err == nil {
+		_ = ln.Close()
+		eng6, err := New(EngineOptions{
+			ListenAddr: "[::]:0",
+		})
+		if err != nil {
+			t.Fatalf("New Engine with [::]:0 failed: %v", err)
+		}
+		if err := eng6.Start(); err != nil {
+			t.Fatalf("Start Engine with [::]:0 failed: %v", err)
+		}
+		defer func() { _ = eng6.Close() }()
+
+		if !strings.HasPrefix(eng6.Addr(), "[::]:") {
+			t.Fatalf("expected Addr on [::]:<port>, got %q", eng6.Addr())
+		}
+		wantLocal6 := fmt.Sprintf("127.0.0.1:%d", eng6.Port())
+		if eng6.LocalProxyAddr() != wantLocal6 {
+			t.Fatalf("expected LocalProxyAddr %q for IPv6 wildcard, got %q", wantLocal6, eng6.LocalProxyAddr())
+		}
+		conn6, err := net.DialTimeout("tcp", eng6.LocalProxyAddr(), time.Second)
+		if err != nil {
+			t.Fatalf("dial LocalProxyAddr %s for [::] failed: %v", eng6.LocalProxyAddr(), err)
+		}
+		_ = conn6.Close()
+	}
+}

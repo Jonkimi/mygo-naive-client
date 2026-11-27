@@ -241,6 +241,9 @@ func (a *app) renderSidebarEngineStatusPill(c *ui.Context, p palette, collapsed 
 		gwPort = 10809
 	}
 	gwAddr := fmt.Sprintf("127.0.0.1:%d", gwPort)
+	if a.state.GatewayAllowLAN {
+		gwAddr = fmt.Sprintf("LAN :%d", gwPort)
+	}
 
 	// Gateway dot & badge colors
 	gwRunning := a.state.GatewayEnabled && a.getGateway() != nil

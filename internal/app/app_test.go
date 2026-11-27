@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -4629,6 +4630,135 @@ func TestApp_SplitDNSStrategyUI(t *testing.T) {
 	a.loadState()
 	if a.state.DirectDNSStrategy != "ipv4_only" || a.state.ProxyDNSStrategy != "prefer_ipv6" {
 		t.Fatalf("expected persisted split DNS strategies, got %q / %q", a.state.DirectDNSStrategy, a.state.ProxyDNSStrategy)
+	}
+}
+
+// Tests toggling Gateway Allow LAN access in Settings UI, restarting gateway on wildcard bind, normalizing sysproxy to 127.0.0.1, and copying LAN proxy addresses.
+func TestApp_GatewayAllowLAN_UIAndLifecycle(t *testing.T) {
+	a, _, _ := newTestApp(t, nil)
+	port := freeLocalPort(t)
+	a.state.GatewayEnabled = true
+	a.state.GatewayPort = port
+	a.listLANIPsFn = func() []string { return []string{"192.168.1.25", "fd00::25"} }
+
+	var sysMu sync.Mutex
+	var sysCalls []string
+	a.sysproxy = sysproxy.NewWithExecutor(func(name string, args ...string) ([]byte, error) {
+		if name == "networksetup" && len(args) > 0 && args[0] == "-listallnetworkservices" {
+			return []byte("Wi-Fi\n"), nil
+		}
+		sysMu.Lock()
+		sysCalls = append(sysCalls, name+" "+strings.Join(args, " "))
+		sysMu.Unlock()
+		return []byte("ok"), nil
+	}, filepath.Join(a.dataDir, "network-recovery.json"))
+
+	if err := a.startGateway(); err != nil {
+		t.Fatalf("startGateway initial: %v", err)
+	}
+	defer a.stopGateway()
+
+	if !strings.HasPrefix(a.gateway.Addr(), "127.0.0.1:") {
+		t.Fatalf("expected initial gateway bound to 127.0.0.1, got %q", a.gateway.Addr())
+	}
+
+	a.activeTab = TabSettings
+	a.settingsSubTab = 1
+	cat := a.catalog()
+
+	tt := ui.NewTester(func(c *ui.Context) {
+		a.renderSettingsPage(c, darkPalette)
+	}, 900, 1400)
+
+	// Toggle Allow LAN on via the switch role.
+	sw, ok := tt.AccessByRole(ui.RoleSwitch, cat.GatewayAllowLANLabel())
+	if !ok {
+		t.Fatalf("expected Allow LAN switch with label %q", cat.GatewayAllowLANLabel())
+	}
+	tt.ClickAt(sw.Bounds.X+sw.Bounds.W/2, sw.Bounds.Y+sw.Bounds.H/2)
+	tt.Frame()
+
+	if !a.state.GatewayAllowLAN {
+		t.Fatalf("expected state GatewayAllowLAN to be true")
+	}
+	if a.gateway == nil {
+		t.Fatalf("expected gateway running after toggling Allow LAN on")
+	}
+	host, _, err := net.SplitHostPort(a.gateway.Addr())
+	if err != nil || (host != "::" && host != "0.0.0.0") {
+		t.Fatalf("expected gateway bound to wildcard host (:: or 0.0.0.0), got %q", a.gateway.Addr())
+	}
+	wantLocal := fmt.Sprintf("127.0.0.1:%d", port)
+	if a.gateway.LocalProxyAddr() != wantLocal {
+		t.Fatalf("expected LocalProxyAddr %q, got %q", wantLocal, a.gateway.LocalProxyAddr())
+	}
+
+	// Verify persistence on reload.
+	a.loadState()
+	if !a.state.GatewayAllowLAN {
+		t.Fatalf("expected GatewayAllowLAN persisted on disk")
+	}
+
+	// Verify LAN badge and proxy addresses show up, and clicking one copies it.
+	if !slices.Contains(tt.Texts(), cat.GatewayLANBadge()) {
+		t.Fatalf("expected LAN badge %q when Allow LAN is enabled, texts: %v", cat.GatewayLANBadge(), tt.Texts())
+	}
+	wantV4Addr := fmt.Sprintf("192.168.1.25:%d", port)
+	wantV6Addr := fmt.Sprintf("[fd00::25]:%d", port)
+	if !tt.HasText(wantV4Addr) || !tt.HasText(wantV6Addr) {
+		t.Fatalf("expected LAN proxy addresses %q and %q, got texts: %v", wantV4Addr, wantV6Addr, tt.Texts())
+	}
+	if err := tt.Click(wantV4Addr); err != nil {
+		t.Fatalf("click LAN address %q: %v", wantV4Addr, err)
+	}
+	tt.Frame()
+	if a.clipboardMem != wantV4Addr {
+		t.Fatalf("expected clipboard %q, got %q", wantV4Addr, a.clipboardMem)
+	}
+
+	// Verify sysproxy receives normalized 127.0.0.1 rather than wildcard 0.0.0.0 or ::.
+	if err := a.setTrafficMode("sysproxy"); err != nil {
+		t.Fatalf("setTrafficMode(sysproxy): %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		sysMu.Lock()
+		n := len(sysCalls)
+		sysMu.Unlock()
+		if n > 0 && a.sysproxy.IsActive() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sysMu.Lock()
+	joinedSys := strings.Join(sysCalls, "\n")
+	sysMu.Unlock()
+	if joinedSys == "" || !strings.Contains(joinedSys, fmt.Sprintf("127.0.0.1 %d", port)) && !strings.Contains(joinedSys, fmt.Sprintf("127.0.0.1:%d", port)) {
+		t.Fatalf("expected sysproxy call with normalized loopback 127.0.0.1 on port %d, got:\n%s", port, joinedSys)
+	}
+	if strings.Contains(joinedSys, " 0.0.0.0 ") || strings.Contains(joinedSys, "0.0.0.0:") || strings.Contains(joinedSys, " :: ") || strings.Contains(joinedSys, "[::]") {
+		t.Fatalf("expected sysproxy to normalize wildcard host to 127.0.0.1, got:\n%s", joinedSys)
+	}
+
+	// Toggle Allow LAN back off and verify loopback bind is restored and LAN badge is removed.
+	swOff, ok := tt.AccessByRole(ui.RoleSwitch, cat.GatewayAllowLANLabel())
+	if !ok {
+		t.Fatalf("expected Allow LAN switch when turning off")
+	}
+	tt.ClickAt(swOff.Bounds.X+swOff.Bounds.W/2, swOff.Bounds.Y+swOff.Bounds.H/2)
+	tt.Frame()
+
+	if a.state.GatewayAllowLAN {
+		t.Fatalf("expected state GatewayAllowLAN to be false after second toggle")
+	}
+	if a.gateway == nil || !strings.HasPrefix(a.gateway.Addr(), "127.0.0.1:") {
+		t.Fatalf("expected gateway restored to 127.0.0.1, got %v", a.gateway)
+	}
+	if slices.Contains(tt.Texts(), cat.GatewayLANBadge()) {
+		t.Fatalf("expected LAN badge hidden after turning off Allow LAN, texts: %v", tt.Texts())
+	}
+	if tt.HasText(wantV4Addr) || tt.HasText(wantV6Addr) {
+		t.Fatalf("expected LAN proxy addresses hidden after turning off Allow LAN")
 	}
 }
 

@@ -495,6 +495,25 @@ func (e *Engine) Addr() string {
 	return e.addr
 }
 
+// LocalProxyAddr returns a loopback host:port suitable for local clients and OS system proxy,
+// translating wildcard bind hosts (0.0.0.0, ::, or empty) to 127.0.0.1.
+func (e *Engine) LocalProxyAddr() string {
+	if e == nil {
+		return ""
+	}
+	host, portStr, err := net.SplitHostPort(e.addr)
+	if err != nil {
+		if e.port > 0 {
+			return fmt.Sprintf("127.0.0.1:%d", e.port)
+		}
+		return e.addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return net.JoinHostPort("127.0.0.1", portStr)
+	}
+	return e.addr
+}
+
 // SetLogLevel dynamically updates the embedded sing-box log level without restarting the engine.
 func (e *Engine) SetLogLevel(level string) {
 	normLvl, parsedLvl := parseSingBoxLogLevel(level)
@@ -1435,7 +1454,8 @@ func buildInboundsConfig(opts EngineOptions, host string, port int) []map[string
 		},
 	}
 
-	if opts.TailnetConfig != nil && opts.TailnetConfig.ExposeMixedPort {
+	isWildcardHost := host == "" || host == "0.0.0.0" || host == "::"
+	if !isWildcardHost && opts.TailnetConfig != nil && opts.TailnetConfig.ExposeMixedPort {
 		inbounds = append(inbounds, map[string]any{
 			"type":        "mixed",
 			"tag":         "tailnet-mixed-in",

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net"
 	"runtime"
 	"strconv"
 	"strings"
@@ -343,6 +344,9 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 					statusDot(c, p.green)
 					ui.Text(c, "Running :"+fmt.Sprint(a.state.GatewayPort)).
 						FontSize(12).FontWeight(500).FontFeatures("tnum").TextColor(p.greenText).NoWrap()
+					if a.state.GatewayAllowLAN {
+						tagPill(c, cat.GatewayLANBadge(), p.accentText, p.accentBg)
+					}
 				} else if a.state.GatewayEnabled && gwErr != nil {
 					statusDot(c, p.red)
 					ui.Text(c, cat.StatusError()).FontSize(12).FontWeight(500).TextColor(p.redText).NoWrap()
@@ -392,6 +396,59 @@ func (a *app) renderSettingsGatewayTab(c *ui.Context, p palette) {
 					_ = a.startGatewayWithFallback()
 				}
 			}
+		}
+
+		ui.Box(c).FillWidth().Height(1).Background(p.borderSubtle)
+
+		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Gap(12).Wrap().Children(func() {
+			ui.Column(c).Gap(2).Grow(1).Shrink(1).MinWidth(140).Children(func() {
+				if ui.Text(c, cat.GatewayAllowLANLabel()).FontSize(13).FontWeight(500).TextColor(p.text).Clicked() {
+					a.state.GatewayAllowLAN = !a.state.GatewayAllowLAN
+					a.applyGatewayAllowLANChange()
+				}
+				ui.Text(c, cat.GatewayAllowLANHint()).FontSize(11).TextColor(p.textDim)
+			})
+			if ui.Switch(c.Key("page-set-gateway-allow-lan"), &a.state.GatewayAllowLAN).Label(cat.GatewayAllowLANLabel()).Changed() {
+				a.applyGatewayAllowLANChange()
+			}
+		})
+
+		if a.state.GatewayAllowLAN {
+			port := a.state.GatewayPort
+			if port <= 0 {
+				port = 10809
+			}
+			lanIPs := a.cachedLANIPs()
+			ui.Column(c.Key("page-set-gateway-lan-addrs")).Gap(6).
+				Padding(8, 10, 8, 10).Radius(6).
+				Background(p.elevated).Border(1, p.borderSubtle).
+				Children(func() {
+					ui.Text(c, cat.GatewayLANAddressesLabel()).FontSize(11).FontWeight(500).TextColor(p.textDim)
+					if len(lanIPs) == 0 {
+						ui.Text(c, cat.GatewayLANNoAddress()).FontSize(11).TextColor(p.textMuted)
+						return
+					}
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Wrap().Children(func() {
+						for _, ip := range lanIPs {
+							addr := net.JoinHostPort(ip, strconv.Itoa(port))
+							btn := ui.ButtonBase(c.Key("page-set-gateway-lan-addr-"+ip)).
+								Label(addr).
+								Padding(4, 8, 4, 8).Radius(5).
+								Background(p.card).Border(1, p.border).
+								Children(func() {
+									ui.Text(c, addr).FontSize(11).FontFeatures("tnum").TextColor(p.text).NoWrap()
+								})
+							if btn.Pressed() {
+								btn.Background(p.borderSubtle)
+							} else if btn.Hovered() {
+								btn.Background(p.cardHover)
+							}
+							if btn.Clicked() {
+								a.writeClipboard(addr, cat.GatewayLANAddressCopied())
+							}
+						}
+					})
+				})
 		}
 	})
 

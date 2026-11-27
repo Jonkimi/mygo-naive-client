@@ -101,6 +101,10 @@ func (s *Sysproxy) Set(addr string, bypass []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid proxy address %q: %w", addr, err)
 	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+		addr = net.JoinHostPort(host, port)
+	}
 
 	if len(bypass) == 0 {
 		bypass = []string{
